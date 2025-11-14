@@ -1,0 +1,591 @@
+syntax = "proto3";
+
+package objstore.v1;
+
+option go_package = "github.com/jeremyhahn/go-objstore/api/proto;objstorepb";
+
+import "google/protobuf/timestamp.proto";
+
+// ObjectStore service provides a unified interface for object storage operations.
+service ObjectStore {
+  // Put stores an object in the backend.
+  rpc Put(PutRequest) returns (PutResponse);
+
+  // Get retrieves an object from the backend with streaming support for large files.
+  rpc Get(GetRequest) returns (stream GetResponse);
+
+  // Delete removes an object from the backend.
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+
+  // List returns a list of objects that match the given criteria.
+  rpc List(ListRequest) returns (ListResponse);
+
+  // Exists checks if an object exists in the backend.
+  rpc Exists(ExistsRequest) returns (ExistsResponse);
+
+  // GetMetadata retrieves only the metadata for an object without its content.
+  rpc GetMetadata(GetMetadataRequest) returns (MetadataResponse);
+
+  // UpdateMetadata updates the metadata for an existing object.
+  rpc UpdateMetadata(UpdateMetadataRequest) returns (UpdateMetadataResponse);
+
+  // Health check endpoint for service health monitoring.
+  rpc Health(HealthRequest) returns (HealthResponse);
+
+  // Archive copies an object to an archival storage backend.
+  rpc Archive(ArchiveRequest) returns (ArchiveResponse);
+
+  // AddPolicy adds a new lifecycle policy.
+  rpc AddPolicy(AddPolicyRequest) returns (AddPolicyResponse);
+
+  // RemovePolicy removes an existing lifecycle policy.
+  rpc RemovePolicy(RemovePolicyRequest) returns (RemovePolicyResponse);
+
+  // GetPolicies retrieves all lifecycle policies.
+  rpc GetPolicies(GetPoliciesRequest) returns (GetPoliciesResponse);
+
+  // ApplyPolicies executes all lifecycle policies.
+  rpc ApplyPolicies(ApplyPoliciesRequest) returns (ApplyPoliciesResponse);
+
+  // Replication methods
+
+  // AddReplicationPolicy adds a new replication policy.
+  rpc AddReplicationPolicy(AddReplicationPolicyRequest) returns (AddReplicationPolicyResponse);
+
+  // RemoveReplicationPolicy removes an existing replication policy.
+  rpc RemoveReplicationPolicy(RemoveReplicationPolicyRequest) returns (RemoveReplicationPolicyResponse);
+
+  // GetReplicationPolicies retrieves all replication policies.
+  rpc GetReplicationPolicies(GetReplicationPoliciesRequest) returns (GetReplicationPoliciesResponse);
+
+  // GetReplicationPolicy retrieves a specific replication policy.
+  rpc GetReplicationPolicy(GetReplicationPolicyRequest) returns (GetReplicationPolicyResponse);
+
+  // TriggerReplication triggers synchronization for one or all policies.
+  rpc TriggerReplication(TriggerReplicationRequest) returns (TriggerReplicationResponse);
+
+  // GetReplicationStatus retrieves status and metrics for a specific replication policy.
+  rpc GetReplicationStatus(GetReplicationStatusRequest) returns (GetReplicationStatusResponse);
+}
+
+// Metadata represents metadata associated with an object in storage.
+message Metadata {
+  // MIME type of the object (e.g., "application/json")
+  string content_type = 1;
+
+  // Encoding applied to the object (e.g., "gzip")
+  string content_encoding = 2;
+
+  // Size of the object in bytes
+  int64 size = 3;
+
+  // Timestamp when the object was last modified
+  google.protobuf.Timestamp last_modified = 4;
+
+  // Entity tag for the object (used for versioning/caching)
+  string etag = 5;
+
+  // Custom metadata key-value pairs
+  map<string, string> custom = 6;
+}
+
+// ObjectInfo represents complete information about a stored object.
+message ObjectInfo {
+  // Object's storage key/path
+  string key = 1;
+
+  // Object's metadata
+  Metadata metadata = 2;
+}
+
+// PutRequest represents a request to store an object.
+message PutRequest {
+  // Storage key for the object
+  string key = 1;
+
+  // Object data
+  bytes data = 2;
+
+  // Optional metadata
+  Metadata metadata = 3;
+}
+
+// PutResponse represents the response from a Put operation.
+message PutResponse {
+  // Whether the operation was successful
+  bool success = 1;
+
+  // Optional message (e.g., error details)
+  string message = 2;
+
+  // ETag of the stored object
+  string etag = 3;
+}
+
+// GetRequest represents a request to retrieve an object.
+message GetRequest {
+  // Storage key for the object
+  string key = 1;
+}
+
+// GetResponse represents a streaming response from a Get operation.
+message GetResponse {
+  // Chunk of object data
+  bytes data = 1;
+
+  // Metadata (included only in the first response)
+  Metadata metadata = 2;
+
+  // Whether this is the last chunk
+  bool is_last = 3;
+}
+
+// DeleteRequest represents a request to delete an object.
+message DeleteRequest {
+  // Storage key for the object
+  string key = 1;
+}
+
+// DeleteResponse represents the response from a Delete operation.
+message DeleteResponse {
+  // Whether the operation was successful
+  bool success = 1;
+
+  // Optional message (e.g., error details)
+  string message = 2;
+}
+
+// ListRequest represents a request to list objects.
+message ListRequest {
+  // Prefix to filter objects
+  string prefix = 1;
+
+  // Delimiter for hierarchical listing
+  string delimiter = 2;
+
+  // Maximum number of results per page
+  int32 max_results = 3;
+
+  // Pagination token from a previous response
+  string continue_from = 4;
+}
+
+// ListResponse represents the response from a List operation.
+message ListResponse {
+  // List of objects matching the criteria
+  repeated ObjectInfo objects = 1;
+
+  // Common prefixes when using delimiter
+  repeated string common_prefixes = 2;
+
+  // Pagination token for the next page
+  string next_token = 3;
+
+  // Whether more results are available
+  bool truncated = 4;
+}
+
+// ExistsRequest represents a request to check if an object exists.
+message ExistsRequest {
+  // Storage key for the object
+  string key = 1;
+}
+
+// ExistsResponse represents the response from an Exists operation.
+message ExistsResponse {
+  // Whether the object exists
+  bool exists = 1;
+}
+
+// GetMetadataRequest represents a request to retrieve object metadata.
+message GetMetadataRequest {
+  // Storage key for the object
+  string key = 1;
+}
+
+// MetadataResponse represents the response from a GetMetadata operation.
+message MetadataResponse {
+  // Object metadata
+  Metadata metadata = 1;
+
+  // Whether the operation was successful
+  bool success = 2;
+
+  // Optional message (e.g., error details)
+  string message = 3;
+}
+
+// UpdateMetadataRequest represents a request to update object metadata.
+message UpdateMetadataRequest {
+  // Storage key for the object
+  string key = 1;
+
+  // New metadata
+  Metadata metadata = 2;
+}
+
+// UpdateMetadataResponse represents the response from an UpdateMetadata operation.
+message UpdateMetadataResponse {
+  // Whether the operation was successful
+  bool success = 1;
+
+  // Optional message (e.g., error details)
+  string message = 2;
+}
+
+// HealthRequest represents a health check request.
+message HealthRequest {
+  // Optional service name to check
+  string service = 1;
+}
+
+// HealthResponse represents a health check response.
+message HealthResponse {
+  // Health status
+  enum Status {
+    UNKNOWN = 0;
+    SERVING = 1;
+    NOT_SERVING = 2;
+  }
+
+  Status status = 1;
+
+  // Optional message
+  string message = 2;
+}
+
+// ArchiveRequest represents a request to archive an object.
+message ArchiveRequest {
+  // Storage key for the object to archive
+  string key = 1;
+
+  // Destination backend type (glacier, azurearchive, etc.)
+  string destination_type = 2;
+
+  // Destination backend settings
+  map<string, string> destination_settings = 3;
+}
+
+// ArchiveResponse represents the response from an Archive operation.
+message ArchiveResponse {
+  // Whether the operation was successful
+  bool success = 1;
+
+  // Optional message (e.g., error details)
+  string message = 2;
+}
+
+// LifecyclePolicy represents a lifecycle policy for objects.
+message LifecyclePolicy {
+  // Unique identifier for the policy
+  string id = 1;
+
+  // Prefix of objects to which the policy applies
+  string prefix = 2;
+
+  // Retention duration in seconds
+  int64 retention_seconds = 3;
+
+  // Action to take after retention period ("delete" or "archive")
+  string action = 4;
+
+  // Destination backend type for archive action
+  string destination_type = 5;
+
+  // Destination backend settings for archive action
+  map<string, string> destination_settings = 6;
+}
+
+// AddPolicyRequest represents a request to add a lifecycle policy.
+message AddPolicyRequest {
+  // The lifecycle policy to add
+  LifecyclePolicy policy = 1;
+}
+
+// AddPolicyResponse represents the response from an AddPolicy operation.
+message AddPolicyResponse {
+  // Whether the operation was successful
+  bool success = 1;
+
+  // Optional message (e.g., error details)
+  string message = 2;
+}
+
+// RemovePolicyRequest represents a request to remove a lifecycle policy.
+message RemovePolicyRequest {
+  // ID of the policy to remove
+  string id = 1;
+}
+
+// RemovePolicyResponse represents the response from a RemovePolicy operation.
+message RemovePolicyResponse {
+  // Whether the operation was successful
+  bool success = 1;
+
+  // Optional message (e.g., error details)
+  string message = 2;
+}
+
+// GetPoliciesRequest represents a request to get all lifecycle policies.
+message GetPoliciesRequest {
+  // Optional prefix filter
+  string prefix = 1;
+}
+
+// GetPoliciesResponse represents the response from a GetPolicies operation.
+message GetPoliciesResponse {
+  // List of lifecycle policies
+  repeated LifecyclePolicy policies = 1;
+
+  // Whether the operation was successful
+  bool success = 2;
+
+  // Optional message (e.g., error details)
+  string message = 3;
+}
+
+// ApplyPoliciesRequest represents a request to apply all lifecycle policies.
+message ApplyPoliciesRequest {
+  // Empty request - applies all policies
+}
+
+// ApplyPoliciesResponse represents the response from an ApplyPolicies operation.
+message ApplyPoliciesResponse {
+  // Whether the operation was successful
+  bool success = 1;
+
+  // Number of policies applied
+  int32 policies_count = 2;
+
+  // Number of objects processed
+  int32 objects_processed = 3;
+
+  // Optional message (e.g., error details)
+  string message = 4;
+}
+
+// Replication messages
+
+// EncryptionConfig defines encryption settings for a single layer.
+message EncryptionConfig {
+  // Whether this encryption layer is enabled
+  bool enabled = 1;
+
+  // Encryption provider ("noop", "custom")
+  string provider = 2;
+
+  // Provider-agnostic key identifier
+  string default_key = 3;
+}
+
+// EncryptionPolicy defines encryption configuration for all three layers.
+message EncryptionPolicy {
+  // Backend at-rest encryption configuration
+  EncryptionConfig backend = 1;
+
+  // Source client-side DEK configuration
+  EncryptionConfig source = 2;
+
+  // Destination client-side DEK configuration
+  EncryptionConfig destination = 3;
+}
+
+// ReplicationMode specifies how replication should handle encrypted data.
+enum ReplicationMode {
+  // TRANSPARENT decrypts at source and re-encrypts at destination
+  TRANSPARENT = 0;
+
+  // OPAQUE copies encrypted blobs as-is (no DEK operations)
+  OPAQUE = 1;
+}
+
+// ReplicationPolicy defines a replication configuration between storage backends.
+message ReplicationPolicy {
+  // Unique identifier for the policy
+  string id = 1;
+
+  // Source backend type (e.g., "local", "s3", "gcs")
+  string source_backend = 2;
+
+  // Source backend-specific configuration
+  map<string, string> source_settings = 3;
+
+  // Source object key prefix filter (empty means all)
+  string source_prefix = 4;
+
+  // Destination backend type
+  string destination_backend = 5;
+
+  // Destination backend-specific configuration
+  map<string, string> destination_settings = 6;
+
+  // Check interval in seconds
+  int64 check_interval_seconds = 7;
+
+  // Last sync timestamp
+  google.protobuf.Timestamp last_sync_time = 8;
+
+  // Whether this policy is active
+  bool enabled = 9;
+
+  // Encryption configuration
+  EncryptionPolicy encryption = 10;
+
+  // Replication mode
+  ReplicationMode replication_mode = 11;
+}
+
+// AddReplicationPolicyRequest represents a request to add a replication policy.
+message AddReplicationPolicyRequest {
+  // The replication policy to add
+  ReplicationPolicy policy = 1;
+}
+
+// AddReplicationPolicyResponse represents the response from an AddReplicationPolicy operation.
+message AddReplicationPolicyResponse {
+  // Whether the operation was successful
+  bool success = 1;
+
+  // Optional message (e.g., error details)
+  string message = 2;
+}
+
+// RemoveReplicationPolicyRequest represents a request to remove a replication policy.
+message RemoveReplicationPolicyRequest {
+  // ID of the policy to remove
+  string id = 1;
+}
+
+// RemoveReplicationPolicyResponse represents the response from a RemoveReplicationPolicy operation.
+message RemoveReplicationPolicyResponse {
+  // Whether the operation was successful
+  bool success = 1;
+
+  // Optional message (e.g., error details)
+  string message = 2;
+}
+
+// GetReplicationPoliciesRequest represents a request to get all replication policies.
+message GetReplicationPoliciesRequest {
+  // Empty request - returns all policies
+}
+
+// GetReplicationPoliciesResponse represents the response from a GetReplicationPolicies operation.
+message GetReplicationPoliciesResponse {
+  // List of replication policies
+  repeated ReplicationPolicy policies = 1;
+}
+
+// GetReplicationPolicyRequest represents a request to get a specific replication policy.
+message GetReplicationPolicyRequest {
+  // ID of the policy to retrieve
+  string id = 1;
+}
+
+// GetReplicationPolicyResponse represents the response from a GetReplicationPolicy operation.
+message GetReplicationPolicyResponse {
+  // The requested replication policy
+  ReplicationPolicy policy = 1;
+}
+
+// TriggerReplicationRequest represents a request to trigger replication sync.
+message TriggerReplicationRequest {
+  // Policy ID to sync (empty for all policies)
+  string policy_id = 1;
+
+  // Whether to use parallel workers (default: false for sequential)
+  bool parallel = 2;
+
+  // Number of workers for parallel sync (default: 4)
+  int32 worker_count = 3;
+}
+
+// SyncResult contains the results of a replication sync operation.
+message SyncResult {
+  // Policy ID that was synced
+  string policy_id = 1;
+
+  // Number of objects successfully synced
+  int32 synced = 2;
+
+  // Number of objects deleted
+  int32 deleted = 3;
+
+  // Number of objects that failed
+  int32 failed = 4;
+
+  // Total bytes transferred
+  int64 bytes_total = 5;
+
+  // Duration in milliseconds
+  int64 duration_ms = 6;
+
+  // Error messages for failed operations
+  repeated string errors = 7;
+}
+
+// TriggerReplicationResponse represents the response from a TriggerReplication operation.
+message TriggerReplicationResponse {
+  // Whether the operation was successful
+  bool success = 1;
+
+  // Sync result details
+  SyncResult result = 2;
+
+  // Optional message
+  string message = 3;
+}
+
+// GetReplicationStatusRequest represents a request to get replication status.
+message GetReplicationStatusRequest {
+  // Policy ID to get status for
+  string id = 1;
+}
+
+// ReplicationStatus contains policy information and metrics.
+message ReplicationStatus {
+  // Policy ID
+  string policy_id = 1;
+
+  // Source backend type
+  string source_backend = 2;
+
+  // Destination backend type
+  string destination_backend = 3;
+
+  // Whether the policy is enabled
+  bool enabled = 4;
+
+  // Total objects synced (all-time)
+  int64 total_objects_synced = 5;
+
+  // Total objects deleted (all-time)
+  int64 total_objects_deleted = 6;
+
+  // Total bytes synced (all-time)
+  int64 total_bytes_synced = 7;
+
+  // Total errors encountered (all-time)
+  int64 total_errors = 8;
+
+  // Last sync timestamp
+  google.protobuf.Timestamp last_sync_time = 9;
+
+  // Average sync duration in milliseconds
+  int64 average_sync_duration_ms = 10;
+
+  // Number of syncs performed
+  int64 sync_count = 11;
+}
+
+// GetReplicationStatusResponse represents the response from a GetReplicationStatus operation.
+message GetReplicationStatusResponse {
+  // Whether the operation was successful
+  bool success = 1;
+
+  // Replication status
+  ReplicationStatus status = 2;
+
+  // Optional message
+  string message = 3;
+}

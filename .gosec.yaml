@@ -1,0 +1,39 @@
+# gosec configuration for go-objstore
+# https://github.com/securego/gosec
+
+# Only scan specific directories (exclude everything else)
+include:
+  - pkg/**/*.go
+  - cmd/**/*.go
+
+# Exclude paths
+exclude-dirs:
+  - .git
+  - .github
+  - .cache
+  - bin
+  - coverage
+  - docs
+  - examples
+  - test
+  - tools
+
+# Exclude generated files
+exclude-generated: true
+
+# Include test files in scan
+tests: false
+
+# Severity threshold
+severity: medium
+
+# Confidence threshold
+confidence: medium
+
+# Exclude rules - none for now
+# exclude:
+
+# Global settings
+global:
+  nosec: true
+  audit: false

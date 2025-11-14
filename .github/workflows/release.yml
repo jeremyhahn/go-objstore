@@ -1,0 +1,402 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  GO_VERSION: '1.23'
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      version: ${{ steps.get_version.outputs.version }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Get version from tag
+      id: get_version
+      run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+    - name: Extract changelog from CHANGELOG.md
+      id: changelog
+      run: |
+        # Extract the latest release section from CHANGELOG.md
+        # This gets everything from the first ## [version] to the next ## [version] or end of content
+        CHANGELOG=$(awk '
+          /^## \[.*\]/ {
+            if (found) exit;
+            found=1;
+            next;
+          }
+          found {
+            if (/^## \[.*\]/) exit;
+            print;
+          }
+        ' CHANGELOG.md | sed '/^$/N;/^\n$/D')
+
+        # Fallback to git log if CHANGELOG.md extraction fails
+        if [ -z "$CHANGELOG" ]; then
+          echo "Warning: Could not extract changelog from CHANGELOG.md, falling back to git log"
+          if [ $(git tag | wc -l) -eq 1 ]; then
+            CHANGELOG=$(git log --pretty=format:"* %s (%h)" --no-merges)
+          else
+            PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+            if [ -n "$PREV_TAG" ]; then
+              CHANGELOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"* %s (%h)" --no-merges)
+            else
+              CHANGELOG=$(git log --pretty=format:"* %s (%h)" --no-merges)
+            fi
+          fi
+        fi
+
+        # Save to file for later use
+        echo "$CHANGELOG" > changelog.txt
+
+        # Also output for this step
+        echo "changelog<<EOF" >> $GITHUB_OUTPUT
+        echo "$CHANGELOG" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: Release ${{ github.ref_name }}
+        body: |
+          ## Changes in this Release
+
+          ${{ steps.changelog.outputs.changelog }}
+
+          ## Installation
+
+          ### Binaries
+
+          Download the appropriate binary for your platform below:
+
+          **CLI Tool:**
+          - `objstore` - Command-line interface for object storage operations
+
+          **Server Binaries:**
+          - `objstore-server` - All-in-one server (gRPC + REST + QUIC + MCP)
+          - `objstore-grpc-server` - gRPC server only
+          - `objstore-rest-server` - REST API server only
+          - `objstore-quic-server` - QUIC server only
+          - `objstore-mcp-server` - Model Context Protocol server only
+
+          **Shared Libraries (Linux only):**
+          - `libobjstore-{version}-linux-{arch}.so` - Dynamic library with header file
+          - `libobjstore-{version}-linux-{arch}.a` - Static library with header file
+
+          Available platforms:
+          - Linux (amd64, arm64)
+          - macOS/Darwin (amd64, arm64)
+          - Windows (amd64)
+
+          ### Docker
+
+          ```bash
+          docker pull ghcr.io/${{ github.repository }}:${{ steps.get_version.outputs.version }}
+          ```
+
+          ## Checksums
+
+          SHA256 checksums are provided for all artifacts.
+        draft: false
+        prerelease: false
+
+  build-binaries:
+    name: Build ${{ matrix.goos }}-${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    needs: create-release
+    strategy:
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+        exclude:
+          - goos: windows
+            goarch: arm64
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-${{ env.GO_VERSION }}-
+
+    - name: Build binaries
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
+        CGO_ENABLED: 0
+      run: |
+        VERSION=${{ needs.create-release.outputs.version }}
+        BUILD_TAGS="local awss3 gcpstorage azureblob glacier"
+        LDFLAGS="-s -w -X main.Version=${VERSION}"
+
+        # Determine file extension
+        EXT=""
+        if [ "$GOOS" = "windows" ]; then
+          EXT=".exe"
+        fi
+
+        # Build all binaries
+        declare -a BINARIES=(
+          "objstore:./cmd/objstore"
+          "objstore-server:./cmd/objstore-server"
+          "objstore-grpc-server:./cmd/objstore-grpc-server"
+          "objstore-rest-server:./cmd/objstore-rest-server"
+          "objstore-quic-server:./cmd/objstore-quic-server"
+          "objstore-mcp-server:./cmd/objstore-mcp-server"
+        )
+
+        for binary_info in "${BINARIES[@]}"; do
+          IFS=':' read -r name path <<< "$binary_info"
+          BINARY_NAME="${name}-${VERSION}-${GOOS}-${GOARCH}${EXT}"
+
+          echo "Building ${name}: ${BINARY_NAME}"
+          go build -tags "${BUILD_TAGS}" \
+            -ldflags="${LDFLAGS}" \
+            -o "${BINARY_NAME}" \
+            "${path}"
+
+          # Create checksum
+          sha256sum "${BINARY_NAME}" > "${BINARY_NAME}.sha256"
+
+          # Create archive
+          if [ "$GOOS" = "windows" ]; then
+            zip "${BINARY_NAME}.zip" "${BINARY_NAME}" "${BINARY_NAME}.sha256"
+          else
+            tar czf "${BINARY_NAME}.tar.gz" "${BINARY_NAME}" "${BINARY_NAME}.sha256"
+          fi
+        done
+
+    - name: Upload binaries
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        VERSION: ${{ needs.create-release.outputs.version }}
+        UPLOAD_URL: ${{ needs.create-release.outputs.upload_url }}
+      run: |
+        # Determine archive extension
+        if [ "${{ matrix.goos }}" = "windows" ]; then
+          ARCHIVE_EXT=".zip"
+          CONTENT_TYPE="application/zip"
+          BIN_EXT=".exe"
+        else
+          ARCHIVE_EXT=".tar.gz"
+          CONTENT_TYPE="application/gzip"
+          BIN_EXT=""
+        fi
+
+        # Upload all binary archives and their checksums
+        for binary in objstore objstore-server objstore-grpc-server objstore-rest-server objstore-quic-server objstore-mcp-server; do
+          BINARY_NAME="${binary}-${VERSION}-${{ matrix.goos }}-${{ matrix.goarch }}${BIN_EXT}"
+          ARCHIVE="${binary}-${VERSION}-${{ matrix.goos }}-${{ matrix.goarch }}${ARCHIVE_EXT}"
+          CHECKSUM="${BINARY_NAME}.sha256"
+
+          echo "Uploading ${ARCHIVE}..."
+          curl -L \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Content-Type: ${CONTENT_TYPE}" \
+            --data-binary "@${ARCHIVE}" \
+            "${UPLOAD_URL}?name=${ARCHIVE}"
+
+          echo "Uploading ${CHECKSUM}..."
+          curl -L \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Content-Type: text/plain" \
+            --data-binary "@${CHECKSUM}" \
+            "${UPLOAD_URL}?name=${CHECKSUM}"
+        done
+
+  build-libraries:
+    name: Build Shared Libraries
+    runs-on: ubuntu-latest
+    needs: create-release
+    strategy:
+      matrix:
+        goarch: [amd64, arm64]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Install cross-compilation tools
+      if: matrix.goarch == 'arm64'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-aarch64-linux-gnu
+
+    - name: Build shared libraries
+      env:
+        VERSION: ${{ needs.create-release.outputs.version }}
+        GOARCH: ${{ matrix.goarch }}
+      run: |
+        BUILD_TAGS="local awss3 gcpstorage azureblob glacier"
+
+        # Set up cross-compilation for arm64
+        if [ "$GOARCH" = "arm64" ]; then
+          export CC=aarch64-linux-gnu-gcc
+        fi
+
+        # Build dynamic library (.so)
+        echo "Building libobjstore.so for linux-${GOARCH}..."
+        CGO_ENABLED=1 GOOS=linux go build \
+          -tags "${BUILD_TAGS}" \
+          -buildmode=c-shared \
+          -o "libobjstore-${VERSION}-linux-${GOARCH}.so" \
+          ./cmd/objstorelib
+
+        # Build static library (.a)
+        echo "Building libobjstore.a for linux-${GOARCH}..."
+        CGO_ENABLED=1 GOOS=linux go build \
+          -tags "${BUILD_TAGS}" \
+          -buildmode=c-archive \
+          -o "libobjstore-${VERSION}-linux-${GOARCH}.a" \
+          ./cmd/objstorelib
+
+        # Generate header file (same for both)
+        cp libobjstore-${VERSION}-linux-${GOARCH}.h libobjstore.h 2>/dev/null || true
+
+        # Create checksums
+        sha256sum "libobjstore-${VERSION}-linux-${GOARCH}.so" > "libobjstore-${VERSION}-linux-${GOARCH}.so.sha256"
+        sha256sum "libobjstore-${VERSION}-linux-${GOARCH}.a" > "libobjstore-${VERSION}-linux-${GOARCH}.a.sha256"
+
+        # Create archives
+        tar czf "libobjstore-${VERSION}-linux-${GOARCH}.so.tar.gz" \
+          "libobjstore-${VERSION}-linux-${GOARCH}.so" \
+          "libobjstore-${VERSION}-linux-${GOARCH}.so.sha256" \
+          libobjstore.h
+
+        tar czf "libobjstore-${VERSION}-linux-${GOARCH}.a.tar.gz" \
+          "libobjstore-${VERSION}-linux-${GOARCH}.a" \
+          "libobjstore-${VERSION}-linux-${GOARCH}.a.sha256" \
+          libobjstore.h
+
+    - name: Upload libraries
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        VERSION: ${{ needs.create-release.outputs.version }}
+        UPLOAD_URL: ${{ needs.create-release.outputs.upload_url }}
+      run: |
+        # Upload dynamic library archive
+        echo "Uploading libobjstore-${VERSION}-linux-${{ matrix.goarch }}.so.tar.gz..."
+        curl -L \
+          -X POST \
+          -H "Accept: application/vnd.github+json" \
+          -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+          -H "Content-Type: application/gzip" \
+          --data-binary "@libobjstore-${VERSION}-linux-${{ matrix.goarch }}.so.tar.gz" \
+          "${UPLOAD_URL}?name=libobjstore-${VERSION}-linux-${{ matrix.goarch }}.so.tar.gz"
+
+        # Upload dynamic library checksum
+        echo "Uploading libobjstore-${VERSION}-linux-${{ matrix.goarch }}.so.sha256..."
+        curl -L \
+          -X POST \
+          -H "Accept: application/vnd.github+json" \
+          -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+          -H "Content-Type: text/plain" \
+          --data-binary "@libobjstore-${VERSION}-linux-${{ matrix.goarch }}.so.sha256" \
+          "${UPLOAD_URL}?name=libobjstore-${VERSION}-linux-${{ matrix.goarch }}.so.sha256"
+
+        # Upload static library archive
+        echo "Uploading libobjstore-${VERSION}-linux-${{ matrix.goarch }}.a.tar.gz..."
+        curl -L \
+          -X POST \
+          -H "Accept: application/vnd.github+json" \
+          -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+          -H "Content-Type: application/gzip" \
+          --data-binary "@libobjstore-${VERSION}-linux-${{ matrix.goarch }}.a.tar.gz" \
+          "${UPLOAD_URL}?name=libobjstore-${VERSION}-linux-${{ matrix.goarch }}.a.tar.gz"
+
+        # Upload static library checksum
+        echo "Uploading libobjstore-${VERSION}-linux-${{ matrix.goarch }}.a.sha256..."
+        curl -L \
+          -X POST \
+          -H "Accept: application/vnd.github+json" \
+          -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+          -H "Content-Type: text/plain" \
+          --data-binary "@libobjstore-${VERSION}-linux-${{ matrix.goarch }}.a.sha256" \
+          "${UPLOAD_URL}?name=libobjstore-${VERSION}-linux-${{ matrix.goarch }}.a.sha256"
+
+  build-docker:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    needs: create-release
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ghcr.io/${{ github.repository }}
+        tags: |
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=semver,pattern={{major}}
+          type=raw,value=latest
+
+    - name: Build and push
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
