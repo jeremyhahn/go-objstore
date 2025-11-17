@@ -1,0 +1,206 @@
+{
+  "mcpServers": {
+    "objstore": {
+      "command": "objstore-mcp-server",
+      "args": [
+        "-mode",
+        "stdio",
+        "-backend",
+        "local",
+        "-path",
+        "/tmp/objstore"
+      ],
+      "description": "Object storage MCP server with support for local, S3, GCS, and Azure backends"
+    },
+    "objstore-s3": {
+      "command": "objstore-mcp-server",
+      "args": [
+        "-mode",
+        "stdio",
+        "-backend",
+        "s3"
+      ],
+      "env": {
+        "AWS_ACCESS_KEY_ID": "${AWS_ACCESS_KEY_ID}",
+        "AWS_SECRET_ACCESS_KEY": "${AWS_SECRET_ACCESS_KEY}",
+        "S3_BUCKET": "${S3_BUCKET}",
+        "S3_REGION": "${S3_REGION}"
+      },
+      "description": "Object storage MCP server with S3 backend"
+    },
+    "objstore-gcs": {
+      "command": "objstore-mcp-server",
+      "args": [
+        "-mode",
+        "stdio",
+        "-backend",
+        "gcs"
+      ],
+      "env": {
+        "GCS_BUCKET": "${GCS_BUCKET}",
+        "GOOGLE_APPLICATION_CREDENTIALS": "${GOOGLE_APPLICATION_CREDENTIALS}"
+      },
+      "description": "Object storage MCP server with Google Cloud Storage backend"
+    },
+    "objstore-azure": {
+      "command": "objstore-mcp-server",
+      "args": [
+        "-mode",
+        "stdio",
+        "-backend",
+        "azure"
+      ],
+      "env": {
+        "AZURE_STORAGE_ACCOUNT": "${AZURE_STORAGE_ACCOUNT}",
+        "AZURE_STORAGE_KEY": "${AZURE_STORAGE_KEY}",
+        "AZURE_CONTAINER": "${AZURE_CONTAINER}"
+      },
+      "description": "Object storage MCP server with Azure Blob Storage backend"
+    },
+    "objstore-http": {
+      "command": "objstore-mcp-server",
+      "args": [
+        "-mode",
+        "http",
+        "-addr",
+        ":8081",
+        "-backend",
+        "local",
+        "-path",
+        "/tmp/objstore"
+      ],
+      "description": "Object storage MCP server in HTTP mode for remote LLM services"
+    }
+  },
+  "tools": [
+    {
+      "name": "objstore_put",
+      "description": "Upload an object to the object store",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "The storage key/path for the object"
+          },
+          "data": {
+            "type": "string",
+            "description": "The content to store"
+          },
+          "metadata": {
+            "type": "object",
+            "description": "Optional metadata",
+            "properties": {
+              "content_type": {
+                "type": "string"
+              },
+              "content_encoding": {
+                "type": "string"
+              },
+              "custom": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "required": ["key", "data"]
+      }
+    },
+    {
+      "name": "objstore_get",
+      "description": "Download an object from the object store",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "The storage key/path of the object"
+          }
+        },
+        "required": ["key"]
+      }
+    },
+    {
+      "name": "objstore_delete",
+      "description": "Delete an object from the object store",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "The storage key/path of the object to delete"
+          }
+        },
+        "required": ["key"]
+      }
+    },
+    {
+      "name": "objstore_list",
+      "description": "List objects in the object store",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "prefix": {
+            "type": "string",
+            "description": "Prefix to filter objects"
+          },
+          "max_results": {
+            "type": "integer",
+            "description": "Maximum number of results"
+          },
+          "continue_from": {
+            "type": "string",
+            "description": "Pagination token"
+          }
+        }
+      }
+    },
+    {
+      "name": "objstore_exists",
+      "description": "Check if an object exists",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "The storage key/path to check"
+          }
+        },
+        "required": ["key"]
+      }
+    },
+    {
+      "name": "objstore_get_metadata",
+      "description": "Get metadata for an object",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "The storage key/path of the object"
+          }
+        },
+        "required": ["key"]
+      }
+    }
+  ],
+  "resources": {
+    "description": "Access stored objects as resources",
+    "uri_scheme": "objstore://",
+    "examples": [
+      "objstore://documents/report.pdf",
+      "objstore://images/photo.jpg",
+      "objstore://data/export.json"
+    ]
+  },
+  "capabilities": {
+    "tools": {
+      "listChanged": false
+    },
+    "resources": {
+      "subscribe": false,
+      "listChanged": false
+    }
+  },
+  "protocolVersion": "2024-11-05"
+}

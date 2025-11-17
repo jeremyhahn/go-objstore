@@ -1,0 +1,27 @@
+# Dockerfile for REST server
+FROM golang:1.23-alpine
+
+# Allow Go toolchain auto-upgrade
+ENV GOTOOLCHAIN=auto
+
+# Install runtime dependencies
+RUN apk add --no-cache ca-certificates curl
+
+WORKDIR /app
+
+# Copy go modules
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build REST server
+RUN go build -tags local -o /usr/local/bin/objstore-server ./cmd/objstore-server
+
+# Create storage directory
+RUN mkdir -p /tmp/objstore
+
+EXPOSE 8080
+
+CMD ["objstore-server", "-grpc=false", "-rest=true", "-rest-port", "8080", "-backend", "local", "-path", "/tmp/objstore"]

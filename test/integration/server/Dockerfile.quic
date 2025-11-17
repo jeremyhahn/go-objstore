@@ -1,0 +1,27 @@
+# Dockerfile for QUIC server
+FROM golang:1.23-alpine
+
+# Allow Go toolchain auto-upgrade
+ENV GOTOOLCHAIN=auto
+
+# Install runtime dependencies
+RUN apk add --no-cache ca-certificates openssl
+
+WORKDIR /app
+
+# Copy go modules
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build QUIC server
+RUN go build -tags local -o /usr/local/bin/objstore-quic-server ./cmd/objstore-quic-server
+
+# Create storage directory
+RUN mkdir -p /tmp/objstore
+
+EXPOSE 4433/udp
+
+CMD ["sh", "-c", "objstore-quic-server -addr :4433 -backend local -path /tmp/objstore -tlscert ${CERT_FILE:-/certs/server.crt} -tlskey ${KEY_FILE:-/certs/server.key}"]

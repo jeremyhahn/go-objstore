@@ -1,0 +1,25 @@
+# gopls configuration for go-objstore
+# This helps IDEs understand Go test file structure
+
+build:
+  # Enable test files in analysis
+  buildFlags: ["-tags=test"]
+
+  # Don't show diagnostics for test-only code
+  testWorkspace: true
+
+ui:
+  # Reduce false positives in test files
+  diagnostic:
+    analyses:
+      unusedparams: false
+      unusedvariable: false
+
+  # Enable semantic tokens
+  semanticTokens: true
+
+formatting:
+  # Use standard gofmt
+  gofumpt: false
+
+verboseOutput: false
