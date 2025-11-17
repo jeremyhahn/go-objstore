@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  # Test runner that executes CLI integration tests
+  test:
+    build:
+      context: ../../..
+      dockerfile: test/integration/cli/Dockerfile
+    volumes:
+      - ../../..:/app
+      - test-storage:/test-storage
+    working_dir: /app
+    environment:
+      - OBJECTSTORE_BACKEND=local
+      - OBJECTSTORE_BACKEND_PATH=/test-storage
+      - GO_TEST_TIMEOUT=10m
+    command: go test -v -tags local ./test/integration/cli/... -timeout 10m
+
+volumes:
+  test-storage:
+
+networks:
+  default:
+    name: objstore-cli-test

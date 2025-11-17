@@ -1,0 +1,492 @@
+openapi: 3.0.3
+info:
+  title: Go ObjectStore REST API
+  description: |
+    REST API for the go-objstore library providing unified access to multiple storage backends
+    including local filesystem, AWS S3, Google Cloud Storage, and Azure Blob Storage.
+  version: 0.1.0-beta
+  contact:
+    name: Go ObjectStore
+  license:
+    name: AGPL-3.0
+    url: https://www.gnu.org/licenses/agpl-3.0.html
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+  - url: http://localhost:8080/api/v1
+    description: Local development server (API v1)
+
+tags:
+  - name: objects
+    description: Object storage operations
+  - name: metadata
+    description: Metadata operations
+  - name: health
+    description: Health check endpoints
+
+paths:
+  /health:
+    get:
+      tags:
+        - health
+      summary: Health check
+      description: Check if the server is healthy and responsive
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /objects:
+    get:
+      tags:
+        - objects
+      summary: List objects
+      description: List objects with optional prefix filtering and pagination support
+      operationId: listObjects
+      parameters:
+        - name: prefix
+          in: query
+          description: Filter objects by prefix
+          required: false
+          schema:
+            type: string
+            example: "documents/"
+        - name: limit
+          in: query
+          description: Maximum number of results to return
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+            example: 50
+        - name: token
+          in: query
+          description: Continuation token for pagination
+          required: false
+          schema:
+            type: string
+        - name: delimiter
+          in: query
+          description: Delimiter for hierarchical listing (e.g., "/" for directory-like structure)
+          required: false
+          schema:
+            type: string
+            example: "/"
+      responses:
+        '200':
+          description: List of objects
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListObjectsResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /objects/{key}:
+    put:
+      tags:
+        - objects
+      summary: Upload object
+      description: Upload an object to the storage backend with optional metadata
+      operationId: putObject
+      parameters:
+        - name: key
+          in: path
+          description: Object key/path
+          required: true
+          schema:
+            type: string
+            example: "documents/file.pdf"
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: File to upload
+                metadata:
+                  type: string
+                  description: JSON-encoded metadata object
+                  example: '{"content_type":"application/pdf","custom":{"author":"John Doe"}}'
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '201':
+          description: Object uploaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          description: Request entity too large
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    get:
+      tags:
+        - objects
+      summary: Download object
+      description: Retrieve an object from the storage backend
+      operationId: getObject
+      parameters:
+        - name: key
+          in: path
+          description: Object key/path
+          required: true
+          schema:
+            type: string
+            example: "documents/file.pdf"
+      responses:
+        '200':
+          description: Object content
+          headers:
+            Content-Type:
+              schema:
+                type: string
+              description: MIME type of the object
+            Content-Length:
+              schema:
+                type: integer
+              description: Size of the object in bytes
+            ETag:
+              schema:
+                type: string
+              description: Entity tag for caching
+            Last-Modified:
+              schema:
+                type: string
+              description: Last modification timestamp
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Object not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      tags:
+        - objects
+      summary: Delete object
+      description: Remove an object from the storage backend
+      operationId: deleteObject
+      parameters:
+        - name: key
+          in: path
+          description: Object key/path
+          required: true
+          schema:
+            type: string
+            example: "documents/file.pdf"
+      responses:
+        '200':
+          description: Object deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '404':
+          description: Object not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    head:
+      tags:
+        - objects
+      summary: Check object existence
+      description: Check if an object exists without downloading its content
+      operationId: headObject
+      parameters:
+        - name: key
+          in: path
+          description: Object key/path
+          required: true
+          schema:
+            type: string
+            example: "documents/file.pdf"
+      responses:
+        '200':
+          description: Object exists
+          headers:
+            Content-Type:
+              schema:
+                type: string
+              description: MIME type of the object
+            Content-Length:
+              schema:
+                type: integer
+              description: Size of the object in bytes
+            ETag:
+              schema:
+                type: string
+              description: Entity tag for caching
+            Last-Modified:
+              schema:
+                type: string
+              description: Last modification timestamp
+        '404':
+          description: Object not found
+
+  /objects/{key}/metadata:
+    get:
+      tags:
+        - metadata
+      summary: Get object metadata
+      description: Retrieve metadata for an object without downloading its content
+      operationId: getObjectMetadata
+      parameters:
+        - name: key
+          in: path
+          description: Object key/path
+          required: true
+          schema:
+            type: string
+            example: "documents/file.pdf"
+      responses:
+        '200':
+          description: Object metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectResponse'
+        '404':
+          description: Object not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    put:
+      tags:
+        - metadata
+      summary: Update object metadata
+      description: Update metadata for an existing object
+      operationId: updateObjectMetadata
+      parameters:
+        - name: key
+          in: path
+          description: Object key/path
+          required: true
+          schema:
+            type: string
+            example: "documents/file.pdf"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Metadata'
+      responses:
+        '200':
+          description: Metadata updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Object not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  schemas:
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - code
+      properties:
+        error:
+          type: string
+          description: HTTP status text
+          example: "Bad Request"
+        code:
+          type: integer
+          description: HTTP status code
+          example: 400
+        message:
+          type: string
+          description: Detailed error message
+          example: "key parameter is required"
+
+    SuccessResponse:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          description: Success message
+          example: "operation completed successfully"
+        data:
+          type: object
+          description: Optional response data
+          additionalProperties: true
+
+    HealthResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          description: Health status
+          example: "healthy"
+        version:
+          type: string
+          description: API version
+          example: "1.0.0"
+
+    Metadata:
+      type: object
+      properties:
+        content_type:
+          type: string
+          description: MIME type of the object
+          example: "application/pdf"
+        content_encoding:
+          type: string
+          description: Content encoding
+          example: "gzip"
+        size:
+          type: integer
+          format: int64
+          description: Size in bytes
+          example: 1048576
+        last_modified:
+          type: string
+          format: date-time
+          description: Last modification timestamp
+          example: "2025-11-05T10:00:00Z"
+        etag:
+          type: string
+          description: Entity tag for versioning/caching
+          example: "d41d8cd98f00b204e9800998ecf8427e"
+        custom:
+          type: object
+          description: Custom metadata key-value pairs
+          additionalProperties:
+            type: string
+          example:
+            author: "John Doe"
+            department: "Engineering"
+
+    ObjectResponse:
+      type: object
+      required:
+        - key
+        - size
+      properties:
+        key:
+          type: string
+          description: Object key/path
+          example: "documents/file.pdf"
+        size:
+          type: integer
+          format: int64
+          description: Size in bytes
+          example: 1048576
+        modified:
+          type: string
+          format: date-time
+          description: Last modification timestamp
+          example: "2025-11-05T10:00:00Z"
+        etag:
+          type: string
+          description: Entity tag
+          example: "d41d8cd98f00b204e9800998ecf8427e"
+        metadata:
+          type: object
+          description: Custom metadata
+          additionalProperties:
+            type: string
+
+    ListObjectsResponse:
+      type: object
+      required:
+        - objects
+        - truncated
+      properties:
+        objects:
+          type: array
+          description: List of objects
+          items:
+            $ref: '#/components/schemas/ObjectResponse'
+        common_prefixes:
+          type: array
+          description: Common prefixes (when using delimiter)
+          items:
+            type: string
+          example:
+            - "documents/"
+            - "images/"
+        next_token:
+          type: string
+          description: Token for fetching the next page
+          example: "eyJrZXkiOiJkb2N1bWVudHMvZmlsZTEwMC5wZGYifQ=="
+        truncated:
+          type: boolean
+          description: Whether more results are available
+          example: false

@@ -1,0 +1,24 @@
+services:
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.33.0
+    command: azurite --blobHost 0.0.0.0 --blobPort 10000 --location /data --silent
+    environment:
+      - AZURITE_ACCOUNTS=devstoreaccount1:bXlrZXk=
+    ports:
+      - "10000:10000"
+
+  test:
+    build:
+      context: ../../..
+      dockerfile: test/integration/azure/Dockerfile
+    depends_on:
+      - azurite
+    environment:
+      - AZURE_ENDPOINT=http://azurite:10000
+    volumes:
+      - ../../..:/app
+    working_dir: /app
+
+networks:
+  default:
+    name: objstore-azure-test

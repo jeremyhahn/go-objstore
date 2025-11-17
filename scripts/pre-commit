@@ -1,0 +1,73 @@
+#!/bin/bash
+
+#
+# Pre-commit hook for go-objstore
+#
+# This script runs code quality checks before allowing a commit:
+# - gofmt: Code formatting
+# - go vet: Detects suspicious constructs
+# - golangci-lint: Comprehensive linting
+# - go test: Unit tests
+#
+# To install this hook, run:
+#   cp scripts/pre-commit .git/hooks/pre-commit
+#   chmod +x .git/hooks/pre-commit
+#
+
+set -e
+
+# Color codes for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$PROJECT_ROOT"
+
+echo -e "${BLUE}Running pre-commit checks...${NC}\n"
+
+# 1. Check if gofmt is needed
+echo -e "${BLUE}→ Checking code formatting with gofmt...${NC}"
+GOFMT_OUTPUT=$(gofmt -l ./pkg ./cmd 2>&1 || true)
+if [ -n "$GOFMT_OUTPUT" ]; then
+    echo -e "${RED}✗ gofmt check failed. Files need formatting:${NC}"
+    echo "$GOFMT_OUTPUT"
+    echo -e "${YELLOW}Run: gofmt -w ./pkg ./cmd${NC}\n"
+    exit 1
+fi
+echo -e "${GREEN}✓ Code formatting check passed${NC}\n"
+
+# 2. Run go vet
+echo -e "${BLUE}→ Running go vet...${NC}"
+if ! go vet ./pkg/... ./cmd/... 2>&1; then
+    echo -e "${RED}✗ go vet check failed${NC}\n"
+    exit 1
+fi
+echo -e "${GREEN}✓ Go vet check passed${NC}\n"
+
+# 3. Run golangci-lint if available
+if command -v golangci-lint &> /dev/null; then
+    echo -e "${BLUE}→ Running golangci-lint...${NC}"
+    if ! golangci-lint run --timeout=5m ./pkg/... ./cmd/... 2>&1; then
+        echo -e "${RED}✗ golangci-lint check failed${NC}\n"
+        exit 1
+    fi
+    echo -e "${GREEN}✓ golangci-lint check passed${NC}\n"
+else
+    echo -e "${YELLOW}⚠ golangci-lint not installed, skipping${NC}"
+    echo -e "${YELLOW}  Install: https://golangci-lint.run/usage/install/${NC}\n"
+fi
+
+# 4. Run tests (only short tests to keep hook fast)
+echo -e "${BLUE}→ Running tests...${NC}"
+if ! go test -short -race ./pkg/... 2>&1; then
+    echo -e "${RED}✗ Tests failed${NC}\n"
+    exit 1
+fi
+echo -e "${GREEN}✓ Tests passed${NC}\n"
+
+echo -e "${GREEN}$(printf '%.0s=%.0s' {1..50})${NC}"
+echo -e "${GREEN}All pre-commit checks passed!${NC}"
+echo -e "${GREEN}$(printf '%.0s=%.0s' {1..50})${NC}\n"
