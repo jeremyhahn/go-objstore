@@ -1,0 +1,95 @@
+# Credentials and Secrets
+*.env
+*.env.*
+.env
+.env.*
+*.key
+*.pem
+*.crt
+.aws/
+.azure/
+credentials.json
+secrets.yaml
+secrets.yml
+
+# Exception: Allow test certificates
+!**/test/**/*.crt
+!**/test/**/*.key
+!**/test/**/*.pem
+!**/testdata/**/*.crt
+!**/testdata/**/*.key
+!**/testdata/**/*.pem
+
+# Exception: Allow JSON files in api directory
+!api/**/*.json
+
+# Configuration files
+.objstore.yaml
+.objstore-*.yaml
+config.yaml
+config.yml
+local_config.yaml
+
+# Build artifacts
+bin/
+dist/
+*.so
+*.dylib
+*.dll
+*.exe
+*.test
+*.out
+coverage/
+coverage.txt
+coverage.out
+*.prof
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*~
+.directory
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*.swn
+*.bak
+.project
+.classpath
+.settings/
+*.iml
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.log
+*.pid
+*.seed
+*.lock
+
+# Dependency directories
+vendor/
+node_modules/
+
+# Local storage directories (for testing)
+testdata/storage/
+testdata/temp/
+test-storage/
+test/integration/cli/storage/
+test/integration/server/storage/
+test/integration/*/storage/
+
+# Go workspace
+go.work
+go.work.sum
+gosec-results.json
+storage/

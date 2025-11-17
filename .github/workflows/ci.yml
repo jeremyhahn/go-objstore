@@ -1,0 +1,257 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Weekly rebuild to pick up security updates
+    - cron: '0 0 * * 0'
+
+env:
+  GO_VERSION: '1.24'
+  COVERAGE_THRESHOLD: 89
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Verify dependencies
+      run: go mod verify
+
+    - name: Run unit tests with coverage
+      run: |
+        mkdir -p coverage
+        make test
+
+    - name: Check coverage threshold
+      run: |
+        COVERAGE=$(go tool cover -func=coverage/unit.out | grep total | awk '{print $3}' | sed 's/%//')
+        echo "Coverage: ${COVERAGE}%"
+        if (( $(echo "$COVERAGE < $COVERAGE_THRESHOLD" | bc -l) )); then
+          echo "Coverage ${COVERAGE}% is below threshold ${COVERAGE_THRESHOLD}%"
+          exit 1
+        fi
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage/unit.out
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+
+  integration-test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Run local storage integration tests
+      run: make integration-test-local
+
+    - name: Run S3/MinIO integration tests
+      run: make integration-test-s3
+
+    - name: Run MinIO integration tests
+      run: make integration-test-minio
+
+    - name: Run Azure/Azurite integration tests
+      run: make integration-test-azure
+
+    - name: Run GCS integration tests
+      run: make integration-test-gcs
+
+    - name: Run factory integration tests
+      run: make integration-test-factory
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    - name: Run golangci-lint
+      uses: golangci/golangci-lint-action@v6
+      with:
+        version: latest
+        args: --timeout=10m
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    - name: Run gosec security scanner
+      uses: securego/gosec@master
+      with:
+        args: '-no-fail -fmt json -out gosec-results.json -exclude-dir=examples ./...'
+
+    - name: Upload gosec results as artifact
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: gosec-results
+        path: gosec-results.json
+
+    - name: Run govulncheck
+      run: |
+        go install golang.org/x/vuln/cmd/govulncheck@latest
+        GOFLAGS="-tags=local,awss3,gcpstorage,azureblob,glacier" govulncheck ./...
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [test, lint, security]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    - name: Build CLI
+      run: make build-cli WITH_LOCAL=1 WITH_AWS=1 WITH_GCP=1 WITH_AZURE=1
+
+    - name: Build server
+      run: make build-server WITH_LOCAL=1 WITH_AWS=1 WITH_GCP=1 WITH_AZURE=1
+
+    - name: Build shared library
+      run: make lib WITH_LOCAL=1 WITH_AWS=1 WITH_GCP=1 WITH_AZURE=1
+
+  docker:
+    name: Build and Scan Docker Image
+    runs-on: ubuntu-latest
+    needs: [build, integration-test]
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build Docker image for scanning
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        platforms: linux/amd64
+        push: false
+        load: true
+        tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ci-scan
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ci-scan
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+        severity: 'CRITICAL,HIGH'
+
+    - name: Upload Trivy results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+        category: 'trivy-container'
+
+    - name: Run Trivy vulnerability scanner (table output)
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ci-scan
+        format: 'table'
+        severity: 'CRITICAL,HIGH'
+        exit-code: '0'
+
+    - name: Scan for secrets with Trivy
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        scanners: 'secret'
+        format: 'sarif'
+        output: 'trivy-secret-results.sarif'
+
+    - name: Upload secret scan results
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'trivy-secret-results.sarif'
+        category: 'trivy-secrets'
+
+    - name: Run Grype vulnerability scanner
+      uses: anchore/scan-action@v4
+      id: grype
+      with:
+        image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ci-scan
+        fail-build: false
+        severity-cutoff: high
+        output-format: sarif
+
+    - name: Upload Grype results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v3
+      if: always() && steps.grype.outputs.sarif != ''
+      with:
+        sarif_file: ${{ steps.grype.outputs.sarif }}
+        category: 'grype'

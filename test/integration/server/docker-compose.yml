@@ -1,0 +1,138 @@
+version: '3.8'
+
+services:
+  # gRPC server instance
+  grpc-server:
+    build:
+      context: ../../..
+      dockerfile: test/integration/server/Dockerfile.grpc
+    ports:
+      - "50051:50051"
+    volumes:
+      - grpc-storage:/tmp/objstore
+      - grpc-archive:/tmp/archive
+    environment:
+      - STORAGE_BACKEND=local
+      - STORAGE_PATH=/tmp/objstore
+      - ARCHIVE_PATH=/tmp/archive
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=:50051"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # REST server instance
+  rest-server:
+    build:
+      context: ../../..
+      dockerfile: test/integration/server/Dockerfile.rest
+    ports:
+      - "8080:8080"
+    volumes:
+      - rest-storage:/tmp/objstore
+      - rest-archive:/tmp/archive
+    environment:
+      - STORAGE_BACKEND=local
+      - STORAGE_PATH=/tmp/objstore
+      - SERVER_PORT=8080
+      - ARCHIVE_PATH=/tmp/archive
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # QUIC server instance
+  quic-server:
+    build:
+      context: ../../..
+      dockerfile: test/integration/server/Dockerfile.quic
+    ports:
+      - "4433:4433/udp"
+    volumes:
+      - quic-storage:/tmp/objstore
+      - quic-archive:/tmp/archive
+      - ./certs:/certs:ro
+    environment:
+      - STORAGE_BACKEND=local
+      - STORAGE_PATH=/tmp/objstore
+      - SERVER_PORT=4433
+      - CERT_FILE=/certs/server.crt
+      - KEY_FILE=/certs/server.key
+      - ARCHIVE_PATH=/tmp/archive
+    networks:
+      - test-network
+
+  # MCP server instance (stdio mode testing via HTTP)
+  mcp-server:
+    build:
+      context: ../../..
+      dockerfile: test/integration/server/Dockerfile.mcp
+    ports:
+      - "8081:8081"
+    volumes:
+      - mcp-storage:/tmp/objstore
+      - mcp-archive:/tmp/archive
+    environment:
+      - STORAGE_BACKEND=local
+      - STORAGE_PATH=/tmp/objstore
+      - MCP_MODE=http
+      - MCP_PORT=8081
+      - ARCHIVE_PATH=/tmp/archive
+    networks:
+      - test-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # Test runner that waits for servers and runs tests
+  test:
+    build:
+      context: ../../..
+      dockerfile: test/integration/server/Dockerfile.test
+    depends_on:
+      grpc-server:
+        condition: service_healthy
+      rest-server:
+        condition: service_healthy
+      mcp-server:
+        condition: service_healthy
+      quic-server:
+        condition: service_started
+    volumes:
+      - ../../..:/app
+      - ./certs:/certs:ro
+    working_dir: /app
+    environment:
+      - GRPC_SERVER_ADDR=grpc-server:50051
+      - REST_SERVER_ADDR=http://rest-server:8080
+      - QUIC_SERVER_ADDR=https://quic-server:4433
+      - MCP_SERVER_ADDR=http://mcp-server:8081
+      - CERT_FILE=/certs/server.crt
+      - GO_TEST_TIMEOUT=15m
+    networks:
+      - test-network
+    command: go test -v -tags local ./test/integration/server/... -timeout 15m
+
+volumes:
+  grpc-storage:
+  grpc-archive:
+  rest-storage:
+  rest-archive:
+  quic-storage:
+  quic-archive:
+  mcp-storage:
+  mcp-archive:
+
+networks:
+  test-network:
+    name: objstore-server-test

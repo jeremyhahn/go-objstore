@@ -1,0 +1,45 @@
+services:
+  minio:
+    image: quay.io/minio/minio:RELEASE.2024-09-22T00-33-43Z
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.33.0
+    command: azurite --blobHost 0.0.0.0 --blobPort 10000 --location /data
+    environment:
+      - AZURITE_ACCOUNTS=devstoreaccount1:bXlrZXk=
+    ports:
+      - "10000:10000"
+  fake-gcs:
+    image: fsouza/fake-gcs-server:1.49.1
+    command: ["-scheme", "http", "-port", "4443", "-backend", "memory", "-public-host", "fake-gcs:4443"]
+    ports:
+      - "4443:4443"
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    working_dir: /app
+    volumes:
+      - .:/app
+    environment:
+      - AWS_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+      - STORAGE_EMULATOR_HOST=http://fake-gcs:4443
+      - GOTOOLCHAIN=auto
+      - PKG_COVER=${PKG_COVER:-go-objstore/pkg/azure,go-objstore/pkg/azurearchive,go-objstore/pkg/local,go-objstore/pkg/s3,go-objstore/pkg/factory,go-objstore/pkg/glacier,go-objstore/pkg/gcs}
+    depends_on:
+      - minio
+      - azurite
+      - fake-gcs
+    entrypoint: /app/docker-entrypoint.sh
+
+networks:
+  default:
+    name: objstore-net
