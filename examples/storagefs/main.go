@@ -80,7 +80,7 @@ func localExample() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	readFile.Close()
+	_ = readFile.Close()
 	fmt.Printf("File content: %s", content)
 
 	// Get file stats
@@ -122,9 +122,10 @@ func s3Example() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	if _, err := file.WriteString("Q4 2024 Summary\n"); err != nil {
+		_ = file.Close()
 		log.Fatal(err)
 	}
 
@@ -140,13 +141,13 @@ func utilsExample() {
 
 	// Example 1: Write and read files
 	file, _ := fs.Create("test.txt")
-	file.WriteString("This is a test file\n")
-	file.Close()
+	_, _ = file.WriteString("This is a test file\n")
+	_ = file.Close()
 
 	// Read the file
 	readFile, _ := fs.Open("test.txt")
 	content, _ := io.ReadAll(readFile)
-	readFile.Close()
+	_ = readFile.Close()
 	fmt.Printf("Read content: %s", content)
 
 	// Example 2: Check if file exists
@@ -176,21 +177,24 @@ func utilsExample() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer srcFile.Close()
+	defer func() { _ = srcFile.Close() }()
 
 	dstFile, err := dstFs.Create("test-copy.txt")
 	if err != nil {
+		_ = srcFile.Close()
 		log.Fatal(err)
 	}
-	defer dstFile.Close()
+	defer func() { _ = dstFile.Close() }()
 
 	if _, err := io.Copy(dstFile, srcFile); err != nil {
+		_ = srcFile.Close()
+		_ = dstFile.Close()
 		log.Fatal(err)
 	}
 
 	fmt.Println("Successfully copied file between storage backends")
 
 	// Clean up
-	fs.RemoveAll("")
-	dstFs.RemoveAll("")
+	_ = fs.RemoveAll("")
+	_ = dstFs.RemoveAll("")
 }

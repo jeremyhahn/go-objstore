@@ -35,4 +35,10 @@ var (
 
 	// ErrUnsupportedOutputFormat is returned when an unsupported output format is specified.
 	ErrUnsupportedOutputFormat = errors.New("unsupported output format")
+
+	// ErrPolicyManagedByProvider is returned when trying to apply policies that are managed by the cloud provider.
+	ErrPolicyManagedByProvider = errors.New("policy application is managed by cloud provider")
+
+	// ErrMetadataNotFound is returned when metadata is not found.
+	ErrMetadataNotFound = errors.New("metadata not found")
 )

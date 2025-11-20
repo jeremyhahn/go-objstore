@@ -14,13 +14,33 @@
 package client
 
 import (
+	"errors"
 	"fmt"
+)
+
+var (
+	// ErrConfigRequired is returned when client config is nil
+	ErrConfigRequired = errors.New("client config is required")
+	// ErrUnsupportedProtocol is returned when an unsupported protocol is specified
+	ErrUnsupportedProtocol = errors.New("unsupported protocol")
+	// ErrServerURLRequired is returned when server URL is missing
+	ErrServerURLRequired = errors.New("server URL is required")
+	// ErrMaxResultsOverflow is returned when MaxResults exceeds int32 range
+	ErrMaxResultsOverflow = errors.New("MaxResults exceeds int32 range")
+	// ErrServerNotServing is returned when health check fails
+	ErrServerNotServing = errors.New("server not serving")
+	// ErrNoSyncResult is returned when sync result is nil
+	ErrNoSyncResult = errors.New("no sync result returned")
+	// ErrNoStatus is returned when status is nil
+	ErrNoStatus = errors.New("no status returned")
+	// ErrServerError is returned when server returns non-success status
+	ErrServerError = errors.New("server returned error")
 )
 
 // NewClient creates a new client based on the protocol specified in the config
 func NewClient(config *Config) (Client, error) {
 	if config == nil {
-		return nil, fmt.Errorf("client config is required")
+		return nil, ErrConfigRequired
 	}
 
 	// Default to REST if no protocol specified
@@ -37,6 +57,6 @@ func NewClient(config *Config) (Client, error) {
 	case "quic", "http3":
 		return NewQUICClient(config)
 	default:
-		return nil, fmt.Errorf("unsupported protocol: %s (supported: rest, grpc, quic)", config.Protocol)
+		return nil, fmt.Errorf("%w: %s (supported: rest, grpc, quic)", ErrUnsupportedProtocol, config.Protocol)
 	}
 }

@@ -146,7 +146,7 @@ func SaveCertificateToPEM(certFile, keyFile string, cert *tls.Certificate) error
 	if err != nil {
 		return err
 	}
-	defer certOut.Close()
+	defer func() { _ = certOut.Close() }()
 
 	if err := pem.Encode(certOut, &pem.Block{
 		Type:  "CERTIFICATE",
@@ -160,7 +160,7 @@ func SaveCertificateToPEM(certFile, keyFile string, cert *tls.Certificate) error
 	if err != nil {
 		return err
 	}
-	defer keyOut.Close()
+	defer func() { _ = keyOut.Close() }()
 
 	privKey, ok := cert.PrivateKey.(*rsa.PrivateKey)
 	if !ok {

@@ -16,6 +16,7 @@ package server_test
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -27,6 +28,8 @@ import (
 )
 
 var (
+	errMCPRPC = errors.New("RPC error")
+
 	mcpServerAddr string
 	mcpClient     *http.Client
 )
@@ -592,7 +595,7 @@ func TestMCPConcurrency(t *testing.T) {
 					return
 				}
 				if resp.Error != nil {
-					errChan <- fmt.Errorf("RPC error: %s", resp.Error.Message)
+					errChan <- fmt.Errorf("%w: %s", errMCPRPC, resp.Error.Message)
 					return
 				}
 				errChan <- nil

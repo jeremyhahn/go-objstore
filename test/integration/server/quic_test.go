@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -32,6 +33,9 @@ import (
 )
 
 var (
+	errQUICTimeout           = errors.New("timeout waiting for QUIC server")
+	errQUICCACertParseFailed = errors.New("failed to parse CA cert")
+
 	quicServerAddr string
 	quicClient     *http.Client
 )
@@ -56,7 +60,7 @@ func setupQUICClient() error {
 
 	caCertPool := x509.NewCertPool()
 	if !caCertPool.AppendCertsFromPEM(caCert) {
-		return fmt.Errorf("failed to parse CA cert")
+		return errQUICCACertParseFailed
 	}
 
 	tlsConfig := &tls.Config{
@@ -80,7 +84,7 @@ func setupQUICClient() error {
 	for {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("timeout waiting for QUIC server")
+			return errQUICTimeout
 		case <-ticker.C:
 			resp, err := quicClient.Get(quicServerAddr + "/health")
 			if err == nil && resp.StatusCode == http.StatusOK {

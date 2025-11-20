@@ -25,6 +25,12 @@ import (
 	"time"
 )
 
+// Error variables
+var (
+	ErrInvalidWhence  = errors.New("invalid whence")
+	ErrNegativeOffset = errors.New("negative offset")
+)
+
 // StorageFile implements fs.File interface for object storage.
 // It provides file-like operations with buffered writes and seek support.
 type StorageFile struct {
@@ -92,7 +98,7 @@ func newStorageFile(fs *StorageFS, name string, flag int, perm os.FileMode) (*St
 				return nil, err
 			}
 		} else {
-			defer data.Close()
+			defer func() { _ = data.Close() }()
 			f.buf = new(bytes.Buffer)
 			if _, err := io.Copy(f.buf, data); err != nil {
 				return nil, err
@@ -109,7 +115,7 @@ func newStorageFile(fs *StorageFS, name string, flag int, perm os.FileMode) (*St
 			// Try to get existing content for append or create without truncate
 			data, err := fs.storage.Get(name)
 			if err == nil {
-				defer data.Close()
+				defer func() { _ = data.Close() }()
 				f.buf = new(bytes.Buffer)
 				if _, err := io.Copy(f.buf, data); err != nil {
 					return nil, err
@@ -269,11 +275,11 @@ func (f *StorageFile) Seek(offset int64, whence int) (int64, error) {
 	case io.SeekEnd:
 		newOffset = bufLen + offset
 	default:
-		return 0, errors.New("invalid whence")
+		return 0, ErrInvalidWhence
 	}
 
 	if newOffset < 0 {
-		return 0, errors.New("negative offset")
+		return 0, ErrNegativeOffset
 	}
 
 	f.offset = newOffset

@@ -3,7 +3,7 @@ module github.com/jeremyhahn/go-objstore/examples/encryption
 go 1.25.3
 
 require (
-	github.com/jeremyhahn/go-keychain v0.0.0
+	github.com/jeremyhahn/go-keychain v0.1.5-alpha
 	github.com/jeremyhahn/go-objstore v0.0.0
 )
 
@@ -18,4 +18,3 @@ require (
 
 replace github.com/jeremyhahn/go-objstore => ../..
 
-replace github.com/jeremyhahn/go-keychain => /home/jhahn/sources/go-keychain

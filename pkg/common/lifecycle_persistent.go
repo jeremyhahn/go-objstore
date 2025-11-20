@@ -21,6 +21,23 @@ import (
 	"sync"
 )
 
+var (
+	// ErrFileSystemNil is returned when filesystem is nil
+	ErrFileSystemNil = errors.New("storage filesystem cannot be nil")
+	// ErrNoRead is returned when file doesn't support Read
+	ErrNoRead = errors.New("file does not support Read")
+	// ErrNoWrite is returned when file doesn't support Write
+	ErrNoWrite = errors.New("file does not support Write")
+	// ErrNoClose is returned when file doesn't support Close
+	ErrNoClose = errors.New("file does not support Close")
+	// ErrNoSeek is returned when file doesn't support Seek
+	ErrNoSeek = errors.New("file does not support Seek")
+	// ErrNoTruncate is returned when file doesn't support Truncate
+	ErrNoTruncate = errors.New("file does not support Truncate")
+	// ErrNoSync is returned when file doesn't support Sync
+	ErrNoSync = errors.New("file does not support Sync")
+)
+
 // FileSystem defines the minimal interface needed for persistent lifecycle storage.
 // This allows users to provide any filesystem-like implementation, including storagefs.StorageFS.
 type FileSystem interface {
@@ -67,7 +84,7 @@ type persistedPolicies struct {
 //	manager := common.NewPersistentLifecycleManager(adapter, "")
 func NewPersistentLifecycleManager(fs FileSystem, policyFile string) (*PersistentLifecycleManager, error) {
 	if fs == nil {
-		return nil, errors.New("storage filesystem cannot be nil")
+		return nil, ErrFileSystemNil
 	}
 
 	if policyFile == "" {
@@ -139,42 +156,42 @@ func (f *fileAdapter) Read(p []byte) (n int, err error) {
 	if r, ok := f.file.(io.Reader); ok {
 		return r.Read(p)
 	}
-	return 0, errors.New("file does not support Read")
+	return 0, ErrNoRead
 }
 
 func (f *fileAdapter) Write(p []byte) (n int, err error) {
 	if w, ok := f.file.(io.Writer); ok {
 		return w.Write(p)
 	}
-	return 0, errors.New("file does not support Write")
+	return 0, ErrNoWrite
 }
 
 func (f *fileAdapter) Close() error {
 	if c, ok := f.file.(io.Closer); ok {
 		return c.Close()
 	}
-	return errors.New("file does not support Close")
+	return ErrNoClose
 }
 
 func (f *fileAdapter) Seek(offset int64, whence int) (int64, error) {
 	if s, ok := f.file.(io.Seeker); ok {
 		return s.Seek(offset, whence)
 	}
-	return 0, errors.New("file does not support Seek")
+	return 0, ErrNoSeek
 }
 
 func (f *fileAdapter) Truncate(size int64) error {
 	if t, ok := f.file.(interface{ Truncate(int64) error }); ok {
 		return t.Truncate(size)
 	}
-	return errors.New("file does not support Truncate")
+	return ErrNoTruncate
 }
 
 func (f *fileAdapter) Sync() error {
 	if s, ok := f.file.(interface{ Sync() error }); ok {
 		return s.Sync()
 	}
-	return errors.New("file does not support Sync")
+	return ErrNoSync
 }
 
 // AddPolicy adds a new lifecycle policy and persists it to storage.
@@ -241,7 +258,7 @@ func (lm *PersistentLifecycleManager) save() error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	// Write the data
 	if _, err := file.Write(jsonData); err != nil {
@@ -258,7 +275,7 @@ func (lm *PersistentLifecycleManager) load() error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	jsonData, err := io.ReadAll(file)
 	if err != nil {

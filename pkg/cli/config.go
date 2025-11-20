@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/viper"
 )
@@ -152,7 +153,7 @@ func (c *Config) GetStorageSettings() map[string]string {
 // DisplayConfig formats and displays the current configuration.
 func DisplayConfig(cfg *Config, format string) string {
 	switch format {
-	case "json":
+	case string(FormatJSON):
 		return formatConfigJSON(cfg)
 	case "table":
 		return formatConfigTable(cfg)
@@ -265,7 +266,7 @@ func ValidateConfig(cfg *Config) error {
 			return ErrBackendPathRequired
 		}
 		// Expand path if it contains ~
-		if filepath.HasPrefix(cfg.BackendPath, "~") {
+		if strings.HasPrefix(cfg.BackendPath, "~") {
 			home, err := os.UserHomeDir()
 			if err != nil {
 				return err
