@@ -18,6 +18,7 @@ package main
 import "C"
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -25,6 +26,25 @@ import (
 
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
 )
+
+// Errors for C API
+var (
+	// ErrInvalidHandle is returned when an invalid storage handle is provided
+	ErrInvalidHandle = errors.New("invalid storage handle")
+
+	// ErrBufferTooSmall is returned when the provided buffer is too small
+	ErrBufferTooSmall = errors.New("buffer too small")
+)
+
+// NewInvalidHandleError creates a new invalid handle error
+func NewInvalidHandleError(handle int) error {
+	return fmt.Errorf("%w: %d", ErrInvalidHandle, handle)
+}
+
+// NewBufferTooSmallError creates a new buffer too small error
+func NewBufferTooSmallError(need, have int) error {
+	return fmt.Errorf("%w: need %d bytes, have %d", ErrBufferTooSmall, need, have)
+}
 
 // Storage handle registry to manage Go objects from C
 var (
@@ -50,7 +70,7 @@ func getStorage(handle int) (any, error) {
 	defer storageMutex.Unlock()
 	storage, ok := storageRegistry[handle]
 	if !ok {
-		return nil, fmt.Errorf("invalid storage handle: %d", handle)
+		return nil, NewInvalidHandleError(handle)
 	}
 	return storage, nil
 }
@@ -159,7 +179,7 @@ func ObjstoreGet(handle C.int, key *C.char, buffer *C.char, bufferSize C.int) C.
 		setLastError(err)
 		return -1
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// Read data into Go buffer first
 	data, err := io.ReadAll(reader)
@@ -170,7 +190,7 @@ func ObjstoreGet(handle C.int, key *C.char, buffer *C.char, bufferSize C.int) C.
 
 	// Check if buffer is large enough
 	if len(data) > int(bufferSize) {
-		setLastError(fmt.Errorf("buffer too small: need %d bytes, have %d", len(data), bufferSize))
+		setLastError(NewBufferTooSmallError(len(data), int(bufferSize)))
 		return -1
 	}
 

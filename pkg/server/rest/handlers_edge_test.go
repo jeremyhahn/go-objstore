@@ -30,6 +30,12 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
+// Test error variables
+var (
+	errTestStorageError = errors.New("storage error")
+	errTestExistsCheck  = errors.New("exists check error")
+)
+
 // ErrorMockStorage is a mock storage that returns errors for testing error paths
 type ErrorMockStorage struct {
 	*MockStorage
@@ -85,7 +91,7 @@ func (e *ErrorMockStorage) UpdateMetadata(ctx context.Context, key string, metad
 func TestPutObjectStorageError(t *testing.T) {
 	storage := &ErrorMockStorage{
 		MockStorage: NewMockStorage(),
-		putErr:      errors.New("storage error"),
+		putErr:      errTestStorageError,
 	}
 	handler := NewHandler(storage)
 
@@ -105,7 +111,7 @@ func TestPutObjectStorageError(t *testing.T) {
 func TestGetObjectMetadataError(t *testing.T) {
 	storage := &ErrorMockStorage{
 		MockStorage: NewMockStorage(),
-		metadataErr: errors.New("metadata error"),
+		metadataErr: errTestMetadataError,
 	}
 	handler := NewHandler(storage)
 
@@ -125,7 +131,7 @@ func TestGetObjectMetadataError(t *testing.T) {
 func TestDeleteObjectExistsError(t *testing.T) {
 	storage := &ErrorMockStorage{
 		MockStorage: NewMockStorage(),
-		existsErr:   errors.New("exists check error"),
+		existsErr:   errTestExistsCheck,
 	}
 	handler := NewHandler(storage)
 
@@ -249,7 +255,7 @@ func TestListObjectsLargeLimit(t *testing.T) {
 func TestGetObjectMetadataHandler(t *testing.T) {
 	storage := &ErrorMockStorage{
 		MockStorage: NewMockStorage(),
-		metadataErr: errors.New("metadata error"),
+		metadataErr: errTestMetadataError,
 	}
 
 	handler := NewHandler(storage)

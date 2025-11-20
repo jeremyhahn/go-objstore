@@ -163,7 +163,7 @@ func BenchmarkGCSPut(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		data.Seek(0, 0)
+		_, _ = data.Seek(0, 0)
 		if err := storage.Put("test-key", data); err != nil {
 			b.Fatal(err)
 		}
@@ -183,7 +183,7 @@ func BenchmarkGCSGet(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		io.Copy(io.Discard, rc)
+		_, _ = io.Copy(io.Discard, rc)
 		rc.Close()
 	}
 }
@@ -275,7 +275,7 @@ func BenchmarkGCSPutGetDelete(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		// Put
-		data.Seek(0, 0)
+		_, _ = data.Seek(0, 0)
 		if err := storage.Put("test-key", data); err != nil {
 			b.Fatal(err)
 		}
@@ -285,7 +285,7 @@ func BenchmarkGCSPutGetDelete(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		io.Copy(io.Discard, rc)
+		_, _ = io.Copy(io.Discard, rc)
 		rc.Close()
 
 		// Delete

@@ -68,11 +68,12 @@ func LoggingMiddleware(logger adapters.Logger) gin.HandlerFunc {
 			{Key: "client_ip", Value: clientIP},
 		}
 
-		if statusCode >= 500 {
+		switch {
+		case statusCode >= 500:
 			logger.Error(c.Request.Context(), "HTTP request completed", fields...)
-		} else if statusCode >= 400 {
+		case statusCode >= 400:
 			logger.Warn(c.Request.Context(), "HTTP request completed", fields...)
-		} else {
+		default:
 			logger.Info(c.Request.Context(), "HTTP request completed", fields...)
 		}
 	}

@@ -35,6 +35,12 @@ var (
 
 	// ErrInsufficientPermissions is returned when the authenticated principal lacks required permissions.
 	ErrInsufficientPermissions = errors.New("insufficient permissions")
+
+	// ErrMTLSNotSupported is returned when mTLS auth is not supported by authenticator.
+	ErrMTLSNotSupported = errors.New("mTLS authentication not supported")
+
+	// ErrMTLSRequiresPeer is returned when mTLS auth requires peer.Peer but wasn't provided.
+	ErrMTLSRequiresPeer = errors.New("mTLS requires peer.Peer")
 )
 
 // Principal represents an authenticated entity (user, service, etc.).
@@ -174,7 +180,7 @@ func (a *BearerTokenAuthenticator) AuthenticateGRPC(ctx context.Context, md meta
 
 // AuthenticateMTLS is not supported for bearer token auth.
 func (a *BearerTokenAuthenticator) AuthenticateMTLS(ctx context.Context, state *tls.ConnectionState) (*Principal, error) {
-	return nil, errors.New("mTLS authentication not supported for bearer token authenticator")
+	return nil, ErrMTLSNotSupported
 }
 
 // ValidatePermission performs basic role-based access control.
@@ -216,7 +222,7 @@ func (a *MTLSAuthenticator) AuthenticateHTTP(ctx context.Context, req *http.Requ
 func (a *MTLSAuthenticator) AuthenticateGRPC(ctx context.Context, md metadata.MD) (*Principal, error) {
 	// gRPC mTLS authentication typically happens at the transport layer
 	// The certificate info should be in the context's peer info
-	return nil, errors.New("mTLS for gRPC requires using AuthenticateMTLS with peer.Peer")
+	return nil, ErrMTLSRequiresPeer
 }
 
 // AuthenticateMTLS authenticates using TLS connection state.

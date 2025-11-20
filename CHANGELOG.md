@@ -4,6 +4,49 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1-alpha] - 2025-11-20
+
+### Fixed
+
+- **Dependency Compatibility**: Downgraded `github.com/quic-go/qpack` from v0.6.0 to v0.5.1 to maintain compatibility with `quic-go v0.56.0`
+- **Build System**: Removed restrictive `//go:build local` build tags from all files in `pkg/local` package, allowing the package to be included in normal builds without requiring explicit build tags
+- **Test Coverage**: Updated Makefile test target to include all build tags (`local`, `awss3`, `minio`, `gcpstorage`, `azureblob`, `glacier`, `azurearchive`), ensuring comprehensive test coverage across all backend implementations
+- **Compilation Errors**: Resolved compilation errors in `pkg/replication/syncer.go` and test files in `pkg/server/quic` caused by missing `pkg/local` package
+- **Linting Issues**: Reduced linting errors from 290 to 64 (78% reduction)
+  - Fixed all err113 errors by using `errors.Is()` instead of direct error comparisons
+  - Fixed all errcheck errors by adding proper error handling for Close() calls
+  - Fixed gocritic exitAfterDefer warnings by replacing `os.Exit()` with `log.Fatal()`
+  - Fixed staticcheck SA9003 empty branch warnings
+  - Fixed staticcheck SA1012 nil context warnings by using `context.TODO()`
+  - Fixed staticcheck S1009 unnecessary nil checks before `len()`
+  - Fixed staticcheck ST1011 variable naming issues
+  - Added nolint directives for AWS SDK v1 deprecation warnings (migration to v2 planned)
+- **Code Quality**: Extracted 35+ magic string constants across 25+ files to improve maintainability
+  - Centralized repeated string literals (action types, content types, file names, etc.)
+  - Eliminated typo risks from duplicated strings
+  - Improved code readability with named constants
+
+### Added
+
+- **Test Coverage**: Added tests for `GetReplicationStatusCommand` and `FormatReplicationStatus` functions to improve CLI package coverage
+- **Package Coverage**: Enabled testing for previously excluded packages:
+  - `pkg/minio`: 94.4% coverage
+  - `pkg/azurearchive`: 93.1% coverage
+- **Error Handling**: Enhanced error handling across all packages
+  - Proper error wrapping and checking throughout codebase
+  - Consistent use of `errors.Is()` for error comparison
+  - Deferred cleanup handlers with error checking
+
+### Changed
+
+- **Test Coverage**: Improved overall test coverage from 89.8% to 90.5%, exceeding the 90% coverage target
+- **CLI Package**: Increased coverage from 85.1% to 91.5%
+- **Code Quality**: Enhanced maintainability through systematic refactoring
+  - Replaced magic strings with named constants across all packages
+  - Improved error handling patterns
+  - Better resource cleanup and context handling
+- **Dependencies**: Updated golangci-lint configuration to enforce stricter code quality standards
+
 ## [0.1.0-alpha] - 2025-11-14
 
 ### Added
@@ -98,4 +141,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Secure credential handling for cloud backends
 - Context-aware timeout and cancellation for resource cleanup
 
+[0.1.1-alpha]: https://github.com/jeremyhahn/go-objstore/releases/tag/v0.1.1-alpha
 [0.1.0-alpha]: https://github.com/jeremyhahn/go-objstore/releases/tag/v0.1.0-alpha

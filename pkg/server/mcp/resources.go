@@ -100,7 +100,7 @@ func (m *ResourceManager) ReadResource(ctx context.Context, uri string) (string,
 	if err != nil {
 		return "", "", err
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	var buf bytes.Buffer
 	_, err = io.Copy(&buf, reader)

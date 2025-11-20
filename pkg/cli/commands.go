@@ -110,7 +110,7 @@ func (ctx *CommandContext) PutCommandWithMetadata(key, filePath, contentType, co
 		if err != nil {
 			return err
 		}
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 
 		// Get file info for metadata
 		fileInfo, err := file.Stat()
@@ -177,7 +177,7 @@ func (ctx *CommandContext) GetCommand(key, outputPath string) error {
 			return err
 		}
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// Determine output destination
 	var writer io.Writer
@@ -190,7 +190,7 @@ func (ctx *CommandContext) GetCommand(key, outputPath string) error {
 		if err != nil {
 			return err
 		}
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 		writer = file
 	}
 
@@ -412,7 +412,7 @@ func (ctx *CommandContext) ApplyPoliciesCommand() error {
 		return ctx.applyLocalPolicies(policies)
 	default:
 		// For cloud backends, policies are managed by the cloud provider
-		return fmt.Errorf("policy application is managed by %s cloud provider", ctx.Config.Backend)
+		return fmt.Errorf("%w: %s", ErrPolicyManagedByProvider, ctx.Config.Backend)
 	}
 }
 

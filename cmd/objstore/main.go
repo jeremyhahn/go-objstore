@@ -104,7 +104,7 @@ You can also set metadata using flags: --content-type, --content-encoding, --cus
 			fmt.Fprintln(os.Stderr, cli.FormatError(err, cli.OutputFormat(globalConfig.OutputFormat)))
 			return err
 		}
-		defer ctx.Close()
+		defer func() { _ = ctx.Close() }()
 
 		if err := ctx.PutCommandWithMetadata(key, filePath, contentType, contentEncoding, customFields); err != nil {
 			fmt.Fprintln(os.Stderr, cli.FormatError(err, cli.OutputFormat(globalConfig.OutputFormat)))
@@ -149,7 +149,7 @@ Use --metadata flag to retrieve only metadata instead of the file content.`,
 			fmt.Fprintln(os.Stderr, cli.FormatError(err, cli.OutputFormat(globalConfig.OutputFormat)))
 			return err
 		}
-		defer ctx.Close()
+		defer func() { _ = ctx.Close() }()
 
 		// If --metadata flag is set, return metadata only
 		if metadataOnly {
@@ -201,7 +201,7 @@ var deleteCmd = &cobra.Command{
 			fmt.Fprintln(os.Stderr, cli.FormatError(err, cli.OutputFormat(globalConfig.OutputFormat)))
 			return err
 		}
-		defer ctx.Close()
+		defer func() { _ = ctx.Close() }()
 
 		if err := ctx.DeleteCommand(key); err != nil {
 			fmt.Fprintln(os.Stderr, cli.FormatError(err, cli.OutputFormat(globalConfig.OutputFormat)))
@@ -238,7 +238,7 @@ var listCmd = &cobra.Command{
 			fmt.Fprintln(os.Stderr, cli.FormatError(err, cli.OutputFormat(globalConfig.OutputFormat)))
 			return err
 		}
-		defer ctx.Close()
+		defer func() { _ = ctx.Close() }()
 
 		objects, err := ctx.ListCommand(prefix)
 		if err != nil {
@@ -270,7 +270,7 @@ Returns exit code 0 if the object exists, 1 if it does not.`,
 			fmt.Fprintln(os.Stderr, cli.FormatError(err, cli.OutputFormat(globalConfig.OutputFormat)))
 			return err
 		}
-		defer ctx.Close()
+		defer func() { _ = ctx.Close() }()
 
 		exists, err := ctx.ExistsCommand(key)
 		if err != nil {
@@ -349,7 +349,7 @@ This allows archiving to a different mount point (e.g., NFS backup server).`,
 			fmt.Fprintln(os.Stderr, cli.FormatError(err, cli.OutputFormat(globalConfig.OutputFormat)))
 			return err
 		}
-		defer ctx.Close()
+		defer func() { _ = ctx.Close() }()
 
 		if err := ctx.ArchiveCommandWithSettings(key, destinationBackend, destinationSettings); err != nil {
 			fmt.Fprintln(os.Stderr, cli.FormatError(err, cli.OutputFormat(globalConfig.OutputFormat)))
@@ -405,7 +405,7 @@ Actions:
 			fmt.Fprintln(os.Stderr, cli.FormatError(err, cli.OutputFormat(globalConfig.OutputFormat)))
 			return err
 		}
-		defer ctx.Close()
+		defer func() { _ = ctx.Close() }()
 
 		if err := ctx.AddPolicyCommand(id, prefix, retentionDays, action); err != nil {
 			fmt.Fprintln(os.Stderr, cli.FormatError(err, cli.OutputFormat(globalConfig.OutputFormat)))
@@ -438,7 +438,7 @@ This stops the policy from being applied to new objects. Existing objects are no
 			fmt.Fprintln(os.Stderr, cli.FormatError(err, cli.OutputFormat(globalConfig.OutputFormat)))
 			return err
 		}
-		defer ctx.Close()
+		defer func() { _ = ctx.Close() }()
 
 		if err := ctx.RemovePolicyCommand(id); err != nil {
 			fmt.Fprintln(os.Stderr, cli.FormatError(err, cli.OutputFormat(globalConfig.OutputFormat)))
@@ -470,7 +470,7 @@ Shows all active policies with their IDs, prefixes, retention periods, and actio
 			fmt.Fprintln(os.Stderr, cli.FormatError(err, cli.OutputFormat(globalConfig.OutputFormat)))
 			return err
 		}
-		defer ctx.Close()
+		defer func() { _ = ctx.Close() }()
 
 		policies, err := ctx.ListPoliciesCommand()
 		if err != nil {
@@ -501,7 +501,7 @@ Use this command in cron jobs for scheduled policy execution.`,
 			fmt.Fprintln(os.Stderr, cli.FormatError(err, cli.OutputFormat(globalConfig.OutputFormat)))
 			return err
 		}
-		defer ctx.Close()
+		defer func() { _ = ctx.Close() }()
 
 		if err := ctx.ApplyPoliciesCommand(); err != nil {
 			fmt.Fprintln(os.Stderr, cli.FormatError(err, cli.OutputFormat(globalConfig.OutputFormat)))
@@ -533,7 +533,7 @@ Returns the backend status, version, and configuration information.`,
 			fmt.Fprintln(os.Stderr, cli.FormatError(err, cli.OutputFormat(globalConfig.OutputFormat)))
 			return err
 		}
-		defer ctx.Close()
+		defer func() { _ = ctx.Close() }()
 
 		health, err := ctx.HealthCommand()
 		if err != nil {

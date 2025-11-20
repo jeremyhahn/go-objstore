@@ -14,6 +14,7 @@
 package server_test
 
 import (
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -25,6 +26,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+)
+
+var (
+	errCLIBinaryNotFound = errors.New("CLI binary not found")
+	errServerNotReady    = errors.New("server not ready after 30 seconds")
 )
 
 // CLI test configuration
@@ -63,7 +69,7 @@ func runCLI(args ...string) (string, string, error) {
 	// Find the objstore binary (built during Docker image creation)
 	cliBinary := "/usr/local/bin/objstore"
 	if _, err := os.Stat(cliBinary); os.IsNotExist(err) {
-		return "", "", fmt.Errorf("CLI binary not found at %s", cliBinary)
+		return "", "", fmt.Errorf("%w at %s", errCLIBinaryNotFound, cliBinary)
 	}
 
 	cmd := exec.Command(cliBinary, args...)
@@ -90,7 +96,7 @@ func waitForServer(serverAddr, protocol string) error {
 		}
 		time.Sleep(1 * time.Second)
 	}
-	return fmt.Errorf("server %s (%s) not ready after 30 seconds", serverAddr, protocol)
+	return fmt.Errorf("%w: %s (%s)", errServerNotReady, serverAddr, protocol)
 }
 
 // TestCLIAgainstAllServers runs all CLI tests against all server types

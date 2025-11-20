@@ -42,8 +42,8 @@ func TestGCS_Wrappers_Coverage(t *testing.T) {
 
 	ow := objectWrapper{&storage.ObjectHandle{}} // zero value; stubs ignore it
 	w := ow.NewWriter(context.Background())
-	w.Write([]byte("x"))
-	w.Close()
+	_, _ = w.Write([]byte("x"))
+	_ = w.Close()
 	rc, err := ow.NewReader(context.Background())
 	if err != nil {
 		t.Fatalf("stubbed reader err: %v", err)

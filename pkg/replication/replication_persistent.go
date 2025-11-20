@@ -515,7 +515,7 @@ func (prm *PersistentReplicationManager) save() error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	if _, err := file.Write(jsonData); err != nil {
 		return err
@@ -530,7 +530,7 @@ func (prm *PersistentReplicationManager) load() error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	jsonData, err := io.ReadAll(file)
 	if err != nil {

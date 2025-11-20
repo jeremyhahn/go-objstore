@@ -38,7 +38,7 @@ type RESTClient struct {
 // NewRESTClient creates a new REST client
 func NewRESTClient(config *Config) (*RESTClient, error) {
 	if config.ServerURL == "" {
-		return nil, fmt.Errorf("server URL is required")
+		return nil, ErrServerURLRequired
 	}
 
 	httpClient := &http.Client{
@@ -86,14 +86,14 @@ func (c *RESTClient) Put(ctx context.Context, key string, reader io.Reader, meta
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, err := io.ReadAll(resp.Body)
 		if err == nil && len(body) > 0 {
-			return fmt.Errorf("server returned %d: %s", resp.StatusCode, string(body))
+			return fmt.Errorf("%w %d: %s", ErrServerError, resp.StatusCode, string(body))
 		}
-		return fmt.Errorf("server returned %d", resp.StatusCode)
+		return fmt.Errorf("%w %d", ErrServerError, resp.StatusCode)
 	}
 
 	return nil
@@ -114,12 +114,12 @@ func (c *RESTClient) Get(ctx context.Context, key string) (io.ReadCloser, *commo
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		body, err := io.ReadAll(resp.Body)
 		if err == nil && len(body) > 0 {
-			return nil, nil, fmt.Errorf("server returned %d: %s", resp.StatusCode, string(body))
+			return nil, nil, fmt.Errorf("%w %d: %s", ErrServerError, resp.StatusCode, string(body))
 		}
-		return nil, nil, fmt.Errorf("server returned %d", resp.StatusCode)
+		return nil, nil, fmt.Errorf("%w %d", ErrServerError, resp.StatusCode)
 	}
 
 	// Extract metadata from headers
@@ -162,14 +162,14 @@ func (c *RESTClient) Delete(ctx context.Context, key string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		body, err := io.ReadAll(resp.Body)
 		if err == nil && len(body) > 0 {
-			return fmt.Errorf("server returned %d: %s", resp.StatusCode, string(body))
+			return fmt.Errorf("%w %d: %s", ErrServerError, resp.StatusCode, string(body))
 		}
-		return fmt.Errorf("server returned %d", resp.StatusCode)
+		return fmt.Errorf("%w %d", ErrServerError, resp.StatusCode)
 	}
 
 	return nil
@@ -188,7 +188,7 @@ func (c *RESTClient) Exists(ctx context.Context, key string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	return resp.StatusCode == http.StatusOK, nil
 }
@@ -227,14 +227,14 @@ func (c *RESTClient) List(ctx context.Context, opts *common.ListOptions) (*commo
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, err := io.ReadAll(resp.Body)
 		if err == nil && len(body) > 0 {
-			return nil, fmt.Errorf("server returned %d: %s", resp.StatusCode, string(body))
+			return nil, fmt.Errorf("%w %d: %s", ErrServerError, resp.StatusCode, string(body))
 		}
-		return nil, fmt.Errorf("server returned %d", resp.StatusCode)
+		return nil, fmt.Errorf("%w %d", ErrServerError, resp.StatusCode)
 	}
 
 	var result common.ListResult
@@ -258,14 +258,14 @@ func (c *RESTClient) GetMetadata(ctx context.Context, key string) (*common.Metad
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, err := io.ReadAll(resp.Body)
 		if err == nil && len(body) > 0 {
-			return nil, fmt.Errorf("server returned %d: %s", resp.StatusCode, string(body))
+			return nil, fmt.Errorf("%w %d: %s", ErrServerError, resp.StatusCode, string(body))
 		}
-		return nil, fmt.Errorf("server returned %d", resp.StatusCode)
+		return nil, fmt.Errorf("%w %d", ErrServerError, resp.StatusCode)
 	}
 
 	var metadata common.Metadata
@@ -295,14 +295,14 @@ func (c *RESTClient) UpdateMetadata(ctx context.Context, key string, metadata *c
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, err := io.ReadAll(resp.Body)
 		if err == nil && len(body) > 0 {
-			return fmt.Errorf("server returned %d: %s", resp.StatusCode, string(body))
+			return fmt.Errorf("%w %d: %s", ErrServerError, resp.StatusCode, string(body))
 		}
-		return fmt.Errorf("server returned %d", resp.StatusCode)
+		return fmt.Errorf("%w %d", ErrServerError, resp.StatusCode)
 	}
 
 	return nil
@@ -333,14 +333,14 @@ func (c *RESTClient) Archive(ctx context.Context, key, destinationType string, d
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, err := io.ReadAll(resp.Body)
 		if err == nil && len(body) > 0 {
-			return fmt.Errorf("server returned %d: %s", resp.StatusCode, string(body))
+			return fmt.Errorf("%w %d: %s", ErrServerError, resp.StatusCode, string(body))
 		}
-		return fmt.Errorf("server returned %d", resp.StatusCode)
+		return fmt.Errorf("%w %d", ErrServerError, resp.StatusCode)
 	}
 
 	return nil
@@ -365,14 +365,14 @@ func (c *RESTClient) AddPolicy(ctx context.Context, policy common.LifecyclePolic
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, err := io.ReadAll(resp.Body)
 		if err == nil && len(body) > 0 {
-			return fmt.Errorf("server returned %d: %s", resp.StatusCode, string(body))
+			return fmt.Errorf("%w %d: %s", ErrServerError, resp.StatusCode, string(body))
 		}
-		return fmt.Errorf("server returned %d", resp.StatusCode)
+		return fmt.Errorf("%w %d", ErrServerError, resp.StatusCode)
 	}
 
 	return nil
@@ -391,14 +391,14 @@ func (c *RESTClient) RemovePolicy(ctx context.Context, policyID string) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		body, err := io.ReadAll(resp.Body)
 		if err == nil && len(body) > 0 {
-			return fmt.Errorf("server returned %d: %s", resp.StatusCode, string(body))
+			return fmt.Errorf("%w %d: %s", ErrServerError, resp.StatusCode, string(body))
 		}
-		return fmt.Errorf("server returned %d", resp.StatusCode)
+		return fmt.Errorf("%w %d", ErrServerError, resp.StatusCode)
 	}
 
 	return nil
@@ -417,14 +417,14 @@ func (c *RESTClient) GetPolicies(ctx context.Context) ([]common.LifecyclePolicy,
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, err := io.ReadAll(resp.Body)
 		if err == nil && len(body) > 0 {
-			return nil, fmt.Errorf("server returned %d: %s", resp.StatusCode, string(body))
+			return nil, fmt.Errorf("%w %d: %s", ErrServerError, resp.StatusCode, string(body))
 		}
-		return nil, fmt.Errorf("server returned %d", resp.StatusCode)
+		return nil, fmt.Errorf("%w %d", ErrServerError, resp.StatusCode)
 	}
 
 	var policies []common.LifecyclePolicy
@@ -448,14 +448,14 @@ func (c *RESTClient) ApplyPolicies(ctx context.Context) (policiesCount int, obje
 	if err != nil {
 		return 0, 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, err := io.ReadAll(resp.Body)
 		if err == nil && len(body) > 0 {
-			return 0, 0, fmt.Errorf("server returned %d: %s", resp.StatusCode, string(body))
+			return 0, 0, fmt.Errorf("%w %d: %s", ErrServerError, resp.StatusCode, string(body))
 		}
-		return 0, 0, fmt.Errorf("server returned %d", resp.StatusCode)
+		return 0, 0, fmt.Errorf("%w %d", ErrServerError, resp.StatusCode)
 	}
 
 	var result struct {
@@ -488,14 +488,14 @@ func (c *RESTClient) AddReplicationPolicy(ctx context.Context, policy common.Rep
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, err := io.ReadAll(resp.Body)
 		if err == nil && len(body) > 0 {
-			return fmt.Errorf("server returned %d: %s", resp.StatusCode, string(body))
+			return fmt.Errorf("%w %d: %s", ErrServerError, resp.StatusCode, string(body))
 		}
-		return fmt.Errorf("server returned %d", resp.StatusCode)
+		return fmt.Errorf("%w %d", ErrServerError, resp.StatusCode)
 	}
 
 	return nil
@@ -514,14 +514,14 @@ func (c *RESTClient) RemoveReplicationPolicy(ctx context.Context, policyID strin
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		body, err := io.ReadAll(resp.Body)
 		if err == nil && len(body) > 0 {
-			return fmt.Errorf("server returned %d: %s", resp.StatusCode, string(body))
+			return fmt.Errorf("%w %d: %s", ErrServerError, resp.StatusCode, string(body))
 		}
-		return fmt.Errorf("server returned %d", resp.StatusCode)
+		return fmt.Errorf("%w %d", ErrServerError, resp.StatusCode)
 	}
 
 	return nil
@@ -540,14 +540,14 @@ func (c *RESTClient) GetReplicationPolicy(ctx context.Context, policyID string) 
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, err := io.ReadAll(resp.Body)
 		if err == nil && len(body) > 0 {
-			return nil, fmt.Errorf("server returned %d: %s", resp.StatusCode, string(body))
+			return nil, fmt.Errorf("%w %d: %s", ErrServerError, resp.StatusCode, string(body))
 		}
-		return nil, fmt.Errorf("server returned %d", resp.StatusCode)
+		return nil, fmt.Errorf("%w %d", ErrServerError, resp.StatusCode)
 	}
 
 	var policy common.ReplicationPolicy
@@ -571,14 +571,14 @@ func (c *RESTClient) GetReplicationPolicies(ctx context.Context) ([]common.Repli
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, err := io.ReadAll(resp.Body)
 		if err == nil && len(body) > 0 {
-			return nil, fmt.Errorf("server returned %d: %s", resp.StatusCode, string(body))
+			return nil, fmt.Errorf("%w %d: %s", ErrServerError, resp.StatusCode, string(body))
 		}
-		return nil, fmt.Errorf("server returned %d", resp.StatusCode)
+		return nil, fmt.Errorf("%w %d", ErrServerError, resp.StatusCode)
 	}
 
 	var policies []common.ReplicationPolicy
@@ -607,14 +607,14 @@ func (c *RESTClient) TriggerReplication(ctx context.Context, policyID string) (*
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, err := io.ReadAll(resp.Body)
 		if err == nil && len(body) > 0 {
-			return nil, fmt.Errorf("server returned %d: %s", resp.StatusCode, string(body))
+			return nil, fmt.Errorf("%w %d: %s", ErrServerError, resp.StatusCode, string(body))
 		}
-		return nil, fmt.Errorf("server returned %d", resp.StatusCode)
+		return nil, fmt.Errorf("%w %d", ErrServerError, resp.StatusCode)
 	}
 
 	var result common.SyncResult
@@ -638,14 +638,14 @@ func (c *RESTClient) GetReplicationStatus(ctx context.Context, policyID string) 
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, err := io.ReadAll(resp.Body)
 		if err == nil && len(body) > 0 {
-			return nil, fmt.Errorf("server returned %d: %s", resp.StatusCode, string(body))
+			return nil, fmt.Errorf("%w %d: %s", ErrServerError, resp.StatusCode, string(body))
 		}
-		return nil, fmt.Errorf("server returned %d", resp.StatusCode)
+		return nil, fmt.Errorf("%w %d", ErrServerError, resp.StatusCode)
 	}
 
 	var status replication.ReplicationStatus
@@ -669,14 +669,14 @@ func (c *RESTClient) Health(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, err := io.ReadAll(resp.Body)
 		if err == nil && len(body) > 0 {
-			return fmt.Errorf("server returned %d: %s", resp.StatusCode, string(body))
+			return fmt.Errorf("%w %d: %s", ErrServerError, resp.StatusCode, string(body))
 		}
-		return fmt.Errorf("server returned %d", resp.StatusCode)
+		return fmt.Errorf("%w %d", ErrServerError, resp.StatusCode)
 	}
 
 	return nil

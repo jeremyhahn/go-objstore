@@ -54,7 +54,7 @@ func (h *Handler) handleGetReplicationPolicies(w http.ResponseWriter, r *http.Re
 
 	repMgr, err := repSupport.GetReplicationManager()
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
@@ -69,7 +69,7 @@ func (h *Handler) handleGetReplicationPolicies(w http.ResponseWriter, r *http.Re
 	// Get all policies
 	policies, err := repMgr.GetPolicies()
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
@@ -192,7 +192,7 @@ func (h *Handler) handleAddReplicationPolicy(w http.ResponseWriter, r *http.Requ
 
 	repMgr, err := repSupport.GetReplicationManager()
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
@@ -207,7 +207,7 @@ func (h *Handler) handleAddReplicationPolicy(w http.ResponseWriter, r *http.Requ
 	// Add policy
 	err = repMgr.AddPolicy(policy)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
@@ -266,7 +266,7 @@ func (h *Handler) handleGetReplicationPolicy(w http.ResponseWriter, r *http.Requ
 
 	repMgr, err := repSupport.GetReplicationManager()
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
@@ -281,11 +281,11 @@ func (h *Handler) handleGetReplicationPolicy(w http.ResponseWriter, r *http.Requ
 	// Get policy
 	policy, err := repMgr.GetPolicy(id)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
-		if err == common.ErrPolicyNotFound {
+		if errors.Is(err, common.ErrPolicyNotFound) {
 			http.Error(w, "policy not found", http.StatusNotFound)
 			return
 		}
@@ -338,7 +338,7 @@ func (h *Handler) handleDeleteReplicationPolicy(w http.ResponseWriter, r *http.R
 
 	repMgr, err := repSupport.GetReplicationManager()
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
@@ -353,11 +353,11 @@ func (h *Handler) handleDeleteReplicationPolicy(w http.ResponseWriter, r *http.R
 	// Remove policy
 	err = repMgr.RemovePolicy(id)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
-		if err == common.ErrPolicyNotFound {
+		if errors.Is(err, common.ErrPolicyNotFound) {
 			http.Error(w, "policy not found", http.StatusNotFound)
 			return
 		}
@@ -399,7 +399,7 @@ func (h *Handler) handleTriggerReplication(w http.ResponseWriter, r *http.Reques
 
 	repMgr, err := repSupport.GetReplicationManager()
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
@@ -423,11 +423,11 @@ func (h *Handler) handleTriggerReplication(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
-		if err == common.ErrPolicyNotFound {
+		if errors.Is(err, common.ErrPolicyNotFound) {
 			http.Error(w, "policy not found", http.StatusNotFound)
 			return
 		}
@@ -479,7 +479,7 @@ func (h *Handler) handleGetReplicationStatus(w http.ResponseWriter, r *http.Requ
 
 	repMgr, err := repSupport.GetReplicationManager()
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
@@ -496,11 +496,11 @@ func (h *Handler) handleGetReplicationStatus(w http.ResponseWriter, r *http.Requ
 		GetReplicationStatus(id string) (*replication.ReplicationStatus, error)
 	}).GetReplicationStatus(id)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
-		if err == common.ErrPolicyNotFound {
+		if errors.Is(err, common.ErrPolicyNotFound) {
 			http.Error(w, "policy not found", http.StatusNotFound)
 			return
 		}

@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"time"
 
 	objstorepb "github.com/jeremyhahn/go-objstore/api/proto"
 
@@ -28,16 +27,15 @@ import (
 
 func main() {
 	// Connect to the gRPC server
-	conn, err := grpc.Dial(
+	// Note: grpc.NewClient doesn't block by default, connection is established lazily
+	conn, err := grpc.NewClient(
 		"localhost:50051",
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
-		grpc.WithTimeout(5*time.Second),
 	)
 	if err != nil {
-		log.Fatalf("Failed to connect: %v", err)
+		log.Fatalf("Failed to create client: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	client := objstorepb.NewObjectStoreClient(conn)
 	ctx := context.Background()
@@ -57,6 +55,7 @@ func main() {
 		},
 	})
 	if err != nil {
+		_ = conn.Close()
 		log.Fatalf("Put failed: %v", err)
 	}
 	fmt.Printf("   Success: %v, ETag: %s\n\n", putResp.Success, putResp.Etag)

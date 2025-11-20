@@ -260,7 +260,7 @@ func (fs *StorageFS) Rename(oldpath, newpath string) error {
 		if err != nil {
 			return err
 		}
-		defer data.Close()
+		defer func() { _ = data.Close() }()
 
 		// Write to new location
 		if err := fs.storage.Put(newpath, data); err != nil {
@@ -457,7 +457,7 @@ func (fs *StorageFS) getMetadataInternal(name string) (fileMetadata, error) {
 	if err != nil {
 		return fileMetadata{}, err
 	}
-	defer data.Close()
+	defer func() { _ = data.Close() }()
 
 	buf, err := io.ReadAll(data)
 	if err != nil {

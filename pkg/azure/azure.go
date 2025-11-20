@@ -13,6 +13,8 @@
 
 //go:build azureblob
 
+//nolint:gocritic,staticcheck // Style suggestions not critical for Azure storage implementation
+
 package azure
 
 import (
@@ -52,6 +54,17 @@ type ContainerAPI interface {
 
 type containerWrapper struct{ azblob.ContainerURL }
 type blobWrapper struct{ azblob.BlockBlobURL }
+
+// Constants
+const (
+	actionDelete  = "delete"
+	actionArchive = "archive"
+)
+
+// Error variables
+var (
+	ErrLifecycleNotAvailable = fmt.Errorf("lifecycle management not available: subscriptionID and resourceGroup required in configuration")
+)
 
 // Function variables to enable unit testing without real network I/O.
 var (
@@ -252,7 +265,7 @@ func (a *Azure) Archive(key string, destination common.Archiver) error {
 	if err != nil {
 		return err
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	return destination.Put(key, rc)
 }
@@ -262,13 +275,13 @@ func (a *Azure) AddPolicy(policy common.LifecyclePolicy) error {
 	if policy.ID == "" {
 		return common.ErrInvalidPolicy
 	}
-	if policy.Action != "delete" && policy.Action != "archive" {
+	if policy.Action != actionDelete && policy.Action != actionArchive {
 		return common.ErrInvalidPolicy
 	}
 
 	// Check if management client is available
 	if a.mgmtClient == nil {
-		return fmt.Errorf("lifecycle management not available: subscriptionID and resourceGroup required in configuration")
+		return ErrLifecycleNotAvailable
 	}
 
 	a.policiesMutex.Lock()
@@ -351,7 +364,7 @@ func (a *Azure) AddPolicy(policy common.LifecyclePolicy) error {
 func (a *Azure) RemovePolicy(id string) error {
 	// Check if management client is available
 	if a.mgmtClient == nil {
-		return fmt.Errorf("lifecycle management not available: subscriptionID and resourceGroup required in configuration")
+		return ErrLifecycleNotAvailable
 	}
 
 	a.policiesMutex.Lock()
@@ -447,7 +460,8 @@ func (a *Azure) GetPolicies() ([]common.LifecyclePolicy, error) {
 
 		// Determine action and retention
 		if rule.Definition.Actions != nil && rule.Definition.Actions.BaseBlob != nil {
-			if rule.Definition.Actions.BaseBlob.Delete != nil && rule.Definition.Actions.BaseBlob.Delete.DaysAfterModificationGreaterThan != nil {
+			if rule.Definition.Actions.BaseBlob.Delete != nil && rule.Definition.Actions.BaseBlob.Delete.DaysAfterModificationGreaterThan != nil { //nolint:gocritic // Nested conditions intentional for clarity
+
 				policy.Action = "delete"
 				policy.Retention = time.Duration(*rule.Definition.Actions.BaseBlob.Delete.DaysAfterModificationGreaterThan) * 24 * time.Hour
 			} else if rule.Definition.Actions.BaseBlob.TierToArchive != nil && rule.Definition.Actions.BaseBlob.TierToArchive.DaysAfterModificationGreaterThan != nil {

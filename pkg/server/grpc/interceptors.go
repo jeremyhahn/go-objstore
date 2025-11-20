@@ -321,14 +321,14 @@ func AuthenticationUnaryInterceptor(authenticator adapters.Authenticator, logger
 			return nil, status.Error(codes.Unauthenticated, "authentication failed")
 		}
 
-		// Store principal in context for use by handlers
-		ctx = context.WithValue(ctx, "principal", principal)
-
 		// Add principal info to logger
 		logger = logger.WithFields(
 			adapters.Field{Key: "principal_id", Value: principal.ID},
 			adapters.Field{Key: "principal_name", Value: principal.Name},
 		)
+
+		// Add principal to context for downstream handlers
+		ctx = context.WithValue(ctx, principalContextKey, *principal)
 
 		return handler(ctx, req)
 	}
@@ -370,15 +370,31 @@ func AuthenticationStreamInterceptor(authenticator adapters.Authenticator, logge
 			return status.Error(codes.Unauthenticated, "authentication failed")
 		}
 
-		// Store principal in context for use by handlers
-		ctx = context.WithValue(ctx, "principal", principal)
-
 		// Add principal info to logger
 		logger = logger.WithFields(
 			adapters.Field{Key: "principal_id", Value: principal.ID},
 			adapters.Field{Key: "principal_name", Value: principal.Name},
 		)
 
-		return handler(srv, ss)
+		// Add principal to context for downstream handlers
+		ctx = context.WithValue(ctx, principalContextKey, *principal)
+
+		// Create a wrapped server stream with the updated context
+		wrappedStream := &wrappedServerStream{
+			ServerStream: ss,
+			ctx:          ctx,
+		}
+		return handler(srv, wrappedStream)
 	}
+}
+
+// wrappedServerStream wraps a grpc.ServerStream to override the context.
+type wrappedServerStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+// Context returns the wrapped context.
+func (w *wrappedServerStream) Context() context.Context {
+	return w.ctx
 }

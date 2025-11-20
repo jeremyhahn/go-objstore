@@ -827,3 +827,117 @@ func TestFormatSyncResultWithErrors(t *testing.T) {
 	assert.Contains(t, output, "error syncing file1.txt")
 	assert.Contains(t, output, "error syncing file2.txt")
 }
+
+func TestGetReplicationStatusCommand(t *testing.T) {
+	testStatus := &replication.ReplicationStatus{
+		PolicyID:            "test-policy",
+		SourceBackend:       "local",
+		DestinationBackend:  "s3",
+		Enabled:             true,
+		TotalObjectsSynced:  1000,
+		TotalObjectsDeleted: 50,
+		TotalBytesSynced:    10485760,
+		TotalErrors:         5,
+		LastSyncTime:        time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC),
+		AverageSyncDuration: 30 * time.Second,
+		SyncCount:           100,
+	}
+
+	tests := []struct {
+		name           string
+		policyID       string
+		setupMock      func(*MockReplicationClient)
+		expectError    bool
+		expectedStatus *replication.ReplicationStatus
+	}{
+		{
+			name:     "successful get status",
+			policyID: "test-policy",
+			setupMock: func(m *MockReplicationClient) {
+				m.On("GetReplicationStatus", mock.Anything, "test-policy").Return(testStatus, nil)
+			},
+			expectError:    false,
+			expectedStatus: testStatus,
+		},
+		{
+			name:     "status not found",
+			policyID: "nonexistent",
+			setupMock: func(m *MockReplicationClient) {
+				m.On("GetReplicationStatus", mock.Anything, "nonexistent").
+					Return((*replication.ReplicationStatus)(nil), errors.New("policy not found"))
+			},
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient := new(MockReplicationClient)
+			tt.setupMock(mockClient)
+
+			ctx := &CommandContext{
+				Client: mockClient,
+				Config: &Config{},
+			}
+
+			status, err := ctx.GetReplicationStatusCommand(tt.policyID)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				assert.Nil(t, status)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expectedStatus, status)
+			}
+
+			mockClient.AssertExpectations(t)
+		})
+	}
+}
+
+func TestFormatReplicationStatus(t *testing.T) {
+	status := &replication.ReplicationStatus{
+		PolicyID:            "test-policy",
+		SourceBackend:       "local",
+		DestinationBackend:  "s3",
+		Enabled:             true,
+		TotalObjectsSynced:  1000,
+		TotalObjectsDeleted: 50,
+		TotalBytesSynced:    10485760,
+		TotalErrors:         5,
+		LastSyncTime:        time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC),
+		AverageSyncDuration: 30 * time.Second,
+		SyncCount:           100,
+	}
+
+	tests := []struct {
+		name   string
+		format OutputFormat
+	}{
+		{
+			name:   "text format",
+			format: FormatText,
+		},
+		{
+			name:   "json format",
+			format: FormatJSON,
+		},
+		{
+			name:   "table format",
+			format: FormatTable,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output := FormatReplicationStatus(status, tt.format)
+			assert.NotEmpty(t, output)
+
+			// Verify key information is present
+			if tt.format == FormatText || tt.format == FormatTable {
+				assert.Contains(t, output, "test-policy")
+				assert.Contains(t, output, "1000")
+			}
+		})
+	}
+}

@@ -120,8 +120,8 @@ func main() {
 
 	// Stop server
 	if err := server.Stop(ctx); err != nil {
-		log.Printf("Error during shutdown: %v", err)
-		os.Exit(1)
+		cancel()
+		log.Fatalf("Error during shutdown: %v", err)
 	}
 
 	log.Println("Server stopped successfully")

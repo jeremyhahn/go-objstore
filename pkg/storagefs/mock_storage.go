@@ -236,7 +236,7 @@ func (m *mockStorage) Archive(key string, archiver common.Archiver) error {
 	if err != nil {
 		return err
 	}
-	defer data.Close()
+	defer func() { _ = data.Close() }()
 
 	return archiver.Put(key, data)
 }
