@@ -14,6 +14,7 @@
 package mcp
 
 import (
+	"errors"
 	"context"
 	"io"
 	"net"
@@ -25,6 +26,11 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/sourcegraph/jsonrpc2"
 )
+
+// contextKey is a custom type for context keys to avoid collisions
+type contextKey string
+
+const principalContextKey contextKey = "principal"
 
 // ServerMode defines the transport mode for the MCP server
 type ServerMode string
@@ -181,14 +187,14 @@ func (s *Server) startHTTP(ctx context.Context) error {
 			s.config.Logger.Info(ctx, "Starting MCP server in HTTP mode with TLS",
 				adapters.Field{Key: "address", Value: address},
 			)
-			if err := server.ServeTLS(listener, "", ""); err != nil && err != http.ErrServerClosed {
+			if err := server.ServeTLS(listener, "", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				errChan <- err
 			}
 		} else {
 			s.config.Logger.Info(ctx, "Starting MCP server in HTTP mode",
 				adapters.Field{Key: "address", Value: address},
 			)
-			if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
+			if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				errChan <- err
 			}
 		}
@@ -220,7 +226,7 @@ func (s *Server) authenticationMiddleware(next http.Handler) http.Handler {
 		}
 
 		// Store principal in context
-		ctx := context.WithValue(r.Context(), "principal", principal)
+		ctx := context.WithValue(r.Context(), principalContextKey, principal)
 		r = r.WithContext(ctx)
 
 		// Add principal info to logger

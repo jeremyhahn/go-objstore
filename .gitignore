@@ -44,6 +44,21 @@ coverage.txt
 coverage.out
 *.prof
 
+# Example binaries
+examples/*/basic-usage
+examples/*/storagefs
+examples/*/encryption
+basic-usage
+storagefs
+
+# Temporary documentation files
+*_SUMMARY.md
+*_FIXES_SUMMARY.md
+
+# Test helper files
+**/test_errors.go
+**/test_errors_test.go
+
 # OS files
 .DS_Store
 .DS_Store?

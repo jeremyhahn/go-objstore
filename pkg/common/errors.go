@@ -68,6 +68,9 @@ var (
 	// ErrKeyNotFound is returned when a key is not found in storage.
 	ErrKeyNotFound = errors.New("key not found")
 
+	// ErrMetadataNotFound is returned when metadata is not found for a key.
+	ErrMetadataNotFound = errors.New("metadata not found for key")
+
 	// ErrInternal is returned for internal errors during operations.
 	ErrInternal = errors.New("internal error")
 

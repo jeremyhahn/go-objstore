@@ -30,6 +30,18 @@ import (
 	"google.golang.org/api/iterator"
 )
 
+// Test error variables
+var (
+	errReadError             = errors.New("read error")
+	errDelErr                = errors.New("del err")
+	errAttrsError            = errors.New("attrs error")
+	errObjectNotExist        = errors.New("object doesn't exist")
+	errCloseError            = errors.New("close error")
+	errWriteError            = errors.New("write error")
+	errClientCreationFailed  = errors.New("client creation failed")
+	errPutFailed             = errors.New("put failed")
+)
+
 func TestGCS_AddPolicy_Success(t *testing.T) {
 	mockBucket := &mockGCSBucket{
 		objects: make(map[string][]byte),
@@ -176,7 +188,7 @@ func TestGCS_AddPolicy_InvalidID(t *testing.T) {
 		Action:    "delete",
 	}
 	err := g.AddPolicy(policy)
-	if err != common.ErrInvalidPolicy {
+	if !errors.Is(err, common.ErrInvalidPolicy) {
 		t.Fatalf("expected ErrInvalidPolicy, got %v", err)
 	}
 }
@@ -191,7 +203,7 @@ func TestGCS_AddPolicy_InvalidAction(t *testing.T) {
 		Action:    "invalid",
 	}
 	err := g.AddPolicy(policy)
-	if err != common.ErrInvalidPolicy {
+	if !errors.Is(err, common.ErrInvalidPolicy) {
 		t.Fatalf("expected ErrInvalidPolicy, got %v", err)
 	}
 }
@@ -256,8 +268,8 @@ func TestGCS_GetPolicies_Multiple(t *testing.T) {
 		Action:    "archive",
 	}
 
-	g.AddPolicy(policy1)
-	g.AddPolicy(policy2)
+	_ = g.AddPolicy(policy1)
+	_ = g.AddPolicy(policy2)
 
 	policies, err := g.GetPolicies()
 	if err != nil {
@@ -287,14 +299,14 @@ func (f *fakeObj) NewWriter(ctx context.Context) io.WriteCloser {
 
 func (f *fakeObj) NewReader(ctx context.Context) (io.ReadCloser, error) {
 	if f.err {
-		return nil, errors.New("read error")
+		return nil, errReadError
 	}
 	return io.NopCloser(bytes.NewReader(f.data)), nil
 }
 
 func (f *fakeObj) Delete(ctx context.Context) error {
 	if f.deleteErr {
-		return errors.New("del err")
+		return errDelErr
 	}
 	f.data = nil
 	return nil
@@ -302,10 +314,10 @@ func (f *fakeObj) Delete(ctx context.Context) error {
 
 func (f *fakeObj) Attrs(ctx context.Context) (*storage.ObjectAttrs, error) {
 	if f.attrsErr {
-		return nil, errors.New("attrs error")
+		return nil, errAttrsError
 	}
 	if f.data == nil {
-		return nil, errors.New("object doesn't exist")
+		return nil, errObjectNotExist
 	}
 	return &storage.ObjectAttrs{Name: "test", Size: int64(len(f.data))}, nil
 }
@@ -322,7 +334,7 @@ func (n *nopWriteCloser) Write(p []byte) (int, error) {
 
 func (n *nopWriteCloser) Close() error {
 	if n.closeErr {
-		return errors.New("close error")
+		return errCloseError
 	}
 	return nil
 }
@@ -332,12 +344,12 @@ type errorWriter struct {
 }
 
 func (e *errorWriter) Write(p []byte) (int, error) {
-	return 0, errors.New("write error")
+	return 0, errWriteError
 }
 
 func (e *errorWriter) Close() error {
 	if e.closeErr {
-		return errors.New("close error")
+		return errCloseError
 	}
 	return nil
 }
@@ -472,7 +484,7 @@ func TestGCS_Configure_ClientCreationError(t *testing.T) {
 
 	// Mock gcsNewClient to return error
 	gcsNewClient = func(ctx context.Context) (*storage.Client, error) {
-		return nil, errors.New("client creation failed")
+		return nil, errClientCreationFailed
 	}
 
 	g := &GCS{}
@@ -607,7 +619,7 @@ func TestGCS_Archive_PutError(t *testing.T) {
 	fc := fakeClient{b: fakeBucket{objs: objs}}
 	g := &GCS{client: fc, bucket: "test-bucket"}
 
-	ma := &mockArch{putErr: errors.New("put failed")}
+	ma := &mockArch{putErr: errPutFailed}
 	err := g.Archive("test-key", ma)
 	if err == nil {
 		t.Fatal("expected error from Put in Archive")
@@ -755,7 +767,7 @@ func TestGCS_List_Empty(t *testing.T) {
 
 func TestGCS_List_Error(t *testing.T) {
 	iter := &fakeIterator{
-		err: errors.New("list error"),
+		err: errListError,
 	}
 
 	fc := fakeClient{

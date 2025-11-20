@@ -121,7 +121,7 @@ services:
       - GO_TEST_TIMEOUT=15m
     networks:
       - test-network
-    command: go test -v -tags local ./test/integration/server/... -timeout 15m
+    command: go test -v -tags "local awss3 minio gcpstorage azureblob glacier azurearchive" ./test/integration/server/... -timeout 15m
 
 volumes:
   grpc-storage:

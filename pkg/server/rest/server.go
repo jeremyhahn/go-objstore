@@ -228,7 +228,7 @@ func (s *Server) Start() error {
 		}
 		s.httpServer.TLSConfig = tlsConfig
 
-		s.config.Logger.Info(nil, "Starting REST API server with TLS",
+		s.config.Logger.Info(context.TODO(), "Starting REST API server with TLS",
 			adapters.Field{Key: "address", Value: s.httpServer.Addr},
 			adapters.Field{Key: "tls_mode", Value: s.config.TLSConfig.Mode},
 		)
@@ -237,7 +237,7 @@ func (s *Server) Start() error {
 		return s.httpServer.ListenAndServeTLS("", "")
 	}
 
-	s.config.Logger.Info(nil, "Starting REST API server",
+	s.config.Logger.Info(context.TODO(), "Starting REST API server",
 		adapters.Field{Key: "address", Value: s.httpServer.Addr},
 	)
 	return s.httpServer.ListenAndServe()

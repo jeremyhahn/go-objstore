@@ -88,7 +88,7 @@ func (s *Server) Start() error {
 	// Mark server as running
 	s.running.Store(true)
 
-	s.opts.Logger.Info(nil, "Starting QUIC/HTTP3 server",
+	s.opts.Logger.Info(context.TODO(), "Starting QUIC/HTTP3 server",
 		adapters.Field{Key: "address", Value: s.addr.String()},
 		adapters.Field{Key: "tls", Value: "required"},
 	)
@@ -98,7 +98,7 @@ func (s *Server) Start() error {
 		err := s.server.Serve(conn)
 		if err != nil && s.running.Load() {
 			// Only log error if server is supposed to be running
-			s.opts.Logger.Error(nil, "QUIC server error",
+			s.opts.Logger.Error(context.TODO(), "QUIC server error",
 				adapters.Field{Key: "error", Value: err.Error()},
 			)
 		}

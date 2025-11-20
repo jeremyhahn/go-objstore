@@ -6,14 +6,14 @@
 # ==============================================================================
 
 # Optional storage backend features (set to 1 to enable)
-# Default: Local storage only, cloud backends disabled
+# Default: All backends enabled for production builds and releases
 WITH_LOCAL ?= 1
-WITH_AWS_S3 ?= 0
-WITH_MINIO ?= 0
-WITH_GCP_STORAGE ?= 0
-WITH_AZURE_BLOB ?= 0
-WITH_GLACIER ?= 0
-WITH_AZURE_ARCHIVE ?= 0
+WITH_AWS_S3 ?= 1
+WITH_MINIO ?= 1
+WITH_GCP_STORAGE ?= 1
+WITH_AZURE_BLOB ?= 1
+WITH_GLACIER ?= 1
+WITH_AZURE_ARCHIVE ?= 1
 
 # Group variables (convenience flags to enable all backends for a provider)
 # Setting these will override individual backend flags
@@ -167,7 +167,7 @@ generate-proto:
 test:
 	@echo "$(CYAN)$(BOLD)→ Running unit tests with coverage...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
-	$(GO) test -tags="local awss3 gcpstorage azureblob glacier" -coverprofile=$(COVERAGE_DIR)/unit.out -covermode=atomic ./pkg/...
+	$(GO) test -tags="local awss3 minio gcpstorage azureblob glacier azurearchive" -coverprofile=$(COVERAGE_DIR)/unit.out -covermode=atomic ./pkg/...
 	@echo ""
 	@echo "$(CYAN)$(BOLD)→ Coverage Summary:$(RESET)"
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/unit.out | tail -1 | awk '{print "  $(GREEN)Total Coverage: " $$NF "$(RESET)"}' || true

@@ -90,7 +90,7 @@ func BenchmarkAzurePut(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		data.Seek(0, 0)
+		_, _ = data.Seek(0, 0)
 		if err := storage.Put("test-key", data); err != nil {
 			b.Fatal(err)
 		}
@@ -110,8 +110,8 @@ func BenchmarkAzureGet(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		io.Copy(io.Discard, rc)
-		rc.Close()
+		_, _ = io.Copy(io.Discard, rc)
+		_ = rc.Close()
 	}
 }
 
@@ -175,7 +175,7 @@ func BenchmarkAzureGetPolicies(b *testing.B) {
 
 	// Add some policies
 	for i := 0; i < 10; i++ {
-		storage.AddPolicy(common.LifecyclePolicy{
+		_ = storage.AddPolicy(common.LifecyclePolicy{
 			ID:        "policy-0",
 			Action:    "delete",
 			Retention: 30 * 24 * time.Hour,
@@ -202,7 +202,7 @@ func BenchmarkAzurePutGetDelete(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		// Put
-		data.Seek(0, 0)
+		_, _ = data.Seek(0, 0)
 		if err := storage.Put("test-key", data); err != nil {
 			b.Fatal(err)
 		}
@@ -212,8 +212,8 @@ func BenchmarkAzurePutGetDelete(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		io.Copy(io.Discard, rc)
-		rc.Close()
+		_, _ = io.Copy(io.Discard, rc)
+		_ = rc.Close()
 
 		// Delete
 		if err := storage.Delete("test-key"); err != nil {

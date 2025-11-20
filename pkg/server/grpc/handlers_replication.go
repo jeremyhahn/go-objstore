@@ -208,7 +208,7 @@ func (s *Server) TriggerReplication(
 // protoToReplicationPolicy converts protobuf ReplicationPolicy to domain model.
 func protoToReplicationPolicy(p *objstorepb.ReplicationPolicy) (*common.ReplicationPolicy, error) {
 	if p == nil {
-		return nil, fmt.Errorf("policy cannot be nil")
+		return nil, ErrPolicyCannotBeNil
 	}
 
 	policy := &common.ReplicationPolicy{

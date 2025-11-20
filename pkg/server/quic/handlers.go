@@ -13,7 +13,9 @@
 
 package quic
 
+
 import (
+	"errors"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -26,6 +28,20 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
+)
+
+// Constants
+const (
+	actionDelete  = "delete"
+	actionArchive = "archive"
+)
+
+// contextKey is a custom type for context keys to avoid collisions
+type contextKey string
+
+const (
+	// principalContextKey is the context key for storing the authenticated principal
+	principalContextKey contextKey = "principal"
 )
 
 // Handler implements HTTP/3 request handlers for object storage operations.
@@ -85,7 +101,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Add principal to context and logger
-	ctx := context.WithValue(r.Context(), "principal", principal)
+	ctx := context.WithValue(r.Context(), principalContextKey, principal)
 	r = r.WithContext(ctx)
 
 	h.logger = h.logger.WithFields(
@@ -97,27 +113,28 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 
 	// Route based on path
-	if strings.HasPrefix(r.URL.Path, "/objects/") {
+	switch {
+	case strings.HasPrefix(r.URL.Path, "/objects/"):
 		h.handleObject(rw, r)
-	} else if r.URL.Path == "/objects" {
+	case r.URL.Path == "/objects":
 		h.handleList(rw, r)
-	} else if r.URL.Path == "/archive" {
+	case r.URL.Path == "/archive":
 		h.handleArchive(rw, r)
-	} else if r.URL.Path == "/policies/apply" {
+	case r.URL.Path == "/policies/apply":
 		h.handleApplyPolicies(rw, r)
-	} else if r.URL.Path == "/policies" {
+	case r.URL.Path == "/policies":
 		h.handlePolicies(rw, r)
-	} else if strings.HasPrefix(r.URL.Path, "/policies/") {
+	case strings.HasPrefix(r.URL.Path, "/policies/"):
 		h.handlePolicyByID(rw, r)
-	} else if r.URL.Path == "/replication/trigger" {
+	case r.URL.Path == "/replication/trigger":
 		h.handleTriggerReplication(rw, r)
-	} else if r.URL.Path == "/replication/policies" {
+	case r.URL.Path == "/replication/policies":
 		h.handleReplicationPolicies(rw, r)
-	} else if strings.HasPrefix(r.URL.Path, "/replication/policies/") {
+	case strings.HasPrefix(r.URL.Path, "/replication/policies/"):
 		h.handleReplicationPolicyByID(rw, r)
-	} else if strings.HasPrefix(r.URL.Path, "/replication/status/") {
+	case strings.HasPrefix(r.URL.Path, "/replication/status/"):
 		h.handleGetReplicationStatus(rw, r)
-	} else {
+	default:
 		http.Error(rw, "not found", http.StatusNotFound)
 	}
 
@@ -131,11 +148,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		{Key: "protocol", Value: "HTTP/3"},
 	}
 
-	if rw.statusCode >= 500 {
+	switch {
+	case rw.statusCode >= 500:
 		h.logger.Error(r.Context(), "QUIC request completed", fields...)
-	} else if rw.statusCode >= 400 {
+	case rw.statusCode >= 400:
 		h.logger.Warn(r.Context(), "QUIC request completed", fields...)
-	} else {
+	default:
 		h.logger.Info(r.Context(), "QUIC request completed", fields...)
 	}
 }
@@ -233,7 +251,7 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request, key string) 
 	// Store the object
 	err := h.storage.PutWithMetadata(ctx, key, limitedReader, metadata)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
@@ -266,14 +284,14 @@ func (h *Handler) handleGet(w http.ResponseWriter, r *http.Request, key string) 
 	// Get object data
 	reader, err := h.storage.GetWithContext(ctx, key)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
 		http.Error(w, "object not found", http.StatusNotFound)
 		return
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// Set response headers
 	if info.ContentType != "" {
@@ -312,7 +330,7 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request, key strin
 	// Delete the object
 	err := h.storage.DeleteWithContext(ctx, key)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
@@ -387,7 +405,7 @@ func (h *Handler) handleList(w http.ResponseWriter, r *http.Request) {
 	// List objects
 	result, err := h.storage.ListWithOptions(ctx, options)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
@@ -424,7 +442,7 @@ func (h *Handler) handleExists(w http.ResponseWriter, r *http.Request, key strin
 
 	exists, err := h.storage.Exists(ctx, key)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
@@ -468,7 +486,7 @@ func (h *Handler) handleUpdateMetadata(w http.ResponseWriter, r *http.Request, k
 	// Update metadata
 	err := h.storage.UpdateMetadata(ctx, key, metadata)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
@@ -528,7 +546,7 @@ func (h *Handler) handleArchive(w http.ResponseWriter, r *http.Request) {
 	// Archive the object
 	err = h.storage.Archive(req.Key, archiver)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
@@ -568,7 +586,7 @@ func (h *Handler) handleGetPolicies(w http.ResponseWriter, r *http.Request) {
 
 	policies, err := h.storage.GetPolicies()
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
@@ -637,7 +655,7 @@ func (h *Handler) handleAddPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Action != "delete" && req.Action != "archive" {
+	if req.Action != actionDelete && req.Action != actionArchive {
 		http.Error(w, "action must be 'delete' or 'archive'", http.StatusBadRequest)
 		return
 	}
@@ -672,7 +690,7 @@ func (h *Handler) handleAddPolicy(w http.ResponseWriter, r *http.Request) {
 
 	err := h.storage.AddPolicy(policy)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
@@ -713,11 +731,11 @@ func (h *Handler) handlePolicyByID(w http.ResponseWriter, r *http.Request) {
 
 	err := h.storage.RemovePolicy(id)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
-		if err == common.ErrPolicyNotFound {
+		if errors.Is(err, common.ErrPolicyNotFound) {
 			http.Error(w, "policy not found", http.StatusNotFound)
 			return
 		}
@@ -747,7 +765,7 @@ func (h *Handler) handleApplyPolicies(w http.ResponseWriter, r *http.Request) {
 
 	policies, err := h.storage.GetPolicies()
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
@@ -775,7 +793,7 @@ func (h *Handler) handleApplyPolicies(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := h.storage.ListWithOptions(ctx, opts)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}

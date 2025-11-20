@@ -29,6 +29,13 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
+// Test error variables
+var (
+	errTestGetError      = errors.New("get error")
+	errTestMetadataError = errors.New("metadata error")
+	errTestReadError     = errors.New("read error")
+)
+
 // Test PutObject with missing key parameter
 func TestPutObjectMissingKey(t *testing.T) {
 	storage := NewMockStorage()
@@ -179,7 +186,7 @@ func TestGetObjectInvalidKey(t *testing.T) {
 func TestGetObjectGetError(t *testing.T) {
 	storage := &ErrorMockStorage{
 		MockStorage: NewMockStorage(),
-		getErr:      errors.New("get error"),
+		getErr:      errTestGetError,
 	}
 	// Add object so metadata check passes
 	storage.MockStorage.PutWithContext(context.Background(), "test.txt", strings.NewReader("content"))
@@ -277,7 +284,7 @@ func TestHeadObjectInvalidKey(t *testing.T) {
 func TestHeadObjectMetadataError(t *testing.T) {
 	storage := &ErrorMockStorage{
 		MockStorage: NewMockStorage(),
-		metadataErr: errors.New("metadata error"),
+		metadataErr: errTestMetadataError,
 	}
 	storage.MockStorage.PutWithContext(context.Background(), "test.txt", strings.NewReader("content"))
 
@@ -516,7 +523,7 @@ func TestExtractPrincipalWrongType(t *testing.T) {
 type ErrorReader struct{}
 
 func (e *ErrorReader) Read(p []byte) (n int, err error) {
-	return 0, errors.New("read error")
+	return 0, errTestReadError
 }
 
 func (e *ErrorReader) Close() error {

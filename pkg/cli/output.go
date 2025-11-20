@@ -255,11 +255,12 @@ func wrapText(text string, maxWidth int) []string {
 	words := strings.Fields(text)
 	var currentLine string
 	for _, word := range words {
-		if len(currentLine) == 0 {
+		switch {
+		case len(currentLine) == 0:
 			currentLine = word
-		} else if len(currentLine)+1+len(word) <= maxWidth {
+		case len(currentLine)+1+len(word) <= maxWidth:
 			currentLine += " " + word
-		} else {
+		default:
 			lines = append(lines, currentLine)
 			currentLine = word
 		}
@@ -368,7 +369,7 @@ func formatDuration(d time.Duration) string {
 // FormatMetadataResult formats metadata in the specified format.
 func FormatMetadataResult(metadata *common.Metadata, format OutputFormat) string {
 	if metadata == nil {
-		return FormatError(fmt.Errorf("metadata not found"), format)
+		return FormatError(ErrMetadataNotFound, format)
 	}
 	switch format {
 	case FormatJSON:

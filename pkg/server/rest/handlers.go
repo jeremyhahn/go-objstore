@@ -15,6 +15,7 @@ package rest
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -91,7 +92,7 @@ func (h *Handler) PutObject(c *gin.Context) {
 			RespondWithError(c, http.StatusBadRequest, "failed to read file from multipart form: "+err.Error())
 			return
 		}
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 
 		reader = file
 
@@ -158,10 +159,8 @@ func (h *Handler) PutObject(c *gin.Context) {
 		return
 	}
 
-	bytesTransferred := int64(0)
-	if metadata != nil {
-		bytesTransferred = metadata.Size
-	}
+	// metadata is always non-nil due to all code paths assigning it
+	bytesTransferred := metadata.Size
 	_ = auditLogger.LogObjectMutation(c.Request.Context(), audit.EventObjectCreated,
 		userID, principal, "default", key, c.ClientIP(), requestID, bytesTransferred,
 		audit.ResultSuccess, nil) // #nosec G104 -- Audit logging errors are logged internally, should not block operations
@@ -210,7 +209,7 @@ func (h *Handler) GetObject(c *gin.Context) {
 		RespondWithError(c, http.StatusNotFound, common.SanitizeErrorMessage(err))
 		return
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// Set response headers
 	if metadata.ContentType != "" {
@@ -240,7 +239,7 @@ func (h *Handler) GetObject(c *gin.Context) {
 	_, err = io.Copy(c.Writer, reader)
 	if err != nil {
 		// Log error but can't send error response as headers are already sent
-		c.Error(err)
+		_ = c.Error(err)
 	}
 }
 
@@ -638,7 +637,7 @@ func (h *Handler) AddPolicy(c *gin.Context) {
 		return
 	}
 
-	if req.RetentionSeconds <= 0 {
+	if req.Retention <= 0 {
 		RespondWithError(c, http.StatusBadRequest, "retention_seconds must be positive")
 		return
 	}
@@ -647,7 +646,7 @@ func (h *Handler) AddPolicy(c *gin.Context) {
 	policy := common.LifecyclePolicy{
 		ID:        req.ID,
 		Prefix:    req.Prefix,
-		Retention: req.RetentionSeconds,
+		Retention: req.Retention,
 		Action:    req.Action,
 	}
 
@@ -706,7 +705,7 @@ func (h *Handler) RemovePolicy(c *gin.Context) {
 
 	err := h.storage.RemovePolicy(id)
 	if err != nil {
-		if err == common.ErrPolicyNotFound {
+		if errors.Is(err, common.ErrPolicyNotFound) {
 			RespondWithError(c, http.StatusNotFound, common.SanitizeErrorMessage(err))
 			return
 		}

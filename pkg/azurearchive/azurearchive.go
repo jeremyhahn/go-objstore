@@ -50,7 +50,7 @@ var azureArchUploadFn = func(ctx context.Context, r io.Reader, b azblob.BlockBlo
 }
 
 func (c containerWrapper) NewBlockBlob(name string) blobUploader {
-	return blobWrapper{c.ContainerURL.NewBlockBlobURL(name)}
+	return blobWrapper{c.NewBlockBlobURL(name)}
 }
 
 // AzureArchive is an archive-only storage backend for Azure Archive.

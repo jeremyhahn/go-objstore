@@ -29,6 +29,15 @@ import (
 	"google.golang.org/api/iterator"
 )
 
+// Constants
+const (
+	actionDelete = "delete"
+)
+
+const (
+	lifecycleActionArchive = "archive"
+)
+
 // Small internal interfaces to enable unit tests without real GCS.
 type gcsObject interface {
 	NewWriter(ctx context.Context) io.WriteCloser
@@ -182,7 +191,7 @@ func (g *GCS) Archive(key string, destination common.Archiver) error {
 	if err != nil {
 		return err
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	// Buffer the data to ensure compatibility with destinations that require Content-Length
 	data, err := io.ReadAll(rc)
@@ -198,7 +207,7 @@ func (g *GCS) AddPolicy(policy common.LifecyclePolicy) error {
 	if policy.ID == "" {
 		return common.ErrInvalidPolicy
 	}
-	if policy.Action != "delete" && policy.Action != "archive" {
+	if policy.Action != actionDelete && policy.Action != lifecycleActionArchive {
 		return common.ErrInvalidPolicy
 	}
 
@@ -220,7 +229,7 @@ func (g *GCS) AddPolicy(policy common.LifecyclePolicy) error {
 		for i := range attrs.Lifecycle.Rules {
 			rule := &attrs.Lifecycle.Rules[i]
 			// Skip rules with the same name/condition prefix (our policy ID goes in condition)
-			if rule.Condition.MatchesPrefix != nil && len(rule.Condition.MatchesPrefix) > 0 &&
+			if len(rule.Condition.MatchesPrefix) > 0 &&
 				rule.Condition.MatchesPrefix[0] == policy.Prefix &&
 				rule.Condition.AgeInDays == int64(policy.Retention.Hours()/24) {
 				continue
@@ -243,11 +252,12 @@ func (g *GCS) AddPolicy(policy common.LifecyclePolicy) error {
 		},
 	}
 
-	if policy.Action == "delete" {
+	switch policy.Action {
+	case "delete":
 		newRule.Action = storage.LifecycleAction{
 			Type: storage.DeleteAction,
 		}
-	} else if policy.Action == "archive" {
+	case lifecycleActionArchive:
 		// Transition to Archive storage class
 		newRule.Action = storage.LifecycleAction{
 			Type:         storage.SetStorageClassAction,
@@ -282,7 +292,7 @@ func (g *GCS) RemovePolicy(id string) error {
 	}
 
 	// If no lifecycle rules exist, nothing to remove
-	if attrs.Lifecycle.Rules == nil || len(attrs.Lifecycle.Rules) == 0 {
+	if len(attrs.Lifecycle.Rules) == 0 {
 		return nil
 	}
 
@@ -322,7 +332,7 @@ func (g *GCS) GetPolicies() ([]common.LifecyclePolicy, error) {
 		}
 
 		// Extract prefix from condition
-		if rule.Condition.MatchesPrefix != nil && len(rule.Condition.MatchesPrefix) > 0 {
+		if len(rule.Condition.MatchesPrefix) > 0 {
 			policy.Prefix = rule.Condition.MatchesPrefix[0]
 		}
 
@@ -332,11 +342,12 @@ func (g *GCS) GetPolicies() ([]common.LifecyclePolicy, error) {
 		}
 
 		// Determine action
-		if rule.Action.Type == storage.DeleteAction {
+		switch rule.Action.Type {
+		case storage.DeleteAction:
 			policy.Action = "delete"
-		} else if rule.Action.Type == storage.SetStorageClassAction {
-			policy.Action = "archive"
-		} else {
+		case storage.SetStorageClassAction:
+			policy.Action = lifecycleActionArchive
+		default:
 			// Skip rules we don't understand
 			continue
 		}

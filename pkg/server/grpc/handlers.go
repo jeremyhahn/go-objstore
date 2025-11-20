@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -31,6 +32,23 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+// Constants
+const (
+	principalUnknown = "unknown"
+)
+
+// Error variables
+var (
+	ErrPoliciesCountExceedsRange = fmt.Errorf("policies count exceeds int32 range")
+	ErrPolicyCannotBeNil         = fmt.Errorf("policy cannot be nil")
+)
+
+// contextKey is a custom type for context keys to avoid collisions
+type contextKey string
+
+// principalContextKey is the context key for storing the authenticated principal
+const principalContextKey contextKey = "principal"
 
 // Put stores an object in the backend.
 func (s *Server) Put(ctx context.Context, req *objstorepb.PutRequest) (*objstorepb.PutResponse, error) {
@@ -99,7 +117,7 @@ func (s *Server) Get(req *objstorepb.GetRequest, stream objstorepb.ObjectStore_G
 	if err != nil {
 		return mapError(err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// Get metadata
 	metadata, err := s.storage.GetMetadata(ctx, req.Key)
@@ -348,26 +366,26 @@ func mapError(err error) error {
 	// Check for common error patterns
 	errStr := err.Error()
 
-	switch {
-	case errStr == "not found" || errStr == "key not found":
+	switch errStr {
+	case "not found", "key not found":
 		return status.Error(codes.NotFound, err.Error())
-	case errStr == "already exists":
+	case "already exists":
 		return status.Error(codes.AlreadyExists, err.Error())
-	case errStr == "permission denied":
+	case "permission denied":
 		return status.Error(codes.PermissionDenied, err.Error())
-	case errStr == "invalid argument" || errStr == "invalid key":
+	case "invalid argument", "invalid key":
 		return status.Error(codes.InvalidArgument, err.Error())
-	case errStr == "deadline exceeded" || errStr == "context deadline exceeded":
+	case "deadline exceeded", "context deadline exceeded":
 		return status.Error(codes.DeadlineExceeded, err.Error())
-	case errStr == "canceled" || errStr == "context canceled":
+	case "canceled", "context canceled":
 		return status.Error(codes.Canceled, err.Error())
 	default:
 		// For unknown errors, check if it's a context error
 		if ctx := context.Background(); ctx.Err() != nil {
-			if ctx.Err() == context.Canceled {
+			if errors.Is(ctx.Err(), context.Canceled) {
 				return status.Error(codes.Canceled, err.Error())
 			}
-			if ctx.Err() == context.DeadlineExceeded {
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				return status.Error(codes.DeadlineExceeded, err.Error())
 			}
 		}
@@ -378,7 +396,7 @@ func mapError(err error) error {
 
 // extractGRPCPrincipal extracts the principal information from the gRPC context
 func extractGRPCPrincipal(ctx context.Context) (principal string, userID string) {
-	if principalValue := ctx.Value("principal"); principalValue != nil {
+	if principalValue := ctx.Value(principalContextKey); principalValue != nil {
 		if p, ok := principalValue.(adapters.Principal); ok {
 			return p.Name, p.ID
 		}
@@ -403,7 +421,7 @@ func extractGRPCClientIP(ctx context.Context) string {
 		}
 	}
 
-	return "unknown"
+	return principalUnknown
 }
 
 // Archive copies an object to an archival storage backend.
@@ -591,7 +609,7 @@ func (s *Server) ApplyPolicies(ctx context.Context, req *objstorepb.ApplyPolicie
 	// Safe conversion with overflow check
 	policiesCount := len(policies)
 	if policiesCount > 2147483647 {
-		return nil, fmt.Errorf("policies count exceeds int32 range")
+		return nil, ErrPoliciesCountExceedsRange
 	}
 
 	return &objstorepb.ApplyPoliciesResponse{

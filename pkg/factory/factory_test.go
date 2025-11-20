@@ -16,19 +16,21 @@ package factory
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
 	"testing"
 )
 
+// Test error variable
+var errTestMockArchive = errors.New("mock archive error")
+
 func TestLocal(t *testing.T) {
 	tmpdir, err := ioutil.TempDir("", "objstore-test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpdir)
+	defer func() { _ = os.RemoveAll(tmpdir) }()
 
 	storage, err := NewStorage("local", map[string]string{"path": tmpdir})
 	if err != nil {
@@ -51,7 +53,7 @@ func TestLocal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 
 	readData, err := ioutil.ReadAll(r)
 	if err != nil {
@@ -88,14 +90,14 @@ func TestLocal_Put_Error(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpdir)
+	defer func() { _ = os.RemoveAll(tmpdir) }()
 
 	// Create a file with the same name as the directory
 	file, err := os.Create(tmpdir + "/test-key")
 	if err != nil {
 		t.Fatal(err)
 	}
-	file.Close()
+	_ = file.Close()
 
 	storage, err := NewStorage("local", map[string]string{"path": tmpdir})
 	if err != nil {
@@ -119,7 +121,7 @@ func TestLocal_Get_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpdir)
+	defer func() { _ = os.RemoveAll(tmpdir) }()
 
 	storage, err := NewStorage("local", map[string]string{"path": tmpdir})
 	if err != nil {
@@ -140,7 +142,7 @@ func TestLocal_Delete_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpdir)
+	defer func() { _ = os.RemoveAll(tmpdir) }()
 
 	storage, err := NewStorage("local", map[string]string{"path": tmpdir})
 	if err != nil {
@@ -161,7 +163,7 @@ func TestLocal_Delete_PermissionError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpdir)
+	defer func() { _ = os.RemoveAll(tmpdir) }()
 
 	storage, err := NewStorage("local", map[string]string{"path": tmpdir})
 	if err != nil {
@@ -194,7 +196,7 @@ func TestLocal_Delete_PermissionError(t *testing.T) {
 type mockErrorArchiver struct{}
 
 func (m *mockErrorArchiver) Put(key string, data io.Reader) error {
-	return fmt.Errorf("mock archive error")
+	return errTestMockArchive
 }
 
 func TestLocal_Archive_DestinationError(t *testing.T) {
@@ -202,7 +204,7 @@ func TestLocal_Archive_DestinationError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(tmpdir)
+	defer func() { _ = os.RemoveAll(tmpdir) }()
 
 	storage, err := NewStorage("local", map[string]string{"path": tmpdir})
 	if err != nil {
@@ -330,7 +332,7 @@ func TestS3(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 
 	readData, err := ioutil.ReadAll(r)
 	if err != nil {
@@ -387,7 +389,7 @@ func TestGCS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 
 	readData, err := ioutil.ReadAll(r)
 	if err != nil {
@@ -448,7 +450,7 @@ func TestAzure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 
 	readData, err := ioutil.ReadAll(r)
 	if err != nil {

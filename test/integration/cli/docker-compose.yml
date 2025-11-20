@@ -14,7 +14,7 @@ services:
       - OBJECTSTORE_BACKEND=local
       - OBJECTSTORE_BACKEND_PATH=/test-storage
       - GO_TEST_TIMEOUT=10m
-    command: go test -v -tags local ./test/integration/cli/... -timeout 10m
+    command: go test -v -tags "local awss3 minio gcpstorage azureblob glacier azurearchive" ./test/integration/cli/... -timeout 10m
 
 volumes:
   test-storage:

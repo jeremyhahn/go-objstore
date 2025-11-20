@@ -23,6 +23,9 @@ import (
 	"cloud.google.com/go/storage"
 )
 
+// Test error variable
+var errBoom = errors.New("boom")
+
 func TestGCS_Configure_Success_WithStubClient(t *testing.T) {
 	old := gcsNewClient
 	gcsNewClient = func(_ context.Context) (*storage.Client, error) { return &storage.Client{}, nil }
@@ -39,7 +42,7 @@ func TestGCS_Configure_Success_WithStubClient(t *testing.T) {
 
 func TestGCS_Configure_NewClientError(t *testing.T) {
 	old := gcsNewClient
-	gcsNewClient = func(_ context.Context) (*storage.Client, error) { return nil, errors.New("boom") }
+	gcsNewClient = func(_ context.Context) (*storage.Client, error) { return nil, errBoom }
 	defer func() { gcsNewClient = old }()
 
 	g := &GCS{}

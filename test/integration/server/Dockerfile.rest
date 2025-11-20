@@ -16,8 +16,8 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build REST server
-RUN go build -tags local -o /usr/local/bin/objstore-server ./cmd/objstore-server
+# Build REST server with all backends
+RUN go build -tags "local awss3 minio gcpstorage azureblob glacier azurearchive" -o /usr/local/bin/objstore-server ./cmd/objstore-server
 
 # Create storage directory
 RUN mkdir -p /tmp/objstore

@@ -17,19 +17,19 @@ package glacier
 
 import (
 	"bytes"
+	"context"
 	"io"
-	"io/ioutil"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/glacier"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/glacier"
 )
 
 // Glacier is an archive-only storage backend for AWS Glacier.
 type Glacier struct {
-	svc       *glacier.Glacier
+	svc       *glacier.Client
 	vaultName string
 }
 
@@ -45,14 +45,19 @@ func (g *Glacier) Configure(settings map[string]string) error {
 		return common.ErrVaultNotSet
 	}
 
-	sess, err := session.NewSession(&aws.Config{
-		Region: aws.String(settings["region"]),
-	})
+	ctx := context.TODO()
+	var opts []func(*config.LoadOptions) error
+
+	if region := settings["region"]; region != "" {
+		opts = append(opts, config.WithRegion(region))
+	}
+
+	cfg, err := config.LoadDefaultConfig(ctx, opts...)
 	if err != nil {
 		return err
 	}
 
-	g.svc = glacier.New(sess)
+	g.svc = glacier.NewFromConfig(cfg)
 	return nil
 }
 
@@ -60,12 +65,12 @@ func (g *Glacier) Configure(settings map[string]string) error {
 func (g *Glacier) Put(key string, data io.Reader) error {
 	// Glacier requires the content length to be known beforehand.
 	// For simplicity, we'll read the entire content into a buffer.
-	buf, err := ioutil.ReadAll(data)
+	buf, err := io.ReadAll(data)
 	if err != nil {
 		return err
 	}
 
-	_, err = g.svc.UploadArchive(&glacier.UploadArchiveInput{
+	_, err = g.svc.UploadArchive(context.TODO(), &glacier.UploadArchiveInput{
 		VaultName:          aws.String(g.vaultName),
 		ArchiveDescription: aws.String(key),
 		Body:               bytes.NewReader(buf),

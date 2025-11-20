@@ -13,6 +13,7 @@
 
 package mcp
 
+
 import (
 	"bytes"
 	"context"
@@ -24,6 +25,12 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
 	"github.com/jeremyhahn/go-objstore/pkg/version"
+)
+
+// Constants
+const (
+	actionDelete  = "delete"
+	actionArchive = "archive"
 )
 
 // Tool represents an MCP tool definition
@@ -451,7 +458,7 @@ func (e *ToolExecutor) executeGet(ctx context.Context, args map[string]any) (str
 	if err != nil {
 		return "", err
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	var buf bytes.Buffer
 	size, err := io.Copy(&buf, reader)
@@ -700,7 +707,7 @@ func (e *ToolExecutor) executeAddPolicy(ctx context.Context, args map[string]any
 		return "", ErrMissingParameter
 	}
 
-	if action != "delete" && action != "archive" {
+	if action != actionDelete && action != actionArchive {
 		return "", ErrInvalidAction
 	}
 

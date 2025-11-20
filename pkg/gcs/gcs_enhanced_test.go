@@ -27,6 +27,9 @@ import (
 	"cloud.google.com/go/storage"
 )
 
+// Test error variable
+var errListError = errors.New("list error")
+
 // TestGCS_PutWithContext tests the context-aware Put method
 func TestGCS_PutWithContext(t *testing.T) {
 	fc := fakeClient{b: fakeBucket{objs: map[string]*fakeObj{}}}
@@ -305,7 +308,7 @@ func TestGCS_ListWithContext_WithPrefix(t *testing.T) {
 
 func TestGCS_ListWithContext_Error(t *testing.T) {
 	iter := &fakeIterator{
-		err: errors.New("list error"),
+		err: errListError,
 	}
 
 	fc := fakeClient{
@@ -500,7 +503,7 @@ func TestGCS_ListWithOptions_IteratorDone(t *testing.T) {
 
 func TestGCS_ListWithOptions_Error(t *testing.T) {
 	iter := &fakeIterator{
-		err: errors.New("list error"),
+		err: errListError,
 	}
 
 	fc := fakeClient{

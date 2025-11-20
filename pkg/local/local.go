@@ -11,7 +11,6 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build local
 
 package local
 
@@ -185,13 +184,13 @@ func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 	}
 
 	// Encrypt data if encrypter is available
-	var dataToWrite io.Reader = data
+	dataToWrite := data
 	if encrypter != nil {
 		encryptedData, err := encrypter.Encrypt(ctx, data)
 		if err != nil {
 			return fmt.Errorf("encryption failed: %w", err)
 		}
-		defer encryptedData.Close()
+		defer func() { _ = encryptedData.Close() }()
 		dataToWrite = encryptedData
 	}
 
@@ -199,7 +198,7 @@ func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	size, err := io.Copy(f, dataToWrite)
 	if err != nil {
@@ -291,7 +290,7 @@ func (l *Local) GetWithContext(ctx context.Context, key string) (io.ReadCloser, 
 		var err error
 		encrypter, err = l.atRestEncrypterFactory.GetEncrypter("")
 		if err != nil {
-			file.Close()
+			_ = file.Close()
 			return nil, fmt.Errorf("failed to get encrypter: %w", err)
 		}
 	}
@@ -300,7 +299,7 @@ func (l *Local) GetWithContext(ctx context.Context, key string) (io.ReadCloser, 
 	if encrypter != nil {
 		decryptedData, err := encrypter.Decrypt(ctx, file)
 		if err != nil {
-			file.Close()
+			_ = file.Close()
 			return nil, fmt.Errorf("decryption failed: %w", err)
 		}
 		// Note: file will be closed when decryptedData is closed
@@ -667,7 +666,7 @@ func (l *Local) Archive(key string, destination common.Archiver) error {
 	if err != nil {
 		return err
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 	return destination.Put(key, r)
 }
 
@@ -727,7 +726,7 @@ func (l *Local) loadMetadata(key string) (*common.Metadata, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			// If metadata file doesn't exist, return error
-			return nil, fmt.Errorf("metadata not found for key: %s", key)
+			return nil, fmt.Errorf("%w: %s", common.ErrMetadataNotFound, key)
 		}
 		return nil, err
 	}

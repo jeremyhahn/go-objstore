@@ -228,7 +228,7 @@ func (e *extendedMockStorage) defaultPutWithMetadata(ctx context.Context, key st
 	}
 
 	e.data[key] = bytes
-	e.mockStorage.objects[key] = metadata
+	e.objects[key] = metadata
 	e.putCalled = true
 	return nil
 }
@@ -242,6 +242,6 @@ func (e *extendedMockStorage) DeleteWithContext(ctx context.Context, key string)
 	defer e.mu.Unlock()
 
 	delete(e.data, key)
-	delete(e.mockStorage.objects, key)
+	delete(e.objects, key)
 	return nil
 }

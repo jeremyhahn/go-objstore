@@ -227,7 +227,7 @@ func (cl *JSONLChangeLog) rotate() error {
 		// Try to reopen the original file to maintain consistency
 		file, openErr := os.OpenFile(cl.filePath, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0600)
 		if openErr != nil {
-			return fmt.Errorf("failed to rename and failed to reopen: %v, %v", err, openErr)
+			return fmt.Errorf("%w: rename: %v, reopen: %v", ErrChangeLogRenameReopen, err, openErr)
 		}
 		cl.file = file
 		return fmt.Errorf("failed to rename file: %w", err)

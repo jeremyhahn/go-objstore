@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -33,6 +34,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 )
+
+var errCACertParseFailed = errors.New("failed to parse CA cert")
 
 const (
 	grpcTimeout = 30 * time.Second
@@ -92,7 +95,7 @@ func connectToGRPCServer(ctx context.Context, addr string, useTLS bool) (*grpc.C
 
 		caCertPool := x509.NewCertPool()
 		if !caCertPool.AppendCertsFromPEM(caCert) {
-			return nil, nil, fmt.Errorf("failed to parse CA cert")
+			return nil, nil, errCACertParseFailed
 		}
 
 		creds := credentials.NewTLS(&tls.Config{

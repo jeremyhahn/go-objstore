@@ -69,7 +69,7 @@ type ArchiveRequest struct {
 type AddPolicyRequest struct {
 	ID                  string            `json:"id" binding:"required" example:"policy-1"`
 	Prefix              string            `json:"prefix,omitempty" example:"logs/"`
-	RetentionSeconds    time.Duration     `json:"retention_seconds" binding:"required" example:"2592000"`
+	Retention           time.Duration     `json:"retention_seconds" binding:"required" example:"2592000"`
 	Action              string            `json:"action" binding:"required" example:"delete"`
 	DestinationType     string            `json:"destination_type,omitempty" example:"s3"`
 	DestinationSettings map[string]string `json:"destination_settings,omitempty"`
@@ -195,7 +195,7 @@ func RespondWithObject(c *gin.Context, key string, metadata *common.Metadata) {
 		response.Modified = metadata.LastModified.Format("2006-01-02T15:04:05Z07:00")
 	}
 
-	if metadata.Custom != nil && len(metadata.Custom) > 0 {
+	if len(metadata.Custom) > 0 {
 		response.Metadata = metadata.Custom
 	}
 
@@ -222,7 +222,7 @@ func RespondWithListObjects(c *gin.Context, result *common.ListResult) {
 			objResp.Modified = obj.Metadata.LastModified.Format("2006-01-02T15:04:05Z07:00")
 		}
 
-		if obj.Metadata.Custom != nil && len(obj.Metadata.Custom) > 0 {
+		if len(obj.Metadata.Custom) > 0 {
 			objResp.Metadata = obj.Metadata.Custom
 		}
 

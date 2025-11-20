@@ -26,10 +26,10 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/Azure/azure-storage-blob-go/azblob"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	awss3 "github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 // MustParse parses a URL string and panics on error
@@ -46,25 +46,29 @@ func GenerateRandomData(size int) []byte {
 }
 
 // CreateMinIOBucket creates a bucket in MinIO for testing
-func CreateMinIOBucket(t *testing.T, bucket string) *session.Session {
+func CreateMinIOBucket(t *testing.T, bucket string) {
 	t.Helper()
 	endpoint := os.Getenv("S3_ENDPOINT")
 	if endpoint == "" {
 		endpoint = "http://minio:9000"
 	}
 
-	sess, err := session.NewSession(&aws.Config{
-		Region:           aws.String("us-east-1"),
-		Endpoint:         aws.String(endpoint),
-		S3ForcePathStyle: aws.Bool(true),
-		Credentials:      credentials.NewStaticCredentials("minioadmin", "minioadmin", ""),
-	})
+	ctx := context.Background()
+	cfg, err := config.LoadDefaultConfig(ctx,
+		config.WithRegion("us-east-1"),
+		config.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider("minioadmin", "minioadmin", ""),
+		),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	s3c := awss3.New(sess)
-	_, _ = s3c.CreateBucket(&awss3.CreateBucketInput{Bucket: aws.String(bucket)})
-	return sess
+
+	s3c := awss3.NewFromConfig(cfg, func(o *awss3.Options) {
+		o.BaseEndpoint = aws.String(endpoint)
+		o.UsePathStyle = true
+	})
+	_, _ = s3c.CreateBucket(ctx, &awss3.CreateBucketInput{Bucket: aws.String(bucket)})
 }
 
 // CreateAzuriteContainer creates a container in Azurite for testing

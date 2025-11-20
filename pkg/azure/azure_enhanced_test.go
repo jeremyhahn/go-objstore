@@ -17,11 +17,19 @@ package azure
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"testing"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
+)
+
+// Test error variables
+var (
+	errTestPutError     = errors.New("put error")
+	errTestListError    = errors.New("list error")
+	errTestBlobNotFound = errors.New("blob not found")
 )
 
 // mockContainerEnhanced for enhanced testing
@@ -254,7 +262,7 @@ func TestAzure_PutWithContext_Error(t *testing.T) {
 		newBlockBlobFn: func(name string) BlobAPI {
 			return &mockBlob{
 				uploadFn: func(ctx context.Context, r io.Reader) error {
-					return fmt.Errorf("put error")
+					return errTestPutError
 				},
 			}
 		},
@@ -273,7 +281,7 @@ func TestAzure_PutWithContext_Error(t *testing.T) {
 func TestAzure_ListWithOptions_Error(t *testing.T) {
 	mockCont := &mockContainerEnhanced{
 		listBlobsFlatFn: func(ctx context.Context, prefix string) ([]string, error) {
-			return nil, fmt.Errorf("list error")
+			return nil, errTestListError
 		},
 	}
 
@@ -444,7 +452,7 @@ func TestAzure_Exists_ErrorPath(t *testing.T) {
 		newBlockBlobFn: func(name string) BlobAPI {
 			return &mockBlob{
 				getPropertiesFn: func(ctx context.Context) error {
-					return fmt.Errorf("blob not found")
+					return errTestBlobNotFound
 				},
 			}
 		},

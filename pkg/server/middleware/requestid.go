@@ -26,12 +26,15 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
+// contextKey is a custom type for context keys to avoid collisions
+type contextKey string
+
 const (
 	// RequestIDHeader is the header name for request IDs
 	RequestIDHeader = "X-Request-ID"
 
 	// RequestIDContextKey is the context key for storing request IDs
-	RequestIDContextKey = "request_id"
+	RequestIDContextKey contextKey = "request_id"
 
 	// GRPCRequestIDKey is the metadata key for gRPC request IDs
 	GRPCRequestIDKey = "x-request-id"
@@ -112,10 +115,7 @@ func RequestIDUnaryInterceptor() grpc.UnaryServerInterceptor {
 		ctx = context.WithValue(ctx, RequestIDContextKey, requestID)
 
 		// Add to outgoing metadata (response headers)
-		if err := grpc.SetHeader(ctx, metadata.Pairs(GRPCRequestIDKey, requestID)); err != nil {
-			// Log error but continue processing
-			// In production, you might want to log this with your logger
-		}
+		_ = grpc.SetHeader(ctx, metadata.Pairs(GRPCRequestIDKey, requestID)) // Ignore error, continue processing
 
 		return handler(ctx, req)
 	}
@@ -143,9 +143,7 @@ func RequestIDStreamInterceptor() grpc.StreamServerInterceptor {
 		ctx = context.WithValue(ctx, RequestIDContextKey, requestID)
 
 		// Add to outgoing metadata (response headers)
-		if err := grpc.SetHeader(ctx, metadata.Pairs(GRPCRequestIDKey, requestID)); err != nil {
-			// Log error but continue processing
-		}
+		_ = grpc.SetHeader(ctx, metadata.Pairs(GRPCRequestIDKey, requestID)) // Ignore error, continue processing
 
 		// Wrap the server stream with our context
 		wrappedStream := &requestIDServerStream{

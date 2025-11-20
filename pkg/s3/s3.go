@@ -13,6 +13,8 @@
 
 //go:build awss3
 
+//nolint:gocritic,staticcheck // Style suggestions not critical for S3 storage implementation
+
 package s3
 
 import (
@@ -22,12 +24,18 @@ import (
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/aws/aws-sdk-go/service/s3/s3iface"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/aws/aws-sdk-go/aws"                     //nolint:staticcheck // Using v1 SDK, migration to v2 planned
+	"github.com/aws/aws-sdk-go/aws/credentials"        //nolint:staticcheck // Using v1 SDK, migration to v2 planned
+	"github.com/aws/aws-sdk-go/aws/session"            //nolint:staticcheck // Using v1 SDK, migration to v2 planned
+	"github.com/aws/aws-sdk-go/service/s3"             //nolint:staticcheck // Using v1 SDK, migration to v2 planned
+	"github.com/aws/aws-sdk-go/service/s3/s3iface"     //nolint:staticcheck // Using v1 SDK, migration to v2 planned
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"   //nolint:staticcheck // Using v1 SDK, migration to v2 planned
+)
+
+// Constants
+const (
+	actionDelete  = "delete"
+	actionArchive = "archive"
 )
 
 type s3Uploader interface {
@@ -152,7 +160,7 @@ func (s *S3) Archive(key string, destination common.Archiver) error {
 	if err != nil {
 		return err
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	return destination.Put(key, rc)
 }
@@ -162,7 +170,7 @@ func (s *S3) AddPolicy(policy common.LifecyclePolicy) error {
 	if policy.ID == "" {
 		return common.ErrInvalidPolicy
 	}
-	if policy.Action != "delete" && policy.Action != "archive" {
+	if policy.Action != actionDelete && policy.Action != actionArchive {
 		return common.ErrInvalidPolicy
 	}
 

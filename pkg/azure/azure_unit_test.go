@@ -31,6 +31,16 @@ import (
 	"github.com/Azure/azure-storage-blob-go/azblob"
 )
 
+// Test error variables
+var (
+	errTestUploadFailed   = errors.New("upload failed")
+	errTestReadFailed     = errors.New("read failed")
+	errTestDeleteFailed   = errors.New("delete failed")
+	errTestGetFailed      = errors.New("get failed")
+	errTestPutFailed      = errors.New("put failed")
+	errTestPolicyNotFound = errors.New("policy not found")
+)
+
 type memBlob struct {
 	data                          []byte
 	upErr, rdErr, delErr, propErr error
@@ -65,7 +75,7 @@ func (m *memBlob) GetProperties(_ context.Context) error {
 		return m.propErr
 	}
 	if m.data == nil {
-		return errors.New("blob not found")
+		return errTestBlobNotFound
 	}
 	return nil
 }
@@ -102,7 +112,7 @@ func (m *mockManagementPoliciesClient) Get(ctx context.Context, resourceGroupNam
 		return armstorage.ManagementPoliciesClientGetResponse{}, m.getErr
 	}
 	if m.policy == nil {
-		return armstorage.ManagementPoliciesClientGetResponse{}, errors.New("policy not found")
+		return armstorage.ManagementPoliciesClientGetResponse{}, errTestPolicyNotFound
 	}
 	return armstorage.ManagementPoliciesClientGetResponse{
 		ManagementPolicy: *m.policy,
@@ -342,7 +352,7 @@ func TestAzure_Put_Errors(t *testing.T) {
 			name: "upload error",
 			setup: func() *Azure {
 				c := memContainer{blobs: map[string]*memBlob{
-					"error.txt": {upErr: errors.New("upload failed")},
+					"error.txt": {upErr: errTestUploadFailed},
 				}}
 				return &Azure{container: c}
 			},
@@ -406,7 +416,7 @@ func TestAzure_Get_Errors(t *testing.T) {
 			name: "read error",
 			setup: func() *Azure {
 				c := memContainer{blobs: map[string]*memBlob{
-					"error.txt": {rdErr: errors.New("read failed")},
+					"error.txt": {rdErr: errTestReadFailed},
 				}}
 				return &Azure{container: c}
 			},
@@ -465,7 +475,7 @@ func TestAzure_Delete_Errors(t *testing.T) {
 			name: "delete error",
 			setup: func() *Azure {
 				c := memContainer{blobs: map[string]*memBlob{
-					"error.txt": {delErr: errors.New("delete failed")},
+					"error.txt": {delErr: errTestDeleteFailed},
 				}}
 				return &Azure{container: c}
 			},
@@ -522,7 +532,7 @@ func TestAzure_Archive_Errors(t *testing.T) {
 			name: "get error",
 			setup: func() *Azure {
 				c := memContainer{blobs: map[string]*memBlob{
-					"error.txt": {rdErr: errors.New("get failed")},
+					"error.txt": {rdErr: errTestGetFailed},
 				}}
 				return &Azure{container: c}
 			},
@@ -539,7 +549,7 @@ func TestAzure_Archive_Errors(t *testing.T) {
 				return &Azure{container: c}
 			},
 			key:         "test.txt",
-			archiver:    archiverFunc(func(k string, r io.Reader) error { return errors.New("put failed") }),
+			archiver:    archiverFunc(func(k string, r io.Reader) error { return errTestPutFailed }),
 			expectedErr: "put failed",
 		},
 		{
@@ -779,7 +789,7 @@ func TestAzure_AddPolicy_InvalidID(t *testing.T) {
 		Action:    "delete",
 	}
 	err := a.AddPolicy(policy)
-	if err != common.ErrInvalidPolicy {
+	if !errors.Is(err, common.ErrInvalidPolicy) {
 		t.Fatalf("expected ErrInvalidPolicy, got %v", err)
 	}
 }
@@ -801,7 +811,7 @@ func TestAzure_AddPolicy_InvalidAction(t *testing.T) {
 		Action:    "invalid",
 	}
 	err := a.AddPolicy(policy)
-	if err != common.ErrInvalidPolicy {
+	if !errors.Is(err, common.ErrInvalidPolicy) {
 		t.Fatalf("expected ErrInvalidPolicy, got %v", err)
 	}
 }
@@ -976,8 +986,8 @@ func TestAzure_GetPolicies_Multiple(t *testing.T) {
 		Action:    "archive",
 	}
 
-	a.AddPolicy(policy1)
-	a.AddPolicy(policy2)
+	_ = a.AddPolicy(policy1)
+	_ = a.AddPolicy(policy2)
 
 	policies, err := a.GetPolicies()
 	if err != nil {

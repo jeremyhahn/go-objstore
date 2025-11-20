@@ -15,7 +15,6 @@ package replication
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"sync/atomic"
 
@@ -138,12 +137,12 @@ func (wp *WorkerPool) worker(id int, processor func(context.Context, WorkItem) W
 // Returns an error if the pool has been shut down.
 func (wp *WorkerPool) Submit(item WorkItem) error {
 	if wp.shuttingDown.Load() {
-		return fmt.Errorf("worker pool is shutting down")
+		return ErrWorkerPoolShutdown
 	}
 
 	select {
 	case <-wp.ctx.Done():
-		return fmt.Errorf("worker pool context cancelled")
+		return ErrWorkerPoolCancelled
 	case wp.workQueue <- item:
 		return nil
 	}
