@@ -22,6 +22,13 @@ import (
 	"testing"
 )
 
+// Test error variables
+var (
+	errTestInvalidEncryptedData = errors.New("invalid encrypted data")
+	errTestEncrypterNotFound    = errors.New("encrypter not found")
+	errTestNotFound             = errors.New("not found")
+)
+
 // mockEncrypter implements Encrypter for testing
 type mockEncrypter struct {
 	keyID     string
@@ -46,7 +53,7 @@ func (m *mockEncrypter) Decrypt(ctx context.Context, data io.Reader) (io.ReadClo
 	}
 	prefix := []byte("ENCRYPTED:")
 	if !bytes.HasPrefix(content, prefix) {
-		return nil, errors.New("invalid encrypted data")
+		return nil, errTestInvalidEncryptedData
 	}
 	decrypted := bytes.TrimPrefix(content, prefix)
 	return io.NopCloser(bytes.NewReader(decrypted)), nil
@@ -74,7 +81,7 @@ func (m *mockEncrypterFactory) GetEncrypter(keyID string) (Encrypter, error) {
 	if enc, ok := m.encrypters[keyID]; ok {
 		return enc, nil
 	}
-	return nil, errors.New("encrypter not found")
+	return nil, errTestEncrypterNotFound
 }
 
 func (m *mockEncrypterFactory) Close() error {
@@ -129,7 +136,7 @@ func (m *mockUnderlyingStorage) Get(key string) (io.ReadCloser, error) {
 func (m *mockUnderlyingStorage) GetWithContext(ctx context.Context, key string) (io.ReadCloser, error) {
 	data, ok := m.data[key]
 	if !ok {
-		return nil, errors.New("not found")
+		return nil, errTestNotFound
 	}
 	return io.NopCloser(bytes.NewReader(data)), nil
 }
@@ -137,14 +144,14 @@ func (m *mockUnderlyingStorage) GetWithContext(ctx context.Context, key string) 
 func (m *mockUnderlyingStorage) GetMetadata(ctx context.Context, key string) (*Metadata, error) {
 	metadata, ok := m.metadata[key]
 	if !ok {
-		return nil, errors.New("not found")
+		return nil, errTestNotFound
 	}
 	return metadata, nil
 }
 
 func (m *mockUnderlyingStorage) UpdateMetadata(ctx context.Context, key string, metadata *Metadata) error {
 	if _, ok := m.data[key]; !ok {
-		return errors.New("not found")
+		return errTestNotFound
 	}
 	m.metadata[key] = metadata
 	return nil
@@ -270,7 +277,7 @@ func TestEncryptedStorage_PutAndGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get failed: %v", err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	decrypted, err := io.ReadAll(reader)
 	if err != nil {
@@ -354,14 +361,14 @@ func TestEncryptedStorage_GetWithContext(t *testing.T) {
 
 	// Put data
 	testData := "context get test"
-	storage.PutWithContext(context.Background(), "test.txt", strings.NewReader(testData))
+	_ = storage.PutWithContext(context.Background(), "test.txt", strings.NewReader(testData))
 
 	// Get with context
 	reader, err := storage.GetWithContext(context.Background(), "test.txt")
 	if err != nil {
 		t.Fatalf("GetWithContext failed: %v", err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	decrypted, err := io.ReadAll(reader)
 	if err != nil {
@@ -386,7 +393,7 @@ func TestEncryptedStorage_GetMetadata(t *testing.T) {
 
 	// Put with metadata
 	metadata := &Metadata{ContentType: "text/plain"}
-	storage.PutWithMetadata(context.Background(), "test.txt", strings.NewReader("test"), metadata)
+	_ = storage.PutWithMetadata(context.Background(), "test.txt", strings.NewReader("test"), metadata)
 
 	// Get metadata
 	retrieved, err := storage.GetMetadata(context.Background(), "test.txt")
@@ -411,7 +418,7 @@ func TestEncryptedStorage_UpdateMetadata(t *testing.T) {
 	storage := NewEncryptedStorage(underlying, factory)
 
 	// Put data
-	storage.Put("test.txt", strings.NewReader("test"))
+	_ = storage.Put("test.txt", strings.NewReader("test"))
 
 	// Update metadata
 	newMetadata := &Metadata{ContentType: "application/json"}
@@ -439,7 +446,7 @@ func TestEncryptedStorage_Delete(t *testing.T) {
 	storage := NewEncryptedStorage(underlying, factory)
 
 	// Put data
-	storage.Put("test.txt", strings.NewReader("test"))
+	_ = storage.Put("test.txt", strings.NewReader("test"))
 
 	// Delete
 	err := storage.Delete("test.txt")
@@ -466,7 +473,7 @@ func TestEncryptedStorage_DeleteWithContext(t *testing.T) {
 	storage := NewEncryptedStorage(underlying, factory)
 
 	// Put data
-	storage.Put("test.txt", strings.NewReader("test"))
+	_ = storage.Put("test.txt", strings.NewReader("test"))
 
 	// Delete with context
 	err := storage.DeleteWithContext(context.Background(), "test.txt")
@@ -496,7 +503,7 @@ func TestEncryptedStorage_Exists(t *testing.T) {
 	}
 
 	// Put data
-	storage.Put("test.txt", strings.NewReader("test"))
+	_ = storage.Put("test.txt", strings.NewReader("test"))
 
 	// Check exists
 	exists, err = storage.Exists(context.Background(), "test.txt")

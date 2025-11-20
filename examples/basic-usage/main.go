@@ -16,6 +16,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -73,7 +74,7 @@ func localStorageExample() {
 		log.Fatalf("Failed to get object: %v", err)
 	}
 	content, _ := io.ReadAll(reader)
-	reader.Close()
+	_ = reader.Close()
 	fmt.Printf("  ✓ Retrieved: %s\n", content)
 
 	// Check if object exists
@@ -160,16 +161,16 @@ func contextExample() {
 
 	reader, err := storage.GetWithContext(ctx2, "timeout-test.txt")
 	if err != nil {
-		if err == context.Canceled {
+		if errors.Is(err, context.Canceled) {
 			fmt.Println("  ✓ Context cancellation detected")
 		} else {
 			fmt.Printf("  ✓ Get completed before cancellation\n")
-			reader.Close()
+			_ = reader.Close()
 		}
 	}
 
 	// Cleanup
-	storage.DeleteWithContext(context.Background(), "timeout-test.txt")
+	_ = storage.DeleteWithContext(context.Background(), "timeout-test.txt")
 }
 
 func metadataExample() {
@@ -219,7 +220,7 @@ func metadataExample() {
 	}
 
 	// Cleanup
-	storage.DeleteWithContext(ctx, "config.json")
+	_ = storage.DeleteWithContext(ctx, "config.json")
 }
 
 func listExample() {
@@ -239,7 +240,7 @@ func listExample() {
 	}
 
 	for _, key := range objects {
-		storage.Put(key, bytes.NewReader([]byte("test")))
+		_ = storage.Put(key, bytes.NewReader([]byte("test")))
 	}
 	fmt.Printf("  ✓ Created %d test objects\n", len(objects))
 
@@ -276,6 +277,6 @@ func listExample() {
 
 	// Cleanup
 	for _, key := range objects {
-		storage.Delete(key)
+		_ = storage.Delete(key)
 	}
 }

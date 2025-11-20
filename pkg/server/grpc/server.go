@@ -14,6 +14,7 @@
 package grpc
 
 import (
+	"context"
 	"crypto/tls"
 	"net"
 
@@ -89,10 +90,10 @@ func (s *Server) Start() error {
 	// Enable reflection if configured
 	if s.opts.EnableReflection {
 		reflection.Register(s.grpcServer)
-		s.opts.Logger.Info(nil, "gRPC server reflection enabled")
+		s.opts.Logger.Info(context.TODO(), "gRPC server reflection enabled")
 	}
 
-	s.opts.Logger.Info(nil, "Starting gRPC server",
+	s.opts.Logger.Info(context.TODO(), "Starting gRPC server",
 		adapters.Field{Key: "address", Value: s.opts.Address},
 	)
 
@@ -107,18 +108,18 @@ func (s *Server) Start() error {
 // Stop gracefully stops the gRPC server.
 func (s *Server) Stop() {
 	if s.grpcServer != nil {
-		s.opts.Logger.Info(nil, "Gracefully stopping gRPC server")
+		s.opts.Logger.Info(context.TODO(), "Gracefully stopping gRPC server")
 		s.grpcServer.GracefulStop()
-		s.opts.Logger.Info(nil, "gRPC server stopped")
+		s.opts.Logger.Info(context.TODO(), "gRPC server stopped")
 	}
 }
 
 // ForceStop forcefully stops the gRPC server.
 func (s *Server) ForceStop() {
 	if s.grpcServer != nil {
-		s.opts.Logger.Warn(nil, "Force stopping gRPC server")
+		s.opts.Logger.Warn(context.TODO(), "Force stopping gRPC server")
 		s.grpcServer.Stop()
-		s.opts.Logger.Info(nil, "gRPC server stopped")
+		s.opts.Logger.Info(context.TODO(), "gRPC server stopped")
 	}
 }
 
@@ -143,20 +144,20 @@ func (s *Server) buildServerOptions() []grpc.ServerOption {
 	if s.opts.AdapterTLSConfig != nil {
 		tlsConfig, err := s.opts.AdapterTLSConfig.Build()
 		if err != nil {
-			s.opts.Logger.Error(nil, "Failed to build TLS config",
+			s.opts.Logger.Error(context.TODO(), "Failed to build TLS config",
 				adapters.Field{Key: "error", Value: err.Error()},
 			)
 		} else {
 			creds := credentials.NewTLS(tlsConfig)
 			opts = append(opts, grpc.Creds(creds))
-			s.opts.Logger.Info(nil, "gRPC TLS enabled",
+			s.opts.Logger.Info(context.TODO(), "gRPC TLS enabled",
 				adapters.Field{Key: "tls_mode", Value: s.opts.AdapterTLSConfig.Mode},
 			)
 		}
 	} else if s.opts.TLSConfig != nil {
 		creds := credentials.NewTLS(s.opts.TLSConfig)
 		opts = append(opts, grpc.Creds(creds))
-		s.opts.Logger.Info(nil, "gRPC TLS enabled (legacy config)")
+		s.opts.Logger.Info(context.TODO(), "gRPC TLS enabled (legacy config)")
 	}
 
 	// Set max concurrent streams

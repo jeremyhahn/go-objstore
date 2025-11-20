@@ -512,7 +512,7 @@ func TestNewFileSystemAdapter(t *testing.T) {
 	if file == nil {
 		t.Fatal("Expected non-nil file")
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	// Test Write through adapter
 	data := []byte("test data")

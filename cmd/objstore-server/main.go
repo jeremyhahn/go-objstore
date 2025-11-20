@@ -145,20 +145,21 @@ func main() {
 			// Configure TLS
 			var tlsConfig *tls.Config
 			var err error
-			if *quicSelfSigned {
+			switch {
+			case *quicSelfSigned:
 				log.Println("WARNING: Using self-signed certificate for QUIC. DO NOT USE IN PRODUCTION!")
 				tlsConfig, err = quicserver.GenerateSelfSignedCert()
 				if err != nil {
 					errChan <- fmt.Errorf("failed to generate self-signed certificate: %w", err)
 					return
 				}
-			} else if *quicTLSCert != "" && *quicTLSKey != "" {
+			case *quicTLSCert != "" && *quicTLSKey != "":
 				tlsConfig, err = quicserver.NewTLSConfig(*quicTLSCert, *quicTLSKey)
 				if err != nil {
 					errChan <- fmt.Errorf("failed to load TLS configuration: %w", err)
 					return
 				}
-			} else {
+			default:
 				log.Println("QUIC server requires TLS. Use --quic-tls-cert and --quic-tls-key, or --quic-self-signed for testing")
 				return
 			}

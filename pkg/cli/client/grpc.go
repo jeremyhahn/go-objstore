@@ -36,7 +36,7 @@ type GRPCClient struct {
 // NewGRPCClient creates a new gRPC client
 func NewGRPCClient(config *Config) (*GRPCClient, error) {
 	if config.ServerURL == "" {
-		return nil, fmt.Errorf("server URL is required")
+		return nil, ErrServerURLRequired
 	}
 
 	// Note: TLS configuration can be added via DialOption parameters
@@ -44,7 +44,7 @@ func NewGRPCClient(config *Config) (*GRPCClient, error) {
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	}
 
-	conn, err := grpc.Dial(config.ServerURL, opts...)
+	conn, err := grpc.NewClient(config.ServerURL, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to gRPC server: %w", err)
 	}
@@ -99,7 +99,7 @@ func (c *GRPCClient) Get(ctx context.Context, key string) (io.ReadCloser, *commo
 	pr, pw := io.Pipe()
 
 	go func() {
-		defer pw.Close()
+		defer func() { _ = pw.Close() }()
 
 		// Write first chunk
 		if len(firstChunk.Data) > 0 {
@@ -160,7 +160,7 @@ func (c *GRPCClient) List(ctx context.Context, opts *common.ListOptions) (*commo
 		req.Delimiter = opts.Delimiter
 		// Safe conversion with overflow check
 		if opts.MaxResults > 2147483647 {
-			return nil, fmt.Errorf("MaxResults exceeds int32 range")
+			return nil, ErrMaxResultsOverflow
 		}
 		req.MaxResults = int32(opts.MaxResults) // #nosec G115 -- overflow checked above
 		req.ContinueFrom = opts.ContinueFrom
@@ -288,7 +288,7 @@ func (c *GRPCClient) Health(ctx context.Context) error {
 	}
 
 	if resp.Status != objstorepb.HealthResponse_SERVING {
-		return fmt.Errorf("server not serving: %s", resp.Message)
+		return fmt.Errorf("%w: %s", ErrServerNotServing, resp.Message)
 	}
 
 	return nil
@@ -418,7 +418,7 @@ func (c *GRPCClient) TriggerReplication(ctx context.Context, policyID string) (*
 	}
 
 	if resp.Result == nil {
-		return nil, fmt.Errorf("no sync result returned")
+		return nil, ErrNoSyncResult
 	}
 
 	return &common.SyncResult{
@@ -442,7 +442,7 @@ func (c *GRPCClient) GetReplicationStatus(ctx context.Context, policyID string) 
 	}
 
 	if resp.Status == nil {
-		return nil, fmt.Errorf("no status returned")
+		return nil, ErrNoStatus
 	}
 
 	return &replication.ReplicationStatus{

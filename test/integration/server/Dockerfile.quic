@@ -16,8 +16,8 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build QUIC server
-RUN go build -tags local -o /usr/local/bin/objstore-quic-server ./cmd/objstore-quic-server
+# Build QUIC server with all backends
+RUN go build -tags "local awss3 minio gcpstorage azureblob glacier azurearchive" -o /usr/local/bin/objstore-quic-server ./cmd/objstore-quic-server
 
 # Create storage directory
 RUN mkdir -p /tmp/objstore

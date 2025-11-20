@@ -24,6 +24,10 @@ import (
 	"github.com/sourcegraph/jsonrpc2"
 )
 
+const (
+	jsonRPCVersion = "2.0"
+)
+
 // JSONRPCRequest represents a JSON-RPC 2.0 request
 type JSONRPCRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -267,7 +271,7 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, ErrCodeParseError, "failed to read request body")
 		return
 	}
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 
 	var req JSONRPCRequest
 	if err := json.Unmarshal(body, &req); err != nil {
@@ -275,7 +279,7 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.JSONRPC != "2.0" {
+	if req.JSONRPC != jsonRPCVersion {
 		h.writeErrorWithID(w, req.ID, ErrCodeInvalidRequest, "invalid JSON-RPC version")
 		return
 	}
@@ -289,7 +293,7 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	result, err := h.handler.Handle(r.Context(), nil, jsonrpc2Req)
 
 	resp := JSONRPCResponse{
-		JSONRPC: "2.0",
+		JSONRPC: jsonRPCVersion,
 		ID:      req.ID,
 	}
 
@@ -326,7 +330,7 @@ func (h *HTTPHandler) writeError(w http.ResponseWriter, code int, message string
 // writeErrorWithID writes a JSON-RPC error response with request ID
 func (h *HTTPHandler) writeErrorWithID(w http.ResponseWriter, id any, code int, message string) {
 	resp := JSONRPCResponse{
-		JSONRPC: "2.0",
+		JSONRPC: jsonRPCVersion,
 		Error: &JSONRPCError{
 			Code:    code,
 			Message: message,
@@ -336,8 +340,5 @@ func (h *HTTPHandler) writeErrorWithID(w http.ResponseWriter, id any, code int, 
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(resp); err != nil {
-		// Log error but response headers already sent
-		// Note: In production, you'd want to use a proper logger here
-	}
+	_ = json.NewEncoder(w).Encode(resp) // Ignore error, response headers already sent
 }

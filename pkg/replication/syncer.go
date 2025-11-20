@@ -15,6 +15,7 @@ package replication
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -26,7 +27,23 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/local"
 )
 
+var (
+	// ErrUnsupportedReplicationMode is returned when an unsupported replication mode is specified.
+	ErrUnsupportedReplicationMode = errors.New("unsupported replication mode")
+	// ErrChangeLogRenameReopen is returned when both rename and reopen fail during changelog rotation.
+	ErrChangeLogRenameReopen = errors.New("failed to rename and failed to reopen")
+	// ErrWorkerPoolShutdown is returned when work is submitted to a shutdown pool.
+	ErrWorkerPoolShutdown = errors.New("worker pool is shutting down")
+	// ErrWorkerPoolCancelled is returned when work is submitted but context is cancelled.
+	ErrWorkerPoolCancelled = errors.New("worker pool context cancelled")
+)
+
 // Syncer handles synchronization of objects between source and destination backends.
+const (
+	backendLocal = "local"
+	operationPut = "put"
+	operationDelete = "delete"
+)
 type Syncer struct {
 	policy   common.ReplicationPolicy
 	source   common.Storage
@@ -63,12 +80,12 @@ func NewSyncer(
 
 	// Set backend at-rest encryption if applicable (Layer 1)
 	if policy.Encryption != nil && policy.Encryption.Backend != nil && policy.Encryption.Backend.Enabled {
-		if policy.SourceBackend == "local" {
+		if policy.SourceBackend == backendLocal {
 			if localBackend, ok := source.(*local.Local); ok {
 				localBackend.SetAtRestEncrypterFactory(backendFactory)
 			}
 		}
-		if policy.DestinationBackend == "local" {
+		if policy.DestinationBackend == backendLocal {
 			if localBackend, ok := dest.(*local.Local); ok {
 				localBackend.SetAtRestEncrypterFactory(backendFactory)
 			}
@@ -91,7 +108,7 @@ func NewSyncer(
 		// Backend at-rest encryption still applies if configured
 
 	default:
-		return nil, fmt.Errorf("unsupported replication mode: %s", policy.ReplicationMode)
+		return nil, fmt.Errorf("%w: %s", ErrUnsupportedReplicationMode, policy.ReplicationMode)
 	}
 
 	return &Syncer{
@@ -260,7 +277,7 @@ func (s *Syncer) SyncObject(ctx context.Context, key string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("failed to read source: %w", err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// Get source metadata
 	srcMetadata, err := s.source.GetMetadata(ctx, key)
@@ -323,7 +340,7 @@ func (s *Syncer) SyncIncremental(ctx context.Context, changeLog ChangeLog) (*com
 		var err error
 
 		switch change.Operation {
-		case "put":
+		case operationPut:
 			// Sync the object
 			size, err = s.SyncObject(ctx, change.Key)
 			if err != nil {
@@ -331,7 +348,7 @@ func (s *Syncer) SyncIncremental(ctx context.Context, changeLog ChangeLog) (*com
 				result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", change.Key, err))
 				s.logger.Error(ctx, "Object sync failed",
 					adapters.Field{Key: "key", Value: change.Key},
-					adapters.Field{Key: "operation", Value: "put"},
+					adapters.Field{Key: "operation", Value: operationPut},
 					adapters.Field{Key: "error", Value: err.Error()})
 			} else {
 				result.Synced++
@@ -344,7 +361,7 @@ func (s *Syncer) SyncIncremental(ctx context.Context, changeLog ChangeLog) (*com
 				}
 			}
 
-		case "delete":
+		case operationDelete:
 			// Delete from destination
 			err = s.dest.DeleteWithContext(ctx, change.Key)
 			if err != nil {
@@ -352,7 +369,7 @@ func (s *Syncer) SyncIncremental(ctx context.Context, changeLog ChangeLog) (*com
 				result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", change.Key, err))
 				s.logger.Error(ctx, "Object delete failed",
 					adapters.Field{Key: "key", Value: change.Key},
-					adapters.Field{Key: "operation", Value: "delete"},
+					adapters.Field{Key: "operation", Value: operationDelete},
 					adapters.Field{Key: "error", Value: err.Error()})
 			} else {
 				result.Deleted++

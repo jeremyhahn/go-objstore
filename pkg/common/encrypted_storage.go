@@ -60,7 +60,7 @@ func (e *encryptedStorage) PutWithContext(ctx context.Context, key string, data 
 	if err != nil {
 		return err
 	}
-	defer encryptedData.Close()
+	defer func() { _ = encryptedData.Close() }()
 
 	// Store the encrypted data
 	return e.underlying.PutWithContext(ctx, key, encryptedData)
@@ -79,7 +79,7 @@ func (e *encryptedStorage) PutWithMetadata(ctx context.Context, key string, data
 	if err != nil {
 		return err
 	}
-	defer encryptedData.Close()
+	defer func() { _ = encryptedData.Close() }()
 
 	// Add encryption metadata to custom fields
 	if metadata.Custom == nil {
@@ -115,7 +115,7 @@ func (e *encryptedStorage) GetWithContext(ctx context.Context, key string) (io.R
 	if err != nil {
 		return nil, err
 	}
-	defer encryptedData.Close()
+	defer func() { _ = encryptedData.Close() }()
 
 	// Get encrypter for decryption
 	encrypter, err := e.encrypterFactory.GetEncrypter(keyID)

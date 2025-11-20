@@ -26,6 +26,9 @@ var (
 
 	// ErrInvalidCAPool is returned when the CA pool is invalid.
 	ErrInvalidCAPool = errors.New("invalid CA pool")
+
+	// ErrSelfSignedNotImplemented is returned when self-signed cert generation is attempted.
+	ErrSelfSignedNotImplemented = errors.New("self-signed certificate generation not implemented - use proper certificates")
 )
 
 // TLSMode defines the TLS configuration mode.
@@ -150,17 +153,18 @@ func (c *TLSConfig) Build() (*tls.Config, error) {
 	var cert tls.Certificate
 	var err error
 
-	if len(c.ServerCertPEM) > 0 && len(c.ServerKeyPEM) > 0 {
+	switch {
+	case len(c.ServerCertPEM) > 0 && len(c.ServerKeyPEM) > 0:
 		cert, err = tls.X509KeyPair(c.ServerCertPEM, c.ServerKeyPEM)
 		if err != nil {
 			return nil, ErrInvalidCertificate
 		}
-	} else if c.ServerCertFile != "" && c.ServerKeyFile != "" {
+	case c.ServerCertFile != "" && c.ServerKeyFile != "":
 		cert, err = tls.LoadX509KeyPair(c.ServerCertFile, c.ServerKeyFile)
 		if err != nil {
 			return nil, ErrInvalidCertificate
 		}
-	} else {
+	default:
 		return nil, ErrInvalidCertificate
 	}
 
@@ -171,12 +175,13 @@ func (c *TLSConfig) Build() (*tls.Config, error) {
 		// Load client CA pool
 		var caPool *x509.CertPool
 
-		if len(c.ClientCAPEM) > 0 {
+		switch {
+		case len(c.ClientCAPEM) > 0:
 			caPool = x509.NewCertPool()
 			if !caPool.AppendCertsFromPEM(c.ClientCAPEM) {
 				return nil, ErrInvalidCAPool
 			}
-		} else if c.ClientCAFile != "" {
+		case c.ClientCAFile != "":
 			caData, err := os.ReadFile(c.ClientCAFile)
 			if err != nil {
 				return nil, ErrInvalidCAPool
@@ -185,7 +190,7 @@ func (c *TLSConfig) Build() (*tls.Config, error) {
 			if !caPool.AppendCertsFromPEM(caData) {
 				return nil, ErrInvalidCAPool
 			}
-		} else {
+		default:
 			return nil, ErrInvalidCAPool
 		}
 
@@ -225,7 +230,7 @@ func LoadMTLSConfigFromFiles(certFile, keyFile, caFile string) (*tls.Config, err
 func CreateSelfSignedCert() (certPEM, keyPEM []byte, err error) {
 	// This is a placeholder - in a real implementation, we'd use crypto/x509 to generate
 	// a self-signed certificate. For now, we'll return an error indicating this needs to be implemented.
-	return nil, nil, errors.New("self-signed certificate generation not implemented - use proper certificates")
+	return nil, nil, ErrSelfSignedNotImplemented
 }
 
 // ValidateClientCertificate validates a client certificate against the CA pool.

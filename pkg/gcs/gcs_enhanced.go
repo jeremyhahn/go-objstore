@@ -35,7 +35,7 @@ func (g *GCS) PutWithContext(ctx context.Context, key string, data io.Reader) er
 // For now, this delegates to the standard Put method.
 func (g *GCS) PutWithMetadata(ctx context.Context, key string, data io.Reader, metadata *common.Metadata) error {
 	w := g.client.Bucket(g.bucket).Object(key).NewWriter(ctx)
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 	_, err := io.Copy(w, data)
 	return err
 }

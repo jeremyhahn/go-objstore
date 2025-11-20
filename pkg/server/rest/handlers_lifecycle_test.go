@@ -191,7 +191,7 @@ func TestAddPolicyEndpoint(t *testing.T) {
 			requestBody: AddPolicyRequest{
 				ID:               "policy1",
 				Prefix:           "logs/",
-				RetentionSeconds: 24 * time.Hour,
+				Retention: 24 * time.Hour,
 				Action:           "delete",
 			},
 			wantStatusCode: http.StatusCreated,
@@ -221,7 +221,7 @@ func TestAddPolicyEndpoint(t *testing.T) {
 			requestBody: AddPolicyRequest{
 				ID:               "existing",
 				Prefix:           "logs/",
-				RetentionSeconds: 24 * time.Hour,
+				Retention: 24 * time.Hour,
 				Action:           "delete",
 			},
 			wantStatusCode: http.StatusConflict,
@@ -244,7 +244,7 @@ func TestAddPolicyEndpoint(t *testing.T) {
 			requestBody: AddPolicyRequest{
 				ID:               "policy3",
 				Prefix:           "logs/",
-				RetentionSeconds: 24 * time.Hour,
+				Retention: 24 * time.Hour,
 				Action:           "delete",
 			},
 			wantStatusCode: http.StatusInternalServerError,

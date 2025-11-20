@@ -195,7 +195,7 @@ func (h *Handler) RemoveReplicationPolicy(c *gin.Context) {
 			userID, principal, "default", id, c.ClientIP(), requestID, 0,
 			audit.ResultFailure, err) // #nosec G104 -- Audit logging errors are logged internally
 
-		if err == common.ErrPolicyNotFound {
+		if errors.Is(err, common.ErrPolicyNotFound) {
 			RespondWithError(c, http.StatusNotFound, common.SanitizeErrorMessage(err))
 			return
 		}
@@ -294,7 +294,7 @@ func (h *Handler) GetReplicationPolicy(c *gin.Context) {
 	// Get policy
 	policy, err := repMgr.GetPolicy(id)
 	if err != nil {
-		if err == common.ErrPolicyNotFound {
+		if errors.Is(err, common.ErrPolicyNotFound) {
 			RespondWithError(c, http.StatusNotFound, common.SanitizeErrorMessage(err))
 			return
 		}
@@ -358,7 +358,7 @@ func (h *Handler) TriggerReplication(c *gin.Context) {
 			userID, principal, "default", policyID, c.ClientIP(), requestID, 0,
 			audit.ResultFailure, err) // #nosec G104 -- Audit logging errors are logged internally
 
-		if err == common.ErrPolicyNotFound {
+		if errors.Is(err, common.ErrPolicyNotFound) {
 			RespondWithError(c, http.StatusNotFound, common.SanitizeErrorMessage(err))
 			return
 		}
@@ -419,7 +419,7 @@ func (h *Handler) GetReplicationStatus(c *gin.Context) {
 		GetReplicationStatus(id string) (*replication.ReplicationStatus, error)
 	}).GetReplicationStatus(id)
 	if err != nil {
-		if err == common.ErrPolicyNotFound {
+		if errors.Is(err, common.ErrPolicyNotFound) {
 			RespondWithError(c, http.StatusNotFound, common.SanitizeErrorMessage(err))
 			return
 		}

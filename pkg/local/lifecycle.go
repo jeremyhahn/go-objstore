@@ -11,7 +11,6 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build local
 
 package local
 
@@ -23,6 +22,11 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
+)
+
+const (
+	actionDelete  = "delete"
+	actionArchive = "archive"
 )
 
 // LifecycleManager is an in-memory lifecycle manager for the local storage backend.
@@ -98,9 +102,9 @@ func (lm *LifecycleManager) Process(storage *Local) {
 			if strings.HasPrefix(relPath, policy.Prefix) {
 				if time.Since(info.ModTime()) > policy.Retention {
 					switch policy.Action {
-					case "delete":
+					case actionDelete:
 						_ = storage.Delete(relPath)
-					case "archive":
+					case actionArchive:
 						if policy.Destination != nil {
 							_ = storage.Archive(relPath, policy.Destination)
 						}

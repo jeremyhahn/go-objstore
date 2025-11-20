@@ -84,6 +84,7 @@ func main() {
 	// Start server
 	log.Printf("Starting MCP server in %s mode", *mode)
 	if err := server.Start(ctx); err != nil {
+		cancel()
 		log.Fatalf("Server error: %v", err)
 	}
 

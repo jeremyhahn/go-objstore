@@ -338,7 +338,7 @@ func TestExtractGRPCPrincipal_WithPrincipal(t *testing.T) {
 		ID:   "user123",
 		Name: "testuser",
 	}
-	ctx := context.WithValue(context.Background(), "principal", principal)
+	ctx := context.WithValue(context.Background(), principalContextKey, principal)
 
 	name, id := extractGRPCPrincipal(ctx)
 	if name != "testuser" || id != "user123" {
@@ -399,7 +399,7 @@ func TestAuthenticationUnaryInterceptor_Success(t *testing.T) {
 
 	handler := func(ctx context.Context, req any) (any, error) {
 		// Check if principal was added to context
-		if ctx.Value("principal") == nil {
+		if ctx.Value(principalContextKey) == nil {
 			t.Error("Expected principal in context")
 		}
 		return "response", nil

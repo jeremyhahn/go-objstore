@@ -59,7 +59,9 @@ func deletePolicyExample() {
 	}
 
 	for _, key := range logs {
-		storage.Put(key, bytes.NewReader([]byte("log data")))
+		if err := storage.Put(key, bytes.NewReader([]byte("log data"))); err != nil {
+			log.Printf("Warning: Failed to put %s: %v", key, err)
+		}
 	}
 	fmt.Printf("  ✓ Created %d log files\n", len(logs))
 
@@ -86,7 +88,9 @@ func deletePolicyExample() {
 
 	// Cleanup
 	for _, key := range logs {
-		storage.Delete(key)
+		if err := storage.Delete(key); err != nil {
+			log.Printf("Warning: Failed to delete %s: %v", key, err)
+		}
 	}
 }
 
@@ -115,7 +119,9 @@ func archivePolicyExample() {
 	}
 
 	for _, key := range dataFiles {
-		storage.Put(key, bytes.NewReader([]byte("report data")))
+		if err := storage.Put(key, bytes.NewReader([]byte("report data"))); err != nil {
+			log.Printf("Warning: Failed to put %s: %v", key, err)
+		}
 	}
 	fmt.Printf("  ✓ Created %d data files\n", len(dataFiles))
 
@@ -143,7 +149,9 @@ func archivePolicyExample() {
 
 	// Cleanup
 	for _, key := range dataFiles {
-		storage.Delete(key)
+		if err := storage.Delete(key); err != nil {
+			log.Printf("Warning: Failed to delete %s: %v", key, err)
+		}
 	}
 }
 
@@ -205,11 +213,15 @@ func policyManagementExample() {
 
 	// Cleanup - remove all policies
 	for _, p := range remainingPolicies {
-		storage.RemovePolicy(p.ID)
+		if err := storage.RemovePolicy(p.ID); err != nil {
+			log.Printf("Warning: Failed to remove policy %s: %v", p.ID, err)
+		}
 	}
 }
 
 // Example: Real-world usage with Glacier archival
+//
+//nolint:unused
 func glacierArchiveExample() {
 	// Create S3 storage for active data
 	s3Storage, err := factory.NewStorage("s3", map[string]string{
@@ -240,7 +252,9 @@ func glacierArchiveExample() {
 		Retention:   365 * 24 * time.Hour,
 	}
 
-	s3Storage.AddPolicy(archivePolicy)
+	if err := s3Storage.AddPolicy(archivePolicy); err != nil {
+		log.Printf("Failed to add archive policy: %v", err)
+	}
 	fmt.Println("Configured S3-to-Glacier archival policy")
 
 	// Policy: Delete temporary uploads after 7 days
@@ -251,11 +265,15 @@ func glacierArchiveExample() {
 		Retention: 7 * 24 * time.Hour,
 	}
 
-	s3Storage.AddPolicy(deletePolicy)
+	if err := s3Storage.AddPolicy(deletePolicy); err != nil {
+		log.Printf("Failed to add delete policy: %v", err)
+	}
 	fmt.Println("Configured automatic cleanup for temporary uploads")
 }
 
 // Example: Multi-tier archival strategy
+//
+//nolint:unused
 func multiTierArchivalExample() {
 	// Tier 1: Active data in S3
 	activeStorage, _ := factory.NewStorage("s3", map[string]string{
@@ -292,8 +310,12 @@ func multiTierArchivalExample() {
 		Retention:   365 * 24 * time.Hour,
 	}
 
-	activeStorage.AddPolicy(warmPolicy)
-	activeStorage.AddPolicy(coldPolicy)
+	if err := activeStorage.AddPolicy(warmPolicy); err != nil {
+		log.Printf("Failed to add warm policy: %v", err)
+	}
+	if err := activeStorage.AddPolicy(coldPolicy); err != nil {
+		log.Printf("Failed to add cold policy: %v", err)
+	}
 
 	fmt.Println("Configured multi-tier archival strategy:")
 	fmt.Println("  - Active (S3): Recent data")
@@ -306,44 +328,49 @@ func multiTierArchivalExample() {
 // 2. Checks their age against policy rules
 // 3. Executes delete or archive actions automatically
 // 4. Logs all lifecycle actions for audit trail
+//
+//nolint:unused
 func runLifecycleManager(storage common.Storage, interval time.Duration) {
 	ctx := context.Background()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	for {
-		select {
-		case <-ticker.C:
-			policies, err := storage.GetPolicies()
+	for range ticker.C {
+		policies, err := storage.GetPolicies()
+		if err != nil {
+			log.Printf("Failed to get policies: %v", err)
+			continue
+		}
+
+		for _, policy := range policies {
+			// Get all objects matching the prefix
+			keys, err := storage.List(policy.Prefix)
 			if err != nil {
-				log.Printf("Failed to get policies: %v", err)
+				log.Printf("Failed to list objects for policy %s: %v", policy.ID, err)
 				continue
 			}
 
-			for _, policy := range policies {
-				// Get all objects matching the prefix
-				keys, err := storage.List(policy.Prefix)
+			for _, key := range keys {
+				// Check object age
+				meta, err := storage.GetMetadata(ctx, key)
 				if err != nil {
-					log.Printf("Failed to list objects for policy %s: %v", policy.ID, err)
 					continue
 				}
 
-				for _, key := range keys {
-					// Check object age
-					meta, err := storage.GetMetadata(ctx, key)
-					if err != nil {
-						continue
-					}
-
-					if meta != nil && !meta.LastModified.IsZero() {
-						age := time.Since(meta.LastModified)
-						if age > policy.Retention {
-							// Execute policy action
-							if policy.Action == "delete" {
-								storage.Delete(key)
+				if meta != nil && !meta.LastModified.IsZero() {
+					age := time.Since(meta.LastModified)
+					if age > policy.Retention {
+						// Execute policy action
+						if policy.Action == "delete" {
+							if err := storage.Delete(key); err != nil {
+								log.Printf("Failed to delete %s: %v", key, err)
+							} else {
 								log.Printf("Deleted %s (age: %v)", key, age)
-							} else if policy.Action == "archive" && policy.Destination != nil {
-								storage.Archive(key, policy.Destination)
+							}
+						} else if policy.Action == "archive" && policy.Destination != nil {
+							if err := storage.Archive(key, policy.Destination); err != nil {
+								log.Printf("Failed to archive %s: %v", key, err)
+							} else {
 								log.Printf("Archived %s (age: %v)", key, age)
 							}
 						}
