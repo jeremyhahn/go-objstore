@@ -5,9 +5,6 @@ on:
     branches: [ main, develop ]
   pull_request:
     branches: [ main, develop ]
-  schedule:
-    # Weekly rebuild to pick up security updates
-    - cron: '0 0 * * 0'
 
 env:
   GO_VERSION: '1.24'
