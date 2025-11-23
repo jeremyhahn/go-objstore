@@ -158,16 +158,16 @@ jobs:
         GOOS: ${{ matrix.goos }}
         GOARCH: ${{ matrix.goarch }}
         CGO_ENABLED: 0
-        GOFIPS140: ${{ matrix.fips && '1' || '0' }}
       run: |
         VERSION=${{ needs.create-release.outputs.version }}
         BUILD_TAGS="local awss3 gcpstorage azureblob glacier"
         FIPS_SUFFIX=""
 
-        # Add FIPS suffix if building FIPS version
-        if [ "$GOFIPS140" = "1" ]; then
+        # Set GOFIPS140 only for FIPS builds (Linux only)
+        if [ "${{ matrix.fips }}" = "true" ]; then
+          export GOFIPS140=latest
           FIPS_SUFFIX="-fips"
-          echo "Building FIPS-compliant binary with GOFIPS140=1"
+          echo "Building FIPS-compliant binary with GOFIPS140=latest"
         fi
 
         LDFLAGS="-s -w -X main.Version=${VERSION}"
@@ -182,7 +182,7 @@ jobs:
         fi
 
         # Build CLI binary
-        echo "Building objstore CLI for ${GOOS}/${GOARCH} (FIPS: ${GOFIPS140})..."
+        echo "Building objstore CLI for ${GOOS}/${GOARCH}${FIPS_SUFFIX}..."
         go build -tags "${BUILD_TAGS}" \
           -ldflags="${LDFLAGS}" \
           -o "${BINARY_NAME}" \
