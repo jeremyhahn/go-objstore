@@ -11,6 +11,9 @@ A unified object storage and file system abstraction library for Go.
 
 ## Features
 
+- **Facade Pattern**: Centralized, secure API for all storage operations
+- **Multi-Backend Support**: Work with multiple storage backends simultaneously
+- **Input Validation**: Built-in protection against injection attacks
 - Unified API across all storage backends
 - Replication and sync between storage backends with encryption support
 - Pluggable adapters for custom logging and authentication
@@ -29,60 +32,83 @@ A unified object storage and file system abstraction library for Go.
 go get github.com/jeremyhahn/go-objstore
 ```
 
-### Basic Usage
+### Basic Usage (Facade Pattern - Recommended)
 
 ```go
 package main
 
 import (
     "bytes"
+    "context"
     "fmt"
     "io"
+
+    "github.com/jeremyhahn/go-objstore/pkg/common"
     "github.com/jeremyhahn/go-objstore/pkg/factory"
+    "github.com/jeremyhahn/go-objstore/pkg/objstore"
 )
 
 func main() {
-    // Create a storage backend
-    storage, err := factory.NewStorage("local", map[string]string{
+    // Create storage backends
+    local, _ := factory.NewStorage("local", map[string]string{
         "path": "/tmp/my-storage",
     })
-    if err != nil {
-        panic(err)
-    }
+
+    // Initialize facade (do this once at app startup)
+    objstore.Initialize(&objstore.FacadeConfig{
+        Backends: map[string]common.Storage{
+            "local": local,
+        },
+        DefaultBackend: "local",
+    })
+    defer objstore.Reset()
 
     // Store data
     data := []byte("Hello, World!")
-    err = storage.Put("greeting.txt", bytes.NewReader(data))
-    if err != nil {
-        panic(err)
-    }
+    objstore.Put("greeting.txt", bytes.NewReader(data))
 
     // Retrieve data
-    reader, err := storage.Get("greeting.txt")
-    if err != nil {
-        panic(err)
-    }
+    reader, _ := objstore.Get("greeting.txt")
     defer reader.Close()
 
     content, _ := io.ReadAll(reader)
     fmt.Println(string(content))  // Output: Hello, World!
 
     // Delete data
-    storage.Delete("greeting.txt")
+    objstore.Delete("greeting.txt")
 }
 ```
+
+### Direct Storage Access (Legacy)
+
+For backward compatibility, you can still use direct storage access:
+
+```go
+// Create a storage backend
+storage, err := factory.NewStorage("local", map[string]string{
+    "path": "/tmp/my-storage",
+})
+if err != nil {
+    panic(err)
+}
+
+// Use storage directly
+storage.Put("greeting.txt", bytes.NewReader(data))
+```
+
+**Note:** The facade pattern is recommended for new code as it provides centralized validation, multi-backend support, and enhanced security.
 
 ## Supported Backends
 
 | Backend | Type | Use Case |
 |---------|------|----------|
-| **Local** | Storage | Development, testing, local archives |
-| **S3** | Storage | AWS object storage, high availability |
-| **MinIO** | Storage | Self-hosted S3-compatible object storage |
-| **GCS** | Storage | Google Cloud object storage |
-| **Azure Blob** | Storage | Microsoft Azure object storage |
-| **Glacier** | Archive-only | AWS long-term cold storage |
-| **Azure Archive** | Archive-only | Azure long-term cold storage |
+| Local | Storage | Development, testing, local archives |
+| S3 | Storage | AWS object storage, high availability |
+| MinIO | Storage | Self-hosted S3-compatible object storage |
+| GCS | Storage | Google Cloud object storage |
+| Azure Blob | Storage | Microsoft Azure object storage |
+| Glacier | Archive-only | AWS long-term cold storage |
+| Azure Archive | Archive-only | Azure long-term cold storage |
 
 ## Backend Configuration
 
@@ -140,6 +166,76 @@ storage, _ := factory.NewStorage("azure", map[string]string{
 ```
 
 ## Advanced Features
+
+### Facade Pattern (Recommended)
+
+The facade pattern provides a centralized, secure API for working with multiple storage backends. It prevents leaky abstractions and ensures consistent validation across all entry points.
+
+#### Benefits
+
+- **Multi-Backend Support**: Work with multiple storage backends simultaneously
+- **Backend Routing**: Use `backend:key` syntax to target specific backends
+- **Automatic Validation**: Built-in protection against path traversal, injection attacks, and malformed input
+- **Centralized API**: Single entry point for all storage operations
+- **Security**: Sanitized error messages prevent information disclosure
+
+#### Multi-Backend Example
+
+```go
+import (
+    "github.com/jeremyhahn/go-objstore/pkg/common"
+    "github.com/jeremyhahn/go-objstore/pkg/factory"
+    "github.com/jeremyhahn/go-objstore/pkg/objstore"
+)
+
+// Create multiple storage backends
+local, _ := factory.NewStorage("local", map[string]string{
+    "path": "/tmp/local-storage",
+})
+
+s3, _ := factory.NewStorage("s3", map[string]string{
+    "bucket": "my-bucket",
+    "region": "us-east-1",
+})
+
+// Initialize facade once at application startup
+objstore.Initialize(&objstore.FacadeConfig{
+    Backends: map[string]common.Storage{
+        "local": local,
+        "s3":    s3,
+    },
+    DefaultBackend: "local",
+})
+defer objstore.Reset()
+
+// Use default backend
+objstore.Put("file.txt", data)
+
+// Target specific backend
+objstore.PutWithContext(ctx, "s3:backups/file.txt", data)
+objstore.PutWithContext(ctx, "local:cache/temp.dat", data)
+
+// Get from specific backend
+reader, _ := objstore.GetWithContext(ctx, "s3:backups/file.txt")
+
+// List all available backends
+backends := objstore.Backends()  // ["local", "s3"]
+```
+
+#### Security Features
+
+The facade automatically validates all inputs to prevent attacks:
+
+```go
+// These all fail with validation errors
+objstore.Put("../../../etc/passwd", data)        // Path traversal blocked
+objstore.Put("/etc/passwd", data)                // Absolute path blocked
+objstore.Put("file\x00.txt", data)              // Null byte blocked
+objstore.Put("file\n.txt", data)                // Control character blocked
+objstore.PutWithContext(ctx, "INVALID:key", data) // Invalid backend name blocked
+```
+
+For detailed migration guide and examples, see [docs/facade-migration.md](docs/facade-migration.md).
 
 ### Filesystem Interface
 
@@ -321,10 +417,10 @@ LD_LIBRARY_PATH=./bin ./myapp
 
 ## Documentation
 
-Complete documentation is available in the [docs/](docs/) directory, organized into three sections:
+Complete documentation is available in the [docs/](docs/) directory.
 
 ### Architecture
-Understand the design and components:
+
 - [Architecture Overview](docs/architecture/README.md)
 - [Storage Layer](docs/architecture/storage-layer.md)
 - [Servers](docs/architecture/servers.md)
@@ -333,7 +429,7 @@ Understand the design and components:
 - [Lifecycle Management](docs/architecture/lifecycle.md)
 
 ### Configuration
-Configure components for your environment:
+
 - [Configuration Guide](docs/configuration/README.md)
 - [Storage Backends](docs/configuration/storage-backends.md)
 - [Servers](docs/configuration/grpc-server.md) (gRPC, REST, QUIC, MCP)
@@ -342,19 +438,20 @@ Configure components for your environment:
 - [CLI Tool](docs/configuration/cli.md)
 
 ### Usage
-Practical guides for using go-objstore:
+
 - [Getting Started](docs/usage/getting-started.md)
 - [Using Storage Backends](docs/usage/storage-backends.md)
 - [Using the CLI](docs/usage/cli.md)
 - [Deployment Guide](docs/usage/deployment.md)
 
-Additional documentation:
+### Additional Resources
+
 - [C API Reference](docs/c_client/README.md)
 - [Testing Guide](docs/testing.md)
 
 ## Examples
 
-📁 **Example Code:** [examples/](examples/)
+Example code is available in the [examples/](examples/) directory:
 
 - [C Client](examples/c_client/) - Using from C applications
 - [StorageFS](examples/storagefs/) - Filesystem interface examples
@@ -444,17 +541,13 @@ make coverage-report
 
 ### Test Coverage
 
-- **Unit Tests:** Fast, in-memory tests with comprehensive coverage
-- **Integration Tests:** Docker-based tests for all servers and backends
-- **Security:** 0 security issues (gosec + govulncheck)
-
-Unit tests run quickly with no external dependencies. For detailed coverage statistics, see the badge above or run `make coverage-report`.
+Unit tests run quickly with no external dependencies. Integration tests use Docker-based emulators for all servers and backends. Security scanning is performed using gosec and govulncheck. For detailed coverage statistics, see the badge above or run `make coverage-report`.
 
 ## Architecture
 
 ### Storage Interface
 
-All backends implement a common `Storage` interface:
+All backends implement a common Storage interface:
 
 ```go
 type Storage interface {
@@ -500,21 +593,17 @@ This abstracts backend-specific initialization while ensuring a consistent inter
 
 ## Performance
 
-- **Concurrent Operations:** All backends support concurrent read/write
-- **Buffering:** Use buffered I/O for better performance
-- **Local Backend:** Fastest for development and testing
-- **Cloud Backends:** Network I/O overhead applies
-- **Benchmarks:** See [docs/testing.md](docs/testing.md)
+All backends support concurrent read/write operations. Use buffered I/O for better performance. The local backend is fastest for development and testing. Cloud backends have network I/O overhead. See [docs/testing.md](docs/testing.md) for benchmarks.
 
 ## Best Practices
 
-1. **Always close readers** returned by `Get()` to prevent resource leaks
-2. **Handle errors** from all storage operations
-3. **Use context** for cancellation and timeouts on long operations
-4. **Enable lifecycle policies** for automatic cleanup
-5. **Choose backends wisely** based on cost, performance, and durability needs
-6. **Use StorageFS** when you need standard filesystem operations
-7. **Test with emulators** before deploying to cloud
+1. Always close readers returned by Get() to prevent resource leaks
+2. Handle errors from all storage operations
+3. Use context for cancellation and timeouts on long operations
+4. Enable lifecycle policies for automatic cleanup
+5. Choose backends wisely based on cost, performance, and durability needs
+6. Use StorageFS when you need standard filesystem operations
+7. Test with emulators before deploying to cloud
 
 ## Server Interfaces
 
@@ -580,7 +669,7 @@ Run all four server protocols simultaneously with a single binary:
 
 Run individual protocols separately for focused deployments:
 
-**gRPC Server**
+gRPC Server:
 ```bash
 # Start gRPC server only
 ./bin/objstore-grpc-server --addr :50051
@@ -589,7 +678,7 @@ Run individual protocols separately for focused deployments:
 ./bin/objstore-grpc-server --addr :50051 --tls-cert cert.pem --tls-key key.pem
 ```
 
-**REST API Server**
+REST API Server:
 ```bash
 # Start REST server only
 ./bin/objstore-rest-server --port 8080
@@ -598,7 +687,7 @@ Run individual protocols separately for focused deployments:
 curl http://localhost:8080/objects/mykey
 ```
 
-**QUIC/HTTP3 Server**
+QUIC/HTTP3 Server:
 ```bash
 # Start QUIC server only
 ./bin/objstore-quic-server -addr :4433 -tlscert cert.pem -tlskey key.pem
@@ -607,7 +696,7 @@ curl http://localhost:8080/objects/mykey
 ./bin/objstore-quic-server -addr :4433 -selfsigned
 ```
 
-**MCP Server**
+MCP Server:
 ```bash
 # Start MCP server only (stdio mode for Claude Desktop)
 ./bin/objstore-mcp-server -mode stdio
@@ -618,20 +707,20 @@ curl http://localhost:8080/objects/mykey
 
 ### Deployment Patterns
 
-**Development - All Services:**
+Development - All Services:
 ```bash
 # Quick development setup with all protocols
 ./bin/objstore-server --quic-self-signed
 ```
 
-**Production - Load Balanced:**
+Production - Load Balanced:
 ```bash
 # Multiple instances of specific protocols behind load balancers
 ./bin/objstore-grpc-server --addr :50051 &
 ./bin/objstore-rest-server --port 8080 &
 ```
 
-**Microservices - Dedicated Services:**
+Microservices - Dedicated Services:
 ```bash
 # Different protocols in different containers/hosts
 docker run objstore-grpc-server
@@ -646,41 +735,37 @@ docker run objstore-quic-server
 
 [![AGPL-3.0](https://www.gnu.org/graphics/agplv3-155x51.png)](https://www.gnu.org/licenses/agpl-3.0.html)
 
-go-objstore is available under a **dual-license model**:
+go-objstore is available under a dual-license model:
 
 ### Option 1: GNU Affero General Public License v3.0 (AGPL-3.0)
 
 The open-source version of go-objstore is licensed under the [AGPL-3.0](LICENSE-AGPL-3.txt).
 
-**What does this mean?**
+What does this mean?
 
-- ✓ Free to use, modify, and distribute
-- ✓ Perfect for open-source projects
-- ⚠️ If you modify and deploy as a network service (SaaS), you **must** disclose your source code
-- ⚠️ Derivative works must also be licensed under AGPL-3.0
+- Free to use, modify, and distribute
+- Perfect for open-source projects
+- If you modify and deploy as a network service (SaaS), you must disclose your source code
+- Derivative works must also be licensed under AGPL-3.0
 
 The AGPL-3.0 requires that if you modify this software and provide it as a service over a network (including SaaS deployments), you must make your modified source code available under the same license.
 
 ### Option 2: Commercial License
 
-If you wish to use go-objstore in proprietary software without the source disclosure requirements of AGPL-3.0, a commercial license is available from **Automate The Things, LLC**.
+If you wish to use go-objstore in proprietary software without the source disclosure requirements of AGPL-3.0, a commercial license is available from Automate The Things, LLC.
 
-**Commercial License Benefits:**
+Commercial License Benefits:
 
-- ✓ Use in closed-source applications
-- ✓ No source code disclosure requirements
-- ✓ Modify and keep changes private
-- ✓ Professional support and SLA options
-- ✓ Custom development available
-- ✓ Legal protections and indemnification
+- Use in closed-source applications
+- No source code disclosure requirements
+- Modify and keep changes private
+- Professional support and SLA options
+- Custom development available
+- Legal protections and indemnification
 
-**Contact for Commercial Licensing:**
+Contact for Commercial Licensing:
 
-For pricing and commercial licensing inquiries:
-
-📧 licensing@automatethethings.com
-<br/>
-🌐 https://automatethethings.com
+For pricing and commercial licensing inquiries, email licensing@automatethethings.com or visit https://automatethethings.com
 
 See [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) for more details.
 
@@ -698,7 +783,7 @@ See [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) for more details.
 
 ---
 
-**Copyright © 2025 Automate The Things, LLC. All rights reserved.**
+Copyright 2025 Automate The Things, LLC. All rights reserved.
 
 
 ## Support
