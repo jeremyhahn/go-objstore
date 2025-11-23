@@ -168,6 +168,10 @@ jobs:
           export GOFIPS140=latest
           FIPS_SUFFIX="-fips"
           echo "Building FIPS-compliant binary with GOFIPS140=latest"
+        else
+          # Explicitly unset GOFIPS140 for non-FIPS builds
+          unset GOFIPS140
+          echo "Building standard binary (FIPS disabled)"
         fi
 
         LDFLAGS="-s -w -X main.Version=${VERSION}"
