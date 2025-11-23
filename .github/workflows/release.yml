@@ -4,9 +4,11 @@ on:
   push:
     tags:
       - 'v*'
+    branches:
+      - main  # Only allow releases from main branch
 
 env:
-  GO_VERSION: '1.23'
+  GO_VERSION: '1.24'
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
@@ -60,17 +62,21 @@ jobs:
 
         Download the appropriate binary for your platform from the assets below.
 
-        **CLI Tool:**
-        - \`go-objstore-{version}-{os}-{arch}.tar.gz\` - Contains the \`objstore\` CLI binary
+        CLI Tool:
+        - go-objstore-{version}-{os}-{arch}.tar.gz - Contains the objstore CLI binary (standard build)
+        - go-objstore-{version}-{os}-{arch}-fips.tar.gz - Contains the objstore-fips CLI binary (FIPS 140-3 compliant, Linux only)
 
-        **Shared Libraries (Linux only):**
-        - \`libobjstore-{version}-linux-{arch}.so\` - Dynamic library with header file
-        - \`libobjstore-{version}-linux-{arch}.a\` - Static library with header file
+        Shared Libraries (Linux only):
+        - libobjstore-{version}-linux-{arch}.so - Dynamic library with header file
+        - libobjstore-{version}-linux-{arch}.a - Static library with header file
 
-        **Available platforms:**
-        - Linux (amd64, arm64)
-        - macOS/Darwin (amd64, arm64)
-        - Windows (amd64)
+        Available platforms:
+        - Linux (amd64, arm64) - Standard and FIPS builds
+        - macOS/Darwin (amd64, arm64) - Standard builds only
+        - Windows (amd64) - Standard builds only
+
+        FIPS 140-3 Compliance:
+        FIPS builds use Go 1.24's GOFIPS140 mode for cryptographic compliance. Use FIPS builds when regulatory compliance is required.
 
         ### Docker Images
         \`\`\`bash
@@ -106,16 +112,29 @@ jobs:
     strategy:
       matrix:
         include:
+          # Standard builds
           - goos: linux
             goarch: amd64
+            fips: false
           - goos: linux
             goarch: arm64
+            fips: false
           - goos: darwin
             goarch: amd64
+            fips: false
           - goos: darwin
             goarch: arm64
+            fips: false
           - goos: windows
             goarch: amd64
+            fips: false
+          # FIPS builds (Linux only for now)
+          - goos: linux
+            goarch: amd64
+            fips: true
+          - goos: linux
+            goarch: arm64
+            fips: true
 
     steps:
     - name: Checkout code
@@ -141,22 +160,31 @@ jobs:
         GOOS: ${{ matrix.goos }}
         GOARCH: ${{ matrix.goarch }}
         CGO_ENABLED: 0
+        GOFIPS140: ${{ matrix.fips && '1' || '0' }}
       run: |
         VERSION=${{ needs.create-release.outputs.version }}
         BUILD_TAGS="local awss3 gcpstorage azureblob glacier"
+        FIPS_SUFFIX=""
+
+        # Add FIPS suffix if building FIPS version
+        if [ "$GOFIPS140" = "1" ]; then
+          FIPS_SUFFIX="-fips"
+          echo "Building FIPS-compliant binary with GOFIPS140=1"
+        fi
+
         LDFLAGS="-s -w -X main.Version=${VERSION}"
 
         # Determine file extension and archive type
         if [ "$GOOS" = "windows" ]; then
-          BINARY_NAME="objstore.exe"
+          BINARY_NAME="objstore${FIPS_SUFFIX}.exe"
           ARCHIVE_EXT="zip"
         else
-          BINARY_NAME="objstore"
+          BINARY_NAME="objstore${FIPS_SUFFIX}"
           ARCHIVE_EXT="tar.gz"
         fi
 
         # Build CLI binary
-        echo "Building objstore CLI for ${GOOS}/${GOARCH}..."
+        echo "Building objstore CLI for ${GOOS}/${GOARCH} (FIPS: ${GOFIPS140})..."
         go build -tags "${BUILD_TAGS}" \
           -ldflags="${LDFLAGS}" \
           -o "${BINARY_NAME}" \
@@ -166,7 +194,7 @@ jobs:
         sha256sum "${BINARY_NAME}" > "${BINARY_NAME}.sha256"
 
         # Create archive
-        ARCHIVE_NAME="go-objstore-${VERSION}-${GOOS}-${GOARCH}"
+        ARCHIVE_NAME="go-objstore-${VERSION}-${GOOS}-${GOARCH}${FIPS_SUFFIX}"
         if [ "$GOOS" = "windows" ]; then
           zip "${ARCHIVE_NAME}.zip" "${BINARY_NAME}" "${BINARY_NAME}.sha256"
           sha256sum "${ARCHIVE_NAME}.zip" > "${ARCHIVE_NAME}.zip.sha256"
@@ -182,7 +210,7 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         files: |
-          go-objstore-${{ needs.create-release.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}.*
+          go-objstore-${{ needs.create-release.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.fips && '-fips' || '' }}.*
 
   build-libraries:
     name: Build Shared Libraries
