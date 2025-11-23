@@ -4,8 +4,6 @@ on:
   push:
     tags:
       - 'v*'
-    branches:
-      - main  # Only allow releases from main branch
 
 env:
   GO_VERSION: '1.24'
