@@ -280,6 +280,12 @@ func (l *Local) GetWithContext(ctx context.Context, key string) (io.ReadCloser, 
 	path := filepath.Join(l.path, key)
 	file, err := os.Open(path) // #nosec G304 -- Path validated by validateKey() to prevent directory traversal
 	if err != nil {
+		// Don't log "not found" errors - these are expected during initialization
+		// and should be handled by the caller. Only return a wrapped error.
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("%w: %s", common.ErrKeyNotFound, key)
+		}
+		// Log actual unexpected errors
 		log.Printf("[LOCAL] ✗ GET '%s' failed: %v", key, err)
 		return nil, err
 	}
@@ -402,6 +408,12 @@ func (l *Local) DeleteWithContext(ctx context.Context, key string) error {
 
 	err := os.Remove(path)
 	if err != nil {
+		// Don't log "not found" errors - these are expected during cleanup
+		// and should be handled by the caller
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%w: %s", common.ErrKeyNotFound, key)
+		}
+		// Log actual unexpected errors
 		log.Printf("[LOCAL] ✗ DELETE '%s' failed: %v", key, err)
 		return err
 	}
