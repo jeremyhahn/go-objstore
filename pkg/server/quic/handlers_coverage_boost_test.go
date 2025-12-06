@@ -132,19 +132,19 @@ func TestHandleReplicationPolicies_POST(t *testing.T) {
 	}
 
 	policy := struct {
-		ID                 string            `json:"id"`
-		SourceBucket       string            `json:"source_bucket"`
-		DestinationBucket  string            `json:"destination_bucket"`
-		DestinationType    string            `json:"destination_type"`
+		ID                  string            `json:"id"`
+		SourceBucket        string            `json:"source_bucket"`
+		DestinationBucket   string            `json:"destination_bucket"`
+		DestinationType     string            `json:"destination_type"`
 		DestinationSettings map[string]string `json:"destination_settings"`
-		Enabled            bool              `json:"enabled"`
+		Enabled             bool              `json:"enabled"`
 	}{
-		ID:                 "test-policy",
-		SourceBucket:       "source",
-		DestinationBucket:  "dest",
-		DestinationType:    "local",
+		ID:                  "test-policy",
+		SourceBucket:        "source",
+		DestinationBucket:   "dest",
+		DestinationType:     "local",
 		DestinationSettings: map[string]string{"path": "/tmp/test"},
-		Enabled:            true,
+		Enabled:             true,
 	}
 
 	body, _ := json.Marshal(policy)
@@ -211,7 +211,7 @@ func (m *mockSimpleStorage) PutWithContext(ctx context.Context, key string, data
 func (m *mockSimpleStorage) PutWithMetadata(ctx context.Context, key string, data io.Reader, metadata *common.Metadata) error {
 	return nil
 }
-func (m *mockSimpleStorage) Get(key string) (io.ReadCloser, error)                      { return nil, nil }
+func (m *mockSimpleStorage) Get(key string) (io.ReadCloser, error) { return nil, nil }
 func (m *mockSimpleStorage) GetWithContext(ctx context.Context, key string) (io.ReadCloser, error) {
 	return nil, nil
 }
@@ -221,19 +221,19 @@ func (m *mockSimpleStorage) GetMetadata(ctx context.Context, key string) (*commo
 func (m *mockSimpleStorage) UpdateMetadata(ctx context.Context, key string, metadata *common.Metadata) error {
 	return nil
 }
-func (m *mockSimpleStorage) Delete(key string) error                              { return nil }
+func (m *mockSimpleStorage) Delete(key string) error                                 { return nil }
 func (m *mockSimpleStorage) DeleteWithContext(ctx context.Context, key string) error { return nil }
-func (m *mockSimpleStorage) Exists(ctx context.Context, key string) (bool, error) { return false, nil }
-func (m *mockSimpleStorage) List(prefix string) ([]string, error)                 { return nil, nil }
+func (m *mockSimpleStorage) Exists(ctx context.Context, key string) (bool, error)    { return false, nil }
+func (m *mockSimpleStorage) List(prefix string) ([]string, error)                    { return nil, nil }
 func (m *mockSimpleStorage) ListWithContext(ctx context.Context, prefix string) ([]string, error) {
 	return nil, nil
 }
 func (m *mockSimpleStorage) ListWithOptions(ctx context.Context, opts *common.ListOptions) (*common.ListResult, error) {
 	return nil, nil
 }
-func (m *mockSimpleStorage) AddPolicy(policy common.LifecyclePolicy) error    { return nil }
-func (m *mockSimpleStorage) RemovePolicy(id string) error                      { return nil }
-func (m *mockSimpleStorage) GetPolicies() ([]common.LifecyclePolicy, error)   { return nil, nil }
+func (m *mockSimpleStorage) AddPolicy(policy common.LifecyclePolicy) error         { return nil }
+func (m *mockSimpleStorage) RemovePolicy(id string) error                          { return nil }
+func (m *mockSimpleStorage) GetPolicies() ([]common.LifecyclePolicy, error)        { return nil, nil }
 func (m *mockSimpleStorage) Archive(key string, destination common.Archiver) error { return nil }
 
 // TestHandleApplyPolicies_NoPolicies tests when there are no policies to apply
@@ -293,7 +293,7 @@ func TestHandleApplyPolicies_Success(t *testing.T) {
 func TestHandleGetReplicationPolicies_Error(t *testing.T) {
 	storage := newMockReplicationStorage()
 	storage.replManager = nil // Simulate unsupported replication
-	
+
 	initTestFacade(t, storage)
 	handler := &Handler{
 		backend:     "",
@@ -306,7 +306,7 @@ func TestHandleGetReplicationPolicies_Error(t *testing.T) {
 	handler.handleGetReplicationPolicies(w, req)
 
 	if w.Code != http.StatusInternalServerError {
-		t.Errorf("Expected status %d for unsupported replication, got %d", 
+		t.Errorf("Expected status %d for unsupported replication, got %d",
 			http.StatusInternalServerError, w.Code)
 	}
 }
@@ -327,21 +327,21 @@ func TestHandleAddReplicationPolicy_MissingFields(t *testing.T) {
 		{
 			name: "missing id",
 			body: map[string]interface{}{
-				"source_backend": "local",
+				"source_backend":      "local",
 				"destination_backend": "s3",
 			},
 		},
 		{
 			name: "missing source_backend",
 			body: map[string]interface{}{
-				"id": "test-policy",
+				"id":                  "test-policy",
 				"destination_backend": "s3",
 			},
 		},
 		{
 			name: "missing destination_backend",
 			body: map[string]interface{}{
-				"id": "test-policy",
+				"id":             "test-policy",
 				"source_backend": "local",
 			},
 		},
@@ -357,7 +357,7 @@ func TestHandleAddReplicationPolicy_MissingFields(t *testing.T) {
 			handler.handleAddReplicationPolicy(w, req)
 
 			if w.Code != http.StatusBadRequest {
-				t.Errorf("Expected status %d for %s, got %d: %s", 
+				t.Errorf("Expected status %d for %s, got %d: %s",
 					http.StatusBadRequest, tt.name, w.Code, w.Body.String())
 			}
 		})
@@ -367,15 +367,15 @@ func TestHandleAddReplicationPolicy_MissingFields(t *testing.T) {
 // TestHandleGetReplicationPolicy_Success tests successful policy retrieval
 func TestHandleGetReplicationPolicy_Success(t *testing.T) {
 	storage := newMockReplicationStorage()
-	
+
 	// Add a policy
 	policy := common.ReplicationPolicy{
-		ID: "test-policy",
-		SourceBackend: "local",
+		ID:                 "test-policy",
+		SourceBackend:      "local",
 		DestinationBackend: "s3",
 	}
 	storage.replManager.AddPolicy(policy)
-	
+
 	initTestFacade(t, storage)
 	handler := &Handler{
 		backend:     "",
@@ -414,15 +414,15 @@ func TestHandleGetReplicationPolicy_NotFound(t *testing.T) {
 // TestHandleDeleteReplicationPolicy_Success tests successful deletion
 func TestHandleDeleteReplicationPolicy_Success(t *testing.T) {
 	storage := newMockReplicationStorage()
-	
+
 	// Add a policy first
 	policy := common.ReplicationPolicy{
-		ID: "test-policy",
-		SourceBackend: "local",
+		ID:                 "test-policy",
+		SourceBackend:      "local",
 		DestinationBackend: "s3",
 	}
 	storage.replManager.AddPolicy(policy)
-	
+
 	initTestFacade(t, storage)
 	handler := &Handler{
 		backend:      "",
@@ -442,15 +442,15 @@ func TestHandleDeleteReplicationPolicy_Success(t *testing.T) {
 // TestHandleReplicationPolicyByID_GET tests GET request routing
 func TestHandleReplicationPolicyByID_GET(t *testing.T) {
 	storage := newMockReplicationStorage()
-	
+
 	// Add a policy
 	policy := common.ReplicationPolicy{
-		ID: "test-policy",
-		SourceBackend: "local",
+		ID:                 "test-policy",
+		SourceBackend:      "local",
 		DestinationBackend: "s3",
 	}
 	storage.replManager.AddPolicy(policy)
-	
+
 	initTestFacade(t, storage)
 	handler := &Handler{
 		backend:     "",
@@ -470,15 +470,15 @@ func TestHandleReplicationPolicyByID_GET(t *testing.T) {
 // TestHandleReplicationPolicyByID_DELETE tests DELETE request routing
 func TestHandleReplicationPolicyByID_DELETE(t *testing.T) {
 	storage := newMockReplicationStorage()
-	
+
 	// Add a policy
 	policy := common.ReplicationPolicy{
-		ID: "test-policy",
-		SourceBackend: "local",
+		ID:                 "test-policy",
+		SourceBackend:      "local",
 		DestinationBackend: "s3",
 	}
 	storage.replManager.AddPolicy(policy)
-	
+
 	initTestFacade(t, storage)
 	handler := &Handler{
 		backend:      "",
@@ -498,15 +498,15 @@ func TestHandleReplicationPolicyByID_DELETE(t *testing.T) {
 // TestHandleTriggerReplication_Success tests successful replication trigger
 func TestHandleTriggerReplication_Success(t *testing.T) {
 	storage := newMockReplicationStorage()
-	
+
 	// Add a policy
 	policy := common.ReplicationPolicy{
-		ID: "test-policy",
-		SourceBackend: "local",
+		ID:                 "test-policy",
+		SourceBackend:      "local",
 		DestinationBackend: "s3",
 	}
 	storage.replManager.AddPolicy(policy)
-	
+
 	initTestFacade(t, storage)
 	handler := &Handler{
 		backend:      "",
@@ -568,6 +568,7 @@ func TestHandleHealth(t *testing.T) {
 		t.Errorf("Expected status %d, got %d", http.StatusOK, w.Code)
 	}
 }
+
 // TestHandleExists_Success tests successful key existence check
 func TestHandleExists_Success(t *testing.T) {
 	storage := newMockLifecycleStorage()
@@ -627,7 +628,6 @@ func TestHandleApplyPolicies_MethodNotAllowed(t *testing.T) {
 		t.Errorf("Expected status %d, got %d", http.StatusMethodNotAllowed, w.Code)
 	}
 }
-
 
 // TestHandleGetReplicationPolicies_EmptyList tests getting empty policy list
 func TestHandleGetReplicationPolicies_EmptyList(t *testing.T) {
@@ -753,7 +753,6 @@ func TestHandleAddReplicationPolicy_InvalidDestinationBackend(t *testing.T) {
 			http.StatusBadRequest, w.Code, w.Body.String())
 	}
 }
-
 
 // TestHandleAddReplicationPolicy_InvalidJSON tests invalid JSON request body
 func TestHandleAddReplicationPolicy_InvalidJSON(t *testing.T) {

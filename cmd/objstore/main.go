@@ -601,12 +601,12 @@ Use --source-* and --dest-* flags to configure backend-specific settings.`,
 			destSettings["path"] = v
 		}
 
-		prefix, _ := cmd.Flags().GetString("prefix")             //nolint:errcheck
-		intervalStr, _ := cmd.Flags().GetString("interval")      //nolint:errcheck
-		mode, _ := cmd.Flags().GetString("mode")                 //nolint:errcheck
-		backendKey, _ := cmd.Flags().GetString("backend-key")    //nolint:errcheck
-		sourceDEK, _ := cmd.Flags().GetString("source-dek")      //nolint:errcheck
-		destDEK, _ := cmd.Flags().GetString("dest-dek")          //nolint:errcheck
+		prefix, _ := cmd.Flags().GetString("prefix")          //nolint:errcheck
+		intervalStr, _ := cmd.Flags().GetString("interval")   //nolint:errcheck
+		mode, _ := cmd.Flags().GetString("mode")              //nolint:errcheck
+		backendKey, _ := cmd.Flags().GetString("backend-key") //nolint:errcheck
+		sourceDEK, _ := cmd.Flags().GetString("source-dek")   //nolint:errcheck
+		destDEK, _ := cmd.Flags().GetString("dest-dek")       //nolint:errcheck
 
 		// Parse interval
 		interval, err := time.ParseDuration(intervalStr)
@@ -641,11 +641,11 @@ Use --source-* and --dest-* flags to configure backend-specific settings.`,
 }
 
 var replicationRemoveCmd = &cobra.Command{
-	Use:   "remove <id>",
-	Short: "Remove a replication policy",
-	Long:  `Remove a replication policy by ID. This stops automatic replication for this policy.`,
+	Use:     "remove <id>",
+	Short:   "Remove a replication policy",
+	Long:    `Remove a replication policy by ID. This stops automatic replication for this policy.`,
 	Example: `  objstore replication remove backup-to-s3       # Remove policy by ID`,
-	Args: cobra.ExactArgs(1),
+	Args:    cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		id := args[0]
 

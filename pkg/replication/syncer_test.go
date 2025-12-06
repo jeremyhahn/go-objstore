@@ -25,7 +25,6 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
-
 func TestSyncObject_Success(t *testing.T) {
 	source := newExtendedMockStorage()
 	dest := newExtendedMockStorage()

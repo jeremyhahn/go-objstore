@@ -161,14 +161,14 @@ func (s *mockGRPCServer) RemoveReplicationPolicy(ctx context.Context, req *objst
 func (s *mockGRPCServer) GetReplicationPolicy(ctx context.Context, req *objstorepb.GetReplicationPolicyRequest) (*objstorepb.GetReplicationPolicyResponse, error) {
 	return &objstorepb.GetReplicationPolicyResponse{
 		Policy: &objstorepb.ReplicationPolicy{
-			Id:                 "test-policy",
-			SourceBackend:      "local",
-			DestinationBackend: "s3",
-			SourceSettings:     map[string]string{"path": "/tmp/src"},
-			DestinationSettings: map[string]string{"bucket": "test"},
+			Id:                   "test-policy",
+			SourceBackend:        "local",
+			DestinationBackend:   "s3",
+			SourceSettings:       map[string]string{"path": "/tmp/src"},
+			DestinationSettings:  map[string]string{"bucket": "test"},
 			CheckIntervalSeconds: 3600,
-			LastSyncTime:       timestamppb.Now(),
-			Enabled:            true,
+			LastSyncTime:         timestamppb.Now(),
+			Enabled:              true,
 		},
 	}, nil
 }
@@ -177,14 +177,14 @@ func (s *mockGRPCServer) GetReplicationPolicies(ctx context.Context, req *objsto
 	return &objstorepb.GetReplicationPoliciesResponse{
 		Policies: []*objstorepb.ReplicationPolicy{
 			{
-				Id:                 "policy1",
-				SourceBackend:      "local",
-				DestinationBackend: "s3",
-				SourceSettings:     map[string]string{"path": "/tmp/src"},
-				DestinationSettings: map[string]string{"bucket": "test"},
+				Id:                   "policy1",
+				SourceBackend:        "local",
+				DestinationBackend:   "s3",
+				SourceSettings:       map[string]string{"path": "/tmp/src"},
+				DestinationSettings:  map[string]string{"bucket": "test"},
 				CheckIntervalSeconds: 3600,
-				LastSyncTime:       timestamppb.Now(),
-				Enabled:            true,
+				LastSyncTime:         timestamppb.Now(),
+				Enabled:              true,
 			},
 		},
 	}, nil

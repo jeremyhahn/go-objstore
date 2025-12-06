@@ -693,3 +693,155 @@ func TestArchiveNilDestination(t *testing.T) {
 		t.Fatalf("Archive() should return ErrArchiveDestinationNil, got: %v", err)
 	}
 }
+
+func TestLifecycleManagerProcess(t *testing.T) {
+	mem := &Memory{
+		objects:          make(map[string]*object),
+		lifecycleManager: NewLifecycleManager(),
+	}
+
+	lm := NewLifecycleManager()
+
+	// Add an object with old timestamp
+	err := mem.PutWithContext(context.Background(), "logs/old.txt", bytes.NewReader([]byte("old data")))
+	if err != nil {
+		t.Fatalf("PutWithContext() returned error: %v", err)
+	}
+
+	// Manually set the last modified time to be older than retention
+	mem.mu.Lock()
+	if obj, ok := mem.objects["logs/old.txt"]; ok {
+		obj.metadata.LastModified = time.Now().Add(-48 * time.Hour)
+	}
+	mem.mu.Unlock()
+
+	// Add a policy to delete objects older than 1 hour
+	policy := common.LifecyclePolicy{
+		ID:        "delete-old-logs",
+		Prefix:    "logs/",
+		Action:    "delete",
+		Retention: time.Hour,
+	}
+	err = lm.AddPolicy(policy)
+	if err != nil {
+		t.Fatalf("AddPolicy() returned error: %v", err)
+	}
+
+	// Process the lifecycle
+	lm.Process(mem)
+
+	// Verify the old object was deleted
+	exists, _ := mem.Exists(context.Background(), "logs/old.txt")
+	if exists {
+		t.Error("Process() should have deleted the old object")
+	}
+}
+
+func TestLifecycleManagerProcessArchive(t *testing.T) {
+	mem := &Memory{
+		objects:          make(map[string]*object),
+		lifecycleManager: NewLifecycleManager(),
+	}
+
+	dest := &Memory{
+		objects:          make(map[string]*object),
+		lifecycleManager: NewLifecycleManager(),
+	}
+
+	lm := NewLifecycleManager()
+
+	// Add an object with old timestamp
+	err := mem.PutWithContext(context.Background(), "archive/old.txt", bytes.NewReader([]byte("old data")))
+	if err != nil {
+		t.Fatalf("PutWithContext() returned error: %v", err)
+	}
+
+	// Manually set the last modified time to be older than retention
+	mem.mu.Lock()
+	if obj, ok := mem.objects["archive/old.txt"]; ok {
+		obj.metadata.LastModified = time.Now().Add(-48 * time.Hour)
+	}
+	mem.mu.Unlock()
+
+	// Add a policy to archive objects older than 1 hour
+	policy := common.LifecyclePolicy{
+		ID:          "archive-old",
+		Prefix:      "archive/",
+		Action:      "archive",
+		Retention:   time.Hour,
+		Destination: dest,
+	}
+	err = lm.AddPolicy(policy)
+	if err != nil {
+		t.Fatalf("AddPolicy() returned error: %v", err)
+	}
+
+	// Process the lifecycle
+	lm.Process(mem)
+
+	// Verify the object was archived to destination
+	exists, _ := dest.Exists(context.Background(), "archive/old.txt")
+	if !exists {
+		t.Error("Process() should have archived the object to destination")
+	}
+}
+
+func TestLifecycleManagerProcessNoPolicies(t *testing.T) {
+	mem := &Memory{
+		objects:          make(map[string]*object),
+		lifecycleManager: NewLifecycleManager(),
+	}
+
+	lm := NewLifecycleManager()
+
+	// Add an object
+	err := mem.PutWithContext(context.Background(), "test.txt", bytes.NewReader([]byte("data")))
+	if err != nil {
+		t.Fatalf("PutWithContext() returned error: %v", err)
+	}
+
+	// Process with no policies - should do nothing
+	lm.Process(mem)
+
+	// Verify the object still exists
+	exists, _ := mem.Exists(context.Background(), "test.txt")
+	if !exists {
+		t.Error("Process() with no policies should not delete objects")
+	}
+}
+
+func TestLifecycleManagerProcessObjectNotOldEnough(t *testing.T) {
+	mem := &Memory{
+		objects:          make(map[string]*object),
+		lifecycleManager: NewLifecycleManager(),
+	}
+
+	lm := NewLifecycleManager()
+
+	// Add a fresh object
+	err := mem.PutWithContext(context.Background(), "logs/new.txt", bytes.NewReader([]byte("new data")))
+	if err != nil {
+		t.Fatalf("PutWithContext() returned error: %v", err)
+	}
+
+	// Add a policy to delete objects older than 1 hour
+	policy := common.LifecyclePolicy{
+		ID:        "delete-old-logs",
+		Prefix:    "logs/",
+		Action:    "delete",
+		Retention: time.Hour,
+	}
+	err = lm.AddPolicy(policy)
+	if err != nil {
+		t.Fatalf("AddPolicy() returned error: %v", err)
+	}
+
+	// Process the lifecycle
+	lm.Process(mem)
+
+	// Verify the new object was NOT deleted
+	exists, _ := mem.Exists(context.Background(), "logs/new.txt")
+	if !exists {
+		t.Error("Process() should NOT delete objects that are not old enough")
+	}
+}

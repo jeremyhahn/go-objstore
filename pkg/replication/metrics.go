@@ -28,9 +28,9 @@ type ReplicationMetrics struct {
 	totalErrors         atomic.Int64
 
 	// Timing
-	lastSyncTime        atomic.Int64 // Unix timestamp in nanoseconds
-	totalSyncDuration   atomic.Int64 // Total duration in nanoseconds
-	syncCount           atomic.Int64 // Number of syncs performed
+	lastSyncTime      atomic.Int64 // Unix timestamp in nanoseconds
+	totalSyncDuration atomic.Int64 // Total duration in nanoseconds
+	syncCount         atomic.Int64 // Number of syncs performed
 }
 
 // NewReplicationMetrics creates a new metrics instance.
@@ -107,13 +107,13 @@ func (m *ReplicationMetrics) GetAverageSyncDuration() time.Duration {
 // GetMetricsSnapshot returns a snapshot of all metrics.
 func (m *ReplicationMetrics) GetMetricsSnapshot() MetricsSnapshot {
 	return MetricsSnapshot{
-		TotalObjectsSynced:   m.GetTotalObjectsSynced(),
-		TotalObjectsDeleted:  m.GetTotalObjectsDeleted(),
-		TotalBytesSynced:     m.GetTotalBytesSynced(),
-		TotalErrors:          m.GetTotalErrors(),
-		LastSyncTime:         m.GetLastSyncTime(),
-		AverageSyncDuration:  m.GetAverageSyncDuration(),
-		SyncCount:            m.syncCount.Load(),
+		TotalObjectsSynced:  m.GetTotalObjectsSynced(),
+		TotalObjectsDeleted: m.GetTotalObjectsDeleted(),
+		TotalBytesSynced:    m.GetTotalBytesSynced(),
+		TotalErrors:         m.GetTotalErrors(),
+		LastSyncTime:        m.GetLastSyncTime(),
+		AverageSyncDuration: m.GetAverageSyncDuration(),
+		SyncCount:           m.syncCount.Load(),
 	}
 }
 
@@ -131,13 +131,13 @@ func (m *ReplicationMetrics) Reset() {
 
 // MetricsSnapshot represents a point-in-time snapshot of replication metrics.
 type MetricsSnapshot struct {
-	TotalObjectsSynced   int64         `json:"total_objects_synced"`
-	TotalObjectsDeleted  int64         `json:"total_objects_deleted"`
-	TotalBytesSynced     int64         `json:"total_bytes_synced"`
-	TotalErrors          int64         `json:"total_errors"`
-	LastSyncTime         time.Time     `json:"last_sync_time"`
-	AverageSyncDuration  time.Duration `json:"average_sync_duration"`
-	SyncCount            int64         `json:"sync_count"`
+	TotalObjectsSynced  int64         `json:"total_objects_synced"`
+	TotalObjectsDeleted int64         `json:"total_objects_deleted"`
+	TotalBytesSynced    int64         `json:"total_bytes_synced"`
+	TotalErrors         int64         `json:"total_errors"`
+	LastSyncTime        time.Time     `json:"last_sync_time"`
+	AverageSyncDuration time.Duration `json:"average_sync_duration"`
+	SyncCount           int64         `json:"sync_count"`
 }
 
 // ReplicationStatus contains both policy information and metrics.

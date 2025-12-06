@@ -196,14 +196,14 @@ func TestAddReplicationPolicy_Success(t *testing.T) {
 	router, _ := setupTestRouter(t, storage)
 
 	policy := AddReplicationPolicyRequest{
-		ID:                  "test-policy",
-		SourceBackend:       "local",
-		SourceSettings:      map[string]string{"path": "/data/source"},
-		DestinationBackend:  "s3",
-		DestinationSettings: map[string]string{"bucket": "backup"},
-		CheckIntervalSeconds:       300,
-		Enabled:             true,
-		ReplicationMode:     common.ReplicationModeTransparent,
+		ID:                   "test-policy",
+		SourceBackend:        "local",
+		SourceSettings:       map[string]string{"path": "/data/source"},
+		DestinationBackend:   "s3",
+		DestinationSettings:  map[string]string{"bucket": "backup"},
+		CheckIntervalSeconds: 300,
+		Enabled:              true,
+		ReplicationMode:      common.ReplicationModeTransparent,
 	}
 
 	body, _ := json.Marshal(policy)
@@ -226,9 +226,9 @@ func TestAddReplicationPolicy_MissingID(t *testing.T) {
 	router, _ := setupTestRouter(t, storage)
 
 	policy := AddReplicationPolicyRequest{
-		SourceBackend:      "local",
-		DestinationBackend: "s3",
-		CheckIntervalSeconds:      300,
+		SourceBackend:        "local",
+		DestinationBackend:   "s3",
+		CheckIntervalSeconds: 300,
 	}
 
 	body, _ := json.Marshal(policy)
@@ -251,9 +251,9 @@ func TestAddReplicationPolicy_MissingSourceBackend(t *testing.T) {
 	router, _ := setupTestRouter(t, storage)
 
 	policy := AddReplicationPolicyRequest{
-		ID:                 "test-policy",
-		DestinationBackend: "s3",
-		CheckIntervalSeconds:      300,
+		ID:                   "test-policy",
+		DestinationBackend:   "s3",
+		CheckIntervalSeconds: 300,
 	}
 
 	body, _ := json.Marshal(policy)
@@ -271,11 +271,11 @@ func TestAddReplicationPolicy_InvalidReplicationMode(t *testing.T) {
 	router, _ := setupTestRouter(t, storage)
 
 	policy := AddReplicationPolicyRequest{
-		ID:                 "test-policy",
-		SourceBackend:      "local",
-		DestinationBackend: "s3",
-		CheckIntervalSeconds:      300,
-		ReplicationMode:    "invalid-mode",
+		ID:                   "test-policy",
+		SourceBackend:        "local",
+		DestinationBackend:   "s3",
+		CheckIntervalSeconds: 300,
+		ReplicationMode:      "invalid-mode",
 	}
 
 	body, _ := json.Marshal(policy)
@@ -294,11 +294,11 @@ func TestAddReplicationPolicy_DuplicatePolicy(t *testing.T) {
 	router, _ := setupTestRouter(t, storage)
 
 	policy := AddReplicationPolicyRequest{
-		ID:                 "test-policy",
-		SourceBackend:      "local",
-		DestinationBackend: "s3",
-		CheckIntervalSeconds:      300,
-		Enabled:            true,
+		ID:                   "test-policy",
+		SourceBackend:        "local",
+		DestinationBackend:   "s3",
+		CheckIntervalSeconds: 300,
+		Enabled:              true,
 	}
 
 	// Add policy first time
@@ -323,10 +323,10 @@ func TestAddReplicationPolicy_ReplicationNotSupported(t *testing.T) {
 	router, _ := setupTestRouter(t, storage)
 
 	policy := AddReplicationPolicyRequest{
-		ID:                 "test-policy",
-		SourceBackend:      "local",
-		DestinationBackend: "s3",
-		CheckIntervalSeconds:      300,
+		ID:                   "test-policy",
+		SourceBackend:        "local",
+		DestinationBackend:   "s3",
+		CheckIntervalSeconds: 300,
 	}
 
 	body, _ := json.Marshal(policy)
@@ -345,11 +345,11 @@ func TestAddReplicationPolicy_WithEncryption(t *testing.T) {
 	router, _ := setupTestRouter(t, storage)
 
 	policy := AddReplicationPolicyRequest{
-		ID:                 "test-policy",
-		SourceBackend:      "local",
-		DestinationBackend: "s3",
-		CheckIntervalSeconds:      300,
-		Enabled:            true,
+		ID:                   "test-policy",
+		SourceBackend:        "local",
+		DestinationBackend:   "s3",
+		CheckIntervalSeconds: 300,
+		Enabled:              true,
 		Encryption: &common.EncryptionPolicy{
 			Source: &common.EncryptionConfig{
 				Enabled:  true,
@@ -643,11 +643,11 @@ func TestReplicationPolicies_BackwardsCompatibility(t *testing.T) {
 
 	// Test POST without /api/v1 prefix
 	policy := AddReplicationPolicyRequest{
-		ID:                 "test-policy",
-		SourceBackend:      "local",
-		DestinationBackend: "s3",
-		CheckIntervalSeconds:      300,
-		Enabled:            true,
+		ID:                   "test-policy",
+		SourceBackend:        "local",
+		DestinationBackend:   "s3",
+		CheckIntervalSeconds: 300,
+		Enabled:              true,
 	}
 
 	body, _ := json.Marshal(policy)
@@ -694,10 +694,10 @@ func TestAddReplicationPolicy_ZeroCheckInterval(t *testing.T) {
 	router, _ := setupTestRouter(t, storage)
 
 	policy := AddReplicationPolicyRequest{
-		ID:                 "test-policy",
-		SourceBackend:      "local",
-		DestinationBackend: "s3",
-		CheckIntervalSeconds:      0, // Invalid
+		ID:                   "test-policy",
+		SourceBackend:        "local",
+		DestinationBackend:   "s3",
+		CheckIntervalSeconds: 0, // Invalid
 	}
 
 	body, _ := json.Marshal(policy)
@@ -766,10 +766,10 @@ func TestAddReplicationPolicy_GetReplicationManagerError(t *testing.T) {
 	router, _ := setupTestRouter(t, storage)
 
 	policy := AddReplicationPolicyRequest{
-		ID:                 "test-policy",
-		SourceBackend:      "local",
-		DestinationBackend: "s3",
-		CheckIntervalSeconds:      300,
+		ID:                   "test-policy",
+		SourceBackend:        "local",
+		DestinationBackend:   "s3",
+		CheckIntervalSeconds: 300,
 	}
 
 	body, _ := json.Marshal(policy)
@@ -844,8 +844,8 @@ func TestAddReplicationPolicy_MissingDestinationBackend(t *testing.T) {
 	router, _ := setupTestRouter(t, storage)
 
 	policy := AddReplicationPolicyRequest{
-		ID:            "test-policy",
-		SourceBackend: "local",
+		ID:                   "test-policy",
+		SourceBackend:        "local",
 		CheckIntervalSeconds: 300,
 	}
 
@@ -864,12 +864,12 @@ func TestAddReplicationPolicy_OpaqueMode(t *testing.T) {
 	router, _ := setupTestRouter(t, storage)
 
 	policy := AddReplicationPolicyRequest{
-		ID:                 "test-policy",
-		SourceBackend:      "local",
-		DestinationBackend: "s3",
-		CheckIntervalSeconds:      300,
-		Enabled:            true,
-		ReplicationMode:    common.ReplicationModeOpaque,
+		ID:                   "test-policy",
+		SourceBackend:        "local",
+		DestinationBackend:   "s3",
+		CheckIntervalSeconds: 300,
+		Enabled:              true,
+		ReplicationMode:      common.ReplicationModeOpaque,
 	}
 
 	body, _ := json.Marshal(policy)
@@ -931,10 +931,10 @@ func TestAddReplicationPolicy_AddPolicyError(t *testing.T) {
 	router, _ := setupTestRouter(t, storage)
 
 	policy := AddReplicationPolicyRequest{
-		ID:                 "test-policy",
-		SourceBackend:      "local",
-		DestinationBackend: "s3",
-		CheckIntervalSeconds:      300,
+		ID:                   "test-policy",
+		SourceBackend:        "local",
+		DestinationBackend:   "s3",
+		CheckIntervalSeconds: 300,
 	}
 
 	body, _ := json.Marshal(policy)

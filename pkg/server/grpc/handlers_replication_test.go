@@ -28,15 +28,15 @@ import (
 
 // mockReplicationManager implements common.ReplicationManager for testing
 type mockReplicationManager struct {
-	policies           map[string]common.ReplicationPolicy
-	addPolicyError     error
-	removePolicyError  error
-	getPolicyError     error
-	getPoliciesError   error
-	syncAllError       error
-	syncPolicyError    error
-	syncAllResult      *common.SyncResult
-	syncPolicyResult   *common.SyncResult
+	policies          map[string]common.ReplicationPolicy
+	addPolicyError    error
+	removePolicyError error
+	getPolicyError    error
+	getPoliciesError  error
+	syncAllError      error
+	syncPolicyError   error
+	syncAllResult     *common.SyncResult
+	syncPolicyResult  *common.SyncResult
 }
 
 func newMockReplicationManager() *mockReplicationManager {
@@ -138,14 +138,14 @@ func (m *mockReplicationManager) Run(ctx context.Context) {
 // mockReplicationCapableStorage extends mockStorage with replication capabilities
 type mockReplicationCapableStorage struct {
 	*mockStorage
-	replicationMgr     *mockReplicationManager
-	replicationMgrErr  error
+	replicationMgr    *mockReplicationManager
+	replicationMgrErr error
 }
 
 func newMockReplicationCapableStorage() *mockReplicationCapableStorage {
 	return &mockReplicationCapableStorage{
-		mockStorage:     newMockStorage(),
-		replicationMgr:  newMockReplicationManager(),
+		mockStorage:    newMockStorage(),
+		replicationMgr: newMockReplicationManager(),
 	}
 }
 
@@ -172,14 +172,14 @@ func TestAddReplicationPolicy(t *testing.T) {
 			},
 			request: &objstorepb.AddReplicationPolicyRequest{
 				Policy: &objstorepb.ReplicationPolicy{
-					Id:                    "test-policy",
-					SourceBackend:         "local",
-					SourceSettings:        map[string]string{"path": "/source"},
-					DestinationBackend:    "s3",
-					DestinationSettings:   map[string]string{"bucket": "dest"},
-					CheckIntervalSeconds:  300,
-					Enabled:               true,
-					ReplicationMode:       objstorepb.ReplicationMode_TRANSPARENT,
+					Id:                   "test-policy",
+					SourceBackend:        "local",
+					SourceSettings:       map[string]string{"path": "/source"},
+					DestinationBackend:   "s3",
+					DestinationSettings:  map[string]string{"bucket": "dest"},
+					CheckIntervalSeconds: 300,
+					Enabled:              true,
+					ReplicationMode:      objstorepb.ReplicationMode_TRANSPARENT,
 				},
 			},
 			wantError:      false,
@@ -203,9 +203,9 @@ func TestAddReplicationPolicy(t *testing.T) {
 			},
 			request: &objstorepb.AddReplicationPolicyRequest{
 				Policy: &objstorepb.ReplicationPolicy{
-					Id:                    "",
-					SourceBackend:         "local",
-					DestinationBackend:    "s3",
+					Id:                 "",
+					SourceBackend:      "local",
+					DestinationBackend: "s3",
 				},
 			},
 			wantError:      true,
@@ -218,9 +218,9 @@ func TestAddReplicationPolicy(t *testing.T) {
 			},
 			request: &objstorepb.AddReplicationPolicyRequest{
 				Policy: &objstorepb.ReplicationPolicy{
-					Id:                    "test-policy",
-					SourceBackend:         "local",
-					DestinationBackend:    "s3",
+					Id:                 "test-policy",
+					SourceBackend:      "local",
+					DestinationBackend: "s3",
 				},
 			},
 			wantError:      true,
@@ -235,9 +235,9 @@ func TestAddReplicationPolicy(t *testing.T) {
 			},
 			request: &objstorepb.AddReplicationPolicyRequest{
 				Policy: &objstorepb.ReplicationPolicy{
-					Id:                    "test-policy",
-					SourceBackend:         "local",
-					DestinationBackend:    "s3",
+					Id:                 "test-policy",
+					SourceBackend:      "local",
+					DestinationBackend: "s3",
 				},
 			},
 			wantError:      true,
@@ -370,18 +370,18 @@ func TestGetReplicationPolicies(t *testing.T) {
 			setupStorage: func() common.Storage {
 				storage := newMockReplicationCapableStorage()
 				storage.replicationMgr.policies["policy1"] = common.ReplicationPolicy{
-					ID:                  "policy1",
-					SourceBackend:       "local",
-					DestinationBackend:  "s3",
-					Enabled:             true,
-					ReplicationMode:     common.ReplicationModeTransparent,
+					ID:                 "policy1",
+					SourceBackend:      "local",
+					DestinationBackend: "s3",
+					Enabled:            true,
+					ReplicationMode:    common.ReplicationModeTransparent,
 				}
 				storage.replicationMgr.policies["policy2"] = common.ReplicationPolicy{
-					ID:                  "policy2",
-					SourceBackend:       "s3",
-					DestinationBackend:  "gcs",
-					Enabled:             false,
-					ReplicationMode:     common.ReplicationModeOpaque,
+					ID:                 "policy2",
+					SourceBackend:      "s3",
+					DestinationBackend: "gcs",
+					Enabled:            false,
+					ReplicationMode:    common.ReplicationModeOpaque,
 				}
 				return storage
 			},
@@ -461,12 +461,12 @@ func TestGetReplicationPolicy(t *testing.T) {
 			setupStorage: func() common.Storage {
 				storage := newMockReplicationCapableStorage()
 				storage.replicationMgr.policies["test-policy"] = common.ReplicationPolicy{
-					ID:                  "test-policy",
-					SourceBackend:       "local",
-					DestinationBackend:  "s3",
-					CheckInterval:       5 * time.Minute,
-					Enabled:             true,
-					ReplicationMode:     common.ReplicationModeTransparent,
+					ID:                 "test-policy",
+					SourceBackend:      "local",
+					DestinationBackend: "s3",
+					CheckInterval:      5 * time.Minute,
+					Enabled:            true,
+					ReplicationMode:    common.ReplicationModeTransparent,
 				}
 				return storage
 			},
@@ -635,16 +635,16 @@ func TestProtoConversions(t *testing.T) {
 	t.Run("protoToReplicationPolicy", func(t *testing.T) {
 		now := time.Now()
 		proto := &objstorepb.ReplicationPolicy{
-			Id:                    "test-policy",
-			SourceBackend:         "local",
-			SourceSettings:        map[string]string{"path": "/source"},
-			SourcePrefix:          "prefix/",
-			DestinationBackend:    "s3",
-			DestinationSettings:   map[string]string{"bucket": "dest"},
-			CheckIntervalSeconds:  300,
-			LastSyncTime:          timestamppb.New(now),
-			Enabled:               true,
-			ReplicationMode:       objstorepb.ReplicationMode_TRANSPARENT,
+			Id:                   "test-policy",
+			SourceBackend:        "local",
+			SourceSettings:       map[string]string{"path": "/source"},
+			SourcePrefix:         "prefix/",
+			DestinationBackend:   "s3",
+			DestinationSettings:  map[string]string{"bucket": "dest"},
+			CheckIntervalSeconds: 300,
+			LastSyncTime:         timestamppb.New(now),
+			Enabled:              true,
+			ReplicationMode:      objstorepb.ReplicationMode_TRANSPARENT,
 			Encryption: &objstorepb.EncryptionPolicy{
 				Backend: &objstorepb.EncryptionConfig{
 					Enabled:    true,

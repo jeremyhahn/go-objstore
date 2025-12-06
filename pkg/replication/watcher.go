@@ -56,16 +56,16 @@ type FSNotifyWatcher struct {
 	debounceDelay time.Duration
 
 	// Tracking state
-	mu            sync.RWMutex
-	watching      map[string]bool    // Paths currently being watched
-	lastEvent     map[string]time.Time // For debouncing
-	stopChan      chan struct{}
-	stopped       bool
+	mu        sync.RWMutex
+	watching  map[string]bool      // Paths currently being watched
+	lastEvent map[string]time.Time // For debouncing
+	stopChan  chan struct{}
+	stopped   bool
 
 	// Context for managing goroutines
-	ctx           context.Context
-	cancel        context.CancelFunc
-	wg            sync.WaitGroup
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 }
 
 // FSNotifyWatcherConfig contains configuration options for FSNotifyWatcher.

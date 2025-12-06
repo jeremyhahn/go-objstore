@@ -15,7 +15,8 @@ package version
 
 // Version is the application version.
 // This should be set at build time using:
-//   go build -ldflags "-X github.com/jeremyhahn/go-objstore/pkg/version.Version=1.0.0"
+//
+//	go build -ldflags "-X github.com/jeremyhahn/go-objstore/pkg/version.Version=1.0.0"
 var Version = "0.1.0-alpha" // default version if not set at build time
 
 // Get returns the application version string.

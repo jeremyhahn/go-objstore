@@ -69,10 +69,10 @@ func TestSyncObjectAuditLogging(t *testing.T) {
 	auditLog := &capturingAuditLogger{}
 
 	policy := common.ReplicationPolicy{
-		ID:              "audit-test",
-		SourceBackend:   "local",
+		ID:                 "audit-test",
+		SourceBackend:      "local",
 		DestinationBackend: "local",
-		ReplicationMode: common.ReplicationModeOpaque,
+		ReplicationMode:    common.ReplicationModeOpaque,
 	}
 
 	syncer := &Syncer{
@@ -117,10 +117,10 @@ func TestSyncObjectPutError(t *testing.T) {
 	auditLog := &capturingAuditLogger{}
 
 	policy := common.ReplicationPolicy{
-		ID:              "put-error-test",
-		SourceBackend:   "local",
+		ID:                 "put-error-test",
+		SourceBackend:      "local",
 		DestinationBackend: "local",
-		ReplicationMode: common.ReplicationModeOpaque,
+		ReplicationMode:    common.ReplicationModeOpaque,
 	}
 
 	syncer := &Syncer{

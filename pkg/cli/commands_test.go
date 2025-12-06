@@ -168,12 +168,12 @@ func (e *mockError) Error() string {
 
 // mockClient is a mock implementation of client.Client for testing
 type mockClient struct {
-	healthError  error
-	existsError  error
-	putError     error
-	getError     error
-	deleteError  error
-	listError    error
+	healthError   error
+	existsError   error
+	putError      error
+	getError      error
+	deleteError   error
+	listError     error
 	metadataError error
 }
 
