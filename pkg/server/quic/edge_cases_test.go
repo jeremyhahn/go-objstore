@@ -169,11 +169,12 @@ func TestServerStartServerError(t *testing.T) {
 	// This is hard to trigger reliably, but we can at least call Start
 	storage := local.New()
 	storage.Configure(map[string]string{"path": t.TempDir()})
+	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
 	opts := DefaultOptions().
 		WithAddr(":0").
-		WithStorage(storage).
+		WithBackend("").
 		WithTLSConfig(tlsConfig)
 
 	server, _ := New(opts)
@@ -348,12 +349,13 @@ func TestNewTLSConfigWithValidFiles(t *testing.T) {
 func TestOptionsValidateAllBranches(t *testing.T) {
 	storage := local.New()
 	storage.Configure(map[string]string{"path": t.TempDir()})
+	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
 	// Test with all zero/default values that get filled
 	opts := &Options{
 		Addr:      ":4433",
-		Storage:   storage,
+		Backend:   "",
 		TLSConfig: tlsConfig,
 		// Everything else zero
 	}

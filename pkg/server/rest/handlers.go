@@ -19,6 +19,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -26,6 +27,8 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/audit"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
+	"github.com/jeremyhahn/go-objstore/pkg/objstore"
+	"github.com/jeremyhahn/go-objstore/pkg/validation"
 	"github.com/jeremyhahn/go-objstore/pkg/version"
 )
 
@@ -37,31 +40,32 @@ const (
 	MaxListLimit = 1000
 )
 
-// Handler encapsulates the storage backend for handling requests
+// Handler handles REST API requests using the ObjstoreFacade
 type Handler struct {
-	storage common.Storage
+	backend string // Backend name (empty = default)
 }
 
-// NewHandler creates a new Handler instance
-func NewHandler(storage common.Storage) *Handler {
-	return &Handler{
-		storage: storage,
+// NewHandler creates a new Handler instance.
+// The backend parameter specifies which backend to route to (empty = default).
+// The ObjstoreFacade must be initialized before calling NewHandler.
+func NewHandler(backend string) (*Handler, error) {
+	if !objstore.IsInitialized() {
+		return nil, objstore.ErrNotInitialized
 	}
+	return &Handler{
+		backend: backend,
+	}, nil
+}
+
+// keyRef builds a key reference with optional backend prefix
+func (h *Handler) keyRef(key string) string {
+	if h.backend == "" {
+		return key
+	}
+	return h.backend + ":" + key
 }
 
 // PutObject handles object upload
-// @Summary Upload an object
-// @Description Upload an object to the storage backend with optional metadata
-// @Tags objects
-// @Accept multipart/form-data,application/octet-stream
-// @Produce json
-// @Param key path string true "Object key"
-// @Param file formData file false "File to upload (multipart)"
-// @Param metadata formData string false "JSON metadata"
-// @Success 201 {object} SuccessResponse
-// @Failure 400 {object} ErrorResponse
-// @Failure 500 {object} ErrorResponse
-// @Router /objects/{key} [put]
 func (h *Handler) PutObject(c *gin.Context) {
 	key := c.Param("key")
 	if key == "" {
@@ -74,18 +78,12 @@ func (h *Handler) PutObject(c *gin.Context) {
 		key = key[1:]
 	}
 
-	// Validate key for security
-	if err := common.ValidateKey(key); err != nil {
-		RespondWithError(c, http.StatusBadRequest, common.SanitizeErrorMessage(err))
-		return
-	}
-
 	var reader io.Reader
 	var metadata *common.Metadata
 
 	// Check if this is a multipart upload
 	contentType := c.GetHeader("Content-Type")
-	if contentType == "multipart/form-data" || c.Request.MultipartForm != nil {
+	if strings.HasPrefix(contentType, "multipart/form-data") || c.Request.MultipartForm != nil {
 		// Handle multipart upload
 		file, header, err := c.Request.FormFile("file")
 		if err != nil {
@@ -103,13 +101,6 @@ func (h *Handler) PutObject(c *gin.Context) {
 			if err := json.Unmarshal([]byte(metadataStr), metadata); err != nil {
 				RespondWithError(c, http.StatusBadRequest, "invalid metadata JSON: "+err.Error())
 				return
-			}
-			// Validate custom metadata
-			if metadata.Custom != nil {
-				if err := common.ValidateMetadata(metadata.Custom); err != nil {
-					RespondWithError(c, http.StatusBadRequest, err.Error())
-					return
-				}
 			}
 		} else {
 			metadata = &common.Metadata{
@@ -129,13 +120,6 @@ func (h *Handler) PutObject(c *gin.Context) {
 				RespondWithError(c, http.StatusBadRequest, "invalid metadata JSON in header: "+err.Error())
 				return
 			}
-			// Validate custom metadata
-			if metadata.Custom != nil {
-				if err := common.ValidateMetadata(metadata.Custom); err != nil {
-					RespondWithError(c, http.StatusBadRequest, err.Error())
-					return
-				}
-			}
 		} else {
 			metadata = &common.Metadata{
 				ContentType: c.GetHeader("Content-Type"),
@@ -143,8 +127,8 @@ func (h *Handler) PutObject(c *gin.Context) {
 		}
 	}
 
-	// Store the object
-	err := h.storage.PutWithMetadata(c.Request.Context(), key, reader, metadata)
+	// Store the object using facade
+	err := objstore.PutWithMetadata(c.Request.Context(), h.keyRef(key), reader, metadata)
 
 	// Audit logging
 	auditLogger := audit.GetAuditLogger(c.Request.Context())
@@ -153,31 +137,29 @@ func (h *Handler) PutObject(c *gin.Context) {
 
 	if err != nil {
 		_ = auditLogger.LogObjectMutation(c.Request.Context(), audit.EventObjectCreated,
-			userID, principal, "default", key, c.ClientIP(), requestID, 0,
-			audit.ResultFailure, err) // #nosec G104 -- Audit logging errors are logged internally, should not block operations
+			userID, principal, h.backend, key, c.ClientIP(), requestID, 0,
+			audit.ResultFailure, err)
 		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
 		return
 	}
 
-	// metadata is always non-nil due to all code paths assigning it
 	bytesTransferred := metadata.Size
 	_ = auditLogger.LogObjectMutation(c.Request.Context(), audit.EventObjectCreated,
-		userID, principal, "default", key, c.ClientIP(), requestID, bytesTransferred,
-		audit.ResultSuccess, nil) // #nosec G104 -- Audit logging errors are logged internally, should not block operations
+		userID, principal, h.backend, key, c.ClientIP(), requestID, bytesTransferred,
+		audit.ResultSuccess, nil)
 
-	RespondWithSuccess(c, http.StatusCreated, "object uploaded successfully", gin.H{"key": key})
+	// Get the stored metadata to retrieve the ETag
+	var etag string
+	storedMetadata, metaErr := objstore.GetMetadata(c.Request.Context(), h.keyRef(key))
+	if metaErr == nil && storedMetadata != nil && storedMetadata.ETag != "" {
+		etag = storedMetadata.ETag
+		c.Header("ETag", etag)
+	}
+
+	RespondWithSuccess(c, http.StatusCreated, "object uploaded successfully", gin.H{"key": key, "etag": etag})
 }
 
 // GetObject handles object download
-// @Summary Download an object
-// @Description Retrieve an object from the storage backend
-// @Tags objects
-// @Produce application/octet-stream
-// @Param key path string true "Object key"
-// @Success 200 {file} binary
-// @Failure 404 {object} ErrorResponse
-// @Failure 500 {object} ErrorResponse
-// @Router /objects/{key} [get]
 func (h *Handler) GetObject(c *gin.Context) {
 	key := c.Param("key")
 	if key == "" {
@@ -190,21 +172,15 @@ func (h *Handler) GetObject(c *gin.Context) {
 		key = key[1:]
 	}
 
-	// Validate key for security
-	if err := common.ValidateKey(key); err != nil {
-		RespondWithError(c, http.StatusBadRequest, common.SanitizeErrorMessage(err))
-		return
-	}
-
 	// Get metadata first to set headers
-	metadata, err := h.storage.GetMetadata(c.Request.Context(), key)
+	metadata, err := objstore.GetMetadata(c.Request.Context(), h.keyRef(key))
 	if err != nil {
 		RespondWithError(c, http.StatusNotFound, common.SanitizeErrorMessage(err))
 		return
 	}
 
-	// Get the object
-	reader, err := h.storage.GetWithContext(c.Request.Context(), key)
+	// Get the object using facade
+	reader, err := objstore.GetWithContext(c.Request.Context(), h.keyRef(key))
 	if err != nil {
 		RespondWithError(c, http.StatusNotFound, common.SanitizeErrorMessage(err))
 		return
@@ -238,21 +214,11 @@ func (h *Handler) GetObject(c *gin.Context) {
 	c.Status(http.StatusOK)
 	_, err = io.Copy(c.Writer, reader)
 	if err != nil {
-		// Log error but can't send error response as headers are already sent
 		_ = c.Error(err)
 	}
 }
 
 // DeleteObject handles object deletion
-// @Summary Delete an object
-// @Description Remove an object from the storage backend
-// @Tags objects
-// @Produce json
-// @Param key path string true "Object key"
-// @Success 200 {object} SuccessResponse
-// @Failure 404 {object} ErrorResponse
-// @Failure 500 {object} ErrorResponse
-// @Router /objects/{key} [delete]
 func (h *Handler) DeleteObject(c *gin.Context) {
 	key := c.Param("key")
 	if key == "" {
@@ -265,14 +231,8 @@ func (h *Handler) DeleteObject(c *gin.Context) {
 		key = key[1:]
 	}
 
-	// Validate key for security
-	if err := common.ValidateKey(key); err != nil {
-		RespondWithError(c, http.StatusBadRequest, common.SanitizeErrorMessage(err))
-		return
-	}
-
-	// Check if object exists
-	exists, err := h.storage.Exists(c.Request.Context(), key)
+	// Check if object exists using facade
+	exists, err := objstore.Exists(c.Request.Context(), h.keyRef(key))
 	if err != nil {
 		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
 		return
@@ -283,8 +243,8 @@ func (h *Handler) DeleteObject(c *gin.Context) {
 		return
 	}
 
-	// Delete the object
-	err = h.storage.DeleteWithContext(c.Request.Context(), key)
+	// Delete the object using facade
+	err = objstore.DeleteWithContext(c.Request.Context(), h.keyRef(key))
 
 	// Audit logging
 	auditLogger := audit.GetAuditLogger(c.Request.Context())
@@ -293,28 +253,20 @@ func (h *Handler) DeleteObject(c *gin.Context) {
 
 	if err != nil {
 		_ = auditLogger.LogObjectMutation(c.Request.Context(), audit.EventObjectDeleted,
-			userID, principal, "default", key, c.ClientIP(), requestID, 0,
-			audit.ResultFailure, err) // #nosec G104 -- Audit logging errors are logged internally, should not block operations
+			userID, principal, h.backend, key, c.ClientIP(), requestID, 0,
+			audit.ResultFailure, err)
 		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
 		return
 	}
 
 	_ = auditLogger.LogObjectMutation(c.Request.Context(), audit.EventObjectDeleted,
-		userID, principal, "default", key, c.ClientIP(), requestID, 0,
-		audit.ResultSuccess, nil) // #nosec G104 -- Audit logging errors are logged internally, should not block operations
+		userID, principal, h.backend, key, c.ClientIP(), requestID, 0,
+		audit.ResultSuccess, nil)
 
 	RespondWithSuccess(c, http.StatusOK, "object deleted successfully", gin.H{"key": key})
 }
 
 // HeadObject checks if an object exists
-// @Summary Check object existence
-// @Description Check if an object exists in the storage backend
-// @Tags objects
-// @Produce json
-// @Param key path string true "Object key"
-// @Success 200 {object} SuccessResponse
-// @Failure 404 {object} ErrorResponse
-// @Router /objects/{key} [head]
 func (h *Handler) HeadObject(c *gin.Context) {
 	key := c.Param("key")
 	if key == "" {
@@ -327,14 +279,8 @@ func (h *Handler) HeadObject(c *gin.Context) {
 		key = key[1:]
 	}
 
-	// Validate key for security
-	if err := common.ValidateKey(key); err != nil {
-		RespondWithError(c, http.StatusBadRequest, common.SanitizeErrorMessage(err))
-		return
-	}
-
-	// Check if object exists
-	exists, err := h.storage.Exists(c.Request.Context(), key)
+	// Check if object exists using facade
+	exists, err := objstore.Exists(c.Request.Context(), h.keyRef(key))
 	if err != nil {
 		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
 		return
@@ -346,7 +292,7 @@ func (h *Handler) HeadObject(c *gin.Context) {
 	}
 
 	// Get metadata to set headers
-	metadata, err := h.storage.GetMetadata(c.Request.Context(), key)
+	metadata, err := objstore.GetMetadata(c.Request.Context(), h.keyRef(key))
 	if err == nil {
 		if metadata.ContentType != "" {
 			c.Header("Content-Type", metadata.ContentType)
@@ -366,20 +312,8 @@ func (h *Handler) HeadObject(c *gin.Context) {
 }
 
 // ListObjects handles listing objects with pagination
-// @Summary List objects
-// @Description List objects with optional prefix filtering and pagination
-// @Tags objects
-// @Produce json
-// @Param prefix query string false "Prefix filter"
-// @Param limit query int false "Maximum number of results" default(100)
-// @Param token query string false "Continuation token for pagination"
-// @Param delimiter query string false "Delimiter for hierarchical listing"
-// @Success 200 {object} ListObjectsResponse
-// @Failure 500 {object} ErrorResponse
-// @Router /objects [get]
 func (h *Handler) ListObjects(c *gin.Context) {
 	prefix := c.Query("prefix")
-	// Support both "limit" and "max_results" parameters for compatibility
 	limitStr := c.Query("limit")
 	if limitStr == "" {
 		limitStr = c.Query("max_results")
@@ -396,7 +330,6 @@ func (h *Handler) ListObjects(c *gin.Context) {
 		return
 	}
 
-	// Cap limit at MaxListLimit
 	if limit > MaxListLimit {
 		limit = MaxListLimit
 	}
@@ -408,7 +341,8 @@ func (h *Handler) ListObjects(c *gin.Context) {
 		Delimiter:    delimiter,
 	}
 
-	result, err := h.storage.ListWithOptions(c.Request.Context(), opts)
+	// List using facade
+	result, err := objstore.ListWithOptions(c.Request.Context(), h.backend, opts)
 	if err != nil {
 		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
 		return
@@ -418,14 +352,6 @@ func (h *Handler) ListObjects(c *gin.Context) {
 }
 
 // GetObjectMetadata retrieves object metadata
-// @Summary Get object metadata
-// @Description Retrieve metadata for an object without downloading it
-// @Tags objects
-// @Produce json
-// @Param key path string true "Object key"
-// @Success 200 {object} ObjectResponse
-// @Failure 404 {object} ErrorResponse
-// @Router /metadata/{key} [get]
 func (h *Handler) GetObjectMetadata(c *gin.Context) {
 	key := c.Param("key")
 	if key == "" {
@@ -438,13 +364,7 @@ func (h *Handler) GetObjectMetadata(c *gin.Context) {
 		key = key[1:]
 	}
 
-	// Validate key for security
-	if err := common.ValidateKey(key); err != nil {
-		RespondWithError(c, http.StatusBadRequest, common.SanitizeErrorMessage(err))
-		return
-	}
-
-	metadata, err := h.storage.GetMetadata(c.Request.Context(), key)
+	metadata, err := objstore.GetMetadata(c.Request.Context(), h.keyRef(key))
 	if err != nil {
 		RespondWithError(c, http.StatusNotFound, common.SanitizeErrorMessage(err))
 		return
@@ -459,18 +379,6 @@ func (h *Handler) GetObjectMetadata(c *gin.Context) {
 }
 
 // UpdateObjectMetadata updates object metadata
-// @Summary Update object metadata
-// @Description Update metadata for an existing object
-// @Tags objects
-// @Accept json
-// @Produce json
-// @Param key path string true "Object key"
-// @Param metadata body common.Metadata true "Metadata to update"
-// @Success 200 {object} SuccessResponse
-// @Failure 400 {object} ErrorResponse
-// @Failure 404 {object} ErrorResponse
-// @Failure 500 {object} ErrorResponse
-// @Router /metadata/{key} [put]
 func (h *Handler) UpdateObjectMetadata(c *gin.Context) {
 	key := c.Param("key")
 	if key == "" {
@@ -483,14 +391,8 @@ func (h *Handler) UpdateObjectMetadata(c *gin.Context) {
 		key = key[1:]
 	}
 
-	// Validate key for security
-	if err := common.ValidateKey(key); err != nil {
-		RespondWithError(c, http.StatusBadRequest, common.SanitizeErrorMessage(err))
-		return
-	}
-
-	// Check if object exists
-	exists, err := h.storage.Exists(c.Request.Context(), key)
+	// Check if object exists using facade
+	exists, err := objstore.Exists(c.Request.Context(), h.keyRef(key))
 	if err != nil {
 		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
 		return
@@ -508,16 +410,8 @@ func (h *Handler) UpdateObjectMetadata(c *gin.Context) {
 		return
 	}
 
-	// Validate custom metadata
-	if metadata.Custom != nil {
-		if err := common.ValidateMetadata(metadata.Custom); err != nil {
-			RespondWithError(c, http.StatusBadRequest, err.Error())
-			return
-		}
-	}
-
-	// Update metadata
-	err = h.storage.UpdateMetadata(c.Request.Context(), key, &metadata)
+	// Update metadata using facade
+	err = objstore.UpdateMetadata(c.Request.Context(), h.keyRef(key), &metadata)
 	if err != nil {
 		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
 		return
@@ -527,12 +421,6 @@ func (h *Handler) UpdateObjectMetadata(c *gin.Context) {
 }
 
 // HealthCheck handles health check requests
-// @Summary Health check
-// @Description Check if the server is healthy
-// @Tags health
-// @Produce json
-// @Success 200 {object} HealthResponse
-// @Router /health [get]
 func (h *Handler) HealthCheck(c *gin.Context) {
 	c.JSON(http.StatusOK, HealthResponse{
 		Status:  "healthy",
@@ -540,19 +428,7 @@ func (h *Handler) HealthCheck(c *gin.Context) {
 	})
 }
 
-// Helper functions
-
 // Archive handles archiving an object to another backend
-// @Summary Archive an object
-// @Description Archive an object to an archival storage backend
-// @Tags archive
-// @Accept json
-// @Produce json
-// @Param request body ArchiveRequest true "Archive request"
-// @Success 200 {object} SuccessResponse
-// @Failure 400 {object} ErrorResponse
-// @Failure 500 {object} ErrorResponse
-// @Router /archive [post]
 func (h *Handler) Archive(c *gin.Context) {
 	var req ArchiveRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -565,14 +441,14 @@ func (h *Handler) Archive(c *gin.Context) {
 		return
 	}
 
-	if req.DestinationType == "" {
-		RespondWithError(c, http.StatusBadRequest, "destination_type is required")
+	// Validate key
+	if err := validation.ValidateKey(req.Key); err != nil {
+		RespondWithError(c, http.StatusBadRequest, "invalid key: "+common.SanitizeErrorMessage(err))
 		return
 	}
 
-	// Validate key for security
-	if err := common.ValidateKey(req.Key); err != nil {
-		RespondWithError(c, http.StatusBadRequest, common.SanitizeErrorMessage(err))
+	if req.DestinationType == "" {
+		RespondWithError(c, http.StatusBadRequest, "destination_type is required")
 		return
 	}
 
@@ -583,8 +459,8 @@ func (h *Handler) Archive(c *gin.Context) {
 		return
 	}
 
-	// Perform archive operation
-	err = h.storage.Archive(req.Key, archiver)
+	// Perform archive operation using facade
+	err = objstore.Archive(h.keyRef(req.Key), archiver)
 
 	// Audit logging
 	auditLogger := audit.GetAuditLogger(c.Request.Context())
@@ -593,15 +469,15 @@ func (h *Handler) Archive(c *gin.Context) {
 
 	if err != nil {
 		_ = auditLogger.LogObjectMutation(c.Request.Context(), audit.EventObjectArchived,
-			userID, principal, "default", req.Key, c.ClientIP(), requestID, 0,
-			audit.ResultFailure, err) // #nosec G104 -- Audit logging errors are logged internally, should not block operations
+			userID, principal, h.backend, req.Key, c.ClientIP(), requestID, 0,
+			audit.ResultFailure, err)
 		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
 		return
 	}
 
 	_ = auditLogger.LogObjectMutation(c.Request.Context(), audit.EventObjectArchived,
-		userID, principal, "default", req.Key, c.ClientIP(), requestID, 0,
-		audit.ResultSuccess, nil) // #nosec G104 -- Audit logging errors are logged internally, should not block operations
+		userID, principal, h.backend, req.Key, c.ClientIP(), requestID, 0,
+		audit.ResultSuccess, nil)
 
 	RespondWithSuccess(c, http.StatusOK, "object archived successfully", gin.H{
 		"key":         req.Key,
@@ -610,16 +486,6 @@ func (h *Handler) Archive(c *gin.Context) {
 }
 
 // AddPolicy handles adding a new lifecycle policy
-// @Summary Add lifecycle policy
-// @Description Add a new lifecycle policy for automatic object management
-// @Tags policies
-// @Accept json
-// @Produce json
-// @Param request body AddPolicyRequest true "Policy request"
-// @Success 200 {object} SuccessResponse
-// @Failure 400 {object} ErrorResponse
-// @Failure 500 {object} ErrorResponse
-// @Router /policies [post]
 func (h *Handler) AddPolicy(c *gin.Context) {
 	var req AddPolicyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -664,9 +530,9 @@ func (h *Handler) AddPolicy(c *gin.Context) {
 		policy.Destination = archiver
 	}
 
-	err := h.storage.AddPolicy(policy)
+	// Add policy using facade
+	err := objstore.AddPolicy(h.backend, policy)
 	if err != nil {
-		// Check for duplicate policy error
 		if err.Error() == "policy already exists" {
 			RespondWithError(c, http.StatusConflict, common.SanitizeErrorMessage(err))
 			return
@@ -681,16 +547,6 @@ func (h *Handler) AddPolicy(c *gin.Context) {
 }
 
 // RemovePolicy handles removing a lifecycle policy
-// @Summary Remove lifecycle policy
-// @Description Remove an existing lifecycle policy by ID
-// @Tags policies
-// @Produce json
-// @Param id path string true "Policy ID"
-// @Success 200 {object} SuccessResponse
-// @Failure 400 {object} ErrorResponse
-// @Failure 404 {object} ErrorResponse
-// @Failure 500 {object} ErrorResponse
-// @Router /policies/{id} [delete]
 func (h *Handler) RemovePolicy(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
@@ -703,7 +559,8 @@ func (h *Handler) RemovePolicy(c *gin.Context) {
 		id = id[1:]
 	}
 
-	err := h.storage.RemovePolicy(id)
+	// Remove policy using facade
+	err := objstore.RemovePolicy(h.backend, id)
 	if err != nil {
 		if errors.Is(err, common.ErrPolicyNotFound) {
 			RespondWithError(c, http.StatusNotFound, common.SanitizeErrorMessage(err))
@@ -719,18 +576,11 @@ func (h *Handler) RemovePolicy(c *gin.Context) {
 }
 
 // GetPolicies handles listing all lifecycle policies
-// @Summary List lifecycle policies
-// @Description Retrieve all lifecycle policies with optional prefix filtering
-// @Tags policies
-// @Produce json
-// @Param prefix query string false "Prefix filter"
-// @Success 200 {object} GetPoliciesResponse
-// @Failure 500 {object} ErrorResponse
-// @Router /policies [get]
 func (h *Handler) GetPolicies(c *gin.Context) {
 	prefix := c.Query("prefix")
 
-	policies, err := h.storage.GetPolicies()
+	// Get policies using facade
+	policies, err := objstore.GetPolicies(h.backend)
 	if err != nil {
 		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
 		return
@@ -759,8 +609,8 @@ func (h *Handler) ExistsObject(c *gin.Context) {
 		return
 	}
 
-	ctx := c.Request.Context()
-	exists, err := h.storage.Exists(ctx, key)
+	// Check existence using facade
+	exists, err := objstore.Exists(c.Request.Context(), h.keyRef(key))
 	if err != nil {
 		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
 		return
@@ -776,7 +626,8 @@ func (h *Handler) ExistsObject(c *gin.Context) {
 func (h *Handler) ApplyPolicies(c *gin.Context) {
 	ctx := c.Request.Context()
 
-	policies, err := h.storage.GetPolicies()
+	// Get policies using facade
+	policies, err := objstore.GetPolicies(h.backend)
 	if err != nil {
 		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
 		return
@@ -796,7 +647,7 @@ func (h *Handler) ApplyPolicies(c *gin.Context) {
 	opts := &common.ListOptions{
 		Prefix: "",
 	}
-	result, err := h.storage.ListWithOptions(ctx, opts)
+	result, err := objstore.ListWithOptions(ctx, h.backend, opts)
 	if err != nil {
 		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
 		return
@@ -820,18 +671,16 @@ func (h *Handler) ApplyPolicies(c *gin.Context) {
 				continue
 			}
 
-			// Apply action
+			// Apply action using facade
 			switch policy.Action {
 			case "delete":
-				if err := h.storage.DeleteWithContext(ctx, obj.Key); err != nil {
-					// Continue processing other objects even if one fails
+				if err := objstore.DeleteWithContext(ctx, h.keyRef(obj.Key)); err != nil {
 					continue
 				}
 				objectsProcessed++
 			case "archive":
 				if policy.Destination != nil {
-					if err := h.storage.Archive(obj.Key, policy.Destination); err != nil {
-						// Continue processing other objects even if one fails
+					if err := objstore.Archive(h.keyRef(obj.Key), policy.Destination); err != nil {
 						continue
 					}
 					objectsProcessed++

@@ -1,0 +1,77 @@
+services:
+  # Go ObjectStore server with local storage backend
+  objstore-server:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+      args:
+        BUILD_TAGS: local
+    command: ["/app/objstore-server", "--quic-self-signed"]
+    ports:
+      - "8080:8080"    # REST
+      - "50051:50051"  # gRPC
+      - "4433:4433"    # QUIC
+    environment:
+      - STORAGE_BACKEND=local
+      - STORAGE_PATH=/data
+      - LOG_LEVEL=info
+      - REST_ENABLED=true
+      - GRPC_ENABLED=true
+      - QUIC_ENABLED=true
+    volumes:
+      - objstore-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks:
+      - objstore-net
+
+  # C# SDK unit tests
+  csharp-unit-tests:
+    build:
+      context: ../..  # api/ directory to include proto/
+      dockerfile: sdks/csharp/Dockerfile
+    stdin_open: true
+    tty: true
+    command: >
+      dotnet test Tests/Tests.csproj
+      --configuration Release
+      --no-build
+      --filter "FullyQualifiedName~Unit"
+      --logger "console;verbosity=detailed"
+    networks:
+      - objstore-net
+
+  # C# SDK integration tests
+  csharp-integration-tests:
+    build:
+      context: ../..  # api/ directory to include proto/
+      dockerfile: sdks/csharp/Dockerfile
+    depends_on:
+      objstore-server:
+        condition: service_healthy
+    environment:
+      - OBJSTORE_REST_URL=http://objstore-server:8080
+      - OBJSTORE_GRPC_HOST=objstore-server
+      - OBJSTORE_GRPC_PORT=50051
+      - OBJSTORE_QUIC_URL=https://objstore-server:4433
+    stdin_open: true
+    tty: true
+    command: >
+      dotnet test Tests/Tests.csproj
+      --configuration Release
+      --no-build
+      --filter "FullyQualifiedName~Integration"
+      --logger "console;verbosity=detailed"
+    networks:
+      - objstore-net
+
+volumes:
+  objstore-data:
+
+networks:
+  objstore-net:
+    driver: bridge

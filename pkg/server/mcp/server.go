@@ -14,8 +14,8 @@
 package mcp
 
 import (
-	"errors"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
-	"github.com/jeremyhahn/go-objstore/pkg/common"
+	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	"github.com/sourcegraph/jsonrpc2"
 )
 
@@ -46,7 +46,6 @@ const (
 type ServerConfig struct {
 	Mode           ServerMode
 	HTTPAddress    string
-	Storage        common.Storage
 	ResourcePrefix string
 
 	// Logger is the pluggable logger adapter (default: DefaultLogger)
@@ -58,6 +57,10 @@ type ServerConfig struct {
 
 	// TLSConfig is the TLS/mTLS configuration for HTTP mode (optional)
 	TLSConfig *adapters.TLSConfig
+
+	// Backend is the name of the backend to use when using the facade.
+	// If empty, the default backend is used.
+	Backend string
 }
 
 // Server is the main MCP server
@@ -68,10 +71,12 @@ type Server struct {
 	resourceManager *ResourceManager
 }
 
-// NewServer creates a new MCP server
+// NewServer creates a new MCP server using the ObjstoreFacade.
+// The facade must be initialized before calling this function.
 func NewServer(config *ServerConfig) (*Server, error) {
-	if config.Storage == nil {
-		return nil, ErrStorageRequired
+	// Verify facade is initialized
+	if !objstore.IsInitialized() {
+		return nil, objstore.ErrNotInitialized
 	}
 
 	// Set default resource prefix if not provided
@@ -93,8 +98,8 @@ func NewServer(config *ServerConfig) (*Server, error) {
 	toolRegistry := NewToolRegistry()
 	toolRegistry.RegisterDefaultTools()
 
-	toolExecutor := NewToolExecutor(config.Storage)
-	resourceManager := NewResourceManager(config.Storage, config.ResourcePrefix)
+	toolExecutor := NewToolExecutor(config.Backend)
+	resourceManager := NewResourceManager(config.Backend, config.ResourcePrefix)
 
 	return &Server{
 		config:          config,

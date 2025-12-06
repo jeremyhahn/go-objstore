@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
-	"github.com/jeremyhahn/go-objstore/pkg/local"
 
 	"github.com/quic-go/quic-go"
 )
@@ -64,8 +63,6 @@ func TestDefaultOptions(t *testing.T) {
 }
 
 func TestOptionsValidate(t *testing.T) {
-	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
 	tlsConfig, _ := GenerateSelfSignedCert()
 
 	tests := []struct {
@@ -77,7 +74,7 @@ func TestOptionsValidate(t *testing.T) {
 			name: "valid options",
 			opts: &Options{
 				Addr:               ":4433",
-				Storage:            storage,
+				Backend:            "",
 				TLSConfig:          tlsConfig,
 				MaxRequestBodySize: 100 * 1024 * 1024,
 				ReadTimeout:        30 * time.Second,
@@ -90,24 +87,16 @@ func TestOptionsValidate(t *testing.T) {
 		{
 			name: "missing address",
 			opts: &Options{
-				Storage:   storage,
+				Backend:   "",
 				TLSConfig: tlsConfig,
 			},
 			wantErr: ErrInvalidAddr,
 		},
 		{
-			name: "missing storage",
-			opts: &Options{
-				Addr:      ":4433",
-				TLSConfig: tlsConfig,
-			},
-			wantErr: ErrStorageRequired,
-		},
-		{
 			name: "missing TLS config",
 			opts: &Options{
 				Addr:    ":4433",
-				Storage: storage,
+				Backend: "",
 			},
 			wantErr: ErrTLSConfigRequired,
 		},
@@ -115,7 +104,7 @@ func TestOptionsValidate(t *testing.T) {
 			name: "auto-fill defaults",
 			opts: &Options{
 				Addr:      ":4433",
-				Storage:   storage,
+				Backend:   "",
 				TLSConfig: tlsConfig,
 			},
 			wantErr: nil,
@@ -152,14 +141,12 @@ func TestOptionsValidate(t *testing.T) {
 }
 
 func TestOptionsBuilderPattern(t *testing.T) {
-	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
 	tlsConfig, _ := GenerateSelfSignedCert()
 	quicConfig := &quic.Config{}
 
 	opts := DefaultOptions().
 		WithAddr(":5000").
-		WithStorage(storage).
+		WithBackend("custom").
 		WithTLSConfig(tlsConfig).
 		WithQUICConfig(quicConfig).
 		WithMaxRequestBodySize(50*1024*1024).
@@ -171,8 +158,8 @@ func TestOptionsBuilderPattern(t *testing.T) {
 		t.Errorf("Expected addr :5000, got %s", opts.Addr)
 	}
 
-	if opts.Storage != storage {
-		t.Error("Expected storage to be set")
+	if opts.Backend != "custom" {
+		t.Errorf("Expected backend 'custom', got %s", opts.Backend)
 	}
 
 	if opts.TLSConfig != tlsConfig {
@@ -213,13 +200,11 @@ func TestOptionsBuilderPattern(t *testing.T) {
 }
 
 func TestOptionsValidateSyncsQUICConfig(t *testing.T) {
-	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
 	tlsConfig, _ := GenerateSelfSignedCert()
 
 	opts := &Options{
 		Addr:            ":4433",
-		Storage:         storage,
+		Backend:         "",
 		TLSConfig:       tlsConfig,
 		IdleTimeout:     90 * time.Second,
 		MaxBiStreams:    150,

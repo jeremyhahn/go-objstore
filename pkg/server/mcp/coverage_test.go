@@ -26,7 +26,7 @@ import (
 // TestToolExecutor_EdgeCases tests edge cases to increase coverage
 func TestToolExecutor_EdgeCases(t *testing.T) {
 	storage := NewMockStorage()
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 
 	// Test executePut with invalid metadata type
 	_, err := executor.Execute(context.Background(), "objstore_put", map[string]any{
@@ -109,7 +109,7 @@ func TestToolExecutor_EdgeCases(t *testing.T) {
 // TestToolExecutor_InvalidArgumentTypes tests invalid argument types
 func TestToolExecutor_InvalidArgumentTypes(t *testing.T) {
 	storage := NewMockStorage()
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 
 	tests := []struct {
 		name string
@@ -175,7 +175,7 @@ func TestToolExecutor_InvalidArgumentTypes(t *testing.T) {
 // TestResourceManager_ListWithMetadata tests listing resources with full metadata
 func TestResourceManager_ListWithMetadata(t *testing.T) {
 	storage := NewMockStorage()
-	manager := NewResourceManager(storage, "")
+	manager := createTestResourceManager(t, storage, "")
 
 	// Add objects with metadata
 	storage.PutWithMetadata(context.Background(), "file1.txt", strings.NewReader("data1"), &common.Metadata{
@@ -209,10 +209,7 @@ func TestResourceManager_ListWithMetadata(t *testing.T) {
 // TestJSONRPCRequest_EdgeCases tests edge cases in JSON-RPC request handling
 func TestJSONRPCRequest_EdgeCases(t *testing.T) {
 	storage := NewMockStorage()
-	server, _ := NewServer(&ServerConfig{
-		Mode:    ModeStdio,
-		Storage: storage,
-	})
+	server := createTestServer(t, storage, ModeStdio)
 	handler := NewRPCHandler(server)
 
 	// Test initialize with invalid params
@@ -240,7 +237,7 @@ func TestJSONRPCRequest_EdgeCases(t *testing.T) {
 // TestToolExecutor_PutWithEncoding tests put with content encoding metadata
 func TestToolExecutor_PutWithEncoding(t *testing.T) {
 	storage := NewMockStorage()
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 
 	result, err := executor.Execute(context.Background(), "objstore_put", map[string]any{
 		"key":  "encoded.txt.gz",
@@ -261,10 +258,7 @@ func TestToolExecutor_PutWithEncoding(t *testing.T) {
 // TestHandleResourcesListEmpty tests resources/list with empty cursor
 func TestHandleResourcesListEmpty(t *testing.T) {
 	storage := NewMockStorage()
-	server, _ := NewServer(&ServerConfig{
-		Mode:    ModeStdio,
-		Storage: storage,
-	})
+	server := createTestServer(t, storage, ModeStdio)
 	handler := NewRPCHandler(server)
 
 	// Test with empty params (should work)
@@ -293,7 +287,7 @@ func TestHandleResourcesListEmpty(t *testing.T) {
 // TestToolExecutor_MetadataWithCustomFields tests put with custom metadata fields
 func TestToolExecutor_MetadataWithCustomFields(t *testing.T) {
 	storage := NewMockStorage()
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 
 	result, err := executor.Execute(context.Background(), "objstore_put", map[string]any{
 		"key":  "custom.txt",
@@ -326,7 +320,7 @@ func TestToolExecutor_MetadataWithCustomFields(t *testing.T) {
 // TestToolExecutor_MetadataWithMixedCustomTypes tests custom metadata with mixed types
 func TestToolExecutor_MetadataWithMixedCustomTypes(t *testing.T) {
 	storage := NewMockStorage()
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 
 	_, err := executor.Execute(context.Background(), "objstore_put", map[string]any{
 		"key":  "mixed.txt",
@@ -359,7 +353,7 @@ func TestToolExecutor_MetadataWithMixedCustomTypes(t *testing.T) {
 // TestToolExecutor_ListWithVariousParameters tests list with different parameter combinations
 func TestToolExecutor_ListWithVariousParameters(t *testing.T) {
 	storage := NewMockStorage()
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 
 	// Add test data
 	for i := 0; i < 5; i++ {

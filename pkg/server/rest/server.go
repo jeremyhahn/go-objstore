@@ -192,8 +192,11 @@ func NewServer(storage common.Storage, config *ServerConfig) (*Server, error) {
 		router.Use(RequestSizeLimitMiddleware(config.MaxRequestSize))
 	}
 
-	// Create handler
-	handler := NewHandler(storage)
+	// Create handler (uses facade with default backend)
+	handler, err := NewHandler("")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create handler: %w", err)
+	}
 
 	// Setup routes
 	SetupRoutes(router, handler)

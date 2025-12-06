@@ -1,0 +1,83 @@
+[package]
+name = "go-objstore"
+version = "0.1.2"
+edition = "2021"
+authors = ["Go ObjectStore Contributors"]
+description = "Rust SDK for go-objstore with REST, gRPC, and QUIC/HTTP3 support"
+license = "AGPL-3.0"
+repository = "https://github.com/jeremyhahn/go-objstore"
+keywords = ["object-storage", "s3", "grpc", "quic", "http3"]
+categories = ["api-bindings", "network-programming"]
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+futures = "0.3"
+async-trait = "0.1"
+
+# gRPC
+tonic = "0.11"
+prost = "0.12"
+prost-types = "0.12"
+
+# HTTP clients
+reqwest = { version = "0.11", features = ["json", "multipart", "stream"] }
+hyper = { version = "1.0", features = ["full"] }
+h3 = "0.0.4"
+h3-quinn = "0.0.5"
+quinn = { version = "0.10", features = ["rustls", "ring"] }
+
+# HTTP3/QUIC - versions must be compatible with quinn 0.10
+rustls = { version = "0.21", features = ["dangerous_configuration"] }
+rustls-pemfile = "1.0"
+rustls-native-certs = "0.6"
+tokio-util = { version = "0.7", features = ["compat"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Utilities
+bytes = "1.5"
+url = "2.5"
+mime = "0.3"
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+urlencoding = "2.1"
+http = "1.0"
+
+[build-dependencies]
+tonic-build = "0.11"
+
+[dev-dependencies]
+mockito = "1.2"
+wiremock = "0.5"
+tempfile = "3.8"
+testcontainers = "0.15"
+tokio-test = "0.4"
+paste = "1.0"
+
+[lib]
+name = "go_objstore"
+path = "src/lib.rs"
+
+[[example]]
+name = "rest_client"
+path = "examples/rest_client.rs"
+
+[[example]]
+name = "grpc_client"
+path = "examples/grpc_client.rs"
+
+[[example]]
+name = "quic_client"
+path = "examples/quic_client.rs"
+
+[[example]]
+name = "unified_client"
+path = "examples/unified_client.rs"

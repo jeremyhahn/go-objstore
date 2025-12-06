@@ -32,8 +32,10 @@ docker-compose.yml
 docker-entrypoint.sh
 
 # Test files
-test/
-*_test.go
+# Note: Integration tests in test/integration are NOT ignored for Docker-based testing
+# Ignore unit test files in pkg/ and cmd/ directories
+pkg/**/*_test.go
+cmd/**/*_test.go
 
 # Examples
 examples/

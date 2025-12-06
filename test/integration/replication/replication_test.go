@@ -32,6 +32,7 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/audit"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
+	"github.com/jeremyhahn/go-objstore/pkg/local"
 	"github.com/jeremyhahn/go-objstore/pkg/replication"
 )
 
@@ -370,7 +371,15 @@ func TestReplication_LocalToLocal_BackendEncryption(t *testing.T) {
 	h := NewTestHelper(t)
 	defer h.Cleanup()
 
-	// Create test files
+	// Create backend encryption factory FIRST
+	backendFactory := h.CreateEncrypterFactory("backend-key")
+
+	// Set encryption factory on source store so files are written encrypted
+	if localBackend, ok := h.sourceStore.(*local.Local); ok {
+		localBackend.SetAtRestEncrypterFactory(backendFactory)
+	}
+
+	// Create test files (now written encrypted)
 	testFiles := map[string][]byte{
 		"file1.txt": []byte("sensitive data 1"),
 		"file2.txt": []byte("sensitive data 2"),
@@ -379,9 +388,6 @@ func TestReplication_LocalToLocal_BackendEncryption(t *testing.T) {
 	for key, content := range testFiles {
 		h.CreateTestFile(key, content)
 	}
-
-	// Create backend encryption factory
-	backendFactory := h.CreateEncrypterFactory("backend-key")
 
 	// Create replication policy with backend encryption enabled
 	policy := common.ReplicationPolicy{
@@ -420,9 +426,21 @@ func TestReplication_LocalToLocal_BackendEncryption(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, len(testFiles), result.Synced)
 
+	// Set up dest store with backend encryption for verification
+	if localBackend, ok := h.destStore.(*local.Local); ok {
+		localBackend.SetAtRestEncrypterFactory(backendFactory)
+	}
+
 	// Verify files are encrypted at rest in destination
 	for key, content := range testFiles {
-		h.VerifyFileExists(key, content) // Should decrypt properly when read
+		// Verify content can be read and decrypted correctly
+		reader, err := h.destStore.GetWithContext(context.Background(), key)
+		require.NoError(t, err, "File should exist in destination: %s", key)
+		actualContent, err := io.ReadAll(reader)
+		reader.Close()
+		require.NoError(t, err)
+		assert.Equal(t, content, actualContent, "Content mismatch for key: %s", key)
+
 		h.VerifyEncryptedAtRest(h.destDir, key, content)
 	}
 }
@@ -432,15 +450,24 @@ func TestReplication_LocalToLocal_ThreeLayerEncryption(t *testing.T) {
 	h := NewTestHelper(t)
 	defer h.Cleanup()
 
-	// Create test file
-	testKey := "secret.txt"
-	testContent := []byte("triple encrypted content")
-	h.CreateTestFile(testKey, testContent)
-
 	// Create three different encryption factories
 	backendFactory := h.CreateEncrypterFactory("backend-key")
 	sourceFactory := h.CreateEncrypterFactory("source-dek")
 	destFactory := h.CreateEncrypterFactory("dest-dek")
+
+	// Set up source store with backend encryption AND source DEK encryption
+	// so that files are written with the same encryption the syncer expects
+	if localBackend, ok := h.sourceStore.(*local.Local); ok {
+		localBackend.SetAtRestEncrypterFactory(backendFactory)
+	}
+	// Wrap with source DEK encryption for client-side layer
+	encryptedSourceStore := common.NewEncryptedStorage(h.sourceStore, sourceFactory)
+
+	// Create test file using the encrypted source store
+	testKey := "secret.txt"
+	testContent := []byte("triple encrypted content")
+	err := encryptedSourceStore.Put(testKey, bytes.NewReader(testContent))
+	require.NoError(t, err, "Failed to create test file")
 
 	// Create policy with all three encryption layers
 	policy := common.ReplicationPolicy{
@@ -489,8 +516,26 @@ func TestReplication_LocalToLocal_ThreeLayerEncryption(t *testing.T) {
 	assert.Equal(t, 1, result.Synced)
 	assert.Equal(t, 0, result.Failed)
 
-	// Verify file exists and content is accessible (all layers decrypt properly)
-	h.VerifyFileExists(testKey, testContent)
+	// Set up dest store with backend encryption for reading
+	if localBackend, ok := h.destStore.(*local.Local); ok {
+		localBackend.SetAtRestEncrypterFactory(backendFactory)
+	}
+
+	// Read from dest with backend decryption
+	backendDecryptedReader, err := h.destStore.GetWithContext(context.Background(), testKey)
+	require.NoError(t, err, "File should exist in destination")
+
+	// Manually decrypt with dest DEK (the outer encryption layer)
+	destDecrypter, err := destFactory.GetEncrypter("dest-dek")
+	require.NoError(t, err)
+	decryptedReader, err := destDecrypter.Decrypt(context.Background(), backendDecryptedReader)
+	backendDecryptedReader.Close()
+	require.NoError(t, err)
+	defer decryptedReader.Close()
+
+	actualContent, err := io.ReadAll(decryptedReader)
+	require.NoError(t, err)
+	assert.Equal(t, testContent, actualContent, "Content mismatch after decryption")
 
 	// Verify it's encrypted at rest
 	h.VerifyEncryptedAtRest(h.destDir, testKey, testContent)

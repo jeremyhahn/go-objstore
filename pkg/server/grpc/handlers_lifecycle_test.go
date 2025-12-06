@@ -184,7 +184,7 @@ func TestArchive(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := tt.setupStorage()
-			server, err := NewServer(storage)
+			server, err := newTestServer(t, storage)
 			if err != nil {
 				t.Fatalf("Failed to create server: %v", err)
 			}
@@ -340,7 +340,7 @@ func TestAddPolicy(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := tt.setupStorage()
-			server, err := NewServer(storage)
+			server, err := newTestServer(t, storage)
 			if err != nil {
 				t.Fatalf("Failed to create server: %v", err)
 			}
@@ -434,7 +434,7 @@ func TestRemovePolicy(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := tt.setupStorage()
-			server, err := NewServer(storage)
+			server, err := newTestServer(t, storage)
 			if err != nil {
 				t.Fatalf("Failed to create server: %v", err)
 			}
@@ -559,7 +559,7 @@ func TestGetPolicies(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := tt.setupStorage()
-			server, err := NewServer(storage)
+			server, err := newTestServer(t, storage)
 			if err != nil {
 				t.Fatalf("Failed to create server: %v", err)
 			}

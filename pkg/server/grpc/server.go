@@ -21,7 +21,7 @@ import (
 	objstorepb "github.com/jeremyhahn/go-objstore/api/proto"
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"github.com/jeremyhahn/go-objstore/pkg/audit"
-	"github.com/jeremyhahn/go-objstore/pkg/common"
+	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	"github.com/jeremyhahn/go-objstore/pkg/server/middleware"
 
 	"google.golang.org/grpc"
@@ -36,26 +36,29 @@ import (
 type Server struct {
 	objstorepb.UnimplementedObjectStoreServer
 
-	storage    common.Storage
+	backend    string // Backend name (empty = default)
 	opts       *ServerOptions
 	grpcServer *grpc.Server
 	listener   net.Listener
 	metrics    *MetricsCollector
 }
 
-// NewServer creates a new gRPC server instance.
-func NewServer(storage common.Storage, options ...ServerOption) (*Server, error) {
-	if storage == nil {
-		return nil, ErrStorageRequired
-	}
-
+// NewServer creates a new gRPC server instance using the ObjstoreFacade.
+// The facade must be initialized before calling this function.
+// The opts.Backend field specifies which backend to use (empty = default).
+func NewServer(options ...ServerOption) (*Server, error) {
 	opts := DefaultServerOptions()
 	for _, opt := range options {
 		opt(opts)
 	}
 
+	// Verify facade is initialized
+	if !objstore.IsInitialized() {
+		return nil, objstore.ErrNotInitialized
+	}
+
 	server := &Server{
-		storage: storage,
+		backend: opts.Backend,
 		opts:    opts,
 		metrics: NewMetricsCollector(),
 	}

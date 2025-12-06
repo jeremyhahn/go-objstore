@@ -38,9 +38,6 @@ var (
 
 	// Server errors
 
-	// ErrStorageRequired is returned when storage backend is required but not provided.
-	ErrStorageRequired = errors.New("storage backend is required")
-
 	// ErrUnknownServerMode is returned when an unknown server mode is specified.
 	ErrUnknownServerMode = errors.New("unknown server mode")
 

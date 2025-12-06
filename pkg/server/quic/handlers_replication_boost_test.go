@@ -32,7 +32,7 @@ func TestHandleGetReplicationPolicies_ErrorPaths(t *testing.T) {
 	t.Run("GetReplicationManager returns ErrReplicationNotSupported", func(t *testing.T) {
 		storage := NewMockStorageWithReplication()
 		storage.repErr = common.ErrReplicationNotSupported
-		handler := setupReplicationTestHandler(storage)
+		handler := setupReplicationTestHandler(t, storage)
 
 		req := httptest.NewRequest(http.MethodGet, "/replication/policies", nil)
 		w := httptest.NewRecorder()
@@ -51,7 +51,7 @@ func TestHandleGetReplicationPolicies_ErrorPaths(t *testing.T) {
 	t.Run("GetReplicationManager returns other error", func(t *testing.T) {
 		storage := NewMockStorageWithReplication()
 		storage.repErr = errors.New("some other error")
-		handler := setupReplicationTestHandler(storage)
+		handler := setupReplicationTestHandler(t, storage)
 
 		req := httptest.NewRequest(http.MethodGet, "/replication/policies", nil)
 		w := httptest.NewRecorder()
@@ -66,7 +66,7 @@ func TestHandleGetReplicationPolicies_ErrorPaths(t *testing.T) {
 	t.Run("GetPolicies returns error", func(t *testing.T) {
 		storage := NewMockStorageWithReplication()
 		storage.repMgr.getError = errors.New("failed to get policies")
-		handler := setupReplicationTestHandler(storage)
+		handler := setupReplicationTestHandler(t, storage)
 
 		req := httptest.NewRequest(http.MethodGet, "/replication/policies", nil)
 		w := httptest.NewRecorder()
@@ -80,7 +80,7 @@ func TestHandleGetReplicationPolicies_ErrorPaths(t *testing.T) {
 
 	t.Run("empty policies list", func(t *testing.T) {
 		storage := NewMockStorageWithReplication()
-		handler := setupReplicationTestHandler(storage)
+		handler := setupReplicationTestHandler(t, storage)
 
 		req := httptest.NewRequest(http.MethodGet, "/replication/policies", nil)
 		w := httptest.NewRecorder()
@@ -107,7 +107,7 @@ func TestHandleGetReplicationPolicies_ErrorPaths(t *testing.T) {
 func TestHandleAddReplicationPolicy_ErrorPaths(t *testing.T) {
 	t.Run("invalid JSON body", func(t *testing.T) {
 		storage := NewMockStorageWithReplication()
-		handler := setupReplicationTestHandler(storage)
+		handler := setupReplicationTestHandler(t, storage)
 
 		req := httptest.NewRequest(http.MethodPost, "/replication/policies", bytes.NewReader([]byte("invalid json")))
 		req.Header.Set("Content-Type", "application/json")
@@ -122,7 +122,7 @@ func TestHandleAddReplicationPolicy_ErrorPaths(t *testing.T) {
 
 	t.Run("default replication mode", func(t *testing.T) {
 		storage := NewMockStorageWithReplication()
-		handler := setupReplicationTestHandler(storage)
+		handler := setupReplicationTestHandler(t, storage)
 
 		body, _ := json.Marshal(map[string]any{
 			"id":                  "test-default-mode",
@@ -155,7 +155,7 @@ func TestHandleAddReplicationPolicy_ErrorPaths(t *testing.T) {
 	t.Run("GetReplicationManager returns ErrReplicationNotSupported", func(t *testing.T) {
 		storage := NewMockStorageWithReplication()
 		storage.repErr = common.ErrReplicationNotSupported
-		handler := setupReplicationTestHandler(storage)
+		handler := setupReplicationTestHandler(t, storage)
 
 		body, _ := json.Marshal(map[string]any{
 			"id":                  "test-policy",
@@ -177,7 +177,7 @@ func TestHandleAddReplicationPolicy_ErrorPaths(t *testing.T) {
 	t.Run("GetReplicationManager returns other error", func(t *testing.T) {
 		storage := NewMockStorageWithReplication()
 		storage.repErr = errors.New("some other error")
-		handler := setupReplicationTestHandler(storage)
+		handler := setupReplicationTestHandler(t, storage)
 
 		body, _ := json.Marshal(map[string]any{
 			"id":                  "test-policy",
@@ -199,7 +199,7 @@ func TestHandleAddReplicationPolicy_ErrorPaths(t *testing.T) {
 	t.Run("AddPolicy returns general error", func(t *testing.T) {
 		storage := NewMockStorageWithReplication()
 		storage.repMgr.addError = errors.New("database error")
-		handler := setupReplicationTestHandler(storage)
+		handler := setupReplicationTestHandler(t, storage)
 
 		body, _ := json.Marshal(map[string]any{
 			"id":                  "test-policy",
@@ -220,7 +220,7 @@ func TestHandleAddReplicationPolicy_ErrorPaths(t *testing.T) {
 
 	t.Run("with encryption policy", func(t *testing.T) {
 		storage := NewMockStorageWithReplication()
-		handler := setupReplicationTestHandler(storage)
+		handler := setupReplicationTestHandler(t, storage)
 
 		body, _ := json.Marshal(map[string]any{
 			"id":                  "test-with-encryption",
@@ -251,7 +251,7 @@ func TestHandleAddReplicationPolicy_ErrorPaths(t *testing.T) {
 func TestHandleGetReplicationPolicy_ErrorPaths(t *testing.T) {
 	t.Run("empty policy ID", func(t *testing.T) {
 		storage := NewMockStorageWithReplication()
-		handler := setupReplicationTestHandler(storage)
+		handler := setupReplicationTestHandler(t, storage)
 
 		req := httptest.NewRequest(http.MethodGet, "/replication/policies/", nil)
 		w := httptest.NewRecorder()
@@ -266,7 +266,7 @@ func TestHandleGetReplicationPolicy_ErrorPaths(t *testing.T) {
 	t.Run("GetReplicationManager returns ErrReplicationNotSupported", func(t *testing.T) {
 		storage := NewMockStorageWithReplication()
 		storage.repErr = common.ErrReplicationNotSupported
-		handler := setupReplicationTestHandler(storage)
+		handler := setupReplicationTestHandler(t, storage)
 
 		req := httptest.NewRequest(http.MethodGet, "/replication/policies/test-id", nil)
 		w := httptest.NewRecorder()
@@ -281,7 +281,7 @@ func TestHandleGetReplicationPolicy_ErrorPaths(t *testing.T) {
 	t.Run("GetReplicationManager returns other error", func(t *testing.T) {
 		storage := NewMockStorageWithReplication()
 		storage.repErr = errors.New("some other error")
-		handler := setupReplicationTestHandler(storage)
+		handler := setupReplicationTestHandler(t, storage)
 
 		req := httptest.NewRequest(http.MethodGet, "/replication/policies/test-id", nil)
 		w := httptest.NewRecorder()
@@ -296,7 +296,7 @@ func TestHandleGetReplicationPolicy_ErrorPaths(t *testing.T) {
 	t.Run("GetPolicy returns general error", func(t *testing.T) {
 		storage := NewMockStorageWithReplication()
 		storage.repMgr.getError = errors.New("database error")
-		handler := setupReplicationTestHandler(storage)
+		handler := setupReplicationTestHandler(t, storage)
 
 		req := httptest.NewRequest(http.MethodGet, "/replication/policies/test-id", nil)
 		w := httptest.NewRecorder()
@@ -310,7 +310,7 @@ func TestHandleGetReplicationPolicy_ErrorPaths(t *testing.T) {
 
 	t.Run("policy with encryption", func(t *testing.T) {
 		storage := NewMockStorageWithReplication()
-		handler := setupReplicationTestHandler(storage)
+		handler := setupReplicationTestHandler(t, storage)
 
 		storage.repMgr.AddPolicy(common.ReplicationPolicy{
 			ID:                  "test-encryption",
@@ -351,7 +351,7 @@ func TestHandleGetReplicationPolicy_ErrorPaths(t *testing.T) {
 func TestHandleDeleteReplicationPolicy_ErrorPaths(t *testing.T) {
 	t.Run("empty policy ID", func(t *testing.T) {
 		storage := NewMockStorageWithReplication()
-		handler := setupReplicationTestHandler(storage)
+		handler := setupReplicationTestHandler(t, storage)
 
 		req := httptest.NewRequest(http.MethodDelete, "/replication/policies/", nil)
 		w := httptest.NewRecorder()
@@ -366,7 +366,7 @@ func TestHandleDeleteReplicationPolicy_ErrorPaths(t *testing.T) {
 	t.Run("GetReplicationManager returns ErrReplicationNotSupported", func(t *testing.T) {
 		storage := NewMockStorageWithReplication()
 		storage.repErr = common.ErrReplicationNotSupported
-		handler := setupReplicationTestHandler(storage)
+		handler := setupReplicationTestHandler(t, storage)
 
 		req := httptest.NewRequest(http.MethodDelete, "/replication/policies/test-id", nil)
 		w := httptest.NewRecorder()
@@ -381,7 +381,7 @@ func TestHandleDeleteReplicationPolicy_ErrorPaths(t *testing.T) {
 	t.Run("GetReplicationManager returns other error", func(t *testing.T) {
 		storage := NewMockStorageWithReplication()
 		storage.repErr = errors.New("some other error")
-		handler := setupReplicationTestHandler(storage)
+		handler := setupReplicationTestHandler(t, storage)
 
 		req := httptest.NewRequest(http.MethodDelete, "/replication/policies/test-id", nil)
 		w := httptest.NewRecorder()
@@ -396,7 +396,7 @@ func TestHandleDeleteReplicationPolicy_ErrorPaths(t *testing.T) {
 	t.Run("RemovePolicy returns general error", func(t *testing.T) {
 		storage := NewMockStorageWithReplication()
 		storage.repMgr.removeError = errors.New("database error")
-		handler := setupReplicationTestHandler(storage)
+		handler := setupReplicationTestHandler(t, storage)
 
 		// Add policy first
 		storage.repMgr.AddPolicy(common.ReplicationPolicy{
@@ -422,7 +422,7 @@ func TestHandleTriggerReplication_ErrorPaths(t *testing.T) {
 	t.Run("GetReplicationManager returns ErrReplicationNotSupported", func(t *testing.T) {
 		storage := NewMockStorageWithReplication()
 		storage.repErr = common.ErrReplicationNotSupported
-		handler := setupReplicationTestHandler(storage)
+		handler := setupReplicationTestHandler(t, storage)
 
 		req := httptest.NewRequest(http.MethodPost, "/replication/trigger", nil)
 		w := httptest.NewRecorder()
@@ -437,7 +437,7 @@ func TestHandleTriggerReplication_ErrorPaths(t *testing.T) {
 	t.Run("GetReplicationManager returns other error", func(t *testing.T) {
 		storage := NewMockStorageWithReplication()
 		storage.repErr = errors.New("some other error")
-		handler := setupReplicationTestHandler(storage)
+		handler := setupReplicationTestHandler(t, storage)
 
 		req := httptest.NewRequest(http.MethodPost, "/replication/trigger", nil)
 		w := httptest.NewRecorder()
@@ -452,7 +452,7 @@ func TestHandleTriggerReplication_ErrorPaths(t *testing.T) {
 	t.Run("sync all with error", func(t *testing.T) {
 		storage := NewMockStorageWithReplication()
 		storage.repMgr.syncError = errors.New("sync failed")
-		handler := setupReplicationTestHandler(storage)
+		handler := setupReplicationTestHandler(t, storage)
 
 		req := httptest.NewRequest(http.MethodPost, "/replication/trigger", nil)
 		w := httptest.NewRecorder()
@@ -467,7 +467,7 @@ func TestHandleTriggerReplication_ErrorPaths(t *testing.T) {
 	t.Run("sync with result including errors", func(t *testing.T) {
 		// Create a custom mock replication manager for this test
 		storage := NewMockStorageWithReplication()
-		handler := setupReplicationTestHandler(storage)
+		handler := setupReplicationTestHandler(t, storage)
 
 		// Create a wrapper to override SyncAll
 		type customMockReplicationManager struct {
@@ -511,7 +511,7 @@ func TestHandleTriggerReplication_ErrorPaths(t *testing.T) {
 // TestHandleReplicationPolicies_MethodRouting tests method routing
 func TestHandleReplicationPolicies_MethodRouting(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	handler := setupReplicationTestHandler(storage)
+	handler := setupReplicationTestHandler(t, storage)
 
 	t.Run("PUT method not allowed", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPut, "/replication/policies", nil)

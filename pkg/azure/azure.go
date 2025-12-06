@@ -138,12 +138,13 @@ type Azure struct {
 	// For testing purposes, allow injecting a pre-configured ContainerURL
 	TestContainerURL azblob.ContainerURL
 	// Management plane client for lifecycle policies (optional)
-	mgmtClient     ManagementPoliciesClient
-	subscriptionID string
-	resourceGroup  string
-	accountName    string
-	containerName  string
-	policiesMutex  sync.RWMutex
+	mgmtClient         ManagementPoliciesClient
+	subscriptionID     string
+	resourceGroup      string
+	accountName        string
+	containerName      string
+	policiesMutex      sync.RWMutex
+	replicationManager common.ReplicationManager
 }
 
 // New creates a new Azure storage backend.
@@ -480,3 +481,18 @@ func (a *Azure) GetPolicies() ([]common.LifecyclePolicy, error) {
 	return policies, nil
 }
 
+// GetReplicationManager returns the replication manager for this backend.
+// This method implements the common.ReplicationCapable interface.
+func (a *Azure) GetReplicationManager() (common.ReplicationManager, error) {
+	if a.replicationManager == nil {
+		return nil, common.ErrReplicationNotSupported
+	}
+	return a.replicationManager, nil
+}
+
+// SetReplicationManager allows manually setting a replication manager.
+// This is useful for testing or when you want to share a replication manager
+// across multiple backends.
+func (a *Azure) SetReplicationManager(rm common.ReplicationManager) {
+	a.replicationManager = rm
+}
