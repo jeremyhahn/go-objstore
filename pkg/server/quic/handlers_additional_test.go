@@ -250,14 +250,15 @@ func TestNewHandler(t *testing.T) {
 
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()
-	handler := NewHandler(storage, 50*1024*1024, 15*time.Second, 20*time.Second, logger, auth)
+	handler := createHandlerWithStorage(t, storage, 50*1024*1024, 15*time.Second, 20*time.Second, logger, auth)
 
 	if handler == nil {
 		t.Fatal("Expected non-nil handler")
 	}
 
-	if handler.storage != storage {
-		t.Error("Expected storage to match")
+	// Handler now uses facade, verify backend is set correctly
+	if handler.backend != "" {
+		t.Error("Expected default backend (empty string)")
 	}
 
 	if handler.maxRequestBodySize != 50*1024*1024 {

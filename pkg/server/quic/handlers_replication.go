@@ -23,6 +23,7 @@ import (
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
+	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	"github.com/jeremyhahn/go-objstore/pkg/replication"
 )
 
@@ -43,16 +44,8 @@ func (h *Handler) handleGetReplicationPolicies(w http.ResponseWriter, r *http.Re
 	ctx, cancel := context.WithTimeout(r.Context(), h.readTimeout)
 	defer cancel()
 
-	// Get replication manager from storage
-	repSupport, ok := h.storage.(interface {
-		GetReplicationManager() (common.ReplicationManager, error)
-	})
-	if !ok {
-		http.Error(w, "replication not supported by this storage backend", http.StatusInternalServerError)
-		return
-	}
-
-	repMgr, err := repSupport.GetReplicationManager()
+	// Get replication manager from facade
+	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
@@ -181,16 +174,8 @@ func (h *Handler) handleAddReplicationPolicy(w http.ResponseWriter, r *http.Requ
 		policy.ReplicationMode = common.ReplicationModeTransparent
 	}
 
-	// Get replication manager from storage
-	repSupport, ok := h.storage.(interface {
-		GetReplicationManager() (common.ReplicationManager, error)
-	})
-	if !ok {
-		http.Error(w, "replication not supported by this storage backend", http.StatusInternalServerError)
-		return
-	}
-
-	repMgr, err := repSupport.GetReplicationManager()
+	// Get replication manager from facade
+	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
@@ -255,16 +240,8 @@ func (h *Handler) handleGetReplicationPolicy(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Get replication manager from storage
-	repSupport, ok := h.storage.(interface {
-		GetReplicationManager() (common.ReplicationManager, error)
-	})
-	if !ok {
-		http.Error(w, "replication not supported by this storage backend", http.StatusInternalServerError)
-		return
-	}
-
-	repMgr, err := repSupport.GetReplicationManager()
+	// Get replication manager from facade
+	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
@@ -327,16 +304,8 @@ func (h *Handler) handleDeleteReplicationPolicy(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Get replication manager from storage
-	repSupport, ok := h.storage.(interface {
-		GetReplicationManager() (common.ReplicationManager, error)
-	})
-	if !ok {
-		http.Error(w, "replication not supported by this storage backend", http.StatusInternalServerError)
-		return
-	}
-
-	repMgr, err := repSupport.GetReplicationManager()
+	// Get replication manager from facade
+	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
@@ -388,16 +357,8 @@ func (h *Handler) handleTriggerReplication(w http.ResponseWriter, r *http.Reques
 
 	policyID := r.URL.Query().Get("policy_id")
 
-	// Get replication manager from storage
-	repSupport, ok := h.storage.(interface {
-		GetReplicationManager() (common.ReplicationManager, error)
-	})
-	if !ok {
-		http.Error(w, "replication not supported by this storage backend", http.StatusInternalServerError)
-		return
-	}
-
-	repMgr, err := repSupport.GetReplicationManager()
+	// Get replication manager from facade
+	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
@@ -468,16 +429,8 @@ func (h *Handler) handleGetReplicationStatus(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Get replication manager from storage
-	repSupport, ok := h.storage.(interface {
-		GetReplicationManager() (common.ReplicationManager, error)
-	})
-	if !ok {
-		http.Error(w, "replication not supported by this storage backend", http.StatusInternalServerError)
-		return
-	}
-
-	repMgr, err := repSupport.GetReplicationManager()
+	// Get replication manager from facade
+	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
@@ -492,9 +445,14 @@ func (h *Handler) handleGetReplicationStatus(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Get replication status
-	replicationStatus, err := repMgr.(interface {
+	statusProvider, ok := repMgr.(interface {
 		GetReplicationStatus(id string) (*replication.ReplicationStatus, error)
-	}).GetReplicationStatus(id)
+	})
+	if !ok {
+		http.Error(w, "replication status not supported by this backend", http.StatusInternalServerError)
+		return
+	}
+	replicationStatus, err := statusProvider.GetReplicationStatus(id)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)

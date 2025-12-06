@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
+	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	"github.com/jeremyhahn/go-objstore/pkg/replication"
 )
 
@@ -293,15 +294,8 @@ func (e *ToolExecutor) executeAddReplicationPolicy(ctx context.Context, args map
 		Encryption:          encryptionPolicy,
 	}
 
-	// Get replication manager from storage
-	repSupport, ok := e.storage.(interface {
-		GetReplicationManager() (common.ReplicationManager, error)
-	})
-	if !ok {
-		return "", common.ErrReplicationNotSupported
-	}
-
-	repMgr, err := repSupport.GetReplicationManager()
+	// Get replication manager from facade
+	repMgr, err := objstore.GetReplicationManager(e.backend)
 	if err != nil {
 		return "", err
 	}
@@ -329,15 +323,8 @@ func (e *ToolExecutor) executeRemoveReplicationPolicy(ctx context.Context, args 
 		return "", ErrMissingParameter
 	}
 
-	// Get replication manager from storage
-	repSupport, ok := e.storage.(interface {
-		GetReplicationManager() (common.ReplicationManager, error)
-	})
-	if !ok {
-		return "", common.ErrReplicationNotSupported
-	}
-
-	repMgr, err := repSupport.GetReplicationManager()
+	// Get replication manager from facade
+	repMgr, err := objstore.GetReplicationManager(e.backend)
 	if err != nil {
 		return "", err
 	}
@@ -360,15 +347,8 @@ func (e *ToolExecutor) executeRemoveReplicationPolicy(ctx context.Context, args 
 
 // executeListReplicationPolicies executes the objstore_list_replication_policies tool
 func (e *ToolExecutor) executeListReplicationPolicies(ctx context.Context, args map[string]any) (string, error) {
-	// Get replication manager from storage
-	repSupport, ok := e.storage.(interface {
-		GetReplicationManager() (common.ReplicationManager, error)
-	})
-	if !ok {
-		return "", common.ErrReplicationNotSupported
-	}
-
-	repMgr, err := repSupport.GetReplicationManager()
+	// Get replication manager from facade
+	repMgr, err := objstore.GetReplicationManager(e.backend)
 	if err != nil {
 		return "", err
 	}
@@ -414,15 +394,8 @@ func (e *ToolExecutor) executeGetReplicationPolicy(ctx context.Context, args map
 		return "", ErrMissingParameter
 	}
 
-	// Get replication manager from storage
-	repSupport, ok := e.storage.(interface {
-		GetReplicationManager() (common.ReplicationManager, error)
-	})
-	if !ok {
-		return "", common.ErrReplicationNotSupported
-	}
-
-	repMgr, err := repSupport.GetReplicationManager()
+	// Get replication manager from facade
+	repMgr, err := objstore.GetReplicationManager(e.backend)
 	if err != nil {
 		return "", err
 	}
@@ -456,15 +429,8 @@ func (e *ToolExecutor) executeGetReplicationPolicy(ctx context.Context, args map
 func (e *ToolExecutor) executeTriggerReplication(ctx context.Context, args map[string]any) (string, error) {
 	policyID, _ := args["policy_id"].(string)
 
-	// Get replication manager from storage
-	repSupport, ok := e.storage.(interface {
-		GetReplicationManager() (common.ReplicationManager, error)
-	})
-	if !ok {
-		return "", common.ErrReplicationNotSupported
-	}
-
-	repMgr, err := repSupport.GetReplicationManager()
+	// Get replication manager from facade
+	repMgr, err := objstore.GetReplicationManager(e.backend)
 	if err != nil {
 		return "", err
 	}
@@ -509,15 +475,8 @@ func (e *ToolExecutor) executeGetReplicationStatus(ctx context.Context, args map
 		return "", ErrMissingParameter
 	}
 
-	// Get replication manager from storage
-	repSupport, ok := e.storage.(interface {
-		GetReplicationManager() (common.ReplicationManager, error)
-	})
-	if !ok {
-		return "", common.ErrReplicationNotSupported
-	}
-
-	repMgr, err := repSupport.GetReplicationManager()
+	// Get replication manager from facade
+	repMgr, err := objstore.GetReplicationManager(e.backend)
 	if err != nil {
 		return "", err
 	}

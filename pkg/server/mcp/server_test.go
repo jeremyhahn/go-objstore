@@ -21,6 +21,7 @@ import (
 
 func TestNewServer(t *testing.T) {
 	storage := NewMockStorage()
+	initTestFacade(t, storage)
 
 	tests := []struct {
 		name      string
@@ -31,23 +32,16 @@ func TestNewServer(t *testing.T) {
 			name: "valid config",
 			config: &ServerConfig{
 				Mode:    ModeStdio,
-				Storage: storage,
+				Backend: "",
 			},
 			wantError: false,
-		},
-		{
-			name: "nil storage",
-			config: &ServerConfig{
-				Mode: ModeStdio,
-			},
-			wantError: true,
 		},
 		{
 			name: "http mode with address",
 			config: &ServerConfig{
 				Mode:        ModeHTTP,
 				HTTPAddress: ":8080",
-				Storage:     storage,
+				Backend:     "",
 			},
 			wantError: false,
 		},
@@ -75,13 +69,7 @@ func TestNewServer(t *testing.T) {
 
 func TestServer_ListTools(t *testing.T) {
 	storage := NewMockStorage()
-	server, err := NewServer(&ServerConfig{
-		Mode:    ModeStdio,
-		Storage: storage,
-	})
-	if err != nil {
-		t.Fatalf("failed to create server: %v", err)
-	}
+	server := createTestServer(t, storage, ModeStdio)
 
 	tools := server.ListTools()
 	if len(tools) != 19 {
@@ -111,13 +99,7 @@ func TestServer_ListTools(t *testing.T) {
 
 func TestServer_CallTool(t *testing.T) {
 	storage := NewMockStorage()
-	server, err := NewServer(&ServerConfig{
-		Mode:    ModeStdio,
-		Storage: storage,
-	})
-	if err != nil {
-		t.Fatalf("failed to create server: %v", err)
-	}
+	server := createTestServer(t, storage, ModeStdio)
 
 	// Test valid tool call
 	result, err := server.CallTool(context.Background(), "objstore_put", map[string]any{
@@ -143,13 +125,7 @@ func TestServer_CallTool(t *testing.T) {
 
 func TestServer_ListResources(t *testing.T) {
 	storage := NewMockStorage()
-	server, err := NewServer(&ServerConfig{
-		Mode:    ModeStdio,
-		Storage: storage,
-	})
-	if err != nil {
-		t.Fatalf("failed to create server: %v", err)
-	}
+	server := createTestServer(t, storage, ModeStdio)
 
 	// Add some test objects
 	storage.PutWithContext(context.Background(), "file1.txt", strings.NewReader("data1"))
@@ -167,13 +143,7 @@ func TestServer_ListResources(t *testing.T) {
 
 func TestServer_ReadResource(t *testing.T) {
 	storage := NewMockStorage()
-	server, err := NewServer(&ServerConfig{
-		Mode:    ModeStdio,
-		Storage: storage,
-	})
-	if err != nil {
-		t.Fatalf("failed to create server: %v", err)
-	}
+	server := createTestServer(t, storage, ModeStdio)
 
 	// Add a test object
 	testContent := "hello world"
@@ -260,13 +230,7 @@ func TestStdioReadWriteCloser(t *testing.T) {
 
 func TestServerConfig_DefaultValues(t *testing.T) {
 	storage := NewMockStorage()
-	server, err := NewServer(&ServerConfig{
-		Mode:    ModeStdio,
-		Storage: storage,
-	})
-	if err != nil {
-		t.Fatalf("failed to create server: %v", err)
-	}
+	server := createTestServer(t, storage, ModeStdio)
 
 	// Verify default resource prefix is set
 	if server.config.ResourcePrefix != "" {
@@ -277,10 +241,11 @@ func TestServerConfig_DefaultValues(t *testing.T) {
 func TestServer_WithResourcePrefix(t *testing.T) {
 	storage := NewMockStorage()
 	prefix := "data/"
+	initTestFacade(t, storage)
 
 	server, err := NewServer(&ServerConfig{
 		Mode:           ModeStdio,
-		Storage:        storage,
+		Backend:        "",
 		ResourcePrefix: prefix,
 	})
 	if err != nil {

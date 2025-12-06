@@ -27,7 +27,7 @@ import (
 // TestAddPolicy_MissingAction tests missing action error path
 func TestAddPolicy_MissingAction(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.POST("/policies", handler.AddPolicy)
@@ -54,7 +54,7 @@ func TestAddPolicy_MissingAction(t *testing.T) {
 // TestAddPolicy_InvalidRetention tests invalid retention_seconds error path
 func TestAddPolicy_InvalidRetention(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.POST("/policies", handler.AddPolicy)
@@ -81,7 +81,7 @@ func TestAddPolicy_InvalidRetention(t *testing.T) {
 // TestAddPolicy_ArchiveMissingDestinationType tests archive without destination_type
 func TestAddPolicy_ArchiveMissingDestinationType(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.POST("/policies", handler.AddPolicy)
@@ -109,7 +109,7 @@ func TestAddPolicy_ArchiveMissingDestinationType(t *testing.T) {
 // TestAddPolicy_ArchiveInvalidDestinationType tests archive with invalid destination type
 func TestAddPolicy_ArchiveInvalidDestinationType(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.POST("/policies", handler.AddPolicy)
@@ -138,7 +138,7 @@ func TestAddPolicy_ArchiveInvalidDestinationType(t *testing.T) {
 // TestArchive_MissingDestinationType tests missing destination_type error path
 func TestArchive_MissingDestinationType(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.POST("/archive", handler.Archive)
@@ -163,7 +163,7 @@ func TestArchive_MissingDestinationType(t *testing.T) {
 // TestArchive_InvalidJSON tests invalid JSON error path
 func TestArchive_InvalidJSON(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.POST("/archive", handler.Archive)
@@ -182,7 +182,7 @@ func TestArchive_InvalidJSON(t *testing.T) {
 // TestArchive_InvalidKey tests invalid key error path
 func TestArchive_InvalidKey(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.POST("/archive", handler.Archive)
@@ -208,7 +208,7 @@ func TestArchive_InvalidKey(t *testing.T) {
 // TestArchive_InvalidDestinationType tests archive with invalid archiver type
 func TestArchive_InvalidDestinationType(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.POST("/archive", handler.Archive)

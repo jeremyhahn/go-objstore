@@ -82,14 +82,48 @@ Consistent error handling across protocols:
 - Stack traces in development mode
 - Client-safe error messages in production
 
+## Facade Integration
+
+All servers use the `objstore` facade for storage operations instead of accessing backends directly. This provides:
+- Centralized input validation and security checks
+- Multi-backend routing via backend name configuration
+- Consistent error handling across all server types
+
+### Server Initialization Pattern
+
+```go
+// Initialize the facade with backends
+objstore.Initialize(&objstore.FacadeConfig{
+    BackendConfigs: map[string]objstore.BackendConfig{
+        "default": {Type: "local", Settings: map[string]string{"path": "/data"}},
+    },
+    DefaultBackend: "default",
+})
+
+// Create server with backend name (empty string uses default)
+server, _ := grpcserver.NewServer(
+    grpcserver.WithAddress(":50051"),
+    grpcserver.WithBackend(""), // Uses default backend
+)
+server.Start()
+```
+
+All server handlers use `objstore.*` functions internally:
+```go
+// Inside handler implementation
+func (h *Handler) Put(key string, data io.Reader) error {
+    return objstore.PutWithContext(ctx, h.keyRef(key), data)
+}
+```
+
 ## Server Lifecycle
 
 ### Initialization
-1. Parse configuration
-2. Initialize storage backend
+1. Initialize objstore facade with backend configuration
+2. Parse server-specific configuration
 3. Configure TLS if enabled
 4. Set up authentication adapter
-5. Initialize protocol-specific server
+5. Initialize protocol-specific server with backend name
 6. Register handlers
 7. Start listening on configured port
 

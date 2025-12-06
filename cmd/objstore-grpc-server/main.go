@@ -21,7 +21,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/jeremyhahn/go-objstore/pkg/factory"
+	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	grpcserver "github.com/jeremyhahn/go-objstore/pkg/server/grpc"
 )
 
@@ -35,21 +35,36 @@ func main() {
 
 	flag.Parse()
 
-	// Create storage backend
-	settings := map[string]string{
-		"path": *storagePath,
-	}
-
-	storage, err := factory.NewStorage(*backend, settings)
-	if err != nil {
-		log.Fatalf("Failed to create storage backend: %v", err)
+	// Initialize the objstore facade with simplified API
+	if err := objstore.Initialize(&objstore.FacadeConfig{
+		BackendConfigs: map[string]objstore.BackendConfig{
+			"default": {
+				Type:     *backend,
+				Settings: map[string]string{"path": *storagePath},
+			},
+		},
+		DefaultBackend: "default",
+	}); err != nil {
+		log.Fatalf("Failed to initialize objstore facade: %v", err)
 	}
 
 	log.Printf("Initialized %s storage backend", *backend)
 
+	// Enable replication on the default backend
+	policyPath := *storagePath + "/.replication-policies.json"
+	if err := objstore.EnableReplication("", &objstore.ReplicationConfig{
+		PolicyFilePath:  policyPath,
+		RunInBackground: false,
+	}); err != nil {
+		log.Printf("Warning: Failed to enable replication: %v", err)
+	} else {
+		log.Printf("Replication enabled with policy file: %s", policyPath)
+	}
+
 	// Create server options
 	opts := []grpcserver.ServerOption{
 		grpcserver.WithAddress(*addr),
+		grpcserver.WithBackend(""), // Use default backend
 	}
 
 	// Add TLS if certificates provided
@@ -63,7 +78,7 @@ func main() {
 	}
 
 	// Create and start server
-	server, err := grpcserver.NewServer(storage, opts...)
+	server, err := grpcserver.NewServer(opts...)
 	if err != nil {
 		log.Fatalf("Failed to create gRPC server: %v", err)
 	}

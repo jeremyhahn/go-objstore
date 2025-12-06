@@ -33,7 +33,7 @@ func TestOptionsValidateWithAdapterTLSConfig(t *testing.T) {
 
 	opts := &Options{
 		Addr:             ":4433",
-		Storage:          storage,
+		Backend:          "",
 		AdapterTLSConfig: adapterTLS,
 	}
 
@@ -63,7 +63,7 @@ func TestOptionsValidateWithAdapterTLSConfigError(t *testing.T) {
 
 	opts := &Options{
 		Addr:             ":4433",
-		Storage:          storage,
+		Backend:          "",
 		AdapterTLSConfig: adapterTLS,
 	}
 
@@ -80,7 +80,7 @@ func TestOptionsValidateAutoFillsDefaults(t *testing.T) {
 
 	opts := &Options{
 		Addr:      ":4433",
-		Storage:   storage,
+		Backend:   "",
 		TLSConfig: tlsConfig,
 		// All other fields zero/nil
 	}
@@ -119,7 +119,7 @@ func TestOptionsValidateNilQUICConfig(t *testing.T) {
 
 	opts := &Options{
 		Addr:       ":4433",
-		Storage:    storage,
+		Backend:    "",
 		TLSConfig:  tlsConfig,
 		QUICConfig: nil, // Explicitly nil
 	}
@@ -142,7 +142,7 @@ func TestOptionsValidateZeroTimeouts(t *testing.T) {
 
 	opts := &Options{
 		Addr:         ":4433",
-		Storage:      storage,
+		Backend:      "",
 		TLSConfig:    tlsConfig,
 		ReadTimeout:  0, // Zero timeout
 		WriteTimeout: 0, // Zero timeout
@@ -175,7 +175,7 @@ func TestOptionsValidateZeroMaxRequestBodySize(t *testing.T) {
 
 	opts := &Options{
 		Addr:               ":4433",
-		Storage:            storage,
+		Backend:            "",
 		TLSConfig:          tlsConfig,
 		MaxRequestBodySize: 0, // Zero
 	}
@@ -197,7 +197,7 @@ func TestOptionsValidateNegativeMaxRequestBodySize(t *testing.T) {
 
 	opts := &Options{
 		Addr:               ":4433",
-		Storage:            storage,
+		Backend:            "",
 		TLSConfig:          tlsConfig,
 		MaxRequestBodySize: -1, // Negative
 	}
@@ -227,7 +227,7 @@ func TestOptionsChaining(t *testing.T) {
 		t.Error("WithAddr should return the same instance")
 	}
 
-	opts3 := opts.WithStorage(storage)
+	opts3 := opts.WithBackend("")
 	if opts != opts3 {
 		t.Error("WithStorage should return the same instance")
 	}
@@ -260,7 +260,7 @@ func TestOptionsQUICConfigSync(t *testing.T) {
 
 	opts := &Options{
 		Addr:            ":4433",
-		Storage:         storage,
+		Backend:         "",
 		TLSConfig:       tlsConfig,
 		IdleTimeout:     90 * time.Second,
 		MaxBiStreams:    200,
@@ -344,7 +344,7 @@ func TestOptionsEmptyAddr(t *testing.T) {
 
 	opts := &Options{
 		Addr:      "", // Empty address
-		Storage:   storage,
+		Backend:   "",
 		TLSConfig: tlsConfig,
 	}
 
@@ -354,28 +354,25 @@ func TestOptionsEmptyAddr(t *testing.T) {
 	}
 }
 
-func TestOptionsNilStorage(t *testing.T) {
+func TestOptionsEmptyBackend(t *testing.T) {
 	tlsConfig, _ := GenerateSelfSignedCert()
 
 	opts := &Options{
 		Addr:      ":4433",
-		Storage:   nil, // Nil storage
+		Backend:   "", // Empty backend (uses default)
 		TLSConfig: tlsConfig,
 	}
 
 	err := opts.Validate()
-	if err != ErrStorageRequired {
-		t.Errorf("Expected ErrStorageRequired for nil storage, got %v", err)
+	if err != nil {
+		t.Errorf("Empty backend should be valid (uses default), got %v", err)
 	}
 }
 
 func TestOptionsNilTLSConfig(t *testing.T) {
-	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
-
 	opts := &Options{
 		Addr:      ":4433",
-		Storage:   storage,
+		Backend:   "",
 		TLSConfig: nil, // Nil TLS config
 	}
 
@@ -398,7 +395,7 @@ func TestOptionsValidateWithFailingAdapterTLS(t *testing.T) {
 
 	opts := &Options{
 		Addr:             ":4433",
-		Storage:          storage,
+		Backend:          "",
 		AdapterTLSConfig: adapterTLS,
 	}
 
@@ -409,8 +406,6 @@ func TestOptionsValidateWithFailingAdapterTLS(t *testing.T) {
 }
 
 func TestOptionsBuilderAllMethods(t *testing.T) {
-	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
 	tlsConfig, _ := GenerateSelfSignedCert()
 	quicConfig := &quic.Config{}
 	logger := adapters.NewDefaultLogger()
@@ -419,7 +414,7 @@ func TestOptionsBuilderAllMethods(t *testing.T) {
 
 	opts := DefaultOptions().
 		WithAddr(":6000").
-		WithStorage(storage).
+		WithBackend("default").
 		WithTLSConfig(tlsConfig).
 		WithQUICConfig(quicConfig).
 		WithMaxRequestBodySize(200*1024*1024).
@@ -434,8 +429,8 @@ func TestOptionsBuilderAllMethods(t *testing.T) {
 	if opts.Addr != ":6000" {
 		t.Errorf("Addr not set correctly: %s", opts.Addr)
 	}
-	if opts.Storage != storage {
-		t.Error("Storage not set correctly")
+	if opts.Backend != "default" {
+		t.Errorf("Backend not set correctly: %s", opts.Backend)
 	}
 	if opts.TLSConfig != tlsConfig {
 		t.Error("TLSConfig not set correctly")

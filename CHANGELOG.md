@@ -6,6 +6,63 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [0.1.3-alpha] - 2025-12-06
+
+### Added
+
+- Multi-Language SDK Support: Added official client SDKs for 7 programming languages
+  - TypeScript SDK with full type safety and async/await support
+  - Go SDK with idiomatic Go patterns and context support
+  - Python SDK with async support and type hints
+  - Ruby SDK with Rails integration patterns
+  - Rust SDK with async/await and strong typing
+  - C# SDK with .NET 8 support and async patterns
+  - JavaScript SDK with CommonJS and ESM support
+  - All SDKs include comprehensive unit and integration tests
+  - Docker-based integration testing for all SDKs
+
+- Unix Socket Server: New high-performance local IPC server (pkg/server/unix)
+  - Unix domain socket support for local applications
+  - Low-latency communication without network overhead
+  - Full feature parity with REST/gRPC/QUIC servers
+  - Comprehensive test coverage
+
+- Replication Integration Tests: Dedicated Docker-based replication test suite
+  - Moved replication tests to test/integration/replication/
+  - Tests for no encryption, backend encryption, and three-layer encryption
+  - Prefix filtering and empty source edge case tests
+
+- CLI Client Unix Socket Support: Added Unix socket transport to CLI client (pkg/cli/client/unix.go)
+
+### Fixed
+
+- Three-Layer Encryption Metadata Conflict: Fixed critical bug where backend at-rest encryption and client-side DEK encryption used the same metadata field
+  - Changed local backend to use `at_rest_encryption_key_id` and `at_rest_encryption_algorithm` metadata fields
+  - Prevents metadata overwrites when both encryption layers are active
+  - Fixes data truncation issues in three-layer encryption replication
+
+- CLI Integration Tests Docker Build: Fixed .dockerignore excluding test files from Docker builds
+  - Integration tests now properly copied into Docker containers
+  - All CLI integration tests passing
+
+### Changed
+
+- Server Handler Refactoring: Consolidated and simplified all server handlers
+  - gRPC, REST, QUIC, and MCP servers now share common test helpers
+  - Improved error handling consistency across all protocols
+  - Enhanced lifecycle management and replication handlers
+  - Removed redundant error types (consolidated into common errors)
+
+- Facade Pattern Enhancements: Extended facade with additional features
+  - Improved multi-backend routing and error handling
+  - Enhanced test coverage for facade operations
+  - Better integration with server handlers
+
+- Documentation Updates: Updated architecture and usage documentation
+  - Updated server documentation with Unix socket server
+  - Enhanced storage layer documentation
+  - Improved getting started guide
+
 ## [0.1.2-alpha] - 2025-11-22
 
 ### Added

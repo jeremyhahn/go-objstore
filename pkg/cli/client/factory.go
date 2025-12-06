@@ -56,7 +56,9 @@ func NewClient(config *Config) (Client, error) {
 		return NewGRPCClient(config)
 	case "quic", "http3":
 		return NewQUICClient(config)
+	case "unix":
+		return NewUnixSocketClient(config)
 	default:
-		return nil, fmt.Errorf("%w: %s (supported: rest, grpc, quic)", ErrUnsupportedProtocol, config.Protocol)
+		return nil, fmt.Errorf("%w: %s (supported: rest, grpc, quic, unix)", ErrUnsupportedProtocol, config.Protocol)
 	}
 }

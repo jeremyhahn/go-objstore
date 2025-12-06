@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
+	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 )
 
 // Resource represents an MCP resource
@@ -33,16 +34,24 @@ type Resource struct {
 
 // ResourceManager manages MCP resources
 type ResourceManager struct {
-	storage common.Storage
+	backend string // Backend name (empty = default)
 	prefix  string
 }
 
 // NewResourceManager creates a new resource manager
-func NewResourceManager(storage common.Storage, prefix string) *ResourceManager {
+func NewResourceManager(backend string, prefix string) *ResourceManager {
 	return &ResourceManager{
-		storage: storage,
+		backend: backend,
 		prefix:  prefix,
 	}
+}
+
+// keyRef builds a backend-qualified key reference
+func (m *ResourceManager) keyRef(key string) string {
+	if m.backend == "" {
+		return key
+	}
+	return m.backend + ":" + key
 }
 
 // ListResources lists available resources
@@ -54,7 +63,7 @@ func (m *ResourceManager) ListResources(ctx context.Context, cursor string) ([]R
 		ContinueFrom: cursor,
 	}
 
-	result, err := m.storage.ListWithOptions(ctx, opts)
+	result, err := objstore.ListWithOptions(ctx, m.keyRef(""), opts)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +94,7 @@ func (m *ResourceManager) ReadResource(ctx context.Context, uri string) (string,
 	key := m.uriToObjectKey(uri)
 
 	// Get metadata first to determine MIME type
-	metadata, err := m.storage.GetMetadata(ctx, key)
+	metadata, err := objstore.GetMetadata(ctx, m.keyRef(key))
 	if err != nil {
 		return "", "", err
 	}
@@ -96,7 +105,7 @@ func (m *ResourceManager) ReadResource(ctx context.Context, uri string) (string,
 	}
 
 	// Get the actual content
-	reader, err := m.storage.GetWithContext(ctx, key)
+	reader, err := objstore.GetWithContext(ctx, m.keyRef(key))
 	if err != nil {
 		return "", "", err
 	}

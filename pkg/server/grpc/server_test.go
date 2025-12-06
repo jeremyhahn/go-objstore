@@ -24,6 +24,7 @@ import (
 
 	objstorepb "github.com/jeremyhahn/go-objstore/api/proto"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
+	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -171,7 +172,7 @@ func (e *notFoundError) Error() string {
 func TestNewServer(t *testing.T) {
 	storage := newMockStorage()
 
-	server, err := NewServer(storage)
+	server, err := newTestServer(t, storage)
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}
@@ -180,15 +181,15 @@ func TestNewServer(t *testing.T) {
 		t.Fatal("Server is nil")
 	}
 
-	if server.storage != storage {
-		t.Error("Storage not set correctly")
-	}
+	// Server now uses facade, no direct storage reference to check
 }
 
-func TestNewServer_NilStorage(t *testing.T) {
-	_, err := NewServer(nil)
+func TestNewServer_FacadeNotInitialized(t *testing.T) {
+	// Reset facade to ensure it's not initialized
+	objstore.Reset()
+	_, err := NewServer()
 	if err == nil {
-		t.Error("Expected error for nil storage, got nil")
+		t.Error("Expected error when facade not initialized, got nil")
 	}
 }
 
@@ -292,7 +293,7 @@ func setupTestServer(t *testing.T, opts ...ServerOption) (*Server, objstorepb.Ob
 
 	// Use dynamic port allocation
 	allOpts := append([]ServerOption{WithAddress("127.0.0.1:0")}, opts...)
-	server, err := NewServer(storage, allOpts...)
+	server, err := newTestServer(t, storage, allOpts...)
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}

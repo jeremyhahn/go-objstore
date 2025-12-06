@@ -1,0 +1,68 @@
+services:
+  # Go ObjectStore server with local storage backend
+  objstore-server:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+      args:
+        BUILD_TAGS: local
+    command: ["/app/objstore-server", "--quic-self-signed"]
+    ports:
+      - "18080:8080"    # REST
+      - "15051:50051"  # gRPC
+      - "14433:4433"    # QUIC
+    environment:
+      - STORAGE_BACKEND=local
+      - STORAGE_PATH=/data
+      - LOG_LEVEL=info
+      - REST_ENABLED=true
+      - GRPC_ENABLED=true
+      - QUIC_ENABLED=true
+    volumes:
+      - objstore-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks:
+      - objstore-net
+
+  # Go SDK unit tests
+  go-unit-tests:
+    build:
+      context: ../../..
+      dockerfile: api/sdks/go/Dockerfile
+    volumes:
+      - ../../..:/workspace
+    working_dir: /workspace/api/sdks/go
+    command: go test -v -race -timeout=30s ./...
+    networks:
+      - objstore-net
+
+  # Go SDK integration tests
+  go-integration-tests:
+    build:
+      context: ../../..
+      dockerfile: api/sdks/go/Dockerfile
+    depends_on:
+      objstore-server:
+        condition: service_healthy
+    environment:
+      - OBJSTORE_REST_URL=http://objstore-server:8080
+      - OBJSTORE_GRPC_HOST=objstore-server:50051
+      - OBJSTORE_QUIC_URL=https://objstore-server:4433
+    volumes:
+      - ../../..:/workspace
+    working_dir: /workspace/api/sdks/go/integration
+    command: go test -v -timeout=120s -tags=integration ./...
+    networks:
+      - objstore-net
+
+volumes:
+  objstore-data:
+
+networks:
+  objstore-net:
+    driver: bridge

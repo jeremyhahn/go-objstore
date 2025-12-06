@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  # Go ObjectStore server with local storage backend
+  objstore-server:
+    build:
+      context: ../../../../..
+      dockerfile: Dockerfile
+      args:
+        BUILD_TAGS: local
+    ports:
+      - "8080:8080"    # REST
+      - "50051:50051"  # gRPC
+      - "4433:4433"    # QUIC
+    environment:
+      - STORAGE_BACKEND=local
+      - STORAGE_PATH=/data
+      - LOG_LEVEL=info
+      - REST_ENABLED=true
+      - GRPC_ENABLED=true
+      - QUIC_ENABLED=true
+    volumes:
+      - objstore-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # Python integration test runner
+  python-tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    depends_on:
+      objstore-server:
+        condition: service_healthy
+    environment:
+      - OBJSTORE_REST_URL=http://objstore-server:8080
+      - OBJSTORE_GRPC_HOST=objstore-server
+      - OBJSTORE_GRPC_PORT=50051
+      - OBJSTORE_QUIC_URL=https://objstore-server:4433
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ../..:/app
+    working_dir: /app
+    command: pytest tests/integration/ -v --color=yes
+
+volumes:
+  objstore-data:

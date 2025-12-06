@@ -39,7 +39,7 @@ var (
 // Test PutObject with missing key parameter
 func TestPutObjectMissingKey(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	// Using exact match route instead of wildcard to test empty key
@@ -58,7 +58,7 @@ func TestPutObjectMissingKey(t *testing.T) {
 // Test PutObject with invalid key (path traversal)
 func TestPutObjectInvalidKey(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.PUT("/objects/*key", handler.PutObject)
@@ -89,7 +89,7 @@ func TestPutObjectInvalidKey(t *testing.T) {
 // Test PutObject multipart with metadata JSON validation
 func TestPutObjectMultipartWithValidMetadata(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.PUT("/objects/*key", handler.PutObject)
@@ -117,7 +117,7 @@ func TestPutObjectMultipartWithValidMetadata(t *testing.T) {
 // Test PutObject with invalid custom metadata (exceeds limits)
 func TestPutObjectInvalidCustomMetadata(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.PUT("/objects/*key", handler.PutObject)
@@ -148,7 +148,7 @@ func TestPutObjectInvalidCustomMetadata(t *testing.T) {
 // Test GetObject with missing key
 func TestGetObjectMissingKey(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.GET("/objects/", handler.GetObject)
@@ -166,7 +166,7 @@ func TestGetObjectMissingKey(t *testing.T) {
 // Test GetObject with invalid key
 func TestGetObjectInvalidKey(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.GET("/objects/*key", handler.GetObject)
@@ -191,7 +191,7 @@ func TestGetObjectGetError(t *testing.T) {
 	// Add object so metadata check passes
 	storage.MockStorage.PutWithContext(context.Background(), "test.txt", strings.NewReader("content"))
 
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.GET("/objects/*key", handler.GetObject)
@@ -209,7 +209,7 @@ func TestGetObjectGetError(t *testing.T) {
 // Test DeleteObject with missing key
 func TestDeleteObjectMissingKey(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.DELETE("/objects/", handler.DeleteObject)
@@ -227,7 +227,7 @@ func TestDeleteObjectMissingKey(t *testing.T) {
 // Test DeleteObject with invalid key
 func TestDeleteObjectInvalidKey(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.DELETE("/objects/*key", handler.DeleteObject)
@@ -246,7 +246,7 @@ func TestDeleteObjectInvalidKey(t *testing.T) {
 // Test HeadObject with missing key
 func TestHeadObjectMissingKey(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.HEAD("/objects/", handler.HeadObject)
@@ -264,7 +264,7 @@ func TestHeadObjectMissingKey(t *testing.T) {
 // Test HeadObject with invalid key
 func TestHeadObjectInvalidKey(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.HEAD("/objects/*key", handler.HeadObject)
@@ -288,7 +288,7 @@ func TestHeadObjectMetadataError(t *testing.T) {
 	}
 	storage.MockStorage.PutWithContext(context.Background(), "test.txt", strings.NewReader("content"))
 
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.HEAD("/objects/*key", handler.HeadObject)
@@ -307,7 +307,7 @@ func TestHeadObjectMetadataError(t *testing.T) {
 // Test GetObjectMetadata with missing key
 func TestGetObjectMetadataMissingKey(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.GET("/metadata/", handler.GetObjectMetadata)
@@ -325,7 +325,7 @@ func TestGetObjectMetadataMissingKey(t *testing.T) {
 // Test GetObjectMetadata with invalid key
 func TestGetObjectMetadataInvalidKey(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.GET("/metadata/:key", handler.GetObjectMetadata)
@@ -344,7 +344,7 @@ func TestGetObjectMetadataInvalidKey(t *testing.T) {
 // Test UpdateObjectMetadata with missing key
 func TestUpdateObjectMetadataMissingKey(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.PUT("/metadata/", handler.UpdateObjectMetadata)
@@ -366,7 +366,7 @@ func TestUpdateObjectMetadataMissingKey(t *testing.T) {
 // Test UpdateObjectMetadata with invalid key
 func TestUpdateObjectMetadataInvalidKey(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.PUT("/metadata/:key", handler.UpdateObjectMetadata)
@@ -391,7 +391,7 @@ func TestUpdateObjectMetadataInvalidCustomMetadata(t *testing.T) {
 	storage := NewMockStorage()
 	storage.PutWithContext(context.Background(), "test.txt", strings.NewReader("content"))
 
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.PUT("/metadata/:key", handler.UpdateObjectMetadata)
@@ -533,7 +533,7 @@ func (e *ErrorReader) Close() error {
 // Test PutObject with read error during upload
 func TestPutObjectReadError(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.PUT("/objects/*key", handler.PutObject)
@@ -552,7 +552,7 @@ func TestPutObjectReadError(t *testing.T) {
 // Test multipart with invalid custom metadata in form
 func TestPutObjectMultipartInvalidCustomMetadata(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.PUT("/objects/*key", handler.PutObject)
@@ -589,7 +589,7 @@ func TestPutObjectMultipartInvalidCustomMetadata(t *testing.T) {
 // Test PutObject with direct upload and custom metadata in header
 func TestPutObjectDirectUploadWithCustomMetadata(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.PUT("/objects/*key", handler.PutObject)
