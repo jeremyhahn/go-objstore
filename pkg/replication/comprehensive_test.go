@@ -38,14 +38,14 @@ func TestMultipleSyncRounds(t *testing.T) {
 	}
 
 	policy := common.ReplicationPolicy{
-		ID:              "multi-sync-test",
-		SourceBackend:   "local",
-		SourceSettings:  map[string]string{"path": "/tmp/src"},
-		DestinationBackend: "local",
+		ID:                  "multi-sync-test",
+		SourceBackend:       "local",
+		SourceSettings:      map[string]string{"path": "/tmp/src"},
+		DestinationBackend:  "local",
 		DestinationSettings: map[string]string{"path": "/tmp/dst"},
-		CheckInterval:   5 * time.Minute,
-		Enabled:         true,
-		ReplicationMode: common.ReplicationModeOpaque,
+		CheckInterval:       5 * time.Minute,
+		Enabled:             true,
+		ReplicationMode:     common.ReplicationModeOpaque,
 	}
 
 	err = mgr.AddPolicy(policy)
@@ -92,14 +92,14 @@ func TestSyncAllMultiplePolicies(t *testing.T) {
 	// Add 5 policies
 	for i := 1; i <= 5; i++ {
 		policy := common.ReplicationPolicy{
-			ID:              "policy-" + string(rune('0'+i)),
-			SourceBackend:   "local",
-			SourceSettings:  map[string]string{"path": "/tmp/src" + string(rune('0'+i))},
-			DestinationBackend: "local",
+			ID:                  "policy-" + string(rune('0'+i)),
+			SourceBackend:       "local",
+			SourceSettings:      map[string]string{"path": "/tmp/src" + string(rune('0'+i))},
+			DestinationBackend:  "local",
 			DestinationSettings: map[string]string{"path": "/tmp/dst" + string(rune('0'+i))},
-			CheckInterval:   5 * time.Minute,
-			Enabled:         true,
-			ReplicationMode: common.ReplicationModeOpaque,
+			CheckInterval:       5 * time.Minute,
+			Enabled:             true,
+			ReplicationMode:     common.ReplicationModeOpaque,
 		}
 
 		err = mgr.AddPolicy(policy)
@@ -150,10 +150,10 @@ func TestSyncAllParallelWithLargeDataset(t *testing.T) {
 	}
 
 	policy := common.ReplicationPolicy{
-		ID:              "large-dataset-test",
-		SourceBackend:   "local",
+		ID:                 "large-dataset-test",
+		SourceBackend:      "local",
 		DestinationBackend: "local",
-		ReplicationMode: common.ReplicationModeOpaque,
+		ReplicationMode:    common.ReplicationModeOpaque,
 	}
 
 	syncer := &Syncer{
@@ -202,14 +202,14 @@ func TestPolicyReload(t *testing.T) {
 	}
 
 	policy := common.ReplicationPolicy{
-		ID:              "reload-policy",
-		SourceBackend:   "local",
-		SourceSettings:  map[string]string{"path": "/tmp/src"},
-		DestinationBackend: "local",
+		ID:                  "reload-policy",
+		SourceBackend:       "local",
+		SourceSettings:      map[string]string{"path": "/tmp/src"},
+		DestinationBackend:  "local",
 		DestinationSettings: map[string]string{"path": "/tmp/dst"},
-		CheckInterval:   10 * time.Minute,
-		Enabled:         true,
-		ReplicationMode: common.ReplicationModeTransparent,
+		CheckInterval:       10 * time.Minute,
+		Enabled:             true,
+		ReplicationMode:     common.ReplicationModeTransparent,
 	}
 
 	err = mgr1.AddPolicy(policy)
@@ -245,12 +245,12 @@ func TestPolicyReload(t *testing.T) {
 // TestTransparentModeEncryption tests syncer creation in transparent mode with encryption
 func TestTransparentModeEncryption(t *testing.T) {
 	policy := common.ReplicationPolicy{
-		ID:              "transparent-encrypt-test",
-		SourceBackend:   "local",
-		SourceSettings:  map[string]string{"path": "/tmp/src"},
-		DestinationBackend: "local",
+		ID:                  "transparent-encrypt-test",
+		SourceBackend:       "local",
+		SourceSettings:      map[string]string{"path": "/tmp/src"},
+		DestinationBackend:  "local",
 		DestinationSettings: map[string]string{"path": "/tmp/dst"},
-		ReplicationMode: common.ReplicationModeTransparent,
+		ReplicationMode:     common.ReplicationModeTransparent,
 		Encryption: &common.EncryptionPolicy{
 			Source: &common.EncryptionConfig{
 				Enabled:  true,
@@ -287,12 +287,12 @@ func TestTransparentModeEncryption(t *testing.T) {
 // TestBackendEncryptionConfig tests syncer creation with backend encryption
 func TestBackendEncryptionConfig(t *testing.T) {
 	policy := common.ReplicationPolicy{
-		ID:              "backend-encrypt-test",
-		SourceBackend:   "local",
-		SourceSettings:  map[string]string{"path": "/tmp/src"},
-		DestinationBackend: "local",
+		ID:                  "backend-encrypt-test",
+		SourceBackend:       "local",
+		SourceSettings:      map[string]string{"path": "/tmp/src"},
+		DestinationBackend:  "local",
 		DestinationSettings: map[string]string{"path": "/tmp/dst"},
-		ReplicationMode: common.ReplicationModeTransparent,
+		ReplicationMode:     common.ReplicationModeTransparent,
 		Encryption: &common.EncryptionPolicy{
 			Backend: &common.EncryptionConfig{
 				Enabled:  true,
@@ -331,14 +331,14 @@ func TestReplicationStatusWithMetrics(t *testing.T) {
 	}
 
 	policy := common.ReplicationPolicy{
-		ID:              "metrics-status-test",
-		SourceBackend:   "local",
-		SourceSettings:  map[string]string{"path": "/tmp/src"},
-		DestinationBackend: "local",
+		ID:                  "metrics-status-test",
+		SourceBackend:       "local",
+		SourceSettings:      map[string]string{"path": "/tmp/src"},
+		DestinationBackend:  "local",
 		DestinationSettings: map[string]string{"path": "/tmp/dst"},
-		CheckInterval:   5 * time.Minute,
-		Enabled:         true,
-		ReplicationMode: common.ReplicationModeOpaque,
+		CheckInterval:       5 * time.Minute,
+		Enabled:             true,
+		ReplicationMode:     common.ReplicationModeOpaque,
 	}
 
 	err = mgr.AddPolicy(policy)

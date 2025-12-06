@@ -146,17 +146,17 @@ type TriggerReplicationResponse struct {
 
 // ReplicationStatusResponse represents replication status and metrics
 type ReplicationStatusResponse struct {
-	PolicyID             string `json:"policy_id" example:"repl-policy-1"`
-	SourceBackend        string `json:"source_backend" example:"local"`
-	DestinationBackend   string `json:"destination_backend" example:"s3"`
-	Enabled              bool   `json:"enabled" example:"true"`
-	TotalObjectsSynced   int64  `json:"total_objects_synced" example:"1500"`
-	TotalObjectsDeleted  int64  `json:"total_objects_deleted" example:"50"`
-	TotalBytesSynced     int64  `json:"total_bytes_synced" example:"10485760"`
-	TotalErrors          int64  `json:"total_errors" example:"3"`
-	LastSyncTime         string `json:"last_sync_time,omitempty" example:"2025-11-05T10:00:00Z"`
-	AverageSyncDuration  string `json:"average_sync_duration" example:"2.5s"`
-	SyncCount            int64  `json:"sync_count" example:"100"`
+	PolicyID            string `json:"policy_id" example:"repl-policy-1"`
+	SourceBackend       string `json:"source_backend" example:"local"`
+	DestinationBackend  string `json:"destination_backend" example:"s3"`
+	Enabled             bool   `json:"enabled" example:"true"`
+	TotalObjectsSynced  int64  `json:"total_objects_synced" example:"1500"`
+	TotalObjectsDeleted int64  `json:"total_objects_deleted" example:"50"`
+	TotalBytesSynced    int64  `json:"total_bytes_synced" example:"10485760"`
+	TotalErrors         int64  `json:"total_errors" example:"3"`
+	LastSyncTime        string `json:"last_sync_time,omitempty" example:"2025-11-05T10:00:00Z"`
+	AverageSyncDuration string `json:"average_sync_duration" example:"2.5s"`
+	SyncCount           int64  `json:"sync_count" example:"100"`
 } // @name ReplicationStatusResponse
 
 // RespondWithError sends a standard error response

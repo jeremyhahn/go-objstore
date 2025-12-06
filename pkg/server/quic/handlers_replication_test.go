@@ -175,26 +175,48 @@ func (m *MockStorageWithReplication) GetReplicationManager() (common.Replication
 }
 
 // Implement required Storage interface methods (minimal implementation for testing)
-func (m *MockStorageWithReplication) Configure(settings map[string]string) error       { return nil }
-func (m *MockStorageWithReplication) Put(key string, data io.Reader) error                   { return nil }
-func (m *MockStorageWithReplication) PutWithContext(ctx context.Context, key string, data io.Reader) error { return nil }
-func (m *MockStorageWithReplication) PutWithMetadata(ctx context.Context, key string, data io.Reader, metadata *common.Metadata) error { return nil }
-func (m *MockStorageWithReplication) Get(key string) (io.ReadCloser, error)                      { return nil, nil }
-func (m *MockStorageWithReplication) GetWithContext(ctx context.Context, key string) (io.ReadCloser, error) { return nil, nil }
-func (m *MockStorageWithReplication) GetMetadata(ctx context.Context, key string) (*common.Metadata, error) { return nil, nil }
-func (m *MockStorageWithReplication) UpdateMetadata(ctx context.Context, key string, metadata *common.Metadata) error { return nil }
+func (m *MockStorageWithReplication) Configure(settings map[string]string) error { return nil }
+func (m *MockStorageWithReplication) Put(key string, data io.Reader) error       { return nil }
+func (m *MockStorageWithReplication) PutWithContext(ctx context.Context, key string, data io.Reader) error {
+	return nil
+}
+func (m *MockStorageWithReplication) PutWithMetadata(ctx context.Context, key string, data io.Reader, metadata *common.Metadata) error {
+	return nil
+}
+func (m *MockStorageWithReplication) Get(key string) (io.ReadCloser, error) { return nil, nil }
+func (m *MockStorageWithReplication) GetWithContext(ctx context.Context, key string) (io.ReadCloser, error) {
+	return nil, nil
+}
+func (m *MockStorageWithReplication) GetMetadata(ctx context.Context, key string) (*common.Metadata, error) {
+	return nil, nil
+}
+func (m *MockStorageWithReplication) UpdateMetadata(ctx context.Context, key string, metadata *common.Metadata) error {
+	return nil
+}
 func (m *MockStorageWithReplication) Delete(key string) error { return nil }
-func (m *MockStorageWithReplication) DeleteWithContext(ctx context.Context, key string) error { return nil }
-func (m *MockStorageWithReplication) Exists(ctx context.Context, key string) (bool, error) { return false, nil }
+func (m *MockStorageWithReplication) DeleteWithContext(ctx context.Context, key string) error {
+	return nil
+}
+func (m *MockStorageWithReplication) Exists(ctx context.Context, key string) (bool, error) {
+	return false, nil
+}
 func (m *MockStorageWithReplication) List(prefix string) ([]string, error) { return nil, nil }
-func (m *MockStorageWithReplication) ListWithContext(ctx context.Context, prefix string) ([]string, error) { return nil, nil }
-func (m *MockStorageWithReplication) ListWithOptions(ctx context.Context, opts *common.ListOptions) (*common.ListResult, error) { return nil, nil }
-func (m *MockStorageWithReplication) Archive(key string, destination common.Archiver) error { return nil }
-func (m *MockStorageWithReplication) SetLifecyclePolicy(policy *common.LifecyclePolicy) error { return nil }
-func (m *MockStorageWithReplication) GetLifecyclePolicy() *common.LifecyclePolicy { return nil }
-func (m *MockStorageWithReplication) RunLifecycle(ctx context.Context) error { return nil }
-func (m *MockStorageWithReplication) AddPolicy(policy common.LifecyclePolicy) error { return nil }
-func (m *MockStorageWithReplication) RemovePolicy(id string) error { return nil }
+func (m *MockStorageWithReplication) ListWithContext(ctx context.Context, prefix string) ([]string, error) {
+	return nil, nil
+}
+func (m *MockStorageWithReplication) ListWithOptions(ctx context.Context, opts *common.ListOptions) (*common.ListResult, error) {
+	return nil, nil
+}
+func (m *MockStorageWithReplication) Archive(key string, destination common.Archiver) error {
+	return nil
+}
+func (m *MockStorageWithReplication) SetLifecyclePolicy(policy *common.LifecyclePolicy) error {
+	return nil
+}
+func (m *MockStorageWithReplication) GetLifecyclePolicy() *common.LifecyclePolicy    { return nil }
+func (m *MockStorageWithReplication) RunLifecycle(ctx context.Context) error         { return nil }
+func (m *MockStorageWithReplication) AddPolicy(policy common.LifecyclePolicy) error  { return nil }
+func (m *MockStorageWithReplication) RemovePolicy(id string) error                   { return nil }
 func (m *MockStorageWithReplication) GetPolicies() ([]common.LifecyclePolicy, error) { return nil, nil }
 
 // MockStorageNoReplication is a test storage without replication support
@@ -228,12 +250,12 @@ func TestHandleAddReplicationPolicy(t *testing.T) {
 		{
 			name: "valid policy",
 			requestBody: map[string]any{
-				"id":                   "test-policy-1",
-				"source_backend":       "local",
-				"destination_backend":  "s3",
-				"check_interval":       300,
-				"enabled":              true,
-				"replication_mode":     "transparent",
+				"id":                  "test-policy-1",
+				"source_backend":      "local",
+				"destination_backend": "s3",
+				"check_interval":      300,
+				"enabled":             true,
+				"replication_mode":    "transparent",
 			},
 			expectedStatus: http.StatusCreated,
 			expectInMgr:    true,
@@ -340,20 +362,20 @@ func TestHandleGetReplicationPolicies(t *testing.T) {
 
 	// Add some policies
 	storage.repMgr.AddPolicy(common.ReplicationPolicy{
-		ID:                  "policy-1",
-		SourceBackend:       "local",
-		DestinationBackend:  "s3",
-		CheckInterval:       5 * time.Minute,
-		Enabled:             true,
-		ReplicationMode:     common.ReplicationModeTransparent,
+		ID:                 "policy-1",
+		SourceBackend:      "local",
+		DestinationBackend: "s3",
+		CheckInterval:      5 * time.Minute,
+		Enabled:            true,
+		ReplicationMode:    common.ReplicationModeTransparent,
 	})
 	storage.repMgr.AddPolicy(common.ReplicationPolicy{
-		ID:                  "policy-2",
-		SourceBackend:       "s3",
-		DestinationBackend:  "gcs",
-		CheckInterval:       10 * time.Minute,
-		Enabled:             false,
-		ReplicationMode:     common.ReplicationModeOpaque,
+		ID:                 "policy-2",
+		SourceBackend:      "s3",
+		DestinationBackend: "gcs",
+		CheckInterval:      10 * time.Minute,
+		Enabled:            false,
+		ReplicationMode:    common.ReplicationModeOpaque,
 	})
 
 	req := httptest.NewRequest(http.MethodGet, "/replication/policies", nil)
@@ -386,12 +408,12 @@ func TestHandleGetReplicationPolicy(t *testing.T) {
 
 	// Add a policy
 	storage.repMgr.AddPolicy(common.ReplicationPolicy{
-		ID:                  "test-policy",
-		SourceBackend:       "local",
-		DestinationBackend:  "s3",
-		CheckInterval:       5 * time.Minute,
-		Enabled:             true,
-		ReplicationMode:     common.ReplicationModeTransparent,
+		ID:                 "test-policy",
+		SourceBackend:      "local",
+		DestinationBackend: "s3",
+		CheckInterval:      5 * time.Minute,
+		Enabled:            true,
+		ReplicationMode:    common.ReplicationModeTransparent,
 	})
 
 	tests := []struct {
@@ -446,12 +468,12 @@ func TestHandleDeleteReplicationPolicy(t *testing.T) {
 
 	// Add a policy
 	storage.repMgr.AddPolicy(common.ReplicationPolicy{
-		ID:                  "test-policy",
-		SourceBackend:       "local",
-		DestinationBackend:  "s3",
-		CheckInterval:       5 * time.Minute,
-		Enabled:             true,
-		ReplicationMode:     common.ReplicationModeTransparent,
+		ID:                 "test-policy",
+		SourceBackend:      "local",
+		DestinationBackend: "s3",
+		CheckInterval:      5 * time.Minute,
+		Enabled:            true,
+		ReplicationMode:    common.ReplicationModeTransparent,
 	})
 
 	tests := []struct {
@@ -491,12 +513,12 @@ func TestHandleTriggerReplication(t *testing.T) {
 
 	// Add a policy
 	storage.repMgr.AddPolicy(common.ReplicationPolicy{
-		ID:                  "test-policy",
-		SourceBackend:       "local",
-		DestinationBackend:  "s3",
-		CheckInterval:       5 * time.Minute,
-		Enabled:             true,
-		ReplicationMode:     common.ReplicationModeTransparent,
+		ID:                 "test-policy",
+		SourceBackend:      "local",
+		DestinationBackend: "s3",
+		CheckInterval:      5 * time.Minute,
+		Enabled:            true,
+		ReplicationMode:    common.ReplicationModeTransparent,
 	})
 
 	tests := []struct {
@@ -677,11 +699,11 @@ func TestReplicationErrorHandling(t *testing.T) {
 
 	// Add a policy first
 	storage.repMgr.AddPolicy(common.ReplicationPolicy{
-		ID:                  "test-policy",
-		SourceBackend:       "local",
-		DestinationBackend:  "s3",
-		CheckInterval:       5 * time.Minute,
-		Enabled:             true,
+		ID:                 "test-policy",
+		SourceBackend:      "local",
+		DestinationBackend: "s3",
+		CheckInterval:      5 * time.Minute,
+		Enabled:            true,
 	})
 
 	t.Run("add duplicate policy", func(t *testing.T) {

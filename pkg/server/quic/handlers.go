@@ -13,7 +13,6 @@
 
 package quic
 
-
 import (
 	"context"
 	"encoding/json"

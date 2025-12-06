@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/tls"
 	"net"
+	"sync"
 
 	objstorepb "github.com/jeremyhahn/go-objstore/api/proto"
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
@@ -41,6 +42,7 @@ type Server struct {
 	grpcServer *grpc.Server
 	listener   net.Listener
 	metrics    *MetricsCollector
+	mu         sync.RWMutex
 }
 
 // NewServer creates a new gRPC server instance using the ObjstoreFacade.
@@ -73,26 +75,31 @@ func (s *Server) Start() error {
 	if err != nil {
 		return err
 	}
-	s.listener = listener
 
 	// Build server options
 	serverOpts := s.buildServerOptions()
 
 	// Create gRPC server
-	s.grpcServer = grpc.NewServer(serverOpts...)
+	grpcServer := grpc.NewServer(serverOpts...)
+
+	// Store references with mutex protection
+	s.mu.Lock()
+	s.listener = listener
+	s.grpcServer = grpcServer
+	s.mu.Unlock()
 
 	// Register the ObjectStore service
-	objstorepb.RegisterObjectStoreServer(s.grpcServer, s)
+	objstorepb.RegisterObjectStoreServer(grpcServer, s)
 
 	// Register health check service
 	healthServer := health.NewServer()
-	grpc_health_v1.RegisterHealthServer(s.grpcServer, healthServer)
+	grpc_health_v1.RegisterHealthServer(grpcServer, healthServer)
 	healthServer.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
 	healthServer.SetServingStatus("objstore.ObjectStore", grpc_health_v1.HealthCheckResponse_SERVING)
 
 	// Enable reflection if configured
 	if s.opts.EnableReflection {
-		reflection.Register(s.grpcServer)
+		reflection.Register(grpcServer)
 		s.opts.Logger.Info(context.TODO(), "gRPC server reflection enabled")
 	}
 
@@ -101,7 +108,7 @@ func (s *Server) Start() error {
 	)
 
 	// Start serving (this blocks)
-	if err := s.grpcServer.Serve(listener); err != nil {
+	if err := grpcServer.Serve(listener); err != nil {
 		return err
 	}
 
@@ -110,18 +117,26 @@ func (s *Server) Start() error {
 
 // Stop gracefully stops the gRPC server.
 func (s *Server) Stop() {
-	if s.grpcServer != nil {
+	s.mu.RLock()
+	grpcServer := s.grpcServer
+	s.mu.RUnlock()
+
+	if grpcServer != nil {
 		s.opts.Logger.Info(context.TODO(), "Gracefully stopping gRPC server")
-		s.grpcServer.GracefulStop()
+		grpcServer.GracefulStop()
 		s.opts.Logger.Info(context.TODO(), "gRPC server stopped")
 	}
 }
 
 // ForceStop forcefully stops the gRPC server.
 func (s *Server) ForceStop() {
-	if s.grpcServer != nil {
+	s.mu.RLock()
+	grpcServer := s.grpcServer
+	s.mu.RUnlock()
+
+	if grpcServer != nil {
 		s.opts.Logger.Warn(context.TODO(), "Force stopping gRPC server")
-		s.grpcServer.Stop()
+		grpcServer.Stop()
 		s.opts.Logger.Info(context.TODO(), "gRPC server stopped")
 	}
 }
@@ -133,8 +148,12 @@ func (s *Server) GetMetrics() map[string]any {
 
 // GetAddress returns the server's listening address.
 func (s *Server) GetAddress() string {
-	if s.listener != nil {
-		return s.listener.Addr().String()
+	s.mu.RLock()
+	listener := s.listener
+	s.mu.RUnlock()
+
+	if listener != nil {
+		return listener.Addr().String()
 	}
 	return s.opts.Address
 }

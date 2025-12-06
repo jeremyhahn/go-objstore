@@ -11,7 +11,6 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-
 package local_test
 
 import (
@@ -113,8 +112,8 @@ func TestLocal_PutAndGet(t *testing.T) {
 
 	// Test case 3: Get non-existent object
 	_, err = storage.Get("non-existent-key")
-	if !os.IsNotExist(err) {
-		t.Errorf("Expected 'file does not exist' error, got %v", err)
+	if !errors.Is(err, common.ErrKeyNotFound) {
+		t.Errorf("Expected 'key not found' error, got %v", err)
 	}
 }
 
@@ -202,8 +201,8 @@ func TestLocal_Archive(t *testing.T) {
 
 	// Test case 2: Archive non-existent object (should return error from Get)
 	err = storage.Archive("non-existent-archive-key", mockArchiver)
-	if err == nil || !os.IsNotExist(err) {
-		t.Errorf("Expected 'file does not exist' error on archiving non-existent key, got %v", err)
+	if err == nil || !errors.Is(err, common.ErrKeyNotFound) {
+		t.Errorf("Expected 'key not found' error on archiving non-existent key, got %v", err)
 	}
 
 	// Test case 3: Error during Archiver.Put

@@ -32,14 +32,14 @@ import (
 
 // Test error variables
 var (
-	errReadError             = errors.New("read error")
-	errDelErr                = errors.New("del err")
-	errAttrsError            = errors.New("attrs error")
-	errObjectNotExist        = errors.New("object doesn't exist")
-	errCloseError            = errors.New("close error")
-	errWriteError            = errors.New("write error")
-	errClientCreationFailed  = errors.New("client creation failed")
-	errPutFailed             = errors.New("put failed")
+	errReadError            = errors.New("read error")
+	errDelErr               = errors.New("del err")
+	errAttrsError           = errors.New("attrs error")
+	errObjectNotExist       = errors.New("object doesn't exist")
+	errCloseError           = errors.New("close error")
+	errWriteError           = errors.New("write error")
+	errClientCreationFailed = errors.New("client creation failed")
+	errPutFailed            = errors.New("put failed")
 )
 
 func TestGCS_AddPolicy_Success(t *testing.T) {

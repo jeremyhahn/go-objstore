@@ -490,18 +490,18 @@ func (e *ToolExecutor) executeGetReplicationStatus(ctx context.Context, args map
 	}
 
 	result := map[string]any{
-		"success":                true,
-		"policy_id":              replicationStatus.PolicyID,
-		"source_backend":         replicationStatus.SourceBackend,
-		"destination_backend":    replicationStatus.DestinationBackend,
-		"enabled":                replicationStatus.Enabled,
-		"total_objects_synced":   replicationStatus.TotalObjectsSynced,
-		"total_objects_deleted":  replicationStatus.TotalObjectsDeleted,
-		"total_bytes_synced":     replicationStatus.TotalBytesSynced,
-		"total_errors":           replicationStatus.TotalErrors,
-		"last_sync_time":         replicationStatus.LastSyncTime.Format(time.RFC3339),
-		"average_sync_duration":  replicationStatus.AverageSyncDuration.String(),
-		"sync_count":             replicationStatus.SyncCount,
+		"success":               true,
+		"policy_id":             replicationStatus.PolicyID,
+		"source_backend":        replicationStatus.SourceBackend,
+		"destination_backend":   replicationStatus.DestinationBackend,
+		"enabled":               replicationStatus.Enabled,
+		"total_objects_synced":  replicationStatus.TotalObjectsSynced,
+		"total_objects_deleted": replicationStatus.TotalObjectsDeleted,
+		"total_bytes_synced":    replicationStatus.TotalBytesSynced,
+		"total_errors":          replicationStatus.TotalErrors,
+		"last_sync_time":        replicationStatus.LastSyncTime.Format(time.RFC3339),
+		"average_sync_duration": replicationStatus.AverageSyncDuration.String(),
+		"sync_count":            replicationStatus.SyncCount,
 	}
 
 	jsonResult, _ := json.MarshalIndent(result, "", "  ")

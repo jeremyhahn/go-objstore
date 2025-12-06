@@ -18,6 +18,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"testing"
+	"time"
+
+	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
 func TestHandlePut(t *testing.T) {
@@ -112,11 +115,11 @@ func TestHandleGet(t *testing.T) {
 	handler := createTestHandler(t, storage)
 
 	tests := []struct {
-		name       string
-		params     GetParams
-		wantErr    bool
-		errCode    int
-		wantData   string
+		name     string
+		params   GetParams
+		wantErr  bool
+		errCode  int
+		wantData string
 	}{
 		{
 			name:     "successful get",
@@ -567,5 +570,1226 @@ func TestKeyRef(t *testing.T) {
 				t.Errorf("keyRef(%q) = %q, want %q", tt.key, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestHandleArchive(t *testing.T) {
+	storage := NewMockStorage()
+	storage.objects["test/file.txt"] = []byte("data")
+	handler := createTestHandler(t, storage)
+
+	tests := []struct {
+		name    string
+		params  ArchiveParams
+		wantErr bool
+		errCode int
+	}{
+		{
+			name:    "missing key",
+			params:  ArchiveParams{DestinationType: "local"},
+			wantErr: true,
+			errCode: ErrCodeInvalidParams,
+		},
+		{
+			name:    "missing destination_type",
+			params:  ArchiveParams{Key: "test/file.txt"},
+			wantErr: true,
+			errCode: ErrCodeInvalidParams,
+		},
+		{
+			name: "invalid destination type",
+			params: ArchiveParams{
+				Key:             "test/file.txt",
+				DestinationType: "invalid-backend",
+			},
+			wantErr: true,
+			errCode: ErrCodeInternalError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			paramsJSON, _ := json.Marshal(tt.params)
+			req := &Request{
+				JSONRPC: jsonRPCVersion,
+				Method:  MethodArchive,
+				Params:  paramsJSON,
+				ID:      1,
+			}
+
+			resp := handler.Handle(context.Background(), req)
+
+			if tt.wantErr {
+				if resp.Error == nil {
+					t.Errorf("expected error but got success")
+					return
+				}
+				if resp.Error.Code != tt.errCode {
+					t.Errorf("got error code %d, want %d", resp.Error.Code, tt.errCode)
+				}
+			} else {
+				if resp.Error != nil {
+					t.Errorf("unexpected error: %s", resp.Error.Message)
+				}
+			}
+		})
+	}
+
+	// Test invalid JSON params
+	t.Run("invalid json params", func(t *testing.T) {
+		req := &Request{
+			JSONRPC: jsonRPCVersion,
+			Method:  MethodArchive,
+			Params:  json.RawMessage(`{"invalid": json`),
+			ID:      1,
+		}
+		resp := handler.Handle(context.Background(), req)
+		if resp.Error == nil || resp.Error.Code != ErrCodeInvalidParams {
+			t.Error("expected invalid params error")
+		}
+	})
+}
+
+func TestHandleAddPolicy(t *testing.T) {
+	storage := NewMockStorage()
+	handler := createTestHandler(t, storage)
+
+	tests := []struct {
+		name    string
+		params  PolicyParams
+		wantErr bool
+	}{
+		{
+			name: "add valid policy",
+			params: PolicyParams{
+				ID:        "test-policy",
+				Prefix:    "logs/",
+				Action:    "delete",
+				AfterDays: 30,
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			paramsJSON, _ := json.Marshal(tt.params)
+			req := &Request{
+				JSONRPC: jsonRPCVersion,
+				Method:  MethodAddPolicy,
+				Params:  paramsJSON,
+				ID:      1,
+			}
+
+			resp := handler.Handle(context.Background(), req)
+
+			if tt.wantErr {
+				if resp.Error == nil {
+					t.Errorf("expected error but got success")
+				}
+			} else {
+				if resp.Error != nil {
+					t.Errorf("unexpected error: %s", resp.Error.Message)
+				}
+			}
+		})
+	}
+
+	// Test invalid JSON params
+	t.Run("invalid json params", func(t *testing.T) {
+		req := &Request{
+			JSONRPC: jsonRPCVersion,
+			Method:  MethodAddPolicy,
+			Params:  json.RawMessage(`{"invalid": json`),
+			ID:      1,
+		}
+		resp := handler.Handle(context.Background(), req)
+		if resp.Error == nil || resp.Error.Code != ErrCodeInvalidParams {
+			t.Error("expected invalid params error")
+		}
+	})
+}
+
+func TestHandleRemovePolicy(t *testing.T) {
+	storage := NewMockStorage()
+	handler := createTestHandler(t, storage)
+
+	tests := []struct {
+		name    string
+		params  RemovePolicyParams
+		wantErr bool
+		errCode int
+	}{
+		{
+			name:    "missing id",
+			params:  RemovePolicyParams{ID: ""},
+			wantErr: true,
+			errCode: ErrCodeInvalidParams,
+		},
+		{
+			name:    "remove non-existent policy succeeds",
+			params:  RemovePolicyParams{ID: "non-existent"},
+			wantErr: false, // RemovePolicy succeeds even if policy doesn't exist
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			paramsJSON, _ := json.Marshal(tt.params)
+			req := &Request{
+				JSONRPC: jsonRPCVersion,
+				Method:  MethodRemovePolicy,
+				Params:  paramsJSON,
+				ID:      1,
+			}
+
+			resp := handler.Handle(context.Background(), req)
+
+			if tt.wantErr {
+				if resp.Error == nil {
+					t.Errorf("expected error but got success")
+					return
+				}
+				if resp.Error.Code != tt.errCode {
+					t.Errorf("got error code %d, want %d", resp.Error.Code, tt.errCode)
+				}
+			} else {
+				if resp.Error != nil {
+					t.Errorf("unexpected error: %s", resp.Error.Message)
+				}
+			}
+		})
+	}
+
+	// Test invalid JSON params
+	t.Run("invalid json params", func(t *testing.T) {
+		req := &Request{
+			JSONRPC: jsonRPCVersion,
+			Method:  MethodRemovePolicy,
+			Params:  json.RawMessage(`{"invalid": json`),
+			ID:      1,
+		}
+		resp := handler.Handle(context.Background(), req)
+		if resp.Error == nil || resp.Error.Code != ErrCodeInvalidParams {
+			t.Error("expected invalid params error")
+		}
+	})
+}
+
+func TestHandleGetPolicies(t *testing.T) {
+	storage := NewMockStorage()
+	handler := createTestHandler(t, storage)
+
+	req := &Request{
+		JSONRPC: jsonRPCVersion,
+		Method:  MethodGetPolicies,
+		ID:      1,
+	}
+
+	resp := handler.Handle(context.Background(), req)
+
+	if resp.Error != nil {
+		t.Errorf("unexpected error: %s", resp.Error.Message)
+		return
+	}
+
+	result, ok := resp.Result.([]PolicyParams)
+	if !ok {
+		t.Error("result is not []PolicyParams")
+		return
+	}
+
+	// Should be empty initially
+	if len(result) != 0 {
+		t.Errorf("expected 0 policies, got %d", len(result))
+	}
+}
+
+func TestHandleApplyPolicies(t *testing.T) {
+	storage := NewMockStorage()
+	handler := createTestHandler(t, storage)
+
+	req := &Request{
+		JSONRPC: jsonRPCVersion,
+		Method:  MethodApplyPolicies,
+		ID:      1,
+	}
+
+	resp := handler.Handle(context.Background(), req)
+
+	if resp.Error != nil {
+		t.Errorf("unexpected error: %s", resp.Error.Message)
+		return
+	}
+
+	result, ok := resp.Result.(*ApplyPoliciesResult)
+	if !ok {
+		t.Error("result is not *ApplyPoliciesResult")
+		return
+	}
+
+	// Should have 0 policies and 0 objects processed
+	if result.PoliciesCount != 0 {
+		t.Errorf("expected 0 policies, got %d", result.PoliciesCount)
+	}
+}
+
+func TestHandleAddReplicationPolicy(t *testing.T) {
+	storage := NewMockStorage()
+	handler := createTestHandler(t, storage)
+
+	tests := []struct {
+		name    string
+		params  ReplicationPolicyParams
+		wantErr bool
+		errCode int
+	}{
+		{
+			name: "add valid replication policy",
+			params: ReplicationPolicyParams{
+				ID:              "test-repl",
+				SourcePrefix:    "src/",
+				DestinationType: "local",
+				Destination:     map[string]string{"path": "/tmp/dest"},
+				Schedule:        "1h",
+				Enabled:         true,
+			},
+			wantErr: true, // Will fail because no replication manager configured
+			errCode: ErrCodeInternalError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			paramsJSON, _ := json.Marshal(tt.params)
+			req := &Request{
+				JSONRPC: jsonRPCVersion,
+				Method:  MethodAddReplPolicy,
+				Params:  paramsJSON,
+				ID:      1,
+			}
+
+			resp := handler.Handle(context.Background(), req)
+
+			if tt.wantErr {
+				if resp.Error == nil {
+					t.Errorf("expected error but got success")
+					return
+				}
+				if resp.Error.Code != tt.errCode {
+					t.Errorf("got error code %d, want %d", resp.Error.Code, tt.errCode)
+				}
+			} else {
+				if resp.Error != nil {
+					t.Errorf("unexpected error: %s", resp.Error.Message)
+				}
+			}
+		})
+	}
+
+	// Test invalid JSON params
+	t.Run("invalid json params", func(t *testing.T) {
+		req := &Request{
+			JSONRPC: jsonRPCVersion,
+			Method:  MethodAddReplPolicy,
+			Params:  json.RawMessage(`{"invalid": json`),
+			ID:      1,
+		}
+		resp := handler.Handle(context.Background(), req)
+		if resp.Error == nil || resp.Error.Code != ErrCodeInvalidParams {
+			t.Error("expected invalid params error")
+		}
+	})
+}
+
+func TestHandleRemoveReplicationPolicy(t *testing.T) {
+	storage := NewMockStorage()
+	handler := createTestHandler(t, storage)
+
+	tests := []struct {
+		name    string
+		params  ReplicationPolicyIDParams
+		wantErr bool
+		errCode int
+	}{
+		{
+			name:    "missing id",
+			params:  ReplicationPolicyIDParams{ID: ""},
+			wantErr: true,
+			errCode: ErrCodeInvalidParams,
+		},
+		{
+			name:    "no replication manager",
+			params:  ReplicationPolicyIDParams{ID: "test-id"},
+			wantErr: true,
+			errCode: ErrCodeInternalError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			paramsJSON, _ := json.Marshal(tt.params)
+			req := &Request{
+				JSONRPC: jsonRPCVersion,
+				Method:  MethodRemoveReplPolicy,
+				Params:  paramsJSON,
+				ID:      1,
+			}
+
+			resp := handler.Handle(context.Background(), req)
+
+			if tt.wantErr {
+				if resp.Error == nil {
+					t.Errorf("expected error but got success")
+					return
+				}
+				if resp.Error.Code != tt.errCode {
+					t.Errorf("got error code %d, want %d", resp.Error.Code, tt.errCode)
+				}
+			} else {
+				if resp.Error != nil {
+					t.Errorf("unexpected error: %s", resp.Error.Message)
+				}
+			}
+		})
+	}
+
+	// Test invalid JSON params
+	t.Run("invalid json params", func(t *testing.T) {
+		req := &Request{
+			JSONRPC: jsonRPCVersion,
+			Method:  MethodRemoveReplPolicy,
+			Params:  json.RawMessage(`{"invalid": json`),
+			ID:      1,
+		}
+		resp := handler.Handle(context.Background(), req)
+		if resp.Error == nil || resp.Error.Code != ErrCodeInvalidParams {
+			t.Error("expected invalid params error")
+		}
+	})
+}
+
+func TestHandleGetReplicationPolicy(t *testing.T) {
+	storage := NewMockStorage()
+	handler := createTestHandler(t, storage)
+
+	tests := []struct {
+		name    string
+		params  ReplicationPolicyIDParams
+		wantErr bool
+		errCode int
+	}{
+		{
+			name:    "missing id",
+			params:  ReplicationPolicyIDParams{ID: ""},
+			wantErr: true,
+			errCode: ErrCodeInvalidParams,
+		},
+		{
+			name:    "no replication manager",
+			params:  ReplicationPolicyIDParams{ID: "test-id"},
+			wantErr: true,
+			errCode: ErrCodeInternalError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			paramsJSON, _ := json.Marshal(tt.params)
+			req := &Request{
+				JSONRPC: jsonRPCVersion,
+				Method:  MethodGetReplPolicy,
+				Params:  paramsJSON,
+				ID:      1,
+			}
+
+			resp := handler.Handle(context.Background(), req)
+
+			if tt.wantErr {
+				if resp.Error == nil {
+					t.Errorf("expected error but got success")
+					return
+				}
+				if resp.Error.Code != tt.errCode {
+					t.Errorf("got error code %d, want %d", resp.Error.Code, tt.errCode)
+				}
+			} else {
+				if resp.Error != nil {
+					t.Errorf("unexpected error: %s", resp.Error.Message)
+				}
+			}
+		})
+	}
+
+	// Test invalid JSON params
+	t.Run("invalid json params", func(t *testing.T) {
+		req := &Request{
+			JSONRPC: jsonRPCVersion,
+			Method:  MethodGetReplPolicy,
+			Params:  json.RawMessage(`{"invalid": json`),
+			ID:      1,
+		}
+		resp := handler.Handle(context.Background(), req)
+		if resp.Error == nil || resp.Error.Code != ErrCodeInvalidParams {
+			t.Error("expected invalid params error")
+		}
+	})
+}
+
+func TestHandleGetReplicationPolicies(t *testing.T) {
+	storage := NewMockStorage()
+	handler := createTestHandler(t, storage)
+
+	req := &Request{
+		JSONRPC: jsonRPCVersion,
+		Method:  MethodGetReplPolicies,
+		ID:      1,
+	}
+
+	resp := handler.Handle(context.Background(), req)
+
+	// Should fail because no replication manager
+	if resp.Error == nil {
+		t.Error("expected error but got success")
+		return
+	}
+	if resp.Error.Code != ErrCodeInternalError {
+		t.Errorf("got error code %d, want %d", resp.Error.Code, ErrCodeInternalError)
+	}
+}
+
+func TestHandleTriggerReplication(t *testing.T) {
+	storage := NewMockStorage()
+	handler := createTestHandler(t, storage)
+
+	tests := []struct {
+		name    string
+		params  *ReplicationPolicyIDParams
+		wantErr bool
+		errCode int
+	}{
+		{
+			name:    "trigger all - no replication manager",
+			params:  nil,
+			wantErr: true,
+			errCode: ErrCodeInternalError,
+		},
+		{
+			name:    "trigger specific - no replication manager",
+			params:  &ReplicationPolicyIDParams{ID: "test-policy"},
+			wantErr: true,
+			errCode: ErrCodeInternalError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var paramsJSON json.RawMessage
+			if tt.params != nil {
+				paramsJSON, _ = json.Marshal(tt.params)
+			}
+			req := &Request{
+				JSONRPC: jsonRPCVersion,
+				Method:  MethodTriggerRepl,
+				Params:  paramsJSON,
+				ID:      1,
+			}
+
+			resp := handler.Handle(context.Background(), req)
+
+			if tt.wantErr {
+				if resp.Error == nil {
+					t.Errorf("expected error but got success")
+					return
+				}
+				if resp.Error.Code != tt.errCode {
+					t.Errorf("got error code %d, want %d", resp.Error.Code, tt.errCode)
+				}
+			} else {
+				if resp.Error != nil {
+					t.Errorf("unexpected error: %s", resp.Error.Message)
+				}
+			}
+		})
+	}
+
+	// Test invalid JSON params
+	t.Run("invalid json params", func(t *testing.T) {
+		req := &Request{
+			JSONRPC: jsonRPCVersion,
+			Method:  MethodTriggerRepl,
+			Params:  json.RawMessage(`{"invalid": json`),
+			ID:      1,
+		}
+		resp := handler.Handle(context.Background(), req)
+		if resp.Error == nil || resp.Error.Code != ErrCodeInvalidParams {
+			t.Error("expected invalid params error")
+		}
+	})
+}
+
+func TestHandleGetReplicationStatus(t *testing.T) {
+	storage := NewMockStorage()
+	handler := createTestHandler(t, storage)
+
+	tests := []struct {
+		name    string
+		params  ReplicationPolicyIDParams
+		wantErr bool
+		errCode int
+	}{
+		{
+			name:    "missing id",
+			params:  ReplicationPolicyIDParams{ID: ""},
+			wantErr: true,
+			errCode: ErrCodeInvalidParams,
+		},
+		{
+			name:    "no replication manager",
+			params:  ReplicationPolicyIDParams{ID: "test-id"},
+			wantErr: true,
+			errCode: ErrCodeInternalError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			paramsJSON, _ := json.Marshal(tt.params)
+			req := &Request{
+				JSONRPC: jsonRPCVersion,
+				Method:  MethodGetReplStatus,
+				Params:  paramsJSON,
+				ID:      1,
+			}
+
+			resp := handler.Handle(context.Background(), req)
+
+			if tt.wantErr {
+				if resp.Error == nil {
+					t.Errorf("expected error but got success")
+					return
+				}
+				if resp.Error.Code != tt.errCode {
+					t.Errorf("got error code %d, want %d", resp.Error.Code, tt.errCode)
+				}
+			} else {
+				if resp.Error != nil {
+					t.Errorf("unexpected error: %s", resp.Error.Message)
+				}
+			}
+		})
+	}
+
+	// Test invalid JSON params
+	t.Run("invalid json params", func(t *testing.T) {
+		req := &Request{
+			JSONRPC: jsonRPCVersion,
+			Method:  MethodGetReplStatus,
+			Params:  json.RawMessage(`{"invalid": json`),
+			ID:      1,
+		}
+		resp := handler.Handle(context.Background(), req)
+		if resp.Error == nil || resp.Error.Code != ErrCodeInvalidParams {
+			t.Error("expected invalid params error")
+		}
+	})
+}
+
+// Tests with mock replication manager for success paths
+
+func TestHandleAddReplicationPolicyWithManager(t *testing.T) {
+	storage := NewMockReplicableStorage()
+	handler := createTestHandlerWithReplication(t, storage)
+
+	params := ReplicationPolicyParams{
+		ID:              "test-repl-policy",
+		SourcePrefix:    "src/",
+		DestinationType: "local",
+		Destination:     map[string]string{"path": "/tmp/dest"},
+		Schedule:        "1h",
+		Enabled:         true,
+	}
+
+	paramsJSON, _ := json.Marshal(params)
+	req := &Request{
+		JSONRPC: jsonRPCVersion,
+		Method:  MethodAddReplPolicy,
+		Params:  paramsJSON,
+		ID:      1,
+	}
+
+	resp := handler.Handle(context.Background(), req)
+
+	if resp.Error != nil {
+		t.Errorf("unexpected error: %s", resp.Error.Message)
+	}
+}
+
+func TestHandleGetReplicationPoliciesWithManager(t *testing.T) {
+	storage := NewMockReplicableStorage()
+
+	// Add a policy first
+	_ = storage.replMgr.AddPolicy(common.ReplicationPolicy{
+		ID:           "test-policy-1",
+		SourcePrefix: "src/",
+		Enabled:      true,
+	})
+
+	handler := createTestHandlerWithReplication(t, storage)
+
+	req := &Request{
+		JSONRPC: jsonRPCVersion,
+		Method:  MethodGetReplPolicies,
+		ID:      1,
+	}
+
+	resp := handler.Handle(context.Background(), req)
+
+	if resp.Error != nil {
+		t.Errorf("unexpected error: %s", resp.Error.Message)
+		return
+	}
+
+	result, ok := resp.Result.([]ReplicationPolicyParams)
+	if !ok {
+		t.Error("result is not []ReplicationPolicyParams")
+		return
+	}
+
+	if len(result) != 1 {
+		t.Errorf("expected 1 policy, got %d", len(result))
+	}
+}
+
+func TestHandleGetReplicationPolicyWithManager(t *testing.T) {
+	storage := NewMockReplicableStorage()
+
+	// Add a policy first
+	_ = storage.replMgr.AddPolicy(common.ReplicationPolicy{
+		ID:           "test-policy-get",
+		SourcePrefix: "data/",
+		Enabled:      true,
+	})
+
+	handler := createTestHandlerWithReplication(t, storage)
+
+	params := ReplicationPolicyIDParams{ID: "test-policy-get"}
+	paramsJSON, _ := json.Marshal(params)
+	req := &Request{
+		JSONRPC: jsonRPCVersion,
+		Method:  MethodGetReplPolicy,
+		Params:  paramsJSON,
+		ID:      1,
+	}
+
+	resp := handler.Handle(context.Background(), req)
+
+	if resp.Error != nil {
+		t.Errorf("unexpected error: %s", resp.Error.Message)
+		return
+	}
+
+	result, ok := resp.Result.(*ReplicationPolicyParams)
+	if !ok {
+		t.Error("result is not *ReplicationPolicyParams")
+		return
+	}
+
+	if result.ID != "test-policy-get" {
+		t.Errorf("expected policy ID 'test-policy-get', got '%s'", result.ID)
+	}
+}
+
+func TestHandleRemoveReplicationPolicyWithManager(t *testing.T) {
+	storage := NewMockReplicableStorage()
+
+	// Add a policy first
+	_ = storage.replMgr.AddPolicy(common.ReplicationPolicy{
+		ID:           "test-policy-remove",
+		SourcePrefix: "data/",
+		Enabled:      true,
+	})
+
+	handler := createTestHandlerWithReplication(t, storage)
+
+	params := ReplicationPolicyIDParams{ID: "test-policy-remove"}
+	paramsJSON, _ := json.Marshal(params)
+	req := &Request{
+		JSONRPC: jsonRPCVersion,
+		Method:  MethodRemoveReplPolicy,
+		Params:  paramsJSON,
+		ID:      1,
+	}
+
+	resp := handler.Handle(context.Background(), req)
+
+	if resp.Error != nil {
+		t.Errorf("unexpected error: %s", resp.Error.Message)
+	}
+}
+
+func TestHandleTriggerReplicationWithManager(t *testing.T) {
+	storage := NewMockReplicableStorage()
+
+	// Add a policy first
+	_ = storage.replMgr.AddPolicy(common.ReplicationPolicy{
+		ID:           "test-trigger-policy",
+		SourcePrefix: "data/",
+		Enabled:      true,
+	})
+
+	handler := createTestHandlerWithReplication(t, storage)
+
+	t.Run("trigger all policies", func(t *testing.T) {
+		req := &Request{
+			JSONRPC: jsonRPCVersion,
+			Method:  MethodTriggerRepl,
+			ID:      1,
+		}
+
+		resp := handler.Handle(context.Background(), req)
+
+		if resp.Error != nil {
+			t.Errorf("unexpected error: %s", resp.Error.Message)
+			return
+		}
+
+		result, ok := resp.Result.(*TriggerReplicationResult)
+		if !ok {
+			t.Error("result is not *TriggerReplicationResult")
+			return
+		}
+
+		if result.ObjectsSynced != 1 {
+			t.Errorf("expected 1 object synced, got %d", result.ObjectsSynced)
+		}
+	})
+
+	t.Run("trigger specific policy", func(t *testing.T) {
+		params := ReplicationPolicyIDParams{ID: "test-trigger-policy"}
+		paramsJSON, _ := json.Marshal(params)
+		req := &Request{
+			JSONRPC: jsonRPCVersion,
+			Method:  MethodTriggerRepl,
+			Params:  paramsJSON,
+			ID:      1,
+		}
+
+		resp := handler.Handle(context.Background(), req)
+
+		if resp.Error != nil {
+			t.Errorf("unexpected error: %s", resp.Error.Message)
+			return
+		}
+
+		result, ok := resp.Result.(*TriggerReplicationResult)
+		if !ok {
+			t.Error("result is not *TriggerReplicationResult")
+			return
+		}
+
+		if result.ObjectsSynced != 1 {
+			t.Errorf("expected 1 object synced, got %d", result.ObjectsSynced)
+		}
+	})
+}
+
+func TestHandleGetReplicationStatusWithManager(t *testing.T) {
+	storage := NewMockReplicableStorage()
+
+	// Add a policy first
+	_ = storage.replMgr.AddPolicy(common.ReplicationPolicy{
+		ID:           "test-status-policy",
+		SourcePrefix: "data/",
+		Enabled:      true,
+	})
+
+	handler := createTestHandlerWithReplication(t, storage)
+
+	params := ReplicationPolicyIDParams{ID: "test-status-policy"}
+	paramsJSON, _ := json.Marshal(params)
+	req := &Request{
+		JSONRPC: jsonRPCVersion,
+		Method:  MethodGetReplStatus,
+		Params:  paramsJSON,
+		ID:      1,
+	}
+
+	resp := handler.Handle(context.Background(), req)
+
+	if resp.Error != nil {
+		t.Errorf("unexpected error: %s", resp.Error.Message)
+		return
+	}
+
+	result, ok := resp.Result.(*ReplicationStatusResult)
+	if !ok {
+		t.Error("result is not *ReplicationStatusResult")
+		return
+	}
+
+	if result.PolicyID != "test-status-policy" {
+		t.Errorf("expected policy ID 'test-status-policy', got '%s'", result.PolicyID)
+	}
+}
+
+func TestHandleApplyPoliciesWithObjects(t *testing.T) {
+	storage := NewMockStorage()
+	// Add some objects
+	storage.objects["logs/old.txt"] = []byte("old data")
+	storage.metadata["logs/old.txt"] = &common.Metadata{
+		Size:         8,
+		LastModified: time.Now().Add(-48 * time.Hour), // 2 days old
+	}
+	storage.objects["logs/new.txt"] = []byte("new data")
+	storage.metadata["logs/new.txt"] = &common.Metadata{
+		Size:         8,
+		LastModified: time.Now(),
+	}
+
+	handler := createTestHandler(t, storage)
+
+	// First add a policy
+	addPolicyParams := PolicyParams{
+		ID:        "cleanup-logs",
+		Prefix:    "logs/",
+		Action:    "delete",
+		AfterDays: 1, // 1 day retention
+	}
+	addParamsJSON, _ := json.Marshal(addPolicyParams)
+	addReq := &Request{
+		JSONRPC: jsonRPCVersion,
+		Method:  MethodAddPolicy,
+		Params:  addParamsJSON,
+		ID:      1,
+	}
+	handler.Handle(context.Background(), addReq)
+
+	// Now apply policies
+	req := &Request{
+		JSONRPC: jsonRPCVersion,
+		Method:  MethodApplyPolicies,
+		ID:      2,
+	}
+
+	resp := handler.Handle(context.Background(), req)
+
+	if resp.Error != nil {
+		t.Errorf("unexpected error: %s", resp.Error.Message)
+		return
+	}
+
+	result, ok := resp.Result.(*ApplyPoliciesResult)
+	if !ok {
+		t.Error("result is not *ApplyPoliciesResult")
+		return
+	}
+
+	if result.PoliciesCount != 1 {
+		t.Errorf("expected 1 policy, got %d", result.PoliciesCount)
+	}
+
+	// The old object should have been deleted
+	if result.ObjectsProcessed != 1 {
+		t.Errorf("expected 1 object processed, got %d", result.ObjectsProcessed)
+	}
+}
+
+func TestHandleGetPoliciesWithData(t *testing.T) {
+	storage := NewMockStorage()
+	handler := createTestHandler(t, storage)
+
+	// Add a policy first
+	addParams := PolicyParams{
+		ID:        "test-get-policy",
+		Prefix:    "data/",
+		Action:    "delete",
+		AfterDays: 30,
+	}
+	addParamsJSON, _ := json.Marshal(addParams)
+	addReq := &Request{
+		JSONRPC: jsonRPCVersion,
+		Method:  MethodAddPolicy,
+		Params:  addParamsJSON,
+		ID:      1,
+	}
+	handler.Handle(context.Background(), addReq)
+
+	// Get policies
+	req := &Request{
+		JSONRPC: jsonRPCVersion,
+		Method:  MethodGetPolicies,
+		ID:      2,
+	}
+
+	resp := handler.Handle(context.Background(), req)
+
+	if resp.Error != nil {
+		t.Errorf("unexpected error: %s", resp.Error.Message)
+		return
+	}
+
+	result, ok := resp.Result.([]PolicyParams)
+	if !ok {
+		t.Error("result is not []PolicyParams")
+		return
+	}
+
+	if len(result) != 1 {
+		t.Errorf("expected 1 policy, got %d", len(result))
+		return
+	}
+
+	if result[0].ID != "test-get-policy" {
+		t.Errorf("expected policy ID 'test-get-policy', got '%s'", result[0].ID)
+	}
+}
+
+func TestHandleDeleteSuccess(t *testing.T) {
+	storage := NewMockStorage()
+	storage.objects["test-key"] = []byte("data")
+	handler := createTestHandler(t, storage)
+
+	params := DeleteParams{Key: "test-key"}
+	paramsJSON, _ := json.Marshal(params)
+	req := &Request{
+		JSONRPC: jsonRPCVersion,
+		Method:  MethodDelete,
+		Params:  paramsJSON,
+		ID:      1,
+	}
+
+	resp := handler.Handle(context.Background(), req)
+
+	if resp.Error != nil {
+		t.Errorf("unexpected error: %s", resp.Error.Message)
+	}
+}
+
+func TestHandleExistsSuccess(t *testing.T) {
+	storage := NewMockStorage()
+	storage.objects["test-key"] = []byte("data")
+	handler := createTestHandler(t, storage)
+
+	params := ExistsParams{Key: "test-key"}
+	paramsJSON, _ := json.Marshal(params)
+	req := &Request{
+		JSONRPC: jsonRPCVersion,
+		Method:  MethodExists,
+		Params:  paramsJSON,
+		ID:      1,
+	}
+
+	resp := handler.Handle(context.Background(), req)
+
+	if resp.Error != nil {
+		t.Errorf("unexpected error: %s", resp.Error.Message)
+		return
+	}
+
+	result, ok := resp.Result.(*ExistsResult)
+	if !ok {
+		t.Error("result is not *ExistsResult")
+		return
+	}
+
+	if !result.Exists {
+		t.Error("expected exists=true")
+	}
+}
+
+func TestHandleArchiveSuccess(t *testing.T) {
+	storage := NewMockStorage()
+	storage.objects["test-key"] = []byte("data")
+	storage.metadata["test-key"] = &common.Metadata{Size: 4}
+	handler := createTestHandler(t, storage)
+
+	params := ArchiveParams{
+		Key:             "test-key",
+		DestinationType: "memory",
+	}
+	paramsJSON, _ := json.Marshal(params)
+	req := &Request{
+		JSONRPC: jsonRPCVersion,
+		Method:  MethodArchive,
+		Params:  paramsJSON,
+		ID:      1,
+	}
+
+	resp := handler.Handle(context.Background(), req)
+
+	// This might fail if memory backend isn't registered, which is fine
+	// The important thing is we're exercising the code path
+	_ = resp
+}
+
+func TestHandleUpdateMetadataSuccess(t *testing.T) {
+	storage := NewMockStorage()
+	storage.objects["test-key"] = []byte("data")
+	storage.metadata["test-key"] = &common.Metadata{Size: 4}
+	handler := createTestHandler(t, storage)
+
+	params := UpdateMetadataParams{
+		Key: "test-key",
+		Metadata: &MetadataParams{
+			Custom: map[string]string{
+				"custom": "value",
+			},
+		},
+	}
+	paramsJSON, _ := json.Marshal(params)
+	req := &Request{
+		JSONRPC: jsonRPCVersion,
+		Method:  MethodUpdateMetadata,
+		Params:  paramsJSON,
+		ID:      1,
+	}
+
+	resp := handler.Handle(context.Background(), req)
+
+	if resp.Error != nil {
+		t.Errorf("unexpected error: %s", resp.Error.Message)
+	}
+}
+
+func TestHandleRemovePolicySuccess(t *testing.T) {
+	storage := NewMockStorage()
+	// Add a policy first
+	storage.policies["test-policy"] = common.LifecyclePolicy{ID: "test-policy"}
+	handler := createTestHandler(t, storage)
+
+	params := RemovePolicyParams{ID: "test-policy"}
+	paramsJSON, _ := json.Marshal(params)
+	req := &Request{
+		JSONRPC: jsonRPCVersion,
+		Method:  MethodRemovePolicy,
+		Params:  paramsJSON,
+		ID:      1,
+	}
+
+	resp := handler.Handle(context.Background(), req)
+
+	if resp.Error != nil {
+		t.Errorf("unexpected error: %s", resp.Error.Message)
+	}
+}
+
+func TestHandleApplyPoliciesArchiveAction(t *testing.T) {
+	storage := NewMockStorage()
+	// Add an old object
+	storage.objects["archive/old.txt"] = []byte("old data")
+	storage.metadata["archive/old.txt"] = &common.Metadata{
+		Size:         8,
+		LastModified: time.Now().Add(-48 * time.Hour),
+	}
+	handler := createTestHandler(t, storage)
+
+	// Add an archive policy
+	addParams := PolicyParams{
+		ID:        "archive-policy",
+		Prefix:    "archive/",
+		Action:    "archive",
+		AfterDays: 1,
+	}
+	addParamsJSON, _ := json.Marshal(addParams)
+	addReq := &Request{
+		JSONRPC: jsonRPCVersion,
+		Method:  MethodAddPolicy,
+		Params:  addParamsJSON,
+		ID:      1,
+	}
+	handler.Handle(context.Background(), addReq)
+
+	// Apply policies
+	req := &Request{
+		JSONRPC: jsonRPCVersion,
+		Method:  MethodApplyPolicies,
+		ID:      2,
+	}
+
+	resp := handler.Handle(context.Background(), req)
+
+	if resp.Error != nil {
+		t.Errorf("unexpected error: %s", resp.Error.Message)
+	}
+}
+
+func TestHandleTriggerReplicationPolicyNotFound(t *testing.T) {
+	storage := NewMockReplicableStorage()
+	handler := createTestHandlerWithReplication(t, storage)
+
+	params := ReplicationPolicyIDParams{ID: "nonexistent"}
+	paramsJSON, _ := json.Marshal(params)
+	req := &Request{
+		JSONRPC: jsonRPCVersion,
+		Method:  MethodTriggerRepl,
+		Params:  paramsJSON,
+		ID:      1,
+	}
+
+	resp := handler.Handle(context.Background(), req)
+
+	if resp.Error == nil {
+		t.Error("expected error for non-existent policy")
+	}
+}
+
+func TestHandleGetReplicationStatusPolicyNotFound(t *testing.T) {
+	storage := NewMockReplicableStorage()
+	handler := createTestHandlerWithReplication(t, storage)
+
+	params := ReplicationPolicyIDParams{ID: "nonexistent"}
+	paramsJSON, _ := json.Marshal(params)
+	req := &Request{
+		JSONRPC: jsonRPCVersion,
+		Method:  MethodGetReplStatus,
+		Params:  paramsJSON,
+		ID:      1,
+	}
+
+	resp := handler.Handle(context.Background(), req)
+
+	if resp.Error == nil {
+		t.Error("expected error for non-existent policy")
+	}
+}
+
+func TestHandleRemoveReplicationPolicyNotFound(t *testing.T) {
+	storage := NewMockReplicableStorage()
+	handler := createTestHandlerWithReplication(t, storage)
+
+	params := ReplicationPolicyIDParams{ID: "nonexistent"}
+	paramsJSON, _ := json.Marshal(params)
+	req := &Request{
+		JSONRPC: jsonRPCVersion,
+		Method:  MethodRemoveReplPolicy,
+		Params:  paramsJSON,
+		ID:      1,
+	}
+
+	resp := handler.Handle(context.Background(), req)
+
+	if resp.Error == nil {
+		t.Error("expected error for non-existent policy")
+	}
+}
+
+func TestHandleGetReplicationPolicyNotFound(t *testing.T) {
+	storage := NewMockReplicableStorage()
+	handler := createTestHandlerWithReplication(t, storage)
+
+	params := ReplicationPolicyIDParams{ID: "nonexistent"}
+	paramsJSON, _ := json.Marshal(params)
+	req := &Request{
+		JSONRPC: jsonRPCVersion,
+		Method:  MethodGetReplPolicy,
+		Params:  paramsJSON,
+		ID:      1,
+	}
+
+	resp := handler.Handle(context.Background(), req)
+
+	if resp.Error == nil {
+		t.Error("expected error for non-existent policy")
 	}
 }

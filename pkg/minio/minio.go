@@ -24,7 +24,7 @@ import (
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 
-	"github.com/aws/aws-sdk-go/aws"                 //nolint:staticcheck // Using v1 SDK, migration to v2 planned
+	"github.com/aws/aws-sdk-go/aws"                //nolint:staticcheck // Using v1 SDK, migration to v2 planned
 	"github.com/aws/aws-sdk-go/aws/credentials"    //nolint:staticcheck // Using v1 SDK, migration to v2 planned
 	"github.com/aws/aws-sdk-go/aws/session"        //nolint:staticcheck // Using v1 SDK, migration to v2 planned
 	"github.com/aws/aws-sdk-go/service/s3"         //nolint:staticcheck // Using v1 SDK, migration to v2 planned
@@ -363,7 +363,7 @@ func isNoSuchLifecycleConfiguration(err error) bool {
 	}
 	// AWS SDK returns "NoSuchLifecycleConfiguration" error code
 	return err.Error() == "NoSuchLifecycleConfiguration" ||
-		   (len(err.Error()) > 0 && err.Error()[:28] == "NoSuchLifecycleConfiguration")
+		(len(err.Error()) > 0 && err.Error()[:28] == "NoSuchLifecycleConfiguration")
 }
 
 // GetReplicationManager returns the replication manager for this backend.

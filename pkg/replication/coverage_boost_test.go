@@ -43,14 +43,14 @@ func TestSyncAllWithErrors(t *testing.T) {
 
 	// Add a good policy
 	goodPolicy := common.ReplicationPolicy{
-		ID:              "good-policy",
-		SourceBackend:   "local",
-		SourceSettings:  map[string]string{"path": "/tmp/good-src"},
-		DestinationBackend: "local",
+		ID:                  "good-policy",
+		SourceBackend:       "local",
+		SourceSettings:      map[string]string{"path": "/tmp/good-src"},
+		DestinationBackend:  "local",
 		DestinationSettings: map[string]string{"path": "/tmp/good-dst"},
-		CheckInterval:   5 * time.Minute,
-		Enabled:         true,
-		ReplicationMode: common.ReplicationModeOpaque,
+		CheckInterval:       5 * time.Minute,
+		Enabled:             true,
+		ReplicationMode:     common.ReplicationModeOpaque,
 	}
 
 	err = mgr.AddPolicy(goodPolicy)
@@ -60,14 +60,14 @@ func TestSyncAllWithErrors(t *testing.T) {
 
 	// Add a policy with invalid backend
 	badPolicy := common.ReplicationPolicy{
-		ID:              "bad-policy",
-		SourceBackend:   "invalid-backend",
-		SourceSettings:  map[string]string{"path": "/tmp/bad-src"},
-		DestinationBackend: "local",
+		ID:                  "bad-policy",
+		SourceBackend:       "invalid-backend",
+		SourceSettings:      map[string]string{"path": "/tmp/bad-src"},
+		DestinationBackend:  "local",
 		DestinationSettings: map[string]string{"path": "/tmp/bad-dst"},
-		CheckInterval:   5 * time.Minute,
-		Enabled:         true,
-		ReplicationMode: common.ReplicationModeOpaque,
+		CheckInterval:       5 * time.Minute,
+		Enabled:             true,
+		ReplicationMode:     common.ReplicationModeOpaque,
 	}
 
 	err = mgr.AddPolicy(badPolicy)
@@ -128,10 +128,10 @@ func TestSyncAllWithResultErrors(t *testing.T) {
 	}
 
 	policy := common.ReplicationPolicy{
-		ID:              "test-errors",
-		SourceBackend:   "local",
+		ID:                 "test-errors",
+		SourceBackend:      "local",
 		DestinationBackend: "local",
-		ReplicationMode: common.ReplicationModeOpaque,
+		ReplicationMode:    common.ReplicationModeOpaque,
 	}
 
 	syncer := &Syncer{
@@ -171,14 +171,14 @@ func TestSyncPolicyWithMetricsUpdate(t *testing.T) {
 	}
 
 	policy := common.ReplicationPolicy{
-		ID:              "metrics-test",
-		SourceBackend:   "local",
-		SourceSettings:  map[string]string{"path": "/tmp/src"},
-		DestinationBackend: "local",
+		ID:                  "metrics-test",
+		SourceBackend:       "local",
+		SourceSettings:      map[string]string{"path": "/tmp/src"},
+		DestinationBackend:  "local",
 		DestinationSettings: map[string]string{"path": "/tmp/dst"},
-		CheckInterval:   5 * time.Minute,
-		Enabled:         true,
-		ReplicationMode: common.ReplicationModeOpaque,
+		CheckInterval:       5 * time.Minute,
+		Enabled:             true,
+		ReplicationMode:     common.ReplicationModeOpaque,
 	}
 
 	err = mgr.AddPolicy(policy)
@@ -239,12 +239,12 @@ func TestSaveErrorHandling(t *testing.T) {
 	}
 
 	policy := common.ReplicationPolicy{
-		ID:              "test-policy",
-		SourceBackend:   "local",
+		ID:                 "test-policy",
+		SourceBackend:      "local",
 		DestinationBackend: "local",
-		CheckInterval:   5 * time.Minute,
-		Enabled:         true,
-		ReplicationMode: common.ReplicationModeOpaque,
+		CheckInterval:      5 * time.Minute,
+		Enabled:            true,
+		ReplicationMode:    common.ReplicationModeOpaque,
 	}
 
 	// Make filesystem fail on next operation
@@ -269,12 +269,12 @@ func TestGetReplicationStatusWithoutMetrics(t *testing.T) {
 	}
 
 	policy := common.ReplicationPolicy{
-		ID:              "test-policy",
-		SourceBackend:   "local",
+		ID:                 "test-policy",
+		SourceBackend:      "local",
 		DestinationBackend: "local",
-		CheckInterval:   5 * time.Minute,
-		Enabled:         true,
-		ReplicationMode: common.ReplicationModeOpaque,
+		CheckInterval:      5 * time.Minute,
+		Enabled:            true,
+		ReplicationMode:    common.ReplicationModeOpaque,
 	}
 
 	err = mgr.AddPolicy(policy)
@@ -317,12 +317,12 @@ func TestSyncPolicyParallelWithErrors(t *testing.T) {
 
 	// Add policy with invalid backend
 	policy := common.ReplicationPolicy{
-		ID:              "invalid-backend",
-		SourceBackend:   "nonexistent-backend",
+		ID:                 "invalid-backend",
+		SourceBackend:      "nonexistent-backend",
 		DestinationBackend: "local",
-		CheckInterval:   5 * time.Minute,
-		Enabled:         true,
-		ReplicationMode: common.ReplicationModeOpaque,
+		CheckInterval:      5 * time.Minute,
+		Enabled:            true,
+		ReplicationMode:    common.ReplicationModeOpaque,
 	}
 
 	err = mgr.AddPolicy(policy)
@@ -367,10 +367,10 @@ func TestWorkerPoolErrorHandling(t *testing.T) {
 	}
 
 	policy := common.ReplicationPolicy{
-		ID:              "worker-errors",
-		SourceBackend:   "local",
+		ID:                 "worker-errors",
+		SourceBackend:      "local",
 		DestinationBackend: "local",
-		ReplicationMode: common.ReplicationModeOpaque,
+		ReplicationMode:    common.ReplicationModeOpaque,
 	}
 
 	syncer := &Syncer{

@@ -943,7 +943,7 @@ func TestServer_CustomInterceptors(t *testing.T) {
 // Test ApplyPolicies with no policies
 func TestApplyPolicies_NoPolicies(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	
+
 	server, err := newTestServer(t, storage, WithAddress("127.0.0.1:0"))
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)

@@ -87,10 +87,10 @@ func TestAddPolicy_ArchiveMissingDestinationType(t *testing.T) {
 	router.POST("/policies", handler.AddPolicy)
 
 	requestBody := AddPolicyRequest{
-		ID:               "policy1",
-		Prefix:           "logs/",
+		ID:        "policy1",
+		Prefix:    "logs/",
 		Retention: 24 * time.Hour,
-		Action:           "archive",
+		Action:    "archive",
 		// Missing DestinationType
 	}
 
@@ -117,7 +117,7 @@ func TestAddPolicy_ArchiveInvalidDestinationType(t *testing.T) {
 	requestBody := AddPolicyRequest{
 		ID:                  "policy1",
 		Prefix:              "logs/",
-		Retention:    24 * time.Hour,
+		Retention:           24 * time.Hour,
 		Action:              "archive",
 		DestinationType:     "invalid-type",
 		DestinationSettings: map[string]string{"path": "/tmp/test"},

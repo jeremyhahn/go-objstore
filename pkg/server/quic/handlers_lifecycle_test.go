@@ -918,10 +918,10 @@ func TestApplyPolicies_WithArchive(t *testing.T) {
 
 	// Add archive policy
 	policy := common.LifecyclePolicy{
-		ID:        "archive-old",
-		Prefix:    "data/",
-		Retention: 24 * time.Hour,
-		Action:    "archive",
+		ID:          "archive-old",
+		Prefix:      "data/",
+		Retention:   24 * time.Hour,
+		Action:      "archive",
 		Destination: &mockArchiver{},
 	}
 	storage.AddPolicy(policy)

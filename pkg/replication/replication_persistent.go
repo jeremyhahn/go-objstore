@@ -231,17 +231,17 @@ func (prm *PersistentReplicationManager) GetReplicationStatus(id string) (*Repli
 	snapshot := metrics.GetMetricsSnapshot()
 
 	status := &ReplicationStatus{
-		PolicyID:             policy.ID,
-		SourceBackend:        policy.SourceBackend,
-		DestinationBackend:   policy.DestinationBackend,
-		Enabled:              policy.Enabled,
-		TotalObjectsSynced:   snapshot.TotalObjectsSynced,
-		TotalObjectsDeleted:  snapshot.TotalObjectsDeleted,
-		TotalBytesSynced:     snapshot.TotalBytesSynced,
-		TotalErrors:          snapshot.TotalErrors,
-		LastSyncTime:         snapshot.LastSyncTime,
-		AverageSyncDuration:  snapshot.AverageSyncDuration,
-		SyncCount:            snapshot.SyncCount,
+		PolicyID:            policy.ID,
+		SourceBackend:       policy.SourceBackend,
+		DestinationBackend:  policy.DestinationBackend,
+		Enabled:             policy.Enabled,
+		TotalObjectsSynced:  snapshot.TotalObjectsSynced,
+		TotalObjectsDeleted: snapshot.TotalObjectsDeleted,
+		TotalBytesSynced:    snapshot.TotalBytesSynced,
+		TotalErrors:         snapshot.TotalErrors,
+		LastSyncTime:        snapshot.LastSyncTime,
+		AverageSyncDuration: snapshot.AverageSyncDuration,
+		SyncCount:           snapshot.SyncCount,
 	}
 
 	return status, nil

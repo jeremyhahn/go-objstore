@@ -366,9 +366,9 @@ func TestHandleArchive_ErrorScenarios(t *testing.T) {
 		storage.PutWithContext(context.Background(), "test.txt", bytes.NewReader([]byte("data")))
 
 		archiveReq := map[string]any{
-			"key":                    "test.txt",
-			"destination_type":       "invalid",
-			"destination_settings":   map[string]string{},
+			"key":                  "test.txt",
+			"destination_type":     "invalid",
+			"destination_settings": map[string]string{},
 		}
 
 		body, _ := json.Marshal(archiveReq)
@@ -421,4 +421,3 @@ func TestHandleList_WithMaxResults(t *testing.T) {
 		t.Error("expected at least some objects in response")
 	}
 }
-

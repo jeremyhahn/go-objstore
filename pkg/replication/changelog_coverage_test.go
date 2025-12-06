@@ -309,6 +309,7 @@ func TestChangeLog_ReopenExisting(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, events, 4)
 }
+
 // Test MarkProcessed on event without existing Processed map
 func TestChangeLog_MarkProcessed_NilProcessedMap(t *testing.T) {
 	dir := t.TempDir()

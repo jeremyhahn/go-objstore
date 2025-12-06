@@ -474,7 +474,7 @@ func TestServerWithDifferentHosts(t *testing.T) {
 			}
 
 			initServerTestFacade(t, storage)
-	server, err := NewServer(storage, config)
+			server, err := NewServer(storage, config)
 			if err != nil {
 				t.Errorf("NewServer() with host %s failed: %v", host, err)
 			}
@@ -502,7 +502,7 @@ func TestServerWithDifferentPorts(t *testing.T) {
 			}
 
 			initServerTestFacade(t, storage)
-	server, err := NewServer(storage, config)
+			server, err := NewServer(storage, config)
 			if err != nil {
 				t.Errorf("NewServer() with port %d failed: %v", port, err)
 			}

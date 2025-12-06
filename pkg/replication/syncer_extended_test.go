@@ -87,12 +87,12 @@ func TestNewSyncer_InvalidDestBackend(t *testing.T) {
 // TestNewSyncer_LocalWithBackendEncryption tests NewSyncer with local backend and backend encryption.
 func TestNewSyncer_LocalWithBackendEncryption(t *testing.T) {
 	policy := common.ReplicationPolicy{
-		ID:             "test-policy",
-		SourceBackend:  "local",
-		SourceSettings: map[string]string{"path": t.TempDir()},
-		DestinationBackend: "local",
+		ID:                  "test-policy",
+		SourceBackend:       "local",
+		SourceSettings:      map[string]string{"path": t.TempDir()},
+		DestinationBackend:  "local",
 		DestinationSettings: map[string]string{"path": t.TempDir()},
-		ReplicationMode: common.ReplicationModeTransparent,
+		ReplicationMode:     common.ReplicationModeTransparent,
 		Encryption: &common.EncryptionPolicy{
 			Backend: &common.EncryptionConfig{
 				Enabled:    true,
@@ -392,7 +392,6 @@ func TestSyncObject_GetMetadataError(t *testing.T) {
 		t.Errorf("Unexpected error message: %v", err)
 	}
 }
-
 
 // TestSyncAll_MultipleObjects tests syncing multiple objects.
 func TestSyncAll_MultipleObjects(t *testing.T) {

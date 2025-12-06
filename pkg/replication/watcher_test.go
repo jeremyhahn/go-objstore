@@ -28,10 +28,10 @@ import (
 
 func TestFSNotifyWatcher_Watch(t *testing.T) {
 	tests := []struct {
-		name      string
-		setup     func(t *testing.T) string
-		wantErr   bool
-		errType   error
+		name    string
+		setup   func(t *testing.T) string
+		wantErr bool
+		errType error
 	}{
 		{
 			name: "watch valid directory",

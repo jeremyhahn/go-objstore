@@ -198,10 +198,10 @@ func TestAddPolicyEndpoint(t *testing.T) {
 				return newMockLifecycleStorage()
 			},
 			requestBody: AddPolicyRequest{
-				ID:               "policy1",
-				Prefix:           "logs/",
+				ID:        "policy1",
+				Prefix:    "logs/",
 				Retention: 24 * time.Hour,
-				Action:           "delete",
+				Action:    "delete",
 			},
 			wantStatusCode: http.StatusCreated,
 		},
@@ -228,10 +228,10 @@ func TestAddPolicyEndpoint(t *testing.T) {
 				return storage
 			},
 			requestBody: AddPolicyRequest{
-				ID:               "existing",
-				Prefix:           "logs/",
+				ID:        "existing",
+				Prefix:    "logs/",
 				Retention: 24 * time.Hour,
-				Action:           "delete",
+				Action:    "delete",
 			},
 			wantStatusCode: http.StatusConflict,
 		},
@@ -251,10 +251,10 @@ func TestAddPolicyEndpoint(t *testing.T) {
 				return storage
 			},
 			requestBody: AddPolicyRequest{
-				ID:               "policy3",
-				Prefix:           "logs/",
+				ID:        "policy3",
+				Prefix:    "logs/",
 				Retention: 24 * time.Hour,
-				Action:           "delete",
+				Action:    "delete",
 			},
 			wantStatusCode: http.StatusInternalServerError,
 		},
@@ -531,13 +531,13 @@ func TestHandler_ApplyPolicies(t *testing.T) {
 
 func TestHandler_ApplyPolicies_WithObjects(t *testing.T) {
 	tests := []struct {
-		name            string
-		policies        []common.LifecyclePolicy
-		objects         map[string]*mockObject
-		listErr         error
-		wantStatusCode  int
-		wantProcessed   int
-		wantMessage     string
+		name           string
+		policies       []common.LifecyclePolicy
+		objects        map[string]*mockObject
+		listErr        error
+		wantStatusCode int
+		wantProcessed  int
+		wantMessage    string
 	}{
 		{
 			name: "delete old objects matching prefix",
@@ -577,10 +577,10 @@ func TestHandler_ApplyPolicies_WithObjects(t *testing.T) {
 			name: "archive old objects",
 			policies: []common.LifecyclePolicy{
 				{
-					ID:        "archive-old",
-					Prefix:    "data/",
-					Retention: 1 * time.Hour,
-					Action:    "archive",
+					ID:          "archive-old",
+					Prefix:      "data/",
+					Retention:   1 * time.Hour,
+					Action:      "archive",
 					Destination: &mockArchiver{},
 				},
 			},
