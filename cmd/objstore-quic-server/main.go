@@ -23,7 +23,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jeremyhahn/go-objstore/pkg/factory"
+	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	quicserver "github.com/jeremyhahn/go-objstore/pkg/server/quic"
 )
 
@@ -46,18 +46,33 @@ func main() {
 
 	log.Println("Starting QUIC/HTTP3 Object Storage Server...")
 
-	// Create storage backend
-	settings := map[string]string{
-		"path": *storagePath,
+	// Initialize the objstore facade with simplified API
+	if err := objstore.Initialize(&objstore.FacadeConfig{
+		BackendConfigs: map[string]objstore.BackendConfig{
+			"default": {
+				Type:     *backend,
+				Settings: map[string]string{"path": *storagePath},
+			},
+		},
+		DefaultBackend: "default",
+	}); err != nil {
+		log.Fatalf("Failed to initialize objstore facade: %v", err)
 	}
 
-	storage, err := factory.NewStorage(*backend, settings)
-	if err != nil {
-		log.Fatalf("Failed to create storage backend: %v", err)
+	// Enable replication on the default backend
+	policyPath := *storagePath + "/.replication-policies.json"
+	if err := objstore.EnableReplication("", &objstore.ReplicationConfig{
+		PolicyFilePath:  policyPath,
+		RunInBackground: false,
+	}); err != nil {
+		log.Printf("Warning: Failed to enable replication: %v", err)
+	} else {
+		log.Printf("Replication enabled with policy file: %s", policyPath)
 	}
 
 	// Configure TLS
 	var tlsConfig *tls.Config
+	var err error
 	if *enableSelfSigned {
 		log.Println("WARNING: Using self-signed certificate. DO NOT USE IN PRODUCTION!")
 		tlsConfig, err = quicserver.GenerateSelfSignedCert()
@@ -77,7 +92,7 @@ func main() {
 	// Create server options
 	opts := quicserver.DefaultOptions().
 		WithAddr(*addr).
-		WithStorage(storage).
+		WithBackend(""). // Use default backend
 		WithTLSConfig(tlsConfig).
 		WithMaxRequestBodySize(*maxBodySize).
 		WithTimeouts(*readTimeout, *writeTimeout, *idleTimeout).

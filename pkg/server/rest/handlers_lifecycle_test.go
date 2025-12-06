@@ -26,6 +26,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
+	_ "github.com/jeremyhahn/go-objstore/pkg/factory" // Register archivers
 )
 
 // mockLifecycleStorage extends MockStorage with lifecycle functionality
@@ -37,6 +38,7 @@ type mockLifecycleStorage struct {
 	removePolicyError error
 	getPoliciesError  error
 	existsError       error
+	listErr           error
 }
 
 func newMockLifecycleStorage() *mockLifecycleStorage {
@@ -95,6 +97,13 @@ func (m *mockLifecycleStorage) Exists(ctx context.Context, key string) (bool, er
 		return false, m.existsError
 	}
 	return m.MockStorage.Exists(ctx, key)
+}
+
+func (m *mockLifecycleStorage) ListWithOptions(ctx context.Context, opts *common.ListOptions) (*common.ListResult, error) {
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+	return m.MockStorage.ListWithOptions(ctx, opts)
 }
 
 // mockArchiver for testing
@@ -157,7 +166,7 @@ func TestArchiveObject(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := tt.setupStorage()
-			handler := NewHandler(storage)
+			handler := newTestHandler(t, storage)
 			router := gin.New()
 			router.POST("/archive", handler.Archive)
 
@@ -254,7 +263,7 @@ func TestAddPolicyEndpoint(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := tt.setupStorage()
-			handler := NewHandler(storage)
+			handler := newTestHandler(t, storage)
 
 			router := gin.New()
 			router.POST("/policies", handler.AddPolicy)
@@ -336,7 +345,7 @@ func TestRemovePolicyEndpoint(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := tt.setupStorage()
-			handler := NewHandler(storage)
+			handler := newTestHandler(t, storage)
 
 			router := gin.New()
 			router.DELETE("/policies/:id", handler.RemovePolicy)
@@ -415,7 +424,7 @@ func TestGetPoliciesEndpoint(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := tt.setupStorage()
-			handler := NewHandler(storage)
+			handler := newTestHandler(t, storage)
 
 			router := gin.New()
 			router.GET("/policies", handler.GetPolicies)
@@ -488,7 +497,7 @@ func TestHandler_ApplyPolicies(t *testing.T) {
 			storage.policies = tt.policies
 			storage.getPoliciesError = tt.getPoliciesErr
 
-			handler := NewHandler(storage)
+			handler := newTestHandler(t, storage)
 			router := gin.New()
 			router.POST("/policies/apply", handler.ApplyPolicies)
 
@@ -514,6 +523,179 @@ func TestHandler_ApplyPolicies(t *testing.T) {
 
 				if message != tt.wantMessage {
 					t.Errorf("ApplyPolicies() message = %q, want %q", message, tt.wantMessage)
+				}
+			}
+		})
+	}
+}
+
+func TestHandler_ApplyPolicies_WithObjects(t *testing.T) {
+	tests := []struct {
+		name            string
+		policies        []common.LifecyclePolicy
+		objects         map[string]*mockObject
+		listErr         error
+		wantStatusCode  int
+		wantProcessed   int
+		wantMessage     string
+	}{
+		{
+			name: "delete old objects matching prefix",
+			policies: []common.LifecyclePolicy{
+				{
+					ID:        "delete-old",
+					Prefix:    "logs/",
+					Retention: 1 * time.Hour,
+					Action:    "delete",
+				},
+			},
+			objects: map[string]*mockObject{
+				"logs/old.log": {
+					data: []byte("old log"),
+					metadata: &common.Metadata{
+						LastModified: time.Now().Add(-2 * time.Hour), // 2 hours old
+					},
+				},
+				"logs/new.log": {
+					data: []byte("new log"),
+					metadata: &common.Metadata{
+						LastModified: time.Now(), // fresh
+					},
+				},
+				"data/file.txt": {
+					data: []byte("data"),
+					metadata: &common.Metadata{
+						LastModified: time.Now().Add(-2 * time.Hour), // old but wrong prefix
+					},
+				},
+			},
+			wantStatusCode: http.StatusOK,
+			wantProcessed:  1, // only logs/old.log
+			wantMessage:    "Lifecycle policies applied successfully",
+		},
+		{
+			name: "archive old objects",
+			policies: []common.LifecyclePolicy{
+				{
+					ID:        "archive-old",
+					Prefix:    "data/",
+					Retention: 1 * time.Hour,
+					Action:    "archive",
+					Destination: &mockArchiver{},
+				},
+			},
+			objects: map[string]*mockObject{
+				"data/old-file.txt": {
+					data: []byte("old data"),
+					metadata: &common.Metadata{
+						LastModified: time.Now().Add(-2 * time.Hour),
+					},
+				},
+			},
+			wantStatusCode: http.StatusOK,
+			wantProcessed:  1,
+			wantMessage:    "Lifecycle policies applied successfully",
+		},
+		{
+			name: "skip objects without metadata",
+			policies: []common.LifecyclePolicy{
+				{
+					ID:        "delete-no-meta",
+					Prefix:    "",
+					Retention: 1 * time.Hour,
+					Action:    "delete",
+				},
+			},
+			objects: map[string]*mockObject{
+				"no-meta.txt": {
+					data:     []byte("no metadata"),
+					metadata: nil, // no metadata
+				},
+			},
+			wantStatusCode: http.StatusOK,
+			wantProcessed:  0,
+			wantMessage:    "Lifecycle policies applied successfully",
+		},
+		{
+			name: "skip archive without destination",
+			policies: []common.LifecyclePolicy{
+				{
+					ID:          "archive-no-dest",
+					Prefix:      "",
+					Retention:   1 * time.Hour,
+					Action:      "archive",
+					Destination: nil, // no destination
+				},
+			},
+			objects: map[string]*mockObject{
+				"file.txt": {
+					data: []byte("data"),
+					metadata: &common.Metadata{
+						LastModified: time.Now().Add(-2 * time.Hour),
+					},
+				},
+			},
+			wantStatusCode: http.StatusOK,
+			wantProcessed:  0,
+			wantMessage:    "Lifecycle policies applied successfully",
+		},
+		{
+			name: "error listing objects",
+			policies: []common.LifecyclePolicy{
+				{
+					ID:        "policy1",
+					Prefix:    "",
+					Retention: 1 * time.Hour,
+					Action:    "delete",
+				},
+			},
+			listErr:        errors.New("list failed"),
+			wantStatusCode: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			storage := newMockLifecycleStorage()
+			storage.policies = tt.policies
+			if tt.objects != nil {
+				storage.objects = tt.objects
+			}
+			if tt.listErr != nil {
+				storage.listErr = tt.listErr
+			}
+
+			handler := newTestHandler(t, storage)
+			router := gin.New()
+			router.POST("/policies/apply", handler.ApplyPolicies)
+
+			req := httptest.NewRequest("POST", "/policies/apply", nil)
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			if w.Code != tt.wantStatusCode {
+				t.Errorf("ApplyPolicies() status = %v, want %v, body: %s", w.Code, tt.wantStatusCode, w.Body.String())
+			}
+
+			if w.Code == http.StatusOK {
+				var response map[string]any
+				if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+					t.Fatalf("Failed to unmarshal response: %v", err)
+				}
+
+				message, ok := response["message"].(string)
+				if !ok {
+					t.Fatal("Response missing message field")
+				}
+
+				if message != tt.wantMessage {
+					t.Errorf("ApplyPolicies() message = %q, want %q", message, tt.wantMessage)
+				}
+
+				processed, _ := response["objects_processed"].(float64)
+				if int(processed) != tt.wantProcessed {
+					t.Errorf("ApplyPolicies() objects_processed = %d, want %d", int(processed), tt.wantProcessed)
 				}
 			}
 		})
@@ -572,7 +754,7 @@ func TestHandler_ExistsObject(t *testing.T) {
 				storage.existsError = tt.existsError
 			}
 
-			handler := NewHandler(storage)
+			handler := newTestHandler(t, storage)
 			router := gin.New()
 			router.GET("/exists/*key", handler.ExistsObject)
 

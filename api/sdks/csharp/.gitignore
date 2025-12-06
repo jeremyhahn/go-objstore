@@ -1,0 +1,31 @@
+# Build results
+bin/
+obj/
+dist/
+
+# Test results
+TestResults/
+coverage/
+*.trx
+*.coverage
+
+# User-specific files
+*.user
+*.suo
+*.userprefs
+
+# IDE
+.vs/
+.vscode/
+.idea/
+
+# NuGet
+*.nupkg
+*.snupkg
+packages/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log

@@ -151,13 +151,13 @@ func TestLocalAtRestEncryption(t *testing.T) {
 		t.Fatalf("failed to get metadata: %v", err)
 	}
 
-	if metadata.Custom["encryption_algorithm"] != "AES256-TEST" {
-		t.Errorf("encryption_algorithm = %s, want AES256-TEST",
-			metadata.Custom["encryption_algorithm"])
+	if metadata.Custom["at_rest_encryption_algorithm"] != "AES256-TEST" {
+		t.Errorf("at_rest_encryption_algorithm = %s, want AES256-TEST",
+			metadata.Custom["at_rest_encryption_algorithm"])
 	}
-	if metadata.Custom["encryption_key_id"] != "key1" {
-		t.Errorf("encryption_key_id = %s, want key1",
-			metadata.Custom["encryption_key_id"])
+	if metadata.Custom["at_rest_encryption_key_id"] != "key1" {
+		t.Errorf("at_rest_encryption_key_id = %s, want key1",
+			metadata.Custom["at_rest_encryption_key_id"])
 	}
 }
 
@@ -214,11 +214,11 @@ func TestLocalWithoutEncryption(t *testing.T) {
 		t.Fatalf("failed to get metadata: %v", err)
 	}
 
-	if _, exists := metadata.Custom["encryption_algorithm"]; exists {
-		t.Error("encryption_algorithm should not be present without encryption")
+	if _, exists := metadata.Custom["at_rest_encryption_algorithm"]; exists {
+		t.Error("at_rest_encryption_algorithm should not be present without encryption")
 	}
-	if _, exists := metadata.Custom["encryption_key_id"]; exists {
-		t.Error("encryption_key_id should not be present without encryption")
+	if _, exists := metadata.Custom["at_rest_encryption_key_id"]; exists {
+		t.Error("at_rest_encryption_key_id should not be present without encryption")
 	}
 }
 
@@ -386,13 +386,13 @@ func TestLocalEncryptionWithMetadata(t *testing.T) {
 	}
 
 	// Verify encryption metadata added
-	if metadata.Custom["encryption_algorithm"] != "AES256-TEST" {
-		t.Errorf("encryption_algorithm = %s, want AES256-TEST",
-			metadata.Custom["encryption_algorithm"])
+	if metadata.Custom["at_rest_encryption_algorithm"] != "AES256-TEST" {
+		t.Errorf("at_rest_encryption_algorithm = %s, want AES256-TEST",
+			metadata.Custom["at_rest_encryption_algorithm"])
 	}
-	if metadata.Custom["encryption_key_id"] != "key1" {
-		t.Errorf("encryption_key_id = %s, want key1",
-			metadata.Custom["encryption_key_id"])
+	if metadata.Custom["at_rest_encryption_key_id"] != "key1" {
+		t.Errorf("at_rest_encryption_key_id = %s, want key1",
+			metadata.Custom["at_rest_encryption_key_id"])
 	}
 
 	// Verify data can be decrypted
@@ -663,11 +663,11 @@ func TestLocalEncryptionWithListOptions(t *testing.T) {
 			continue
 		}
 
-		if obj.Metadata.Custom["encryption_algorithm"] != "AES256-TEST" {
-			t.Errorf("encryption_algorithm should be AES256-TEST for %s", obj.Key)
+		if obj.Metadata.Custom["at_rest_encryption_algorithm"] != "AES256-TEST" {
+			t.Errorf("at_rest_encryption_algorithm should be AES256-TEST for %s", obj.Key)
 		}
-		if obj.Metadata.Custom["encryption_key_id"] != "key1" {
-			t.Errorf("encryption_key_id should be key1 for %s", obj.Key)
+		if obj.Metadata.Custom["at_rest_encryption_key_id"] != "key1" {
+			t.Errorf("at_rest_encryption_key_id should be key1 for %s", obj.Key)
 		}
 	}
 }

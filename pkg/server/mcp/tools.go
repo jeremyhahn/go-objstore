@@ -24,6 +24,7 @@ import (
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
+	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	"github.com/jeremyhahn/go-objstore/pkg/version"
 )
 
@@ -333,14 +334,22 @@ func (r *ToolRegistry) GetTool(name string) (Tool, bool) {
 
 // ToolExecutor executes tool calls
 type ToolExecutor struct {
-	storage common.Storage
+	backend string // Backend name (empty = default)
 }
 
 // NewToolExecutor creates a new tool executor
-func NewToolExecutor(storage common.Storage) *ToolExecutor {
+func NewToolExecutor(backend string) *ToolExecutor {
 	return &ToolExecutor{
-		storage: storage,
+		backend: backend,
 	}
+}
+
+// keyRef builds a key reference with optional backend prefix.
+func (e *ToolExecutor) keyRef(key string) string {
+	if e.backend == "" {
+		return key
+	}
+	return e.backend + ":" + key
 }
 
 // Execute executes a tool call
@@ -426,11 +435,12 @@ func (e *ToolExecutor) executePut(ctx context.Context, args map[string]any) (str
 		}
 	}
 
+	// Store the object using facade
 	var err error
 	if metadata != nil {
-		err = e.storage.PutWithMetadata(ctx, key, reader, metadata)
+		err = objstore.PutWithMetadata(ctx, e.keyRef(key), reader, metadata)
 	} else {
-		err = e.storage.PutWithContext(ctx, key, reader)
+		err = objstore.PutWithContext(ctx, e.keyRef(key), reader)
 	}
 
 	if err != nil {
@@ -454,7 +464,8 @@ func (e *ToolExecutor) executeGet(ctx context.Context, args map[string]any) (str
 		return "", ErrMissingParameter
 	}
 
-	reader, err := e.storage.GetWithContext(ctx, key)
+	// Get object using facade
+	reader, err := objstore.GetWithContext(ctx, e.keyRef(key))
 	if err != nil {
 		return "", err
 	}
@@ -484,7 +495,8 @@ func (e *ToolExecutor) executeDelete(ctx context.Context, args map[string]any) (
 		return "", ErrMissingParameter
 	}
 
-	err := e.storage.DeleteWithContext(ctx, key)
+	// Delete object using facade
+	err := objstore.DeleteWithContext(ctx, e.keyRef(key))
 	if err != nil {
 		return "", err
 	}
@@ -515,7 +527,8 @@ func (e *ToolExecutor) executeList(ctx context.Context, args map[string]any) (st
 		opts.ContinueFrom = continueFrom
 	}
 
-	listResult, err := e.storage.ListWithOptions(ctx, opts)
+	// List objects using facade
+	listResult, err := objstore.ListWithOptions(ctx, e.backend, opts)
 	if err != nil {
 		return "", err
 	}
@@ -545,7 +558,8 @@ func (e *ToolExecutor) executeExists(ctx context.Context, args map[string]any) (
 		return "", ErrMissingParameter
 	}
 
-	exists, err := e.storage.Exists(ctx, key)
+	// Check existence using facade
+	exists, err := objstore.Exists(ctx, e.keyRef(key))
 	if err != nil {
 		return "", err
 	}
@@ -567,7 +581,8 @@ func (e *ToolExecutor) executeGetMetadata(ctx context.Context, args map[string]a
 		return "", ErrMissingParameter
 	}
 
-	metadata, err := e.storage.GetMetadata(ctx, key)
+	// Get metadata using facade
+	metadata, err := objstore.GetMetadata(ctx, e.keyRef(key))
 	if err != nil {
 		return "", err
 	}
@@ -621,7 +636,8 @@ func (e *ToolExecutor) executeUpdateMetadata(ctx context.Context, args map[strin
 		}
 	}
 
-	err := e.storage.UpdateMetadata(ctx, key, metadata)
+	// Update metadata using facade
+	err := objstore.UpdateMetadata(ctx, e.keyRef(key), metadata)
 	if err != nil {
 		return "", err
 	}
@@ -678,8 +694,8 @@ func (e *ToolExecutor) executeArchive(ctx context.Context, args map[string]any) 
 		return "", err
 	}
 
-	// Perform archive operation
-	err = e.storage.Archive(key, archiver)
+	// Perform archive operation using facade
+	err = objstore.Archive(e.keyRef(key), archiver)
 	if err != nil {
 		return "", err
 	}
@@ -769,7 +785,8 @@ func (e *ToolExecutor) executeAddPolicy(ctx context.Context, args map[string]any
 		policy.Destination = archiver
 	}
 
-	err := e.storage.AddPolicy(policy)
+	// Add policy using facade
+	err := objstore.AddPolicy(e.backend, policy)
 	if err != nil {
 		return "", err
 	}
@@ -791,7 +808,8 @@ func (e *ToolExecutor) executeRemovePolicy(ctx context.Context, args map[string]
 		return "", ErrMissingParameter
 	}
 
-	err := e.storage.RemovePolicy(id)
+	// Remove policy using facade
+	err := objstore.RemovePolicy(e.backend, id)
 	if err != nil {
 		return "", err
 	}
@@ -810,7 +828,8 @@ func (e *ToolExecutor) executeRemovePolicy(ctx context.Context, args map[string]
 func (e *ToolExecutor) executeGetPolicies(ctx context.Context, args map[string]any) (string, error) {
 	prefix, _ := args["prefix"].(string)
 
-	policies, err := e.storage.GetPolicies()
+	// Get policies using facade
+	policies, err := objstore.GetPolicies(e.backend)
 	if err != nil {
 		return "", err
 	}
@@ -845,7 +864,8 @@ func (e *ToolExecutor) executeGetPolicies(ctx context.Context, args map[string]a
 }
 
 func (e *ToolExecutor) executeApplyPolicies(ctx context.Context, args map[string]any) (string, error) {
-	policies, err := e.storage.GetPolicies()
+	// Get policies using facade
+	policies, err := objstore.GetPolicies(e.backend)
 	if err != nil {
 		return "", err
 	}
@@ -866,7 +886,8 @@ func (e *ToolExecutor) executeApplyPolicies(ctx context.Context, args map[string
 	opts := &common.ListOptions{
 		Prefix: "",
 	}
-	listResult, err := e.storage.ListWithOptions(ctx, opts)
+	// List objects using facade
+	listResult, err := objstore.ListWithOptions(ctx, e.backend, opts)
 	if err != nil {
 		return "", err
 	}
@@ -889,17 +910,17 @@ func (e *ToolExecutor) executeApplyPolicies(ctx context.Context, args map[string
 				continue
 			}
 
-			// Apply action
+			// Apply action using facade
 			switch policy.Action {
 			case "delete":
-				if err := e.storage.DeleteWithContext(ctx, obj.Key); err != nil {
+				if err := objstore.DeleteWithContext(ctx, e.keyRef(obj.Key)); err != nil {
 					// Log error but continue
 					continue
 				}
 				objectsProcessed++
 			case "archive":
 				if policy.Destination != nil {
-					if err := e.storage.Archive(obj.Key, policy.Destination); err != nil {
+					if err := objstore.Archive(e.keyRef(obj.Key), policy.Destination); err != nil {
 						// Log error but continue
 						continue
 					}

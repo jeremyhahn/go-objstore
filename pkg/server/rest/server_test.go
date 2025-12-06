@@ -21,7 +21,22 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jeremyhahn/go-objstore/pkg/common"
+	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 )
+
+// initSrvTestFacade initializes the objstore facade with a mock storage for testing.
+func initSrvTestFacade(t *testing.T, storage common.Storage) {
+	t.Helper()
+	objstore.Reset()
+	err := objstore.Initialize(&objstore.FacadeConfig{
+		Backends:       map[string]common.Storage{"default": storage},
+		DefaultBackend: "default",
+	})
+	if err != nil {
+		t.Fatalf("Failed to initialize facade: %v", err)
+	}
+}
 
 func TestDefaultServerConfig(t *testing.T) {
 	config := DefaultServerConfig()
@@ -84,7 +99,7 @@ func TestNewServer(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server, err := NewServer(storage, tt.config)
+			server, err := func() (*Server, error) { initSrvTestFacade(t, storage); return NewServer(storage, tt.config) }()
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("NewServer() error = %v, wantErr %v", err, tt.wantErr)
@@ -110,6 +125,7 @@ func TestNewServer(t *testing.T) {
 
 func TestServerRouter(t *testing.T) {
 	storage := NewMockStorage()
+	initSrvTestFacade(t, storage)
 	server, err := NewServer(storage, nil)
 	if err != nil {
 		t.Fatalf("NewServer() failed: %v", err)
@@ -123,6 +139,7 @@ func TestServerRouter(t *testing.T) {
 
 func TestServerHandler(t *testing.T) {
 	storage := NewMockStorage()
+	initSrvTestFacade(t, storage)
 	server, err := NewServer(storage, nil)
 	if err != nil {
 		t.Fatalf("NewServer() failed: %v", err)
@@ -141,6 +158,7 @@ func TestServerAddress(t *testing.T) {
 		Port: 9000,
 	}
 
+	initSrvTestFacade(t, storage)
 	server, err := NewServer(storage, config)
 	if err != nil {
 		t.Fatalf("NewServer() failed: %v", err)
@@ -164,6 +182,7 @@ func TestServerWithAllMiddleware(t *testing.T) {
 		Mode:           gin.TestMode,
 	}
 
+	initSrvTestFacade(t, storage)
 	server, err := NewServer(storage, config)
 	if err != nil {
 		t.Fatalf("NewServer() failed: %v", err)
@@ -196,6 +215,7 @@ func TestServerWithoutMiddleware(t *testing.T) {
 		Mode:           gin.TestMode,
 	}
 
+	initSrvTestFacade(t, storage)
 	server, err := NewServer(storage, config)
 	if err != nil {
 		t.Fatalf("NewServer() failed: %v", err)
@@ -219,6 +239,7 @@ func TestServerShutdown(t *testing.T) {
 		Mode: gin.TestMode,
 	}
 
+	initSrvTestFacade(t, storage)
 	server, err := NewServer(storage, config)
 	if err != nil {
 		t.Fatalf("NewServer() failed: %v", err)
@@ -257,7 +278,8 @@ func TestServerModes(t *testing.T) {
 				Mode: mode,
 			}
 
-			server, err := NewServer(storage, config)
+			initSrvTestFacade(t, storage)
+	server, err := NewServer(storage, config)
 			if err != nil {
 				t.Errorf("NewServer() with mode %s failed: %v", mode, err)
 			}
@@ -280,6 +302,7 @@ func TestServerCustomTimeouts(t *testing.T) {
 		Mode:         gin.TestMode,
 	}
 
+	initSrvTestFacade(t, storage)
 	server, err := NewServer(storage, config)
 	if err != nil {
 		t.Fatalf("NewServer() failed: %v", err)

@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  # gRPC server
+  grpc-server:
+    image: ghcr.io/jeremyhahn/go-objstore:latest
+    build:
+      context: ../../../..
+      dockerfile: Dockerfile
+      args:
+        BUILD_TAGS: local
+    command: ["grpc-server", "--address=:50051", "--storage-backend=local", "--storage-path=/data"]
+    ports:
+      - "50051:50051"
+    volumes:
+      - ./data/grpc:/data
+    healthcheck:
+      test: ["CMD", "grpc-health-probe", "-addr=:50051"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    networks:
+      - objstore-test
+
+  # REST server
+  rest-server:
+    image: ghcr.io/jeremyhahn/go-objstore:latest
+    build:
+      context: ../../../..
+      dockerfile: Dockerfile
+      args:
+        BUILD_TAGS: local
+    command: ["rest-server", "--address=:8080", "--storage-backend=local", "--storage-path=/data"]
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data/rest:/data
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    networks:
+      - objstore-test
+
+  # QUIC server
+  quic-server:
+    image: ghcr.io/jeremyhahn/go-objstore:latest
+    build:
+      context: ../../../..
+      dockerfile: Dockerfile
+      args:
+        BUILD_TAGS: local
+    command: ["quic-server", "--address=:4433", "--storage-backend=local", "--storage-path=/data"]
+    ports:
+      - "4433:4433/udp"
+    volumes:
+      - ./data/quic:/data
+    networks:
+      - objstore-test
+    environment:
+      - QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING=true
+
+networks:
+  objstore-test:
+    driver: bridge
+
+volumes:
+  grpc-data:
+  rest-data:
+  quic-data:

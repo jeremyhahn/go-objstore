@@ -248,7 +248,7 @@ func TestAddReplicationPolicy(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := tt.setupStorage()
-			server, err := NewServer(storage)
+			server, err := newTestServer(t, storage)
 			if err != nil {
 				t.Fatalf("Failed to create server: %v", err)
 			}
@@ -327,7 +327,7 @@ func TestRemoveReplicationPolicy(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := tt.setupStorage()
-			server, err := NewServer(storage)
+			server, err := newTestServer(t, storage)
 			if err != nil {
 				t.Fatalf("Failed to create server: %v", err)
 			}
@@ -416,7 +416,7 @@ func TestGetReplicationPolicies(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := tt.setupStorage()
-			server, err := NewServer(storage)
+			server, err := newTestServer(t, storage)
 			if err != nil {
 				t.Fatalf("Failed to create server: %v", err)
 			}
@@ -503,7 +503,7 @@ func TestGetReplicationPolicy(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := tt.setupStorage()
-			server, err := NewServer(storage)
+			server, err := newTestServer(t, storage)
 			if err != nil {
 				t.Fatalf("Failed to create server: %v", err)
 			}
@@ -596,7 +596,7 @@ func TestTriggerReplication(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := tt.setupStorage()
-			server, err := NewServer(storage)
+			server, err := newTestServer(t, storage)
 			if err != nil {
 				t.Fatalf("Failed to create server: %v", err)
 			}

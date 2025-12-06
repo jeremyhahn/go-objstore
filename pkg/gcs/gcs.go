@@ -106,9 +106,10 @@ func (o objectWrapper) Attrs(ctx context.Context) (*storage.ObjectAttrs, error) 
 
 // GCS is a storage backend that stores files in Google Cloud Storage.
 type GCS struct {
-	client        gcsClient
-	bucket        string
-	policiesMutex sync.RWMutex
+	client             gcsClient
+	bucket             string
+	policiesMutex      sync.RWMutex
+	replicationManager common.ReplicationManager
 }
 
 var gcsNewClient = func(ctx context.Context) (*storage.Client, error) { return storage.NewClient(ctx) }
@@ -356,4 +357,20 @@ func (g *GCS) GetPolicies() ([]common.LifecyclePolicy, error) {
 	}
 
 	return policies, nil
+}
+
+// GetReplicationManager returns the replication manager for this backend.
+// This method implements the common.ReplicationCapable interface.
+func (g *GCS) GetReplicationManager() (common.ReplicationManager, error) {
+	if g.replicationManager == nil {
+		return nil, common.ErrReplicationNotSupported
+	}
+	return g.replicationManager, nil
+}
+
+// SetReplicationManager allows manually setting a replication manager.
+// This is useful for testing or when you want to share a replication manager
+// across multiple backends.
+func (g *GCS) SetReplicationManager(rm common.ReplicationManager) {
+	g.replicationManager = rm
 }

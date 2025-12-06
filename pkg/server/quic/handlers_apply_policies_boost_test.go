@@ -47,7 +47,7 @@ func TestHandleApplyPolicies_ErrorPaths(t *testing.T) {
 	t.Run("GetPolicies returns error", func(t *testing.T) {
 		storage := newMockLifecycleStorage()
 		storage.getPoliciesError = errors.New("database error")
-		handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+		handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 		req := httptest.NewRequest(http.MethodPost, "/policies/apply", nil)
 		w := httptest.NewRecorder()
@@ -70,7 +70,7 @@ func TestHandleApplyPolicies_ErrorPaths(t *testing.T) {
 			Retention: 24 * time.Hour,
 			Action:    "delete",
 		})
-		handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+		handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 		req := httptest.NewRequest(http.MethodPost, "/policies/apply", nil)
 		w := httptest.NewRecorder()
@@ -84,7 +84,7 @@ func TestHandleApplyPolicies_ErrorPaths(t *testing.T) {
 
 	t.Run("archive action without destination", func(t *testing.T) {
 		storage := newMockLifecycleStorage()
-		handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+		handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 		// Add policy with archive action but no destination
 		storage.AddPolicy(common.LifecyclePolicy{
@@ -122,7 +122,7 @@ func TestHandleApplyPolicies_ErrorPaths(t *testing.T) {
 
 	t.Run("delete action error continues processing", func(t *testing.T) {
 		storage := newMockLifecycleStorage()
-		handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+		handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 		// Add policy
 		storage.AddPolicy(common.LifecyclePolicy{
@@ -152,7 +152,7 @@ func TestHandleApplyPolicies_ErrorPaths(t *testing.T) {
 	t.Run("archive action error continues processing", func(t *testing.T) {
 		storage := newMockLifecycleStorage()
 		storage.archiveError = errors.New("archive failed")
-		handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+		handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 		// Add policy with archive action
 		storage.AddPolicy(common.LifecyclePolicy{
@@ -190,7 +190,7 @@ func TestHandleApplyPolicies_ErrorPaths(t *testing.T) {
 
 	t.Run("object not matching prefix", func(t *testing.T) {
 		storage := newMockLifecycleStorage()
-		handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+		handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 		// Add policy with specific prefix
 		storage.AddPolicy(common.LifecyclePolicy{
@@ -232,7 +232,7 @@ func TestHandleApplyPolicies_ErrorPaths(t *testing.T) {
 
 	t.Run("object not old enough for retention", func(t *testing.T) {
 		storage := newMockLifecycleStorage()
-		handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+		handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 		// Add policy
 		storage.AddPolicy(common.LifecyclePolicy{
@@ -274,7 +274,7 @@ func TestHandleApplyPolicies_ErrorPaths(t *testing.T) {
 
 	t.Run("unknown action type", func(t *testing.T) {
 		storage := newMockLifecycleStorage()
-		handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+		handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 		// Add policy with unknown action
 		storage.AddPolicy(common.LifecyclePolicy{
@@ -311,7 +311,7 @@ func TestHandleApplyPolicies_ErrorPaths(t *testing.T) {
 
 	t.Run("multiple policies on same object", func(t *testing.T) {
 		storage := newMockLifecycleStorage()
-		handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+		handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 		// Add two delete policies with different prefixes
 		storage.AddPolicy(common.LifecyclePolicy{
@@ -351,7 +351,7 @@ func TestHandleApplyPolicies_ErrorPaths(t *testing.T) {
 func TestHandleApplyPolicies_SuccessPaths(t *testing.T) {
 	t.Run("delete with prefix match", func(t *testing.T) {
 		storage := newMockLifecycleStorage()
-		handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+		handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 		storage.AddPolicy(common.LifecyclePolicy{
 			ID:        "cleanup",
@@ -391,7 +391,7 @@ func TestHandleApplyPolicies_SuccessPaths(t *testing.T) {
 
 	t.Run("archive with destination", func(t *testing.T) {
 		storage := newMockLifecycleStorage()
-		handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+		handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 		storage.AddPolicy(common.LifecyclePolicy{
 			ID:          "archive-policy",
@@ -427,7 +427,7 @@ func TestHandleApplyPolicies_SuccessPaths(t *testing.T) {
 
 	t.Run("empty prefix matches all objects", func(t *testing.T) {
 		storage := newMockLifecycleStorage()
-		handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+		handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 		storage.AddPolicy(common.LifecyclePolicy{
 			ID:        "cleanup-all",

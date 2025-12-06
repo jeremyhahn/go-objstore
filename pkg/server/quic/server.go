@@ -34,19 +34,23 @@ type Server struct {
 }
 
 // New creates a new QUIC server with the given options.
+// The ObjstoreFacade must be initialized before calling this function.
 func New(opts *Options) (*Server, error) {
 	if err := opts.Validate(); err != nil {
 		return nil, err
 	}
 
-	handler := NewHandler(
-		opts.Storage,
+	handler, err := NewHandler(
+		opts.Backend,
 		opts.MaxRequestBodySize,
 		opts.ReadTimeout,
 		opts.WriteTimeout,
 		opts.Logger,
 		opts.Authenticator,
 	)
+	if err != nil {
+		return nil, err
+	}
 
 	server := &http3.Server{
 		Addr:       opts.Addr,

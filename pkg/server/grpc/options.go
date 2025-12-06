@@ -93,6 +93,11 @@ type ServerOptions struct {
 
 	// EnableAudit enables audit logging (default: true)
 	EnableAudit bool
+
+	// Backend is the name of the backend to use when using the facade.
+	// If empty, the default backend is used. This is only used when
+	// the server is created with NewServerWithFacade.
+	Backend string
 }
 
 // DefaultServerOptions returns the default server options.
@@ -268,5 +273,12 @@ func WithAuditLogger(logger audit.AuditLogger) ServerOption {
 func WithAudit(enable bool) ServerOption {
 	return func(o *ServerOptions) {
 		o.EnableAudit = enable
+	}
+}
+
+// WithBackend sets the backend name for facade-based operation.
+func WithBackend(backend string) ServerOption {
+	return func(o *ServerOptions) {
+		o.Backend = backend
 	}
 }

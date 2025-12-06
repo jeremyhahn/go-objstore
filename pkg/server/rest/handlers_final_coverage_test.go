@@ -31,7 +31,7 @@ import (
 // Test PutObject with multipart form check (checking c.Request.MultipartForm != nil path)
 func TestPutObjectMultipartFormCheck(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.PUT("/objects/*key", handler.PutObject)
@@ -58,7 +58,7 @@ func TestPutObjectMultipartFormCheck(t *testing.T) {
 // Test PutObject with empty metadata (no X-Metadata header)
 func TestPutObjectNoMetadataHeader(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.PUT("/objects/*key", handler.PutObject)
@@ -78,7 +78,7 @@ func TestPutObjectNoMetadataHeader(t *testing.T) {
 // Test PutObject with content type from direct upload
 func TestPutObjectDirectUploadContentType(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.PUT("/objects/*key", handler.PutObject)
@@ -97,7 +97,7 @@ func TestPutObjectDirectUploadContentType(t *testing.T) {
 // Test GetObject with zero-value LastModified
 func TestGetObjectZeroLastModified(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	// Add object with zero LastModified
 	storage.PutWithMetadata(context.Background(), "test.txt", strings.NewReader("content"), &common.Metadata{
@@ -127,7 +127,7 @@ func TestGetObjectZeroLastModified(t *testing.T) {
 // Test GetObject with zero size
 func TestGetObjectZeroSize(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	// Add object with zero size
 	storage.PutWithMetadata(context.Background(), "test.txt", strings.NewReader(""), &common.Metadata{
@@ -151,7 +151,7 @@ func TestGetObjectZeroSize(t *testing.T) {
 // Test GetObject with empty ETag
 func TestGetObjectEmptyETag(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	// Add object with empty ETag
 	storage.PutWithMetadata(context.Background(), "test.txt", strings.NewReader("content"), &common.Metadata{
@@ -176,7 +176,7 @@ func TestGetObjectEmptyETag(t *testing.T) {
 // Test GetObject with empty ContentEncoding
 func TestGetObjectEmptyContentEncoding(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	// Add object with empty ContentEncoding
 	storage.PutWithMetadata(context.Background(), "test.txt", strings.NewReader("content"), &common.Metadata{
@@ -201,7 +201,7 @@ func TestGetObjectEmptyContentEncoding(t *testing.T) {
 // Test GetObjectMetadata with empty key (no param)
 func TestGetObjectMetadataEmptyKey(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	// Route without :key param - will cause empty key
@@ -220,7 +220,7 @@ func TestGetObjectMetadataEmptyKey(t *testing.T) {
 // Test UpdateObjectMetadata with empty key
 func TestUpdateObjectMetadataEmptyKey(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.PUT("/metadata/", handler.UpdateObjectMetadata)
@@ -244,7 +244,7 @@ func TestUpdateObjectMetadataNoCustom(t *testing.T) {
 	storage := NewMockStorage()
 	storage.PutWithContext(context.Background(), "test.txt", strings.NewReader("content"))
 
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.PUT("/metadata/:key", handler.UpdateObjectMetadata)
@@ -336,7 +336,7 @@ func TestRespondWithListObjectsEmptyCustomMetadata(t *testing.T) {
 // Test PutObject with multipart form and Content-Type header check
 func TestPutObjectMultipartContentTypeCheck(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.PUT("/objects/*key", handler.PutObject)
@@ -363,7 +363,7 @@ func TestPutObjectMultipartContentTypeCheck(t *testing.T) {
 // Test PutObject with empty body
 func TestPutObjectEmptyBodyContentType(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.PUT("/objects/*key", handler.PutObject)

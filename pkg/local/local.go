@@ -25,6 +25,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jeremyhahn/go-objstore/pkg/adapters"
+	"github.com/jeremyhahn/go-objstore/pkg/audit"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
@@ -34,8 +36,11 @@ const metadataSuffix = ".metadata.json"
 type Local struct {
 	path                   string
 	lifecycleManager       common.LifecycleManager
+	replicationManager     common.ReplicationManager
 	atRestEncrypterFactory common.EncrypterFactory
 	changeLog              ChangeLog
+	logger                 adapters.Logger
+	auditLog               audit.AuditLogger
 }
 
 // New creates a new Local storage backend.
@@ -51,6 +56,10 @@ func New() common.Storage {
 //   - runLifecycle: "true" to run lifecycle processing in background (optional)
 //   - lifecycleManagerType: "memory" (default) or "persistent" (optional)
 //   - lifecyclePolicyFile: Path to policy file when using persistent manager (optional, default: ".lifecycle-policies.json")
+//
+// Note: Replication is enabled by calling SetReplicationManager() after Configure().
+// This allows the caller to configure replication with custom settings and avoids
+// import cycles between packages.
 func (l *Local) Configure(settings map[string]string) error {
 	l.path = settings["path"]
 	if l.path == "" {
@@ -60,6 +69,14 @@ func (l *Local) Configure(settings map[string]string) error {
 	// Ensure directory exists
 	if err := os.MkdirAll(l.path, 0750); err != nil {
 		return err
+	}
+
+	// Initialize logger and audit log with no-op defaults if not set
+	if l.logger == nil {
+		l.logger = adapters.NewNoOpLogger()
+	}
+	if l.auditLog == nil {
+		l.auditLog = audit.NewNoOpAuditLogger()
 	}
 
 	// Configure lifecycle manager type
@@ -219,13 +236,14 @@ func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 		metadata.ETag = fmt.Sprintf("%d-%d", info.ModTime().Unix(), size)
 	}
 
-	// Add encryption metadata if encrypted
+	// Add at-rest encryption metadata if encrypted
+	// Use separate field names to avoid conflict with client-side DEK encryption
 	if encrypter != nil {
 		if metadata.Custom == nil {
 			metadata.Custom = make(map[string]string)
 		}
-		metadata.Custom["encryption_algorithm"] = encrypter.Algorithm()
-		metadata.Custom["encryption_key_id"] = encrypter.KeyID()
+		metadata.Custom["at_rest_encryption_algorithm"] = encrypter.Algorithm()
+		metadata.Custom["at_rest_encryption_key_id"] = encrypter.KeyID()
 	}
 
 	if err := l.saveMetadata(key, metadata); err != nil {
@@ -751,4 +769,47 @@ func formatBytes(bytes int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+// GetReplicationManager returns the replication manager for this backend.
+// This method implements the common.ReplicationCapable interface.
+func (l *Local) GetReplicationManager() (common.ReplicationManager, error) {
+	if l.replicationManager == nil {
+		return nil, common.ErrReplicationNotSupported
+	}
+	return l.replicationManager, nil
+}
+
+// SetLogger sets the logger for replication operations.
+func (l *Local) SetLogger(logger adapters.Logger) {
+	l.logger = logger
+}
+
+// SetAuditLogger sets the audit logger for replication operations.
+func (l *Local) SetAuditLogger(auditLog audit.AuditLogger) {
+	l.auditLog = auditLog
+}
+
+// SetReplicationManager allows manually setting a replication manager.
+// This is useful for testing or when you want to share a replication manager
+// across multiple backends.
+func (l *Local) SetReplicationManager(rm common.ReplicationManager) {
+	l.replicationManager = rm
+}
+
+// GetPath returns the base path of the local storage.
+// This is useful for creating a replication filesystem that can be passed
+// to the replication manager.
+func (l *Local) GetPath() string {
+	return l.path
+}
+
+// GetLogger returns the configured logger.
+func (l *Local) GetLogger() adapters.Logger {
+	return l.logger
+}
+
+// GetAuditLogger returns the configured audit logger.
+func (l *Local) GetAuditLogger() audit.AuditLogger {
+	return l.auditLog
 }

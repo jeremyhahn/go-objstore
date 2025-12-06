@@ -19,9 +19,6 @@ var (
 	// ErrInvalidAddr is returned when the address is invalid.
 	ErrInvalidAddr = errors.New("invalid address")
 
-	// ErrStorageRequired is returned when storage is not configured.
-	ErrStorageRequired = errors.New("storage backend is required")
-
 	// ErrTLSConfigRequired is returned when TLS configuration is missing.
 	ErrTLSConfigRequired = errors.New("TLS configuration is required")
 

@@ -1,0 +1,72 @@
+[tool.poetry]
+name = "go-objstore-sdk"
+version = "0.1.0"
+description = "Python SDK for go-objstore with REST, gRPC, and QUIC/HTTP3 support"
+authors = ["Go ObjectStore Team"]
+license = "AGPL-3.0"
+readme = "README.md"
+packages = [{include = "objstore"}]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+requests = "^2.31.0"
+grpcio = "^1.60.0"
+grpcio-tools = "^1.60.0"
+protobuf = "^4.25.0"
+httpx = {extras = ["http3"], version = "^0.26.0"}
+pydantic = "^2.5.0"
+tenacity = "^8.2.3"
+typing-extensions = "^4.9.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.3"
+pytest-cov = "^4.1.0"
+pytest-asyncio = "^0.23.2"
+pytest-mock = "^3.12.0"
+black = "^23.12.0"
+flake8 = "^7.0.0"
+mypy = "^1.8.0"
+isort = "^5.13.2"
+responses = "^0.24.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 100
+target-version = ['py39', 'py310', 'py311']
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --cov=objstore --cov-report=term-missing --cov-report=html --cov-report=xml"
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["objstore"]
+omit = ["*/tests/*", "*/__pycache__/*", "*/proto/*", "*/grpc_client.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]

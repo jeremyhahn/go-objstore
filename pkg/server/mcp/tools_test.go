@@ -393,7 +393,7 @@ func TestToolRegistry_GetTool(t *testing.T) {
 
 func TestToolExecutor_ExecutePut(t *testing.T) {
 	storage := NewMockStorage()
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 
 	tests := []struct {
 		name      string
@@ -465,7 +465,7 @@ func TestToolExecutor_ExecutePut(t *testing.T) {
 
 func TestToolExecutor_ExecuteGet(t *testing.T) {
 	storage := NewMockStorage()
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 
 	// Put some test data
 	storage.PutWithContext(context.Background(), "test/file.txt", strings.NewReader("hello world"))
@@ -526,7 +526,7 @@ func TestToolExecutor_ExecuteGet(t *testing.T) {
 
 func TestToolExecutor_ExecuteDelete(t *testing.T) {
 	storage := NewMockStorage()
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 
 	// Put some test data
 	storage.PutWithContext(context.Background(), "test/file.txt", strings.NewReader("hello world"))
@@ -583,7 +583,7 @@ func TestToolExecutor_ExecuteDelete(t *testing.T) {
 
 func TestToolExecutor_ExecuteList(t *testing.T) {
 	storage := NewMockStorage()
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 
 	// Put some test data
 	storage.PutWithContext(context.Background(), "test/file1.txt", strings.NewReader("data1"))
@@ -644,7 +644,7 @@ func TestToolExecutor_ExecuteList(t *testing.T) {
 
 func TestToolExecutor_ExecuteExists(t *testing.T) {
 	storage := NewMockStorage()
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 
 	// Put some test data
 	storage.PutWithContext(context.Background(), "test/file.txt", strings.NewReader("hello world"))
@@ -708,7 +708,7 @@ func TestToolExecutor_ExecuteExists(t *testing.T) {
 
 func TestToolExecutor_ExecuteGetMetadata(t *testing.T) {
 	storage := NewMockStorage()
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 
 	// Put some test data with metadata
 	metadata := &common.Metadata{
@@ -775,7 +775,7 @@ func TestToolExecutor_ExecuteGetMetadata(t *testing.T) {
 
 func TestToolExecutor_UnknownTool(t *testing.T) {
 	storage := NewMockStorage()
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 
 	_, err := executor.Execute(context.Background(), "unknown_tool", map[string]any{})
 	if err == nil {
@@ -790,7 +790,7 @@ func TestToolExecutor_StorageErrorOnPut(t *testing.T) {
 	storage := &ErrorMockStorage{
 		putError: true,
 	}
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 
 	_, err := executor.Execute(context.Background(), "objstore_put", map[string]any{
 		"key":  "test.txt",
@@ -809,7 +809,7 @@ func TestToolExecutor_StorageErrorOnGet(t *testing.T) {
 	storage := &ErrorMockStorage{
 		getError: true,
 	}
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 
 	_, err := executor.Execute(context.Background(), "objstore_get", map[string]any{
 		"key": "test.txt",
@@ -827,7 +827,7 @@ func TestToolExecutor_GetWithReadError(t *testing.T) {
 	storage := &ErrorMockStorage{
 		readError: true,
 	}
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 
 	_, err := executor.Execute(context.Background(), "objstore_get", map[string]any{
 		"key": "test.txt",
@@ -845,7 +845,7 @@ func TestToolExecutor_StorageErrorOnDelete(t *testing.T) {
 	storage := &ErrorMockStorage{
 		deleteError: true,
 	}
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 
 	_, err := executor.Execute(context.Background(), "objstore_delete", map[string]any{
 		"key": "test.txt",
@@ -863,7 +863,7 @@ func TestToolExecutor_StorageErrorOnExists(t *testing.T) {
 	storage := &ErrorMockStorage{
 		existsError: true,
 	}
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 
 	_, err := executor.Execute(context.Background(), "objstore_exists", map[string]any{
 		"key": "test.txt",
@@ -881,7 +881,7 @@ func TestToolExecutor_StorageErrorOnGetMetadata(t *testing.T) {
 	storage := &ErrorMockStorage{
 		metadataError: true,
 	}
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 
 	_, err := executor.Execute(context.Background(), "objstore_get_metadata", map[string]any{
 		"key": "test.txt",
@@ -899,7 +899,7 @@ func TestToolExecutor_StorageErrorOnList(t *testing.T) {
 	storage := &ErrorMockStorage{
 		listError: true,
 	}
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 
 	_, err := executor.Execute(context.Background(), "objstore_list", map[string]any{
 		"prefix": "test/",
@@ -915,7 +915,7 @@ func TestToolExecutor_StorageErrorOnList(t *testing.T) {
 
 func TestToolExecutor_ExecuteUpdateMetadata(t *testing.T) {
 	storage := NewMockStorage()
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 
 	// First put an object
 	_, err := executor.Execute(context.Background(), "objstore_put", map[string]any{
@@ -1012,7 +1012,7 @@ func TestToolExecutor_ExecuteUpdateMetadata(t *testing.T) {
 
 func TestToolExecutor_ExecuteHealth(t *testing.T) {
 	storage := NewMockStorage()
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 
 	result, err := executor.Execute(context.Background(), "objstore_health", map[string]any{})
 	if err != nil {
