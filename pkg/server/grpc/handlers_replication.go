@@ -15,12 +15,14 @@ package grpc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	objstorepb "github.com/jeremyhahn/go-objstore/api/proto"
 	"github.com/jeremyhahn/go-objstore/pkg/audit"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
+	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	"github.com/jeremyhahn/go-objstore/pkg/replication"
 
 	"google.golang.org/grpc/codes"
@@ -47,14 +49,12 @@ func (s *Server) AddReplicationPolicy(
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	// Get replication manager
-	repCapable, ok := s.storage.(common.ReplicationCapable)
-	if !ok {
-		return nil, status.Error(codes.Unimplemented, "replication not supported by this storage backend")
-	}
-
-	repMgr, err := repCapable.GetReplicationManager()
+	// Get replication manager from facade
+	repMgr, err := objstore.GetReplicationManager(s.backend)
 	if err != nil {
+		if errors.Is(err, common.ErrReplicationNotSupported) {
+			return nil, status.Error(codes.Unimplemented, "replication not supported by this storage backend")
+		}
 		return nil, mapError(err)
 	}
 
@@ -81,13 +81,12 @@ func (s *Server) RemoveReplicationPolicy(
 		return nil, status.Error(codes.InvalidArgument, "policy ID is required")
 	}
 
-	repCapable, ok := s.storage.(common.ReplicationCapable)
-	if !ok {
-		return nil, status.Error(codes.Unimplemented, "replication not supported by this storage backend")
-	}
-
-	repMgr, err := repCapable.GetReplicationManager()
+	// Get replication manager from facade
+	repMgr, err := objstore.GetReplicationManager(s.backend)
 	if err != nil {
+		if errors.Is(err, common.ErrReplicationNotSupported) {
+			return nil, status.Error(codes.Unimplemented, "replication not supported by this storage backend")
+		}
 		return nil, mapError(err)
 	}
 
@@ -109,13 +108,12 @@ func (s *Server) GetReplicationPolicies(
 	ctx context.Context,
 	req *objstorepb.GetReplicationPoliciesRequest,
 ) (*objstorepb.GetReplicationPoliciesResponse, error) {
-	repCapable, ok := s.storage.(common.ReplicationCapable)
-	if !ok {
-		return nil, status.Error(codes.Unimplemented, "replication not supported by this storage backend")
-	}
-
-	repMgr, err := repCapable.GetReplicationManager()
+	// Get replication manager from facade
+	repMgr, err := objstore.GetReplicationManager(s.backend)
 	if err != nil {
+		if errors.Is(err, common.ErrReplicationNotSupported) {
+			return nil, status.Error(codes.Unimplemented, "replication not supported by this storage backend")
+		}
 		return nil, mapError(err)
 	}
 
@@ -144,13 +142,12 @@ func (s *Server) GetReplicationPolicy(
 		return nil, status.Error(codes.InvalidArgument, "policy ID is required")
 	}
 
-	repCapable, ok := s.storage.(common.ReplicationCapable)
-	if !ok {
-		return nil, status.Error(codes.Unimplemented, "replication not supported by this storage backend")
-	}
-
-	repMgr, err := repCapable.GetReplicationManager()
+	// Get replication manager from facade
+	repMgr, err := objstore.GetReplicationManager(s.backend)
 	if err != nil {
+		if errors.Is(err, common.ErrReplicationNotSupported) {
+			return nil, status.Error(codes.Unimplemented, "replication not supported by this storage backend")
+		}
 		return nil, mapError(err)
 	}
 
@@ -169,13 +166,12 @@ func (s *Server) TriggerReplication(
 	ctx context.Context,
 	req *objstorepb.TriggerReplicationRequest,
 ) (*objstorepb.TriggerReplicationResponse, error) {
-	repCapable, ok := s.storage.(common.ReplicationCapable)
-	if !ok {
-		return nil, status.Error(codes.Unimplemented, "replication not supported by this storage backend")
-	}
-
-	repMgr, err := repCapable.GetReplicationManager()
+	// Get replication manager from facade
+	repMgr, err := objstore.GetReplicationManager(s.backend)
 	if err != nil {
+		if errors.Is(err, common.ErrReplicationNotSupported) {
+			return nil, status.Error(codes.Unimplemented, "replication not supported by this storage backend")
+		}
 		return nil, mapError(err)
 	}
 
@@ -377,37 +373,41 @@ func (s *Server) GetReplicationStatus(
 		return nil, status.Error(codes.InvalidArgument, "policy ID is required")
 	}
 
-	repCapable, ok := s.storage.(common.ReplicationCapable)
-	if !ok {
-		return nil, status.Error(codes.Unimplemented, "replication not supported by this storage backend")
-	}
-
-	repMgr, err := repCapable.GetReplicationManager()
+	// Get replication manager from facade
+	repMgr, err := objstore.GetReplicationManager(s.backend)
 	if err != nil {
+		if errors.Is(err, common.ErrReplicationNotSupported) {
+			return nil, status.Error(codes.Unimplemented, "replication not supported by this storage backend")
+		}
 		return nil, mapError(err)
 	}
 
 	// GetReplicationStatus is defined in replication_persistent.go
-	replicationStatus, err := repMgr.(interface {
+	statusProvider, ok := repMgr.(interface {
 		GetReplicationStatus(id string) (*replication.ReplicationStatus, error)
-	}).GetReplicationStatus(req.Id)
+	})
+	if !ok {
+		return nil, status.Error(codes.Unimplemented, "replication status not supported by this backend")
+	}
+
+	replicationStatus, err := statusProvider.GetReplicationStatus(req.Id)
 	if err != nil {
 		return nil, mapError(err)
 	}
 
 	// Convert to proto
 	protoStatus := &objstorepb.ReplicationStatus{
-		PolicyId:               replicationStatus.PolicyID,
-		SourceBackend:          replicationStatus.SourceBackend,
-		DestinationBackend:     replicationStatus.DestinationBackend,
-		Enabled:                replicationStatus.Enabled,
-		TotalObjectsSynced:     replicationStatus.TotalObjectsSynced,
-		TotalObjectsDeleted:    replicationStatus.TotalObjectsDeleted,
-		TotalBytesSynced:       replicationStatus.TotalBytesSynced,
-		TotalErrors:            replicationStatus.TotalErrors,
-		LastSyncTime:           timestamppb.New(replicationStatus.LastSyncTime),
-		AverageSyncDurationMs:  replicationStatus.AverageSyncDuration.Milliseconds(),
-		SyncCount:              replicationStatus.SyncCount,
+		PolicyId:              replicationStatus.PolicyID,
+		SourceBackend:         replicationStatus.SourceBackend,
+		DestinationBackend:    replicationStatus.DestinationBackend,
+		Enabled:               replicationStatus.Enabled,
+		TotalObjectsSynced:    replicationStatus.TotalObjectsSynced,
+		TotalObjectsDeleted:   replicationStatus.TotalObjectsDeleted,
+		TotalBytesSynced:      replicationStatus.TotalBytesSynced,
+		TotalErrors:           replicationStatus.TotalErrors,
+		LastSyncTime:          timestamppb.New(replicationStatus.LastSyncTime),
+		AverageSyncDurationMs: replicationStatus.AverageSyncDuration.Milliseconds(),
+		SyncCount:             replicationStatus.SyncCount,
 	}
 
 	return &objstorepb.GetReplicationStatusResponse{

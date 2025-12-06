@@ -526,22 +526,36 @@ make lib
 # Run unit tests (fast, in-memory)
 make test
 
-# Run integration tests (with Docker)
+# Run all integration tests (backends + CLI)
 make integration-test
+
+# Run ALL integration tests including servers
+make integration-test-all
 
 # Run specific backend tests
 make integration-test-local
 make integration-test-s3
 make integration-test-azure
 make integration-test-gcs
+make integration-test-minio
+make integration-test-factory
+
+# Run CLI integration tests
+make integration-test-cli
+
+# Run server integration tests (gRPC, REST, QUIC, MCP)
+make test-servers
 
 # Generate coverage report
 make coverage-report
+
+# Check per-package coverage (highlights packages under 90%)
+make coverage-check
 ```
 
 ### Test Coverage
 
-Unit tests run quickly with no external dependencies. Integration tests use Docker-based emulators for all servers and backends. Security scanning is performed using gosec and govulncheck. For detailed coverage statistics, see the badge above or run `make coverage-report`.
+Unit tests run quickly with no external dependencies. Integration tests use Docker-based emulators for all servers and backends. CLI integration tests automatically build the CLI binary if not present. Security scanning is performed using gosec and govulncheck. For detailed coverage statistics, see the badge above or run `make coverage-report`.
 
 ## Architecture
 

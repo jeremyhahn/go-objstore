@@ -314,7 +314,7 @@ func TestArchiveViaQUIC(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := tt.setupStorage()
-			_ = NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+			_ = createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 			// We can't directly test the handler's custom routing, but we can test the storage operations
 			// In a real test, we would set up a full HTTP/3 server
@@ -595,7 +595,7 @@ func TestGetPoliciesViaQUIC(t *testing.T) {
 // TestQUICHandlerWithLifecycleOperations tests the full QUIC handler with lifecycle operations
 func TestQUICHandlerWithLifecycleOperations(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	// Test health endpoint (no auth required)
 	req := httptest.NewRequest("GET", "/health", nil)
@@ -610,7 +610,7 @@ func TestQUICHandlerWithLifecycleOperations(t *testing.T) {
 // TestExistsViaQUIC tests object existence checking via QUIC
 func TestExistsViaQUIC(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	// Put an object first
 	putReq := httptest.NewRequest("PUT", "/objects/test-key", strings.NewReader("test data"))
@@ -661,7 +661,7 @@ func TestExistsViaQUIC(t *testing.T) {
 // TestUpdateMetadataViaQUIC tests metadata update via QUIC
 func TestUpdateMetadataViaQUIC(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	// Put an object first
 	putReq := httptest.NewRequest("PUT", "/objects/test-key", strings.NewReader("test data"))
@@ -723,7 +723,7 @@ func TestUpdateMetadataViaQUIC(t *testing.T) {
 // TestUpdateMetadataInvalidJSON tests UpdateMetadata with invalid JSON
 func TestUpdateMetadataInvalidJSON(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	req := httptest.NewRequest("PATCH", "/objects/test-key", strings.NewReader("invalid json"))
 	req.Header.Set("Content-Type", "application/json")
@@ -738,7 +738,7 @@ func TestUpdateMetadataInvalidJSON(t *testing.T) {
 // TestApplyPolicies tests applying lifecycle policies
 func TestApplyPolicies(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	// Add a policy
 	policy := common.LifecyclePolicy{
@@ -779,7 +779,7 @@ func TestApplyPolicies(t *testing.T) {
 // TestApplyPolicies_NoPolicies tests applying policies when no policies exist
 func TestApplyPolicies_NoPolicies(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	req := httptest.NewRequest("POST", "/policies/apply", nil)
 	w := httptest.NewRecorder()
@@ -805,7 +805,7 @@ func TestApplyPolicies_NoPolicies(t *testing.T) {
 // TestApplyPolicies_WrongMethod tests applying policies with wrong HTTP method
 func TestApplyPolicies_WrongMethod(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	req := httptest.NewRequest("GET", "/policies/apply", nil)
 	w := httptest.NewRecorder()
@@ -819,7 +819,7 @@ func TestApplyPolicies_WrongMethod(t *testing.T) {
 // TestHealth tests the health endpoint
 func TestHealth(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	req := httptest.NewRequest("GET", "/health", nil)
 	w := httptest.NewRecorder()
@@ -843,7 +843,7 @@ func TestHealth(t *testing.T) {
 // TestHealth_POST tests health with POST method
 func TestHealth_POST(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	req := httptest.NewRequest("POST", "/health", nil)
 	w := httptest.NewRecorder()
@@ -858,7 +858,7 @@ func TestHealth_POST(t *testing.T) {
 // TestExists_NotFound tests checking existence of non-existent object
 func TestExists_NotFound(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	req := httptest.NewRequest("HEAD", "/objects/nonexistent.txt", nil)
 	w := httptest.NewRecorder()
@@ -872,7 +872,7 @@ func TestExists_NotFound(t *testing.T) {
 // TestExists_WrongMethod tests exists with wrong method
 func TestExists_WrongMethod(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	req := httptest.NewRequest("POST", "/objects/test.txt", nil)
 	w := httptest.NewRecorder()
@@ -886,7 +886,7 @@ func TestExists_WrongMethod(t *testing.T) {
 // TestGet_NotFound tests getting non-existent object
 func TestGet_NotFound(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	req := httptest.NewRequest("GET", "/objects/nonexistent.txt", nil)
 	w := httptest.NewRecorder()
@@ -900,7 +900,7 @@ func TestGet_NotFound(t *testing.T) {
 // TestGet_WrongMethod tests get with wrong method
 func TestGet_WrongMethod(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	req := httptest.NewRequest("POST", "/objects/test.txt", nil)
 	w := httptest.NewRecorder()
@@ -914,7 +914,7 @@ func TestGet_WrongMethod(t *testing.T) {
 // TestApplyPolicies_WithArchive tests applying archive policies
 func TestApplyPolicies_WithArchive(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	// Add archive policy
 	policy := common.LifecyclePolicy{
@@ -942,7 +942,7 @@ func TestApplyPolicies_WithArchive(t *testing.T) {
 // TestApplyPolicies_ObjectWithoutMetadata tests policy on objects without metadata
 func TestApplyPolicies_ObjectWithoutMetadata(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	// Add policy
 	policy := common.LifecyclePolicy{
@@ -974,7 +974,7 @@ func TestApplyPolicies_ObjectWithoutMetadata(t *testing.T) {
 // TestUpdateMetadata_InvalidJSON tests update metadata with invalid JSON
 func TestUpdateMetadata_InvalidJSON2(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	// Add object
 	storage.PutWithContext(context.Background(), "test.txt", bytes.NewReader([]byte("test")))
@@ -991,7 +991,7 @@ func TestUpdateMetadata_InvalidJSON2(t *testing.T) {
 // TestAddPolicy_InvalidJSON tests add policy with invalid JSON
 func TestAddPolicy_InvalidJSON(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	req := httptest.NewRequest("POST", "/policies", strings.NewReader("{invalid json}"))
 	w := httptest.NewRecorder()
@@ -1005,7 +1005,7 @@ func TestAddPolicy_InvalidJSON(t *testing.T) {
 // TestAddPolicy_MissingID tests add policy without ID
 func TestAddPolicy_MissingID(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	policyJSON := `{"retention_seconds": 86400, "action": "delete"}`
 	req := httptest.NewRequest("POST", "/policies", strings.NewReader(policyJSON))
@@ -1020,7 +1020,7 @@ func TestAddPolicy_MissingID(t *testing.T) {
 // TestAddPolicy_MissingAction tests add policy without action
 func TestAddPolicy_MissingAction(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	policyJSON := `{"id": "test", "retention_seconds": 86400}`
 	req := httptest.NewRequest("POST", "/policies", strings.NewReader(policyJSON))
@@ -1035,7 +1035,7 @@ func TestAddPolicy_MissingAction(t *testing.T) {
 // TestAddPolicy_InvalidAction tests add policy with invalid action
 func TestAddPolicy_InvalidAction(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	policyJSON := `{"id": "test", "retention_seconds": 86400, "action": "invalid"}`
 	req := httptest.NewRequest("POST", "/policies", strings.NewReader(policyJSON))
@@ -1050,7 +1050,7 @@ func TestAddPolicy_InvalidAction(t *testing.T) {
 // TestAddPolicy_NegativeRetention tests add policy with negative retention
 func TestAddPolicy_NegativeRetention(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	policyJSON := `{"id": "test", "retention_seconds": -1, "action": "delete"}`
 	req := httptest.NewRequest("POST", "/policies", strings.NewReader(policyJSON))
@@ -1065,7 +1065,7 @@ func TestAddPolicy_NegativeRetention(t *testing.T) {
 // TestGetPolicies_Empty tests getting policies when none exist
 func TestGetPolicies_Empty(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	req := httptest.NewRequest("GET", "/policies", nil)
 	w := httptest.NewRecorder()
@@ -1093,7 +1093,7 @@ func TestGetPolicies_Empty(t *testing.T) {
 // TestPut_WithExistingObject tests putting an object that already exists
 func TestPut_WithExistingObject(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	// Put object first time
 	req := httptest.NewRequest("PUT", "/objects/test.txt", bytes.NewReader([]byte("data1")))
@@ -1122,7 +1122,7 @@ func TestPut_WithExistingObject(t *testing.T) {
 // TestDelete_Success tests deleting an existing object
 func TestDelete_Success(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	// Add object first
 	storage.PutWithContext(context.Background(), "test.txt", bytes.NewReader([]byte("data")))
@@ -1144,7 +1144,7 @@ func TestDelete_Success(t *testing.T) {
 // TestList_WithPrefix tests listing objects with prefix
 func TestList_WithPrefix(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	// Add objects
 	storage.PutWithContext(context.Background(), "logs/app.log", bytes.NewReader([]byte("log1")))

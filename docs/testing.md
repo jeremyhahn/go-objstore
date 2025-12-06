@@ -45,6 +45,9 @@ For current coverage statistics, check the [Codecov dashboard](https://codecov.i
 - Test command-line interface
 - End-to-end CLI workflows
 - Located in: `test/integration/cli/`
+- Build tag: `integration`
+- Automatically builds CLI binary if not present
+- Can run in Docker or locally with `go test -tags=integration,local`
 
 ## Running Tests
 
@@ -54,7 +57,7 @@ For current coverage statistics, check the [Codecov dashboard](https://codecov.i
 # Run all unit tests
 make test
 
-# Run integration tests with emulators
+# Run all integration tests (backends + CLI)
 make integration-test
 
 # Run specific backend integration tests
@@ -62,12 +65,17 @@ make integration-test-local
 make integration-test-s3
 make integration-test-gcs
 make integration-test-azure
+make integration-test-minio
+make integration-test-factory
 
-# Run CLI tests
-make test-cli
+# Run CLI integration tests only
+make integration-test-cli
 
-# Run server tests
+# Run server integration tests (gRPC, REST, QUIC, MCP)
 make test-servers
+
+# Run ALL integration tests including servers
+make integration-test-all
 
 # Generate coverage report
 make coverage-report
@@ -284,7 +292,7 @@ func TestS3_Put(t *testing.T) {
 }
 ```
 
-### Integration Test Example (Emulator)
+### Integration Test Example (Using Facade)
 
 ```go
 //go:build integration
@@ -297,31 +305,41 @@ import (
     "io"
     "testing"
 
-    "github.com/jeremyhahn/go-objstore/pkg/factory"
+    "github.com/jeremyhahn/go-objstore/pkg/objstore"
 )
 
 func TestS3_BasicOps(t *testing.T) {
-    // Create storage via factory
-    storage, err := factory.NewStorage("s3", map[string]string{
-        "bucket":   "test-bucket",
-        "region":   "us-east-1",
-        "endpoint": "http://localhost:9000",
+    // Initialize facade with S3 backend
+    objstore.Reset() // Clear any previous initialization
+    err := objstore.Initialize(&objstore.FacadeConfig{
+        BackendConfigs: map[string]objstore.BackendConfig{
+            "default": {
+                Type: "s3",
+                Settings: map[string]string{
+                    "bucket":   "test-bucket",
+                    "region":   "us-east-1",
+                    "endpoint": "http://localhost:9000",
+                },
+            },
+        },
+        DefaultBackend: "default",
     })
     if err != nil {
-        t.Fatalf("Failed to create storage: %v", err)
+        t.Fatalf("Failed to initialize facade: %v", err)
     }
+    defer objstore.Reset()
 
     ctx := context.Background()
     key := "test.txt"
     data := []byte("hello world")
 
     // Test Put
-    if err := storage.PutWithContext(ctx, key, bytes.NewReader(data)); err != nil {
+    if err := objstore.PutWithContext(ctx, key, bytes.NewReader(data)); err != nil {
         t.Fatalf("Put failed: %v", err)
     }
 
     // Test Get
-    reader, err := storage.GetWithContext(ctx, key)
+    reader, err := objstore.GetWithContext(ctx, key)
     if err != nil {
         t.Fatalf("Get failed: %v", err)
     }
@@ -333,7 +351,7 @@ func TestS3_BasicOps(t *testing.T) {
     }
 
     // Test Delete
-    if err := storage.DeleteWithContext(ctx, key); err != nil {
+    if err := objstore.DeleteWithContext(ctx, key); err != nil {
         t.Fatalf("Delete failed: %v", err)
     }
 }
@@ -347,12 +365,10 @@ func TestS3_BasicOps(t *testing.T) {
 package s3
 
 import (
-    "bytes"
-    "context"
     "os"
     "testing"
 
-    "github.com/jeremyhahn/go-objstore/pkg/factory"
+    "github.com/jeremyhahn/go-objstore/pkg/objstore"
 )
 
 func TestS3_RealCloud(t *testing.T) {
@@ -365,16 +381,26 @@ func TestS3_RealCloud(t *testing.T) {
         bucket = "go-objstore-integration-test"
     }
 
-    // Create storage
-    storage, err := factory.NewStorage("s3", map[string]string{
-        "bucket": bucket,
-        "region": "us-east-1",
+    // Initialize facade with S3 backend
+    objstore.Reset()
+    err := objstore.Initialize(&objstore.FacadeConfig{
+        BackendConfigs: map[string]objstore.BackendConfig{
+            "default": {
+                Type: "s3",
+                Settings: map[string]string{
+                    "bucket": bucket,
+                    "region": "us-east-1",
+                },
+            },
+        },
+        DefaultBackend: "default",
     })
     if err != nil {
-        t.Fatalf("Failed to create S3 storage: %v", err)
+        t.Fatalf("Failed to initialize facade: %v", err)
     }
+    defer objstore.Reset()
 
-    // Run tests...
+    // Run tests using objstore.* functions...
 }
 ```
 

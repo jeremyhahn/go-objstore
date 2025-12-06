@@ -15,8 +15,27 @@ go get github.com/jeremyhahn/go-objstore
 ### Storage Interface
 All backends implement the `Storage` interface with methods for Put, Get, Delete, and List operations.
 
+### Facade Pattern (Recommended)
+The `objstore` package provides a centralized API that handles validation, backend routing, and error handling. Initialize once at startup, then use throughout your application:
+
+```go
+import "github.com/jeremyhahn/go-objstore/pkg/objstore"
+
+// Initialize at startup
+err := objstore.Initialize(&objstore.FacadeConfig{
+    BackendConfigs: map[string]objstore.BackendConfig{
+        "default": {Type: "local", Settings: map[string]string{"path": "/data"}},
+    },
+    DefaultBackend: "default",
+})
+
+// Use throughout application
+err = objstore.Put("myfile.txt", dataReader)
+data, err := objstore.Get("myfile.txt")
+```
+
 ### Factory Pattern
-Use the factory to create storage backends without importing specific implementations.
+For advanced use cases, create storage backends directly with the factory and pass them to the facade.
 
 ### Context Support
 Operations support context for cancellation and timeouts.

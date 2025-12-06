@@ -21,8 +21,13 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/jeremyhahn/go-objstore/pkg/adapters"
+	"github.com/jeremyhahn/go-objstore/pkg/audit"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
+	"github.com/jeremyhahn/go-objstore/pkg/factory"
+	"github.com/jeremyhahn/go-objstore/pkg/replication"
 	"github.com/jeremyhahn/go-objstore/pkg/validation"
 )
 
@@ -53,10 +58,26 @@ type ObjstoreFacade struct {
 	mu             sync.RWMutex
 }
 
+// BackendConfig defines configuration for a storage backend
+// Used with the simplified initialization API
+type BackendConfig struct {
+	// Type is the backend type (local, s3, gcs, azure)
+	Type string
+
+	// Settings contains backend-specific configuration
+	Settings map[string]string
+}
+
 // FacadeConfig configures the objstore facade
 type FacadeConfig struct {
-	// Backends is a map of backend name to Storage
+	// Backends is a map of backend name to Storage (legacy approach)
+	// Use this when you need to pass pre-configured Storage instances
 	Backends map[string]common.Storage
+
+	// BackendConfigs is a map of backend name to BackendConfig (simplified approach)
+	// Use this to let the facade create storage instances via the factory
+	// If both Backends and BackendConfigs are set, they are merged (Backends takes precedence)
+	BackendConfigs map[string]BackendConfig
 
 	// DefaultBackend is the name of the default backend to use
 	// when no backend is specified in the key reference
@@ -65,6 +86,25 @@ type FacadeConfig struct {
 
 // Initialize sets up the objstore facade
 // This should be called once at application startup
+//
+// Two initialization patterns are supported:
+//
+// 1. Simplified (recommended) - let facade create backends via factory:
+//
+//	objstore.Initialize(&objstore.FacadeConfig{
+//	    BackendConfigs: map[string]objstore.BackendConfig{
+//	        "default": {Type: "local", Settings: map[string]string{"path": "/data"}},
+//	    },
+//	    DefaultBackend: "default",
+//	})
+//
+// 2. Legacy - pass pre-configured Storage instances:
+//
+//	storage, _ := factory.NewStorage("local", settings)
+//	objstore.Initialize(&objstore.FacadeConfig{
+//	    Backends: map[string]common.Storage{"default": storage},
+//	    DefaultBackend: "default",
+//	})
 func Initialize(config *FacadeConfig) error {
 	var initErr error
 
@@ -74,7 +114,25 @@ func Initialize(config *FacadeConfig) error {
 			return
 		}
 
-		if len(config.Backends) == 0 {
+		// Build backends map from both sources
+		backends := make(map[string]common.Storage)
+
+		// First, create backends from BackendConfigs (simplified API)
+		for name, cfg := range config.BackendConfigs {
+			storage, err := factory.NewStorage(cfg.Type, cfg.Settings)
+			if err != nil {
+				initErr = fmt.Errorf("failed to create backend %q: %w", name, err)
+				return
+			}
+			backends[name] = storage
+		}
+
+		// Then, merge in pre-configured Backends (legacy API takes precedence)
+		for name, storage := range config.Backends {
+			backends[name] = storage
+		}
+
+		if len(backends) == 0 {
 			initErr = errors.New("at least one backend must be configured")
 			return
 		}
@@ -82,20 +140,20 @@ func Initialize(config *FacadeConfig) error {
 		// If no default specified, use first backend
 		defaultBackend := config.DefaultBackend
 		if defaultBackend == "" {
-			for name := range config.Backends {
+			for name := range backends {
 				defaultBackend = name
 				break
 			}
 		}
 
 		// Verify default backend exists
-		if _, ok := config.Backends[defaultBackend]; !ok {
+		if _, ok := backends[defaultBackend]; !ok {
 			initErr = fmt.Errorf("default backend %s not found in configured backends", defaultBackend)
 			return
 		}
 
 		facade = &ObjstoreFacade{
-			backends:       config.Backends,
+			backends:       backends,
 			defaultBackend: defaultBackend,
 		}
 	})
@@ -572,8 +630,120 @@ func GetReplicationManager(backendName string) (common.ReplicationManager, error
 	// Check if backend supports replication
 	replicable, ok := storage.(common.ReplicationCapable)
 	if !ok {
-		return nil, fmt.Errorf("backend %s does not support replication", validation.SanitizeForLog(backendName))
+		return nil, common.ErrReplicationNotSupported
 	}
 
 	return replicable.GetReplicationManager()
+}
+
+// ReplicationConfig contains configuration for enabling replication on a backend
+type ReplicationConfig struct {
+	// PolicyFilePath is the path to the replication policy file.
+	// If empty, defaults to ".replication-policies.json" in the current directory.
+	PolicyFilePath string
+
+	// Interval is the interval between automatic sync operations.
+	// If zero, defaults to 5 minutes.
+	Interval time.Duration
+
+	// Logger is the logger to use for replication operations.
+	// If nil, a no-op logger is used.
+	Logger adapters.Logger
+
+	// AuditLog is the audit logger to use for replication operations.
+	// If nil, a no-op audit logger is used.
+	AuditLog audit.AuditLogger
+
+	// RunInBackground starts a background goroutine to run periodic syncs.
+	// If false, syncs must be triggered manually.
+	RunInBackground bool
+}
+
+// ReplicationManagerSetter is an interface for backends that can have a replication manager set
+type ReplicationManagerSetter interface {
+	SetReplicationManager(rm common.ReplicationManager)
+}
+
+// EnableReplication creates and configures a replication manager for a backend.
+// The backend must implement both ReplicationCapable and ReplicationManagerSetter interfaces.
+// This function creates a PersistentReplicationManager using the OSFileSystem and
+// attaches it to the backend.
+//
+// Example usage:
+//
+//	objstore.EnableReplication("local", &objstore.ReplicationConfig{
+//	    PolicyFilePath: "/data/replication-policies.json",
+//	    Interval:       10 * time.Minute,
+//	    RunInBackground: true,
+//	})
+func EnableReplication(backendName string, config *ReplicationConfig) error {
+	if config == nil {
+		config = &ReplicationConfig{}
+	}
+
+	// Get the backend
+	var storage common.Storage
+	var err error
+
+	if backendName == "" {
+		storage, err = DefaultBackend()
+	} else {
+		if err := validation.ValidateBackendName(backendName); err != nil {
+			return fmt.Errorf("invalid backend name: %w", err)
+		}
+		storage, err = Backend(backendName)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	// Check if backend supports setting replication manager
+	setter, ok := storage.(ReplicationManagerSetter)
+	if !ok {
+		return fmt.Errorf("backend does not support setting replication manager")
+	}
+
+	// Set defaults
+	policyFile := config.PolicyFilePath
+	if policyFile == "" {
+		policyFile = ".replication-policies.json"
+	}
+
+	interval := config.Interval
+	if interval == 0 {
+		interval = 5 * time.Minute
+	}
+
+	logger := config.Logger
+	if logger == nil {
+		logger = adapters.NewNoOpLogger()
+	}
+
+	auditLog := config.AuditLog
+	if auditLog == nil {
+		auditLog = audit.NewNoOpAuditLogger()
+	}
+
+	// Create the replication manager with OSFileSystem
+	rm, err := replication.NewPersistentReplicationManager(
+		&replication.OSFileSystem{},
+		policyFile,
+		interval,
+		logger,
+		auditLog,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create replication manager: %w", err)
+	}
+
+	// Set the replication manager on the backend
+	setter.SetReplicationManager(rm)
+
+	// Start background processing if requested
+	if config.RunInBackground {
+		go rm.Run(context.Background())
+	}
+
+	return nil
 }

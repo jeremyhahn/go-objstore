@@ -25,6 +25,7 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/audit"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
+	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -50,6 +51,14 @@ type contextKey string
 // principalContextKey is the context key for storing the authenticated principal
 const principalContextKey contextKey = "principal"
 
+// keyRef builds a key reference with optional backend prefix
+func (s *Server) keyRef(key string) string {
+	if s.backend == "" {
+		return key
+	}
+	return s.backend + ":" + key
+}
+
 // Put stores an object in the backend.
 func (s *Server) Put(ctx context.Context, req *objstorepb.PutRequest) (*objstorepb.PutResponse, error) {
 	if req.Key == "" {
@@ -65,12 +74,12 @@ func (s *Server) Put(ctx context.Context, req *objstorepb.PutRequest) (*objstore
 	// Create a reader from the data
 	reader := &bytesReader{data: req.Data}
 
-	// Store the object
+	// Store the object using facade
 	var err error
 	if metadata != nil {
-		err = s.storage.PutWithMetadata(ctx, req.Key, reader, metadata)
+		err = objstore.PutWithMetadata(ctx, s.keyRef(req.Key), reader, metadata)
 	} else {
-		err = s.storage.PutWithContext(ctx, req.Key, reader)
+		err = objstore.PutWithContext(ctx, s.keyRef(req.Key), reader)
 	}
 
 	// Audit logging
@@ -82,14 +91,14 @@ func (s *Server) Put(ctx context.Context, req *objstorepb.PutRequest) (*objstore
 	bytesTransferred := int64(len(req.Data))
 	if err != nil {
 		_ = auditLogger.LogObjectMutation(ctx, audit.EventObjectCreated,
-			userID, principal, "default", req.Key, ipAddress, requestID, 0,
-			audit.ResultFailure, err) // #nosec G104 -- Audit logging errors are logged internally, should not block operations
+			userID, principal, s.backend, req.Key, ipAddress, requestID, 0,
+			audit.ResultFailure, err)
 		return nil, mapError(err)
 	}
 
 	_ = auditLogger.LogObjectMutation(ctx, audit.EventObjectCreated,
-		userID, principal, "default", req.Key, ipAddress, requestID, bytesTransferred,
-		audit.ResultSuccess, nil) // #nosec G104 -- Audit logging errors are logged internally, should not block operations
+		userID, principal, s.backend, req.Key, ipAddress, requestID, bytesTransferred,
+		audit.ResultSuccess, nil)
 
 	// Get the ETag from metadata if available
 	etag := ""
@@ -112,15 +121,15 @@ func (s *Server) Get(req *objstorepb.GetRequest, stream objstorepb.ObjectStore_G
 
 	ctx := stream.Context()
 
-	// Get the object
-	reader, err := s.storage.GetWithContext(ctx, req.Key)
+	// Get the object using facade
+	reader, err := objstore.GetWithContext(ctx, s.keyRef(req.Key))
 	if err != nil {
 		return mapError(err)
 	}
 	defer func() { _ = reader.Close() }()
 
-	// Get metadata
-	metadata, err := s.storage.GetMetadata(ctx, req.Key)
+	// Get metadata using facade
+	metadata, err := objstore.GetMetadata(ctx, s.keyRef(req.Key))
 	if err != nil {
 		return mapError(err)
 	}
@@ -178,7 +187,8 @@ func (s *Server) Delete(ctx context.Context, req *objstorepb.DeleteRequest) (*ob
 		return nil, status.Error(codes.InvalidArgument, "key is required")
 	}
 
-	err := s.storage.DeleteWithContext(ctx, req.Key)
+	// Delete using facade
+	err := objstore.DeleteWithContext(ctx, s.keyRef(req.Key))
 
 	// Audit logging
 	auditLogger := audit.GetAuditLogger(ctx)
@@ -188,14 +198,14 @@ func (s *Server) Delete(ctx context.Context, req *objstorepb.DeleteRequest) (*ob
 
 	if err != nil {
 		_ = auditLogger.LogObjectMutation(ctx, audit.EventObjectDeleted,
-			userID, principal, "default", req.Key, ipAddress, requestID, 0,
-			audit.ResultFailure, err) // #nosec G104 -- Audit logging errors are logged internally, should not block operations
+			userID, principal, s.backend, req.Key, ipAddress, requestID, 0,
+			audit.ResultFailure, err)
 		return nil, mapError(err)
 	}
 
 	_ = auditLogger.LogObjectMutation(ctx, audit.EventObjectDeleted,
-		userID, principal, "default", req.Key, ipAddress, requestID, 0,
-		audit.ResultSuccess, nil) // #nosec G104 -- Audit logging errors are logged internally, should not block operations
+		userID, principal, s.backend, req.Key, ipAddress, requestID, 0,
+		audit.ResultSuccess, nil)
 
 	return &objstorepb.DeleteResponse{
 		Success: true,
@@ -212,7 +222,8 @@ func (s *Server) List(ctx context.Context, req *objstorepb.ListRequest) (*objsto
 		ContinueFrom: req.ContinueFrom,
 	}
 
-	result, err := s.storage.ListWithOptions(ctx, opts)
+	// List using facade
+	result, err := objstore.ListWithOptions(ctx, s.backend, opts)
 	if err != nil {
 		return nil, mapError(err)
 	}
@@ -240,7 +251,8 @@ func (s *Server) Exists(ctx context.Context, req *objstorepb.ExistsRequest) (*ob
 		return nil, status.Error(codes.InvalidArgument, "key is required")
 	}
 
-	exists, err := s.storage.Exists(ctx, req.Key)
+	// Check existence using facade
+	exists, err := objstore.Exists(ctx, s.keyRef(req.Key))
 	if err != nil {
 		return nil, mapError(err)
 	}
@@ -256,7 +268,8 @@ func (s *Server) GetMetadata(ctx context.Context, req *objstorepb.GetMetadataReq
 		return nil, status.Error(codes.InvalidArgument, "key is required")
 	}
 
-	metadata, err := s.storage.GetMetadata(ctx, req.Key)
+	// Get metadata using facade
+	metadata, err := objstore.GetMetadata(ctx, s.keyRef(req.Key))
 	if err != nil {
 		return nil, mapError(err)
 	}
@@ -283,7 +296,8 @@ func (s *Server) UpdateMetadata(ctx context.Context, req *objstorepb.UpdateMetad
 	}
 
 	metadata := protoToMetadata(req.Metadata)
-	err := s.storage.UpdateMetadata(ctx, req.Key, metadata)
+	// Update using facade
+	err := objstore.UpdateMetadata(ctx, s.keyRef(req.Key), metadata)
 	if err != nil {
 		return nil, mapError(err)
 	}
@@ -296,10 +310,208 @@ func (s *Server) UpdateMetadata(ctx context.Context, req *objstorepb.UpdateMetad
 
 // Health performs a health check.
 func (s *Server) Health(ctx context.Context, req *objstorepb.HealthRequest) (*objstorepb.HealthResponse, error) {
-	// Simple health check - can be extended to check storage backend health
 	return &objstorepb.HealthResponse{
 		Status:  objstorepb.HealthResponse_SERVING,
 		Message: "Service is healthy",
+	}, nil
+}
+
+// Archive copies an object to an archival storage backend.
+func (s *Server) Archive(ctx context.Context, req *objstorepb.ArchiveRequest) (*objstorepb.ArchiveResponse, error) {
+	if req.Key == "" {
+		return nil, status.Error(codes.InvalidArgument, "key is required")
+	}
+
+	if req.DestinationType == "" {
+		return nil, status.Error(codes.InvalidArgument, "destination_type is required")
+	}
+
+	// Create archiver from factory
+	archiver, err := createArchiver(req.DestinationType, req.DestinationSettings)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	// Perform archive operation using facade
+	err = objstore.Archive(s.keyRef(req.Key), archiver)
+
+	// Audit logging
+	auditLogger := audit.GetAuditLogger(ctx)
+	principal, userID := extractGRPCPrincipal(ctx)
+	requestID := audit.GetRequestID(ctx)
+	ipAddress := extractGRPCClientIP(ctx)
+
+	if err != nil {
+		_ = auditLogger.LogObjectMutation(ctx, audit.EventObjectArchived,
+			userID, principal, s.backend, req.Key, ipAddress, requestID, 0,
+			audit.ResultFailure, err)
+		return nil, mapError(err)
+	}
+
+	_ = auditLogger.LogObjectMutation(ctx, audit.EventObjectArchived,
+		userID, principal, s.backend, req.Key, ipAddress, requestID, 0,
+		audit.ResultSuccess, nil)
+
+	return &objstorepb.ArchiveResponse{
+		Success: true,
+		Message: "object archived successfully",
+	}, nil
+}
+
+// AddPolicy adds a new lifecycle policy.
+func (s *Server) AddPolicy(ctx context.Context, req *objstorepb.AddPolicyRequest) (*objstorepb.AddPolicyResponse, error) {
+	if req.Policy == nil {
+		return nil, status.Error(codes.InvalidArgument, "policy is required")
+	}
+
+	if req.Policy.Id == "" {
+		return nil, status.Error(codes.InvalidArgument, "policy ID is required")
+	}
+
+	// Convert proto policy to common.LifecyclePolicy
+	policy, err := protoToLifecyclePolicy(req.Policy)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+
+	// Add policy using facade
+	err = objstore.AddPolicy(s.backend, *policy)
+	if err != nil {
+		return nil, mapError(err)
+	}
+
+	return &objstorepb.AddPolicyResponse{
+		Success: true,
+		Message: "policy added successfully",
+	}, nil
+}
+
+// RemovePolicy removes an existing lifecycle policy.
+func (s *Server) RemovePolicy(ctx context.Context, req *objstorepb.RemovePolicyRequest) (*objstorepb.RemovePolicyResponse, error) {
+	if req.Id == "" {
+		return nil, status.Error(codes.InvalidArgument, "policy ID is required")
+	}
+
+	// Remove policy using facade
+	err := objstore.RemovePolicy(s.backend, req.Id)
+	if err != nil {
+		return nil, mapError(err)
+	}
+
+	return &objstorepb.RemovePolicyResponse{
+		Success: true,
+		Message: "policy removed successfully",
+	}, nil
+}
+
+// GetPolicies retrieves all lifecycle policies.
+func (s *Server) GetPolicies(ctx context.Context, req *objstorepb.GetPoliciesRequest) (*objstorepb.GetPoliciesResponse, error) {
+	// Get policies using facade
+	policies, err := objstore.GetPolicies(s.backend)
+	if err != nil {
+		return nil, mapError(err)
+	}
+
+	// Convert to proto policies
+	protoPolicies := make([]*objstorepb.LifecyclePolicy, 0, len(policies))
+	for _, policy := range policies {
+		// Filter by prefix if specified
+		if req.Prefix != "" && policy.Prefix != req.Prefix {
+			continue
+		}
+
+		protoPolicy := lifecyclePolicyToProto(&policy)
+		protoPolicies = append(protoPolicies, protoPolicy)
+	}
+
+	return &objstorepb.GetPoliciesResponse{
+		Policies: protoPolicies,
+		Success:  true,
+		Message:  "policies retrieved successfully",
+	}, nil
+}
+
+// ApplyPolicies executes all lifecycle policies.
+func (s *Server) ApplyPolicies(ctx context.Context, req *objstorepb.ApplyPoliciesRequest) (*objstorepb.ApplyPoliciesResponse, error) {
+	// Get policies using facade
+	policies, err := objstore.GetPolicies(s.backend)
+	if err != nil {
+		return nil, mapError(err)
+	}
+
+	if len(policies) == 0 {
+		return &objstorepb.ApplyPoliciesResponse{
+			Success:          true,
+			PoliciesCount:    0,
+			ObjectsProcessed: 0,
+			Message:          "no lifecycle policies to apply",
+		}, nil
+	}
+
+	// Apply policies by listing objects and checking retention
+	objectsProcessed := int32(0)
+	opts := &common.ListOptions{
+		Prefix: "",
+	}
+	result, err := objstore.ListWithOptions(ctx, s.backend, opts)
+	if err != nil {
+		return nil, mapError(err)
+	}
+
+	for _, policy := range policies {
+		for _, obj := range result.Objects {
+			// Check if object matches policy prefix
+			if policy.Prefix != "" && !hasPrefix(obj.Key, policy.Prefix) {
+				continue
+			}
+
+			// Get metadata to check last modified time
+			if obj.Metadata == nil {
+				continue
+			}
+
+			// Check if object is older than retention period
+			age := time.Since(obj.Metadata.LastModified)
+			if age <= policy.Retention {
+				continue
+			}
+
+			// Apply action using facade
+			switch policy.Action {
+			case "delete":
+				if err := objstore.DeleteWithContext(ctx, s.keyRef(obj.Key)); err != nil {
+					s.opts.Logger.Error(ctx, "Failed to delete object during policy application",
+						adapters.Field{Key: "key", Value: obj.Key},
+						adapters.Field{Key: "error", Value: err.Error()},
+					)
+					continue
+				}
+				objectsProcessed++
+			case "archive":
+				if policy.Destination != nil {
+					if err := objstore.Archive(s.keyRef(obj.Key), policy.Destination); err != nil {
+						s.opts.Logger.Error(ctx, "Failed to archive object during policy application",
+							adapters.Field{Key: "key", Value: obj.Key},
+							adapters.Field{Key: "error", Value: err.Error()},
+						)
+						continue
+					}
+					objectsProcessed++
+				}
+			}
+		}
+	}
+
+	policiesCount := len(policies)
+	if policiesCount > 2147483647 {
+		return nil, ErrPoliciesCountExceedsRange
+	}
+
+	return &objstorepb.ApplyPoliciesResponse{
+		Success:          true,
+		PoliciesCount:    int32(policiesCount),
+		ObjectsProcessed: objectsProcessed,
+		Message:          "lifecycle policies applied successfully",
 	}, nil
 }
 
@@ -363,7 +575,6 @@ func mapError(err error) error {
 		return nil
 	}
 
-	// Check for common error patterns
 	errStr := err.Error()
 
 	switch errStr {
@@ -380,7 +591,6 @@ func mapError(err error) error {
 	case "canceled", "context canceled":
 		return status.Error(codes.Canceled, err.Error())
 	default:
-		// For unknown errors, check if it's a context error
 		if ctx := context.Background(); ctx.Err() != nil {
 			if errors.Is(ctx.Err(), context.Canceled) {
 				return status.Error(codes.Canceled, err.Error())
@@ -389,7 +599,6 @@ func mapError(err error) error {
 				return status.Error(codes.DeadlineExceeded, err.Error())
 			}
 		}
-		// Default to Internal error
 		return status.Error(codes.Internal, err.Error())
 	}
 }
@@ -406,12 +615,10 @@ func extractGRPCPrincipal(ctx context.Context) (principal string, userID string)
 
 // extractGRPCClientIP extracts the client IP address from the gRPC context
 func extractGRPCClientIP(ctx context.Context) string {
-	// Try to get peer info
 	if p, ok := peer.FromContext(ctx); ok {
 		return p.Addr.String()
 	}
 
-	// Try to get from metadata
 	if md, ok := metadata.FromIncomingContext(ctx); ok {
 		if ips := md.Get("x-forwarded-for"); len(ips) > 0 {
 			return ips[0]
@@ -422,202 +629,6 @@ func extractGRPCClientIP(ctx context.Context) string {
 	}
 
 	return principalUnknown
-}
-
-// Archive copies an object to an archival storage backend.
-func (s *Server) Archive(ctx context.Context, req *objstorepb.ArchiveRequest) (*objstorepb.ArchiveResponse, error) {
-	if req.Key == "" {
-		return nil, status.Error(codes.InvalidArgument, "key is required")
-	}
-
-	if req.DestinationType == "" {
-		return nil, status.Error(codes.InvalidArgument, "destination_type is required")
-	}
-
-	// Create archiver from factory
-	archiver, err := createArchiver(req.DestinationType, req.DestinationSettings)
-	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, err.Error())
-	}
-
-	// Perform archive operation
-	err = s.storage.Archive(req.Key, archiver)
-
-	// Audit logging
-	auditLogger := audit.GetAuditLogger(ctx)
-	principal, userID := extractGRPCPrincipal(ctx)
-	requestID := audit.GetRequestID(ctx)
-	ipAddress := extractGRPCClientIP(ctx)
-
-	if err != nil {
-		_ = auditLogger.LogObjectMutation(ctx, audit.EventObjectArchived,
-			userID, principal, "default", req.Key, ipAddress, requestID, 0,
-			audit.ResultFailure, err) // #nosec G104
-		return nil, mapError(err)
-	}
-
-	_ = auditLogger.LogObjectMutation(ctx, audit.EventObjectArchived,
-		userID, principal, "default", req.Key, ipAddress, requestID, 0,
-		audit.ResultSuccess, nil) // #nosec G104
-
-	return &objstorepb.ArchiveResponse{
-		Success: true,
-		Message: "object archived successfully",
-	}, nil
-}
-
-// AddPolicy adds a new lifecycle policy.
-func (s *Server) AddPolicy(ctx context.Context, req *objstorepb.AddPolicyRequest) (*objstorepb.AddPolicyResponse, error) {
-	if req.Policy == nil {
-		return nil, status.Error(codes.InvalidArgument, "policy is required")
-	}
-
-	if req.Policy.Id == "" {
-		return nil, status.Error(codes.InvalidArgument, "policy ID is required")
-	}
-
-	// Convert proto policy to common.LifecyclePolicy
-	policy, err := protoToLifecyclePolicy(req.Policy)
-	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, err.Error())
-	}
-
-	err = s.storage.AddPolicy(*policy)
-	if err != nil {
-		return nil, mapError(err)
-	}
-
-	return &objstorepb.AddPolicyResponse{
-		Success: true,
-		Message: "policy added successfully",
-	}, nil
-}
-
-// RemovePolicy removes an existing lifecycle policy.
-func (s *Server) RemovePolicy(ctx context.Context, req *objstorepb.RemovePolicyRequest) (*objstorepb.RemovePolicyResponse, error) {
-	if req.Id == "" {
-		return nil, status.Error(codes.InvalidArgument, "policy ID is required")
-	}
-
-	err := s.storage.RemovePolicy(req.Id)
-	if err != nil {
-		return nil, mapError(err)
-	}
-
-	return &objstorepb.RemovePolicyResponse{
-		Success: true,
-		Message: "policy removed successfully",
-	}, nil
-}
-
-// GetPolicies retrieves all lifecycle policies.
-func (s *Server) GetPolicies(ctx context.Context, req *objstorepb.GetPoliciesRequest) (*objstorepb.GetPoliciesResponse, error) {
-	policies, err := s.storage.GetPolicies()
-	if err != nil {
-		return nil, mapError(err)
-	}
-
-	// Convert to proto policies
-	protoPolicies := make([]*objstorepb.LifecyclePolicy, 0, len(policies))
-	for _, policy := range policies {
-		// Filter by prefix if specified
-		if req.Prefix != "" && policy.Prefix != req.Prefix {
-			continue
-		}
-
-		protoPolicy := lifecyclePolicyToProto(&policy)
-		protoPolicies = append(protoPolicies, protoPolicy)
-	}
-
-	return &objstorepb.GetPoliciesResponse{
-		Policies: protoPolicies,
-		Success:  true,
-		Message:  "policies retrieved successfully",
-	}, nil
-}
-
-// ApplyPolicies executes all lifecycle policies.
-func (s *Server) ApplyPolicies(ctx context.Context, req *objstorepb.ApplyPoliciesRequest) (*objstorepb.ApplyPoliciesResponse, error) {
-	policies, err := s.storage.GetPolicies()
-	if err != nil {
-		return nil, mapError(err)
-	}
-
-	if len(policies) == 0 {
-		return &objstorepb.ApplyPoliciesResponse{
-			Success:        true,
-			PoliciesCount:  0,
-			ObjectsProcessed: 0,
-			Message:        "no lifecycle policies to apply",
-		}, nil
-	}
-
-	// Apply policies by listing objects and checking retention
-	objectsProcessed := int32(0)
-	opts := &common.ListOptions{
-		Prefix: "",
-	}
-	result, err := s.storage.ListWithOptions(ctx, opts)
-	if err != nil {
-		return nil, mapError(err)
-	}
-
-	for _, policy := range policies {
-		for _, obj := range result.Objects {
-			// Check if object matches policy prefix
-			if policy.Prefix != "" && !hasPrefix(obj.Key, policy.Prefix) {
-				continue
-			}
-
-			// Get metadata to check last modified time
-			if obj.Metadata == nil {
-				continue
-			}
-
-			// Check if object is older than retention period
-			age := time.Since(obj.Metadata.LastModified)
-			if age <= policy.Retention {
-				continue
-			}
-
-			// Apply action
-			switch policy.Action {
-			case "delete":
-				if err := s.storage.DeleteWithContext(ctx, obj.Key); err != nil {
-					s.opts.Logger.Error(ctx, "Failed to delete object during policy application",
-						adapters.Field{Key: "key", Value: obj.Key},
-						adapters.Field{Key: "error", Value: err.Error()},
-					)
-					continue
-				}
-				objectsProcessed++
-			case "archive":
-				if policy.Destination != nil {
-					if err := s.storage.Archive(obj.Key, policy.Destination); err != nil {
-						s.opts.Logger.Error(ctx, "Failed to archive object during policy application",
-							adapters.Field{Key: "key", Value: obj.Key},
-							adapters.Field{Key: "error", Value: err.Error()},
-						)
-						continue
-					}
-					objectsProcessed++
-				}
-			}
-		}
-	}
-
-	// Safe conversion with overflow check
-	policiesCount := len(policies)
-	if policiesCount > 2147483647 {
-		return nil, ErrPoliciesCountExceedsRange
-	}
-
-	return &objstorepb.ApplyPoliciesResponse{
-		Success:          true,
-		PoliciesCount:    int32(policiesCount),
-		ObjectsProcessed: objectsProcessed,
-		Message:          "lifecycle policies applied successfully",
-	}, nil
 }
 
 // hasPrefix checks if a string starts with the given prefix.
@@ -638,7 +649,6 @@ func protoToLifecyclePolicy(p *objstorepb.LifecyclePolicy) (*common.LifecyclePol
 		Action:    p.Action,
 	}
 
-	// Create archiver if action is "archive"
 	if p.Action == "archive" {
 		if p.DestinationType == "" {
 			return nil, common.ErrDestinationTypeRequired
@@ -671,6 +681,5 @@ func lifecyclePolicyToProto(p *common.LifecyclePolicy) *objstorepb.LifecyclePoli
 
 // createArchiver creates an archiver from factory based on destination type.
 func createArchiver(destinationType string, settings map[string]string) (common.Archiver, error) {
-	// Import factory package
 	return factory.NewArchiver(destinationType, settings)
 }

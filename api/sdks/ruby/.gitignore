@@ -1,0 +1,38 @@
+# Ruby / Bundler
+/.bundle/
+/vendor/bundle
+/.ruby-version
+/.ruby-gemset
+
+# Gem build output
+*.gem
+pkg/
+
+# Coverage reports
+/coverage/
+
+# RSpec
+/spec/examples.txt
+
+# Test logs
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Documentation
+/doc/
+/rdoc/
+/.yardoc/

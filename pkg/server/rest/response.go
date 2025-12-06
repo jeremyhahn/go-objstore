@@ -37,11 +37,12 @@ type SuccessResponse struct {
 
 // ObjectResponse represents an object metadata response
 type ObjectResponse struct {
-	Key      string            `json:"key" example:"path/to/object.txt"`
-	Size     int64             `json:"size" example:"1024"`
-	Modified string            `json:"modified,omitempty" example:"2025-11-05T10:00:00Z"`
-	ETag     string            `json:"etag,omitempty" example:"d41d8cd98f00b204e9800998ecf8427e"`
-	Metadata map[string]string `json:"metadata,omitempty"`
+	Key         string            `json:"key" example:"path/to/object.txt"`
+	Size        int64             `json:"size" example:"1024"`
+	Modified    string            `json:"modified,omitempty" example:"2025-11-05T10:00:00Z"`
+	ETag        string            `json:"etag,omitempty" example:"d41d8cd98f00b204e9800998ecf8427e"`
+	ContentType string            `json:"content_type,omitempty" example:"text/plain"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
 } // @name ObjectResponse
 
 // ListObjectsResponse represents a paginated list of objects
@@ -92,31 +93,31 @@ type GetPoliciesResponse struct {
 
 // AddReplicationPolicyRequest represents a request to add a replication policy
 type AddReplicationPolicyRequest struct {
-	ID                  string                     `json:"id" binding:"required" example:"repl-policy-1"`
-	SourceBackend       string                     `json:"source_backend" binding:"required" example:"local"`
-	SourceSettings      map[string]string          `json:"source_settings,omitempty"`
-	SourcePrefix        string                     `json:"source_prefix,omitempty" example:"data/"`
-	DestinationBackend  string                     `json:"destination_backend" binding:"required" example:"s3"`
-	DestinationSettings map[string]string          `json:"destination_settings,omitempty"`
-	CheckInterval       time.Duration              `json:"check_interval" binding:"required" example:"300000000000"`
-	Enabled             bool                       `json:"enabled" example:"true"`
-	ReplicationMode     common.ReplicationMode     `json:"replication_mode,omitempty" example:"transparent"`
-	Encryption          *common.EncryptionPolicy   `json:"encryption,omitempty"`
+	ID                   string                   `json:"id" binding:"required" example:"repl-policy-1"`
+	SourceBackend        string                   `json:"source_backend" binding:"required" example:"local"`
+	SourceSettings       map[string]string        `json:"source_settings,omitempty"`
+	SourcePrefix         string                   `json:"source_prefix,omitempty" example:"data/"`
+	DestinationBackend   string                   `json:"destination_backend" binding:"required" example:"s3"`
+	DestinationSettings  map[string]string        `json:"destination_settings,omitempty"`
+	CheckIntervalSeconds int64                    `json:"check_interval_seconds" binding:"required" example:"300"`
+	Enabled              bool                     `json:"enabled" example:"true"`
+	ReplicationMode      common.ReplicationMode   `json:"replication_mode,omitempty" example:"transparent"`
+	Encryption           *common.EncryptionPolicy `json:"encryption,omitempty"`
 } // @name AddReplicationPolicyRequest
 
 // ReplicationPolicyResponse represents a replication policy response
 type ReplicationPolicyResponse struct {
-	ID                  string                     `json:"id" example:"repl-policy-1"`
-	SourceBackend       string                     `json:"source_backend" example:"local"`
-	SourceSettings      map[string]string          `json:"source_settings,omitempty"`
-	SourcePrefix        string                     `json:"source_prefix,omitempty" example:"data/"`
-	DestinationBackend  string                     `json:"destination_backend" example:"s3"`
-	DestinationSettings map[string]string          `json:"destination_settings,omitempty"`
-	CheckInterval       int64                      `json:"check_interval" example:"300"`
-	LastSyncTime        string                     `json:"last_sync_time,omitempty" example:"2025-11-05T10:00:00Z"`
-	Enabled             bool                       `json:"enabled" example:"true"`
-	ReplicationMode     common.ReplicationMode     `json:"replication_mode" example:"transparent"`
-	Encryption          *common.EncryptionPolicy   `json:"encryption,omitempty"`
+	ID                   string                   `json:"id" example:"repl-policy-1"`
+	SourceBackend        string                   `json:"source_backend" example:"local"`
+	SourceSettings       map[string]string        `json:"source_settings,omitempty"`
+	SourcePrefix         string                   `json:"source_prefix,omitempty" example:"data/"`
+	DestinationBackend   string                   `json:"destination_backend" example:"s3"`
+	DestinationSettings  map[string]string        `json:"destination_settings,omitempty"`
+	CheckIntervalSeconds int64                    `json:"check_interval_seconds" example:"300"`
+	LastSyncTime         string                   `json:"last_sync_time,omitempty" example:"2025-11-05T10:00:00Z"`
+	Enabled              bool                     `json:"enabled" example:"true"`
+	ReplicationMode      common.ReplicationMode   `json:"replication_mode" example:"transparent"`
+	Encryption           *common.EncryptionPolicy `json:"encryption,omitempty"`
 } // @name ReplicationPolicyResponse
 
 // GetReplicationPoliciesResponse represents a list of replication policies
@@ -186,9 +187,10 @@ func RespondWithObject(c *gin.Context, key string, metadata *common.Metadata) {
 	}
 
 	response := ObjectResponse{
-		Key:  key,
-		Size: metadata.Size,
-		ETag: metadata.ETag,
+		Key:         key,
+		Size:        metadata.Size,
+		ETag:        metadata.ETag,
+		ContentType: metadata.ContentType,
 	}
 
 	if !metadata.LastModified.IsZero() {
@@ -262,16 +264,16 @@ func RespondWithReplicationPolicies(c *gin.Context, policies []common.Replicatio
 
 	for _, policy := range policies {
 		policyResp := ReplicationPolicyResponse{
-			ID:                  policy.ID,
-			SourceBackend:       policy.SourceBackend,
-			SourceSettings:      policy.SourceSettings,
-			SourcePrefix:        policy.SourcePrefix,
-			DestinationBackend:  policy.DestinationBackend,
-			DestinationSettings: policy.DestinationSettings,
-			CheckInterval:       int64(policy.CheckInterval.Seconds()),
-			Enabled:             policy.Enabled,
-			ReplicationMode:     policy.ReplicationMode,
-			Encryption:          policy.Encryption,
+			ID:                   policy.ID,
+			SourceBackend:        policy.SourceBackend,
+			SourceSettings:       policy.SourceSettings,
+			SourcePrefix:         policy.SourcePrefix,
+			DestinationBackend:   policy.DestinationBackend,
+			DestinationSettings:  policy.DestinationSettings,
+			CheckIntervalSeconds: int64(policy.CheckInterval.Seconds()),
+			Enabled:              policy.Enabled,
+			ReplicationMode:      policy.ReplicationMode,
+			Encryption:           policy.Encryption,
 		}
 
 		if !policy.LastSyncTime.IsZero() {
@@ -292,16 +294,16 @@ func RespondWithReplicationPolicy(c *gin.Context, policy *common.ReplicationPoli
 	}
 
 	response := ReplicationPolicyResponse{
-		ID:                  policy.ID,
-		SourceBackend:       policy.SourceBackend,
-		SourceSettings:      policy.SourceSettings,
-		SourcePrefix:        policy.SourcePrefix,
-		DestinationBackend:  policy.DestinationBackend,
-		DestinationSettings: policy.DestinationSettings,
-		CheckInterval:       int64(policy.CheckInterval.Seconds()),
-		Enabled:             policy.Enabled,
-		ReplicationMode:     policy.ReplicationMode,
-		Encryption:          policy.Encryption,
+		ID:                   policy.ID,
+		SourceBackend:        policy.SourceBackend,
+		SourceSettings:       policy.SourceSettings,
+		SourcePrefix:         policy.SourcePrefix,
+		DestinationBackend:   policy.DestinationBackend,
+		DestinationSettings:  policy.DestinationSettings,
+		CheckIntervalSeconds: int64(policy.CheckInterval.Seconds()),
+		Enabled:              policy.Enabled,
+		ReplicationMode:      policy.ReplicationMode,
+		Encryption:           policy.Encryption,
 	}
 
 	if !policy.LastSyncTime.IsZero() {

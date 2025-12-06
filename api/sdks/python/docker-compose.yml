@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  # Go ObjectStore server with local storage backend
+  objstore-server:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+      args:
+        BUILD_TAGS: local
+    command: ["/app/objstore-server", "--quic-self-signed"]
+    ports:
+      - "8080:8080"    # REST
+      - "50051:50051"  # gRPC
+      - "4433:4433"    # QUIC
+    environment:
+      - STORAGE_BACKEND=local
+      - STORAGE_PATH=/data
+      - LOG_LEVEL=info
+      - REST_ENABLED=true
+      - GRPC_ENABLED=true
+      - QUIC_ENABLED=true
+    volumes:
+      - objstore-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks:
+      - objstore-net
+
+  # Python SDK unit tests
+  python-unit-tests:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - .:/app
+    command: pytest tests/unit/ -v --cov=objstore --cov-report=term-missing
+    networks:
+      - objstore-net
+
+  # Python SDK integration tests
+  python-integration-tests:
+    build:
+      context: ../..
+      dockerfile: sdks/python/Dockerfile.integration
+    depends_on:
+      objstore-server:
+        condition: service_healthy
+    environment:
+      - OBJSTORE_REST_URL=http://objstore-server:8080
+      - OBJSTORE_GRPC_HOST=objstore-server
+      - OBJSTORE_GRPC_PORT=50051
+      - OBJSTORE_QUIC_URL=https://objstore-server:4433
+      - PYTHONUNBUFFERED=1
+    command: pytest tests/integration/ -v --cov=objstore --cov-append --cov-report=term-missing
+    networks:
+      - objstore-net
+
+volumes:
+  objstore-data:
+
+networks:
+  objstore-net:
+    driver: bridge

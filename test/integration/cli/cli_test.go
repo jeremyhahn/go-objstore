@@ -11,14 +11,18 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
+//go:build integration
+
 package cli_test
 
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -26,28 +30,138 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const (
-	cliBinary = "objstore"
-	testDir   = "/tmp/cli-test"
+var (
+	// cliBinaryPath is the full path to the CLI binary
+	cliBinaryPath string
+	// testDir is the directory for test files
+	testDir = "/tmp/cli-test"
+	// testStorageDir is the directory for test storage backend
+	testStorageDir = "/tmp/cli-test-storage"
 )
 
 // TestMain sets up and tears down the test environment
 func TestMain(m *testing.M) {
-	// Create test directory
+	// Find project root by looking for go.mod
+	projectRoot, err := findProjectRoot()
+	if err != nil {
+		log.Fatalf("Failed to find project root: %v", err)
+	}
+
+	// Determine binary path - check if it exists in PATH first, otherwise build it
+	cliBinaryPath, err = findOrBuildCLI(projectRoot)
+	if err != nil {
+		log.Fatalf("Failed to set up CLI binary: %v", err)
+	}
+
+	log.Printf("Using CLI binary: %s", cliBinaryPath)
+
+	// Create test directories
 	os.RemoveAll(testDir)
 	os.MkdirAll(testDir, 0755)
+	os.RemoveAll(testStorageDir)
+	os.MkdirAll(testStorageDir, 0755)
 
 	// Run tests
 	code := m.Run()
 
 	// Cleanup
 	os.RemoveAll(testDir)
+	os.RemoveAll(testStorageDir)
 	os.Exit(code)
 }
 
+// findProjectRoot walks up from the current directory to find go.mod
+func findProjectRoot() (string, error) {
+	// Start from test file directory
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		return "", fmt.Errorf("could not determine current file path")
+	}
+
+	dir := filepath.Dir(filename)
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir, nil
+		}
+
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf("go.mod not found")
+		}
+		dir = parent
+	}
+}
+
+// findOrBuildCLI finds the CLI binary in PATH or builds it
+func findOrBuildCLI(projectRoot string) (string, error) {
+	// First check if running in Docker (binary already built)
+	if binaryPath, err := exec.LookPath("objstore"); err == nil {
+		return binaryPath, nil
+	}
+
+	// Check for binary in project's bin directory
+	binPath := filepath.Join(projectRoot, "bin", "objstore")
+	if _, err := os.Stat(binPath); err == nil {
+		return binPath, nil
+	}
+
+	// Build the binary
+	log.Println("CLI binary not found, building...")
+
+	// Create bin directory
+	binDir := filepath.Join(projectRoot, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create bin directory: %w", err)
+	}
+
+	// Build with all backend tags
+	cmd := exec.Command("go", "build",
+		"-tags", "local awss3 minio gcpstorage azureblob glacier azurearchive",
+		"-o", binPath,
+		"./cmd/objstore",
+	)
+	cmd.Dir = projectRoot
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to build CLI: %w", err)
+	}
+
+	log.Printf("Built CLI binary: %s", binPath)
+	return binPath, nil
+}
+
 // runCLI executes the CLI with the given arguments and returns stdout, stderr, and error
+// It automatically uses the test storage directory as the default backend path
 func runCLI(args ...string) (string, string, error) {
-	cmd := exec.Command(cliBinary, args...)
+	// Prepend default backend configuration if not already specified
+	hasBackendPath := false
+	for _, arg := range args {
+		if arg == "--backend-path" || strings.HasPrefix(arg, "--backend-path=") {
+			hasBackendPath = true
+			break
+		}
+	}
+
+	var fullArgs []string
+	if !hasBackendPath {
+		fullArgs = append(fullArgs, "--backend", "local", "--backend-path", testStorageDir)
+	}
+	fullArgs = append(fullArgs, args...)
+
+	cmd := exec.Command(cliBinaryPath, fullArgs...)
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	return stdout.String(), stderr.String(), err
+}
+
+// runCLIWithEnv executes the CLI with custom environment variables
+func runCLIWithEnv(env []string, args ...string) (string, string, error) {
+	cmd := exec.Command(cliBinaryPath, args...)
+	cmd.Env = append(os.Environ(), env...)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -100,13 +214,19 @@ func TestCLIPutCommand(t *testing.T) {
 		err := os.WriteFile(testFile, []byte("custom backend test"), 0644)
 		require.NoError(t, err)
 
-		stdout, stderr, err := runCLI(
+		// Use custom storage path - runCLI will not add default backend-path
+		// since we're specifying --backend-path explicitly
+		cmd := exec.Command(cliBinaryPath,
 			"--backend", "local",
 			"--backend-path", customPath,
 			"put", testFile, "custom-key",
 		)
-		require.NoError(t, err, "stderr: %s", stderr)
-		assert.Contains(t, stdout, "Successfully uploaded")
+		var stdout, stderr strings.Builder
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		err = cmd.Run()
+		require.NoError(t, err, "stderr: %s", stderr.String())
+		assert.Contains(t, stdout.String(), "Successfully uploaded")
 	})
 }
 
@@ -338,28 +458,42 @@ func TestCLIConfigCommand(t *testing.T) {
 	})
 
 	t.Run("config with custom backend", func(t *testing.T) {
-		stdout, stderr, err := runCLI("--backend", "local", "--backend-path", "/custom/path", "config")
-		require.NoError(t, err, "stderr: %s", stderr)
-		assert.Contains(t, stdout, "/custom/path")
+		customPath := filepath.Join(testDir, "custom-config-path")
+		os.MkdirAll(customPath, 0755)
+
+		cmd := exec.Command(cliBinaryPath, "--backend", "local", "--backend-path", customPath, "config")
+		var stdout, stderr strings.Builder
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		err := cmd.Run()
+		require.NoError(t, err, "stderr: %s", stderr.String())
+		assert.Contains(t, stdout.String(), customPath)
 	})
 }
 
 // TestCLIConfigFile tests configuration from file
 func TestCLIConfigFile(t *testing.T) {
 	t.Run("config from yaml file", func(t *testing.T) {
+		customStoragePath := filepath.Join(testDir, "config-file-storage")
+		os.MkdirAll(customStoragePath, 0755)
+
 		configFile := filepath.Join(testDir, "test-config.yaml")
-		configContent := `backend: local
-backend-path: /tmp/custom-storage
+		configContent := fmt.Sprintf(`backend: local
+backend-path: %s
 output-format: json
-`
+`, customStoragePath)
 		err := os.WriteFile(configFile, []byte(configContent), 0644)
 		require.NoError(t, err)
 
-		stdout, stderr, err := runCLI("--config", configFile, "config", "-o", "json")
-		require.NoError(t, err, "stderr: %s", stderr)
+		cmd := exec.Command(cliBinaryPath, "--config", configFile, "config", "-o", "json")
+		var stdout, stderr strings.Builder
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		err = cmd.Run()
+		require.NoError(t, err, "stderr: %s", stderr.String())
 
 		var result map[string]any
-		err = json.Unmarshal([]byte(stdout), &result)
+		err = json.Unmarshal([]byte(stdout.String()), &result)
 		require.NoError(t, err)
 		assert.Equal(t, "local", result["backend"])
 	})
@@ -368,10 +502,13 @@ output-format: json
 // TestCLIEnvVars tests configuration from environment variables
 func TestCLIEnvVars(t *testing.T) {
 	t.Run("config from environment variables", func(t *testing.T) {
-		cmd := exec.Command(cliBinary, "config", "-o", "json")
+		envStoragePath := filepath.Join(testDir, "env-storage")
+		os.MkdirAll(envStoragePath, 0755)
+
+		cmd := exec.Command(cliBinaryPath, "config", "-o", "json")
 		cmd.Env = append(os.Environ(),
 			"OBJECTSTORE_BACKEND=local",
-			"OBJECTSTORE_BACKEND_PATH=/tmp/env-storage",
+			"OBJECTSTORE_BACKEND_PATH="+envStoragePath,
 			"OBJECTSTORE_OUTPUT_FORMAT=json",
 		)
 
@@ -455,9 +592,14 @@ func TestCLIErrorScenarios(t *testing.T) {
 // TestCLIPriority tests flag/env/file priority
 func TestCLIPriority(t *testing.T) {
 	t.Run("flags override env vars", func(t *testing.T) {
-		cmd := exec.Command(cliBinary, "--backend-path", "/flag/path", "config", "-o", "json")
+		flagPath := filepath.Join(testDir, "flag-path")
+		envPath := filepath.Join(testDir, "env-path")
+		os.MkdirAll(flagPath, 0755)
+		os.MkdirAll(envPath, 0755)
+
+		cmd := exec.Command(cliBinaryPath, "--backend-path", flagPath, "config", "-o", "json")
 		cmd.Env = append(os.Environ(),
-			"OBJECTSTORE_BACKEND_PATH=/env/path",
+			"OBJECTSTORE_BACKEND_PATH="+envPath,
 		)
 
 		var stdout strings.Builder
@@ -466,8 +608,8 @@ func TestCLIPriority(t *testing.T) {
 		require.NoError(t, err)
 
 		output := stdout.String()
-		assert.Contains(t, output, "/flag/path")
-		assert.NotContains(t, output, "/env/path")
+		assert.Contains(t, output, flagPath)
+		assert.NotContains(t, output, envPath)
 	})
 }
 

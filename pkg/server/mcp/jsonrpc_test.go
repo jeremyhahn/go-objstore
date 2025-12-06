@@ -28,10 +28,7 @@ import (
 
 func TestRPCHandler_HandleInitialize(t *testing.T) {
 	storage := NewMockStorage()
-	server, _ := NewServer(&ServerConfig{
-		Mode:    ModeStdio,
-		Storage: storage,
-	})
+	server := createTestServer(t, storage, ModeStdio)
 	handler := NewRPCHandler(server)
 
 	initParams := map[string]any{
@@ -71,10 +68,7 @@ func TestRPCHandler_HandleInitialize(t *testing.T) {
 
 func TestRPCHandler_HandleInitializeNilParams(t *testing.T) {
 	storage := NewMockStorage()
-	server, _ := NewServer(&ServerConfig{
-		Mode:    ModeStdio,
-		Storage: storage,
-	})
+	server := createTestServer(t, storage, ModeStdio)
 	handler := NewRPCHandler(server)
 
 	result, err := handler.handleInitialize(context.Background(), nil)
@@ -89,10 +83,7 @@ func TestRPCHandler_HandleInitializeNilParams(t *testing.T) {
 
 func TestRPCHandler_HandleToolsList(t *testing.T) {
 	storage := NewMockStorage()
-	server, _ := NewServer(&ServerConfig{
-		Mode:    ModeStdio,
-		Storage: storage,
-	})
+	server := createTestServer(t, storage, ModeStdio)
 	handler := NewRPCHandler(server)
 
 	result, err := handler.handleToolsList(context.Background())
@@ -117,10 +108,7 @@ func TestRPCHandler_HandleToolsList(t *testing.T) {
 
 func TestRPCHandler_HandleToolsCall(t *testing.T) {
 	storage := NewMockStorage()
-	server, _ := NewServer(&ServerConfig{
-		Mode:    ModeStdio,
-		Storage: storage,
-	})
+	server := createTestServer(t, storage, ModeStdio)
 	handler := NewRPCHandler(server)
 
 	tests := []struct {
@@ -185,10 +173,7 @@ func TestRPCHandler_HandleToolsCall(t *testing.T) {
 
 func TestRPCHandler_HandleToolsCallInvalidParams(t *testing.T) {
 	storage := NewMockStorage()
-	server, _ := NewServer(&ServerConfig{
-		Mode:    ModeStdio,
-		Storage: storage,
-	})
+	server := createTestServer(t, storage, ModeStdio)
 	handler := NewRPCHandler(server)
 
 	// Test with nil params
@@ -207,10 +192,7 @@ func TestRPCHandler_HandleToolsCallInvalidParams(t *testing.T) {
 
 func TestRPCHandler_HandleResourcesList(t *testing.T) {
 	storage := NewMockStorage()
-	server, _ := NewServer(&ServerConfig{
-		Mode:    ModeStdio,
-		Storage: storage,
-	})
+	server := createTestServer(t, storage, ModeStdio)
 	handler := NewRPCHandler(server)
 
 	// Add test objects
@@ -239,10 +221,7 @@ func TestRPCHandler_HandleResourcesList(t *testing.T) {
 
 func TestRPCHandler_HandleResourcesRead(t *testing.T) {
 	storage := NewMockStorage()
-	server, _ := NewServer(&ServerConfig{
-		Mode:    ModeStdio,
-		Storage: storage,
-	})
+	server := createTestServer(t, storage, ModeStdio)
 	handler := NewRPCHandler(server)
 
 	// Add test object
@@ -305,10 +284,7 @@ func TestRPCHandler_HandleResourcesRead(t *testing.T) {
 
 func TestRPCHandler_HandleResourcesReadInvalidParams(t *testing.T) {
 	storage := NewMockStorage()
-	server, _ := NewServer(&ServerConfig{
-		Mode:    ModeStdio,
-		Storage: storage,
-	})
+	server := createTestServer(t, storage, ModeStdio)
 	handler := NewRPCHandler(server)
 
 	// Test with nil params
@@ -327,10 +303,7 @@ func TestRPCHandler_HandleResourcesReadInvalidParams(t *testing.T) {
 
 func TestRPCHandler_Handle(t *testing.T) {
 	storage := NewMockStorage()
-	server, _ := NewServer(&ServerConfig{
-		Mode:    ModeStdio,
-		Storage: storage,
-	})
+	server := createTestServer(t, storage, ModeStdio)
 	handler := NewRPCHandler(server)
 
 	tests := []struct {
@@ -386,10 +359,7 @@ func TestRPCHandler_Handle(t *testing.T) {
 
 func TestHTTPHandler_ServeHTTP(t *testing.T) {
 	storage := NewMockStorage()
-	server, _ := NewServer(&ServerConfig{
-		Mode:    ModeHTTP,
-		Storage: storage,
-	})
+	server := createTestServer(t, storage, ModeHTTP)
 	httpHandler := NewHTTPHandler(server)
 
 	tests := []struct {
@@ -468,10 +438,7 @@ func TestHTTPHandler_ServeHTTP(t *testing.T) {
 
 func TestHTTPHandler_WriteError(t *testing.T) {
 	storage := NewMockStorage()
-	server, _ := NewServer(&ServerConfig{
-		Mode:    ModeHTTP,
-		Storage: storage,
-	})
+	server := createTestServer(t, storage, ModeHTTP)
 	httpHandler := NewHTTPHandler(server)
 
 	rec := httptest.NewRecorder()
@@ -501,10 +468,7 @@ func TestHTTPHandler_WriteError(t *testing.T) {
 
 func TestHTTPHandler_WriteErrorWithID(t *testing.T) {
 	storage := NewMockStorage()
-	server, _ := NewServer(&ServerConfig{
-		Mode:    ModeHTTP,
-		Storage: storage,
-	})
+	server := createTestServer(t, storage, ModeHTTP)
 	httpHandler := NewHTTPHandler(server)
 
 	rec := httptest.NewRecorder()
@@ -547,10 +511,7 @@ func TestJSONRPCErrorCodes(t *testing.T) {
 
 func TestHandleResourcesListInvalidJSON(t *testing.T) {
 	storage := NewMockStorage()
-	server, _ := NewServer(&ServerConfig{
-		Mode:    ModeStdio,
-		Storage: storage,
-	})
+	server := createTestServer(t, storage, ModeStdio)
 	handler := NewRPCHandler(server)
 
 	// Test with invalid JSON in params
@@ -563,10 +524,7 @@ func TestHandleResourcesListInvalidJSON(t *testing.T) {
 
 func TestHTTPHandler_ServeHTTP_PingRequest(t *testing.T) {
 	storage := NewMockStorage()
-	server, _ := NewServer(&ServerConfig{
-		Mode:    ModeHTTP,
-		Storage: storage,
-	})
+	server := createTestServer(t, storage, ModeHTTP)
 	httpHandler := NewHTTPHandler(server)
 
 	req := httptest.NewRequest("POST", "/", bytes.NewBufferString(`{

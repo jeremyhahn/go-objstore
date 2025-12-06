@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  # Go-ObjStore server for integration tests
+  objstore:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+      - "50051:50051"
+      - "4433:4433"
+    environment:
+      - STORAGE_BACKEND=local
+      - STORAGE_PATH=/data
+      - LOG_LEVEL=info
+      - REST_ENABLED=true
+      - GRPC_ENABLED=true
+      - QUIC_ENABLED=true
+    volumes:
+      - objstore-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  # C# SDK integration tests
+  sdk-integration-test:
+    build:
+      context: ../../..
+      dockerfile: api/sdks/csharp/Dockerfile.build
+      target: integration-test
+    depends_on:
+      objstore:
+        condition: service_healthy
+    environment:
+      - REST_BASE_URL=http://objstore:8080
+      - GRPC_ADDRESS=http://objstore:50051
+      - QUIC_BASE_URL=https://objstore:4433
+
+volumes:
+  objstore-data:

@@ -48,9 +48,10 @@ var s3managerNewUploaderWithClient = func(c s3iface.S3API, options ...func(*s3ma
 
 // S3 is a storage backend that stores files in Amazon S3.
 type S3 struct {
-	svc           s3iface.S3API
-	bucket        string
-	policiesMutex sync.RWMutex
+	svc                s3iface.S3API
+	bucket             string
+	policiesMutex      sync.RWMutex
+	replicationManager common.ReplicationManager
 }
 
 // New creates a new S3 storage backend.
@@ -345,4 +346,20 @@ func isNoSuchLifecycleConfiguration(err error) bool {
 	// AWS SDK returns "NoSuchLifecycleConfiguration" error code
 	return err.Error() == "NoSuchLifecycleConfiguration" ||
 		   (len(err.Error()) > 0 && err.Error()[:28] == "NoSuchLifecycleConfiguration")
+}
+
+// GetReplicationManager returns the replication manager for this backend.
+// This method implements the common.ReplicationCapable interface.
+func (s *S3) GetReplicationManager() (common.ReplicationManager, error) {
+	if s.replicationManager == nil {
+		return nil, common.ErrReplicationNotSupported
+	}
+	return s.replicationManager, nil
+}
+
+// SetReplicationManager allows manually setting a replication manager.
+// This is useful for testing or when you want to share a replication manager
+// across multiple backends.
+func (s *S3) SetReplicationManager(rm common.ReplicationManager) {
+	s.replicationManager = rm
 }
