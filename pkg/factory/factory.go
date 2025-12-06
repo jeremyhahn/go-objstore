@@ -64,3 +64,36 @@ func NewArchiver(backendType string, settings map[string]string) (common.Archive
 	}
 	return creator(settings)
 }
+
+// ListStorageBackends returns a list of all registered storage backend types.
+// Archive-only backends (glacier, azurearchive) are excluded from this list.
+func ListStorageBackends() []string {
+	backends := make([]string, 0, len(storageRegistry))
+	for backendType := range storageRegistry {
+		if !archiveOnlyTypes[backendType] {
+			backends = append(backends, backendType)
+		}
+	}
+	return backends
+}
+
+// ListArchivers returns a list of all registered archiver types.
+func ListArchivers() []string {
+	archivers := make([]string, 0, len(archiverRegistry))
+	for archiverType := range archiverRegistry {
+		archivers = append(archivers, archiverType)
+	}
+	return archivers
+}
+
+// IsStorageBackendRegistered checks if a storage backend type is registered.
+func IsStorageBackendRegistered(backendType string) bool {
+	_, exists := storageRegistry[backendType]
+	return exists && !archiveOnlyTypes[backendType]
+}
+
+// IsArchiverRegistered checks if an archiver type is registered.
+func IsArchiverRegistered(archiverType string) bool {
+	_, exists := archiverRegistry[archiverType]
+	return exists
+}
