@@ -40,10 +40,11 @@ var (
 
 // Syncer handles synchronization of objects between source and destination backends.
 const (
-	backendLocal = "local"
-	operationPut = "put"
+	backendLocal    = "local"
+	operationPut    = "put"
 	operationDelete = "delete"
 )
+
 type Syncer struct {
 	policy   common.ReplicationPolicy
 	source   common.Storage

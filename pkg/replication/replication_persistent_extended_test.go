@@ -417,7 +417,7 @@ func TestSave_FileSystemError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
-	
+
 	// Now replace filesystem with one that fails
 	mgr.fs = &errorFileSystem{
 		openError: errors.New("filesystem error"),

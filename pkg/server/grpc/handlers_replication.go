@@ -248,15 +248,15 @@ func replicationPolicyToProto(p *common.ReplicationPolicy) *objstorepb.Replicati
 	}
 
 	proto := &objstorepb.ReplicationPolicy{
-		Id:                    p.ID,
-		SourceBackend:         p.SourceBackend,
-		SourceSettings:        p.SourceSettings,
-		SourcePrefix:          p.SourcePrefix,
-		DestinationBackend:    p.DestinationBackend,
-		DestinationSettings:   p.DestinationSettings,
-		CheckIntervalSeconds:  int64(p.CheckInterval.Seconds()),
-		LastSyncTime:          timestamppb.New(p.LastSyncTime),
-		Enabled:               p.Enabled,
+		Id:                   p.ID,
+		SourceBackend:        p.SourceBackend,
+		SourceSettings:       p.SourceSettings,
+		SourcePrefix:         p.SourcePrefix,
+		DestinationBackend:   p.DestinationBackend,
+		DestinationSettings:  p.DestinationSettings,
+		CheckIntervalSeconds: int64(p.CheckInterval.Seconds()),
+		LastSyncTime:         timestamppb.New(p.LastSyncTime),
+		Enabled:              p.Enabled,
 	}
 
 	// Convert replication mode
@@ -354,10 +354,10 @@ func syncResultToProto(r *common.SyncResult) *objstorepb.SyncResult {
 	}
 
 	return &objstorepb.SyncResult{
-		PolicyId: r.PolicyID,
-		Synced:   int32(r.Synced),   // #nosec G115 -- Conversion is safe - replication counts won't exceed int32 range
-		Deleted:  int32(r.Deleted),  // #nosec G115 -- Conversion is safe - replication counts won't exceed int32 range
-		Failed:   int32(r.Failed),   // #nosec G115 -- Conversion is safe - replication counts won't exceed int32 range
+		PolicyId:   r.PolicyID,
+		Synced:     int32(r.Synced),  // #nosec G115 -- Conversion is safe - replication counts won't exceed int32 range
+		Deleted:    int32(r.Deleted), // #nosec G115 -- Conversion is safe - replication counts won't exceed int32 range
+		Failed:     int32(r.Failed),  // #nosec G115 -- Conversion is safe - replication counts won't exceed int32 range
 		BytesTotal: r.BytesTotal,
 		DurationMs: r.Duration.Milliseconds(),
 		Errors:     r.Errors,

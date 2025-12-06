@@ -281,9 +281,9 @@ func TestToolExecutor_ExecuteAddReplicationPolicy(t *testing.T) {
 		{
 			name: "missing destination_backend",
 			args: map[string]any{
-				"id":              "test-policy-5",
-				"source_backend":  "local",
-				"check_interval":  float64(300),
+				"id":             "test-policy-5",
+				"source_backend": "local",
+				"check_interval": float64(300),
 			},
 			wantError: true,
 		},
@@ -361,12 +361,12 @@ func TestToolExecutor_ExecuteRemoveReplicationPolicy(t *testing.T) {
 
 	// Add a policy first
 	storage.repMgr.AddPolicy(common.ReplicationPolicy{
-		ID:                  "test-policy",
-		SourceBackend:       "local",
-		DestinationBackend:  "s3",
-		CheckInterval:       5 * time.Minute,
-		Enabled:             true,
-		ReplicationMode:     common.ReplicationModeTransparent,
+		ID:                 "test-policy",
+		SourceBackend:      "local",
+		DestinationBackend: "s3",
+		CheckInterval:      5 * time.Minute,
+		Enabled:            true,
+		ReplicationMode:    common.ReplicationModeTransparent,
 	})
 
 	tests := []struct {
@@ -426,20 +426,20 @@ func TestToolExecutor_ExecuteListReplicationPolicies(t *testing.T) {
 
 	// Add some policies
 	storage.repMgr.AddPolicy(common.ReplicationPolicy{
-		ID:                  "policy-1",
-		SourceBackend:       "local",
-		DestinationBackend:  "s3",
-		CheckInterval:       5 * time.Minute,
-		Enabled:             true,
-		ReplicationMode:     common.ReplicationModeTransparent,
+		ID:                 "policy-1",
+		SourceBackend:      "local",
+		DestinationBackend: "s3",
+		CheckInterval:      5 * time.Minute,
+		Enabled:            true,
+		ReplicationMode:    common.ReplicationModeTransparent,
 	})
 	storage.repMgr.AddPolicy(common.ReplicationPolicy{
-		ID:                  "policy-2",
-		SourceBackend:       "s3",
-		DestinationBackend:  "gcs",
-		CheckInterval:       10 * time.Minute,
-		Enabled:             false,
-		ReplicationMode:     common.ReplicationModeOpaque,
+		ID:                 "policy-2",
+		SourceBackend:      "s3",
+		DestinationBackend: "gcs",
+		CheckInterval:      10 * time.Minute,
+		Enabled:            false,
+		ReplicationMode:    common.ReplicationModeOpaque,
 	})
 
 	result, err := executor.Execute(context.Background(), "objstore_list_replication_policies", map[string]any{})
@@ -469,12 +469,12 @@ func TestToolExecutor_ExecuteGetReplicationPolicy(t *testing.T) {
 
 	// Add a policy
 	storage.repMgr.AddPolicy(common.ReplicationPolicy{
-		ID:                  "test-policy",
-		SourceBackend:       "local",
-		DestinationBackend:  "s3",
-		CheckInterval:       5 * time.Minute,
-		Enabled:             true,
-		ReplicationMode:     common.ReplicationModeTransparent,
+		ID:                 "test-policy",
+		SourceBackend:      "local",
+		DestinationBackend: "s3",
+		CheckInterval:      5 * time.Minute,
+		Enabled:            true,
+		ReplicationMode:    common.ReplicationModeTransparent,
 	})
 
 	tests := []struct {
@@ -540,12 +540,12 @@ func TestToolExecutor_ExecuteTriggerReplication(t *testing.T) {
 
 	// Add a policy
 	storage.repMgr.AddPolicy(common.ReplicationPolicy{
-		ID:                  "test-policy",
-		SourceBackend:       "local",
-		DestinationBackend:  "s3",
-		CheckInterval:       5 * time.Minute,
-		Enabled:             true,
-		ReplicationMode:     common.ReplicationModeTransparent,
+		ID:                 "test-policy",
+		SourceBackend:      "local",
+		DestinationBackend: "s3",
+		CheckInterval:      5 * time.Minute,
+		Enabled:            true,
+		ReplicationMode:    common.ReplicationModeTransparent,
 	})
 
 	tests := []struct {

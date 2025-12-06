@@ -1727,7 +1727,7 @@ func TestHandlerArchiveStorageError(t *testing.T) {
 	archiveReq := map[string]any{
 		"key":                  "test-key",
 		"destination_type":     "local",
-		"destination_settings": map[string]string{"path": "/tmp/test"},
+		"destination_settings": map[string]string{"path": t.TempDir()},
 	}
 	body, _ := json.Marshal(archiveReq)
 

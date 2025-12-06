@@ -6,6 +6,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [0.1.4-alpha] - 2025-12-06
+
+### Added
+
+- Memory Storage Backend: New in-memory storage implementation (pkg/memory)
+  - Thread-safe concurrent access with RWMutex
+  - Full Storage interface implementation
+  - Lifecycle manager with delete and archive policy support
+  - Ideal for testing, development, and cache scenarios
+  - 93% test coverage
+
+- Unix Server Handler Tests: Comprehensive test coverage for all JSON-RPC handlers
+  - Tests for archive, lifecycle policy, and replication handlers
+  - Mock replication manager for testing replication handler success paths
+  - Coverage increased from 46.5% to 87.1%
+
+- Memory Lifecycle Tests: Tests for lifecycle manager Process() function
+  - Delete and archive action coverage
+  - Edge case testing for policy processing
+
+### Changed
+
+- CI/CD Pipeline: Updated golangci-lint from v1.x to v2.7.1
+  - Migrated golangci-lint-action from v6 to v7
+  - Updated .golangci.yml to v2 configuration format
+  - Added memory package to errcheck exclusions
+
+- Test Coverage: Improved overall coverage from 88.9% to 90.7%
+  - Unix server: 46.5% → 87.1%
+  - Memory package: 84.2% → 93.1%
+  - Exceeds 89% CI threshold
+
+- Code Quality: Applied gofmt formatting and removed redundant blank lines
+  - Struct field alignment fixes across protocol definitions
+  - Consistent whitespace in license headers
+  - Updated local storage tests to use common.ErrKeyNotFound
+
+### Fixed
+
+- Local Storage Tests: Fixed error assertions to use errors.Is() with common.ErrKeyNotFound instead of os.IsNotExist()
+- Golangci-lint v2 Compatibility: Resolved configuration schema issues with v2 format migration
+
 ## [0.1.3-alpha] - 2025-12-06
 
 ### Added
@@ -249,5 +291,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Secure credential handling for cloud backends
 - Context-aware timeout and cancellation for resource cleanup
 
+[0.1.4-alpha]: https://github.com/jeremyhahn/go-objstore/releases/tag/v0.1.4-alpha
+[0.1.3-alpha]: https://github.com/jeremyhahn/go-objstore/releases/tag/v0.1.3-alpha
+[0.1.2-alpha]: https://github.com/jeremyhahn/go-objstore/releases/tag/v0.1.2-alpha
 [0.1.1-alpha]: https://github.com/jeremyhahn/go-objstore/releases/tag/v0.1.1-alpha
 [0.1.0-alpha]: https://github.com/jeremyhahn/go-objstore/releases/tag/v0.1.0-alpha

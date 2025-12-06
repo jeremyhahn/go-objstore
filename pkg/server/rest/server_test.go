@@ -279,7 +279,7 @@ func TestServerModes(t *testing.T) {
 			}
 
 			initSrvTestFacade(t, storage)
-	server, err := NewServer(storage, config)
+			server, err := NewServer(storage, config)
 			if err != nil {
 				t.Errorf("NewServer() with mode %s failed: %v", mode, err)
 			}

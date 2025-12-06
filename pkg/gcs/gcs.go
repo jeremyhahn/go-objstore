@@ -90,7 +90,9 @@ var (
 	gcsDeleteFn         = func(o *storage.ObjectHandle, ctx context.Context) error { return o.Delete(ctx) }
 	gcsAttrsFn          = func(o *storage.ObjectHandle, ctx context.Context) (*storage.ObjectAttrs, error) { return o.Attrs(ctx) }
 	gcsGetBucketAttrsFn = func(ctx context.Context, b *storage.BucketHandle) (*storage.BucketAttrs, error) { return b.Attrs(ctx) }
-	gcsUpdateBucketFn   = func(ctx context.Context, b *storage.BucketHandle, uattrs storage.BucketAttrsToUpdate) (*storage.BucketAttrs, error) { return b.Update(ctx, uattrs) }
+	gcsUpdateBucketFn   = func(ctx context.Context, b *storage.BucketHandle, uattrs storage.BucketAttrsToUpdate) (*storage.BucketAttrs, error) {
+		return b.Update(ctx, uattrs)
+	}
 )
 
 func (o objectWrapper) NewWriter(ctx context.Context) io.WriteCloser {

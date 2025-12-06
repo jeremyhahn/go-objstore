@@ -28,6 +28,9 @@ cd "$PROJECT_ROOT"
 
 echo -e "${BLUE}Running pre-commit checks...${NC}\n"
 
+# Build tags for all backends
+BUILD_TAGS="local awss3 minio gcpstorage azureblob glacier azurearchive"
+
 # 1. Check if gofmt is needed
 echo -e "${BLUE}→ Checking code formatting with gofmt...${NC}"
 GOFMT_OUTPUT=$(gofmt -l ./pkg ./cmd 2>&1 || true)
@@ -41,7 +44,7 @@ echo -e "${GREEN}✓ Code formatting check passed${NC}\n"
 
 # 2. Run go vet
 echo -e "${BLUE}→ Running go vet...${NC}"
-if ! go vet ./pkg/... ./cmd/... 2>&1; then
+if ! go vet -tags="$BUILD_TAGS" ./pkg/... ./cmd/... 2>&1; then
     echo -e "${RED}✗ go vet check failed${NC}\n"
     exit 1
 fi
@@ -62,7 +65,7 @@ fi
 
 # 4. Run tests (only short tests to keep hook fast)
 echo -e "${BLUE}→ Running tests...${NC}"
-if ! go test -short -race ./pkg/... 2>&1; then
+if ! go test -short -race -tags="$BUILD_TAGS" ./pkg/... 2>&1; then
     echo -e "${RED}✗ Tests failed${NC}\n"
     exit 1
 fi

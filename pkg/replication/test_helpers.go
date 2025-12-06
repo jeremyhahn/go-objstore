@@ -32,10 +32,10 @@ func (m *mockLogger) Debug(ctx context.Context, msg string, fields ...adapters.F
 func (m *mockLogger) Info(ctx context.Context, msg string, fields ...adapters.Field)  {}
 func (m *mockLogger) Warn(ctx context.Context, msg string, fields ...adapters.Field)  {}
 func (m *mockLogger) Error(ctx context.Context, msg string, fields ...adapters.Field) {}
-func (m *mockLogger) WithFields(fields ...adapters.Field) adapters.Logger              { return m }
-func (m *mockLogger) WithContext(ctx context.Context) adapters.Logger                  { return m }
-func (m *mockLogger) SetLevel(level adapters.LogLevel)                                 {}
-func (m *mockLogger) GetLevel() adapters.LogLevel                                      { return adapters.InfoLevel }
+func (m *mockLogger) WithFields(fields ...adapters.Field) adapters.Logger             { return m }
+func (m *mockLogger) WithContext(ctx context.Context) adapters.Logger                 { return m }
+func (m *mockLogger) SetLevel(level adapters.LogLevel)                                {}
+func (m *mockLogger) GetLevel() adapters.LogLevel                                     { return adapters.InfoLevel }
 
 // mockAuditLogger implements audit.AuditLogger for testing
 type mockAuditLogger struct{}
@@ -114,7 +114,7 @@ func (m *mockStorage) GetMetadata(ctx context.Context, key string) (*common.Meta
 func (m *mockStorage) UpdateMetadata(ctx context.Context, key string, metadata *common.Metadata) error {
 	return nil
 }
-func (m *mockStorage) Delete(key string) error                                { return nil }
+func (m *mockStorage) Delete(key string) error                                 { return nil }
 func (m *mockStorage) DeleteWithContext(ctx context.Context, key string) error { return nil }
 func (m *mockStorage) Exists(ctx context.Context, key string) (bool, error)    { return false, nil }
 func (m *mockStorage) List(prefix string) ([]string, error)                    { return nil, nil }
@@ -179,15 +179,14 @@ func (m *mockStorage) AddPolicy(policy common.LifecyclePolicy) error         { r
 func (m *mockStorage) RemovePolicy(id string) error                          { return nil }
 func (m *mockStorage) GetPolicies() ([]common.LifecyclePolicy, error)        { return nil, nil }
 
-
 // extendedMockStorage extends mockStorage with Put/Get capabilities for syncing
 type extendedMockStorage struct {
 	*mockStorage
-	data           map[string][]byte
-	putError       error
-	getError       error
-	putCalled      bool
-	putWithMetaFn  func(ctx context.Context, key string, data io.Reader, metadata *common.Metadata) error
+	data          map[string][]byte
+	putError      error
+	getError      error
+	putCalled     bool
+	putWithMetaFn func(ctx context.Context, key string, data io.Reader, metadata *common.Metadata) error
 }
 
 func newExtendedMockStorage() *extendedMockStorage {

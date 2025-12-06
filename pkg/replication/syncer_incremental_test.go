@@ -99,10 +99,10 @@ func TestSyncIncremental_Success(t *testing.T) {
 
 	// Create syncer
 	policy := common.ReplicationPolicy{
-		ID:                  "test-policy",
-		SourceBackend:       "mock",
-		DestinationBackend:  "mock",
-		ReplicationMode:     common.ReplicationModeTransparent,
+		ID:                 "test-policy",
+		SourceBackend:      "mock",
+		DestinationBackend: "mock",
+		ReplicationMode:    common.ReplicationModeTransparent,
 	}
 
 	syncer := &Syncer{
@@ -155,10 +155,10 @@ func TestSyncIncremental_DeleteEvents(t *testing.T) {
 
 	// Create syncer
 	policy := common.ReplicationPolicy{
-		ID:                  "test-policy",
-		SourceBackend:       "mock",
-		DestinationBackend:  "mock",
-		ReplicationMode:     common.ReplicationModeTransparent,
+		ID:                 "test-policy",
+		SourceBackend:      "mock",
+		DestinationBackend: "mock",
+		ReplicationMode:    common.ReplicationModeTransparent,
 	}
 
 	syncer := &Syncer{
@@ -230,10 +230,10 @@ func TestSyncIncremental_MixedEvents(t *testing.T) {
 
 	// Create syncer
 	policy := common.ReplicationPolicy{
-		ID:                  "test-policy",
-		SourceBackend:       "mock",
-		DestinationBackend:  "mock",
-		ReplicationMode:     common.ReplicationModeTransparent,
+		ID:                 "test-policy",
+		SourceBackend:      "mock",
+		DestinationBackend: "mock",
+		ReplicationMode:    common.ReplicationModeTransparent,
 	}
 
 	syncer := &Syncer{
@@ -293,10 +293,10 @@ func TestSyncIncremental_PartialFailure(t *testing.T) {
 
 	// Create syncer
 	policy := common.ReplicationPolicy{
-		ID:                  "test-policy",
-		SourceBackend:       "mock",
-		DestinationBackend:  "mock",
-		ReplicationMode:     common.ReplicationModeTransparent,
+		ID:                 "test-policy",
+		SourceBackend:      "mock",
+		DestinationBackend: "mock",
+		ReplicationMode:    common.ReplicationModeTransparent,
 	}
 
 	syncer := &Syncer{
@@ -337,10 +337,10 @@ func TestSyncIncremental_EmptyChangeLog(t *testing.T) {
 
 	// Create syncer
 	policy := common.ReplicationPolicy{
-		ID:                  "test-policy",
-		SourceBackend:       "mock",
-		DestinationBackend:  "mock",
-		ReplicationMode:     common.ReplicationModeTransparent,
+		ID:                 "test-policy",
+		SourceBackend:      "mock",
+		DestinationBackend: "mock",
+		ReplicationMode:    common.ReplicationModeTransparent,
 	}
 
 	syncer := &Syncer{
@@ -386,10 +386,10 @@ func TestSyncIncremental_AlreadyProcessed(t *testing.T) {
 
 	// Create syncer
 	policy := common.ReplicationPolicy{
-		ID:                  "test-policy",
-		SourceBackend:       "mock",
-		DestinationBackend:  "mock",
-		ReplicationMode:     common.ReplicationModeTransparent,
+		ID:                 "test-policy",
+		SourceBackend:      "mock",
+		DestinationBackend: "mock",
+		ReplicationMode:    common.ReplicationModeTransparent,
 	}
 
 	syncer := &Syncer{
@@ -433,10 +433,10 @@ func TestSyncIncremental_MultiplePolicies(t *testing.T) {
 
 	// Create first syncer (policy1)
 	policy1 := common.ReplicationPolicy{
-		ID:                  "policy1",
-		SourceBackend:       "mock",
-		DestinationBackend:  "mock",
-		ReplicationMode:     common.ReplicationModeTransparent,
+		ID:                 "policy1",
+		SourceBackend:      "mock",
+		DestinationBackend: "mock",
+		ReplicationMode:    common.ReplicationModeTransparent,
 	}
 
 	syncer1 := &Syncer{
@@ -464,10 +464,10 @@ func TestSyncIncremental_MultiplePolicies(t *testing.T) {
 
 	// Create second syncer (policy2)
 	policy2 := common.ReplicationPolicy{
-		ID:                  "policy2",
-		SourceBackend:       "mock",
-		DestinationBackend:  "mock",
-		ReplicationMode:     common.ReplicationModeTransparent,
+		ID:                 "policy2",
+		SourceBackend:      "mock",
+		DestinationBackend: "mock",
+		ReplicationMode:    common.ReplicationModeTransparent,
 	}
 
 	syncer2 := &Syncer{
@@ -504,10 +504,10 @@ func TestSyncIncremental_UnknownOperation(t *testing.T) {
 
 	// Create syncer
 	policy := common.ReplicationPolicy{
-		ID:                  "test-policy",
-		SourceBackend:       "mock",
-		DestinationBackend:  "mock",
-		ReplicationMode:     common.ReplicationModeTransparent,
+		ID:                 "test-policy",
+		SourceBackend:      "mock",
+		DestinationBackend: "mock",
+		ReplicationMode:    common.ReplicationModeTransparent,
 	}
 
 	syncer := &Syncer{
@@ -568,10 +568,10 @@ func TestSyncIncremental_LargeChangeLog(t *testing.T) {
 
 	// Create syncer
 	policy := common.ReplicationPolicy{
-		ID:                  "test-policy",
-		SourceBackend:       "mock",
-		DestinationBackend:  "mock",
-		ReplicationMode:     common.ReplicationModeTransparent,
+		ID:                 "test-policy",
+		SourceBackend:      "mock",
+		DestinationBackend: "mock",
+		ReplicationMode:    common.ReplicationModeTransparent,
 	}
 
 	syncer := &Syncer{

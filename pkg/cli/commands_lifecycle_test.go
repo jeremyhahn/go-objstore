@@ -156,7 +156,7 @@ func TestArchiveCommand(t *testing.T) {
 			storage := tt.setupStorage()
 			cfg := &Config{
 				Backend:     "local",
-				BackendPath: "/tmp/test",
+				BackendPath: t.TempDir(),
 			}
 			ctx := &CommandContext{
 				Storage: storage,
@@ -545,7 +545,7 @@ func TestArchiveCommandEdgeCases(t *testing.T) {
 	tests := []struct {
 		name         string
 		setupStorage func() *mockLifecycleStorage
-		setupConfig  func() *Config
+		setupConfig  func(tempDir string) *Config
 		key          string
 		destBackend  string
 		wantError    bool
@@ -557,10 +557,10 @@ func TestArchiveCommandEdgeCases(t *testing.T) {
 				storage.data["large-file.bin"] = bytes.Repeat([]byte("x"), 1024*1024) // 1MB
 				return storage
 			},
-			setupConfig: func() *Config {
+			setupConfig: func(tempDir string) *Config {
 				return &Config{
 					Backend:     "local",
-					BackendPath: "/tmp/test",
+					BackendPath: tempDir,
 				}
 			},
 			key:         "large-file.bin",
@@ -574,10 +574,10 @@ func TestArchiveCommandEdgeCases(t *testing.T) {
 				storage.data["empty.txt"] = []byte("")
 				return storage
 			},
-			setupConfig: func() *Config {
+			setupConfig: func(tempDir string) *Config {
 				return &Config{
 					Backend:     "local",
-					BackendPath: "/tmp/test",
+					BackendPath: tempDir,
 				}
 			},
 			key:         "empty.txt",
@@ -589,7 +589,7 @@ func TestArchiveCommandEdgeCases(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := tt.setupStorage()
-			cfg := tt.setupConfig()
+			cfg := tt.setupConfig(t.TempDir())
 			ctx := &CommandContext{
 				Storage: storage,
 				Config:  cfg,

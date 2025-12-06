@@ -181,10 +181,10 @@ func TestSyncAllParallel(t *testing.T) {
 
 	// Create syncer
 	policy := common.ReplicationPolicy{
-		ID:              "test-sync-parallel",
-		SourceBackend:   "local",
+		ID:                 "test-sync-parallel",
+		SourceBackend:      "local",
 		DestinationBackend: "local",
-		ReplicationMode: common.ReplicationModeOpaque,
+		ReplicationMode:    common.ReplicationModeOpaque,
 	}
 
 	syncer := &Syncer{
@@ -249,10 +249,10 @@ func TestSyncAllParallelNoChanges(t *testing.T) {
 	}
 
 	policy := common.ReplicationPolicy{
-		ID:              "test-no-changes",
-		SourceBackend:   "local",
+		ID:                 "test-no-changes",
+		SourceBackend:      "local",
 		DestinationBackend: "local",
-		ReplicationMode: common.ReplicationModeOpaque,
+		ReplicationMode:    common.ReplicationModeOpaque,
 	}
 
 	syncer := &Syncer{
@@ -302,10 +302,10 @@ func TestSyncAllParallelWithErrors(t *testing.T) {
 	}
 
 	policy := common.ReplicationPolicy{
-		ID:              "test-with-errors",
-		SourceBackend:   "local",
+		ID:                 "test-with-errors",
+		SourceBackend:      "local",
 		DestinationBackend: "local",
-		ReplicationMode: common.ReplicationModeOpaque,
+		ReplicationMode:    common.ReplicationModeOpaque,
 	}
 
 	syncer := &Syncer{
@@ -399,10 +399,10 @@ func TestMetricsCollection(t *testing.T) {
 	}
 
 	policy := common.ReplicationPolicy{
-		ID:              "metrics-test",
-		SourceBackend:   "local",
+		ID:                 "metrics-test",
+		SourceBackend:      "local",
 		DestinationBackend: "local",
-		ReplicationMode: common.ReplicationModeOpaque,
+		ReplicationMode:    common.ReplicationModeOpaque,
 	}
 
 	syncer := &Syncer{
@@ -468,14 +468,14 @@ func TestPolicyLifecycle(t *testing.T) {
 
 	// Step 1: Add policy
 	policy := common.ReplicationPolicy{
-		ID:              "lifecycle-test",
-		SourceBackend:   "local",
-		SourceSettings:  map[string]string{"path": "/tmp/src"},
-		DestinationBackend: "local",
+		ID:                  "lifecycle-test",
+		SourceBackend:       "local",
+		SourceSettings:      map[string]string{"path": "/tmp/src"},
+		DestinationBackend:  "local",
 		DestinationSettings: map[string]string{"path": "/tmp/dst"},
-		CheckInterval:   5 * time.Minute,
-		Enabled:         true,
-		ReplicationMode: common.ReplicationModeOpaque,
+		CheckInterval:       5 * time.Minute,
+		Enabled:             true,
+		ReplicationMode:     common.ReplicationModeOpaque,
 	}
 
 	err = mgr.AddPolicy(policy)
@@ -544,34 +544,34 @@ func TestMultiBackendReplication(t *testing.T) {
 	// Add multiple policies for different backends
 	policies := []common.ReplicationPolicy{
 		{
-			ID:              "policy-1",
-			SourceBackend:   "local",
-			SourceSettings:  map[string]string{"path": "/tmp/src1"},
-			DestinationBackend: "local",
+			ID:                  "policy-1",
+			SourceBackend:       "local",
+			SourceSettings:      map[string]string{"path": "/tmp/src1"},
+			DestinationBackend:  "local",
 			DestinationSettings: map[string]string{"path": "/tmp/dst1"},
-			CheckInterval:   5 * time.Minute,
-			Enabled:         true,
-			ReplicationMode: common.ReplicationModeOpaque,
+			CheckInterval:       5 * time.Minute,
+			Enabled:             true,
+			ReplicationMode:     common.ReplicationModeOpaque,
 		},
 		{
-			ID:              "policy-2",
-			SourceBackend:   "local",
-			SourceSettings:  map[string]string{"path": "/tmp/src2"},
-			DestinationBackend: "local",
+			ID:                  "policy-2",
+			SourceBackend:       "local",
+			SourceSettings:      map[string]string{"path": "/tmp/src2"},
+			DestinationBackend:  "local",
 			DestinationSettings: map[string]string{"path": "/tmp/dst2"},
-			CheckInterval:   5 * time.Minute,
-			Enabled:         true,
-			ReplicationMode: common.ReplicationModeOpaque,
+			CheckInterval:       5 * time.Minute,
+			Enabled:             true,
+			ReplicationMode:     common.ReplicationModeOpaque,
 		},
 		{
-			ID:              "policy-3-disabled",
-			SourceBackend:   "local",
-			SourceSettings:  map[string]string{"path": "/tmp/src3"},
-			DestinationBackend: "local",
+			ID:                  "policy-3-disabled",
+			SourceBackend:       "local",
+			SourceSettings:      map[string]string{"path": "/tmp/src3"},
+			DestinationBackend:  "local",
 			DestinationSettings: map[string]string{"path": "/tmp/dst3"},
-			CheckInterval:   5 * time.Minute,
-			Enabled:         false, // Disabled
-			ReplicationMode: common.ReplicationModeOpaque,
+			CheckInterval:       5 * time.Minute,
+			Enabled:             false, // Disabled
+			ReplicationMode:     common.ReplicationModeOpaque,
 		},
 	}
 
@@ -622,14 +622,14 @@ func TestErrorRecovery(t *testing.T) {
 
 	// Add good policy
 	goodPolicy := common.ReplicationPolicy{
-		ID:              "good-policy",
-		SourceBackend:   "local",
-		SourceSettings:  map[string]string{"path": "/tmp/src-good"},
-		DestinationBackend: "local",
+		ID:                  "good-policy",
+		SourceBackend:       "local",
+		SourceSettings:      map[string]string{"path": "/tmp/src-good"},
+		DestinationBackend:  "local",
 		DestinationSettings: map[string]string{"path": "/tmp/dst-good"},
-		CheckInterval:   5 * time.Minute,
-		Enabled:         true,
-		ReplicationMode: common.ReplicationModeOpaque,
+		CheckInterval:       5 * time.Minute,
+		Enabled:             true,
+		ReplicationMode:     common.ReplicationModeOpaque,
 	}
 
 	err = mgr.AddPolicy(goodPolicy)
@@ -639,14 +639,14 @@ func TestErrorRecovery(t *testing.T) {
 
 	// Add policy with invalid backend (will fail during sync)
 	badPolicy := common.ReplicationPolicy{
-		ID:              "bad-policy",
-		SourceBackend:   "invalid-backend-type",
-		SourceSettings:  map[string]string{"path": "/tmp/src-bad"},
-		DestinationBackend: "local",
+		ID:                  "bad-policy",
+		SourceBackend:       "invalid-backend-type",
+		SourceSettings:      map[string]string{"path": "/tmp/src-bad"},
+		DestinationBackend:  "local",
 		DestinationSettings: map[string]string{"path": "/tmp/dst-bad"},
-		CheckInterval:   5 * time.Minute,
-		Enabled:         true,
-		ReplicationMode: common.ReplicationModeOpaque,
+		CheckInterval:       5 * time.Minute,
+		Enabled:             true,
+		ReplicationMode:     common.ReplicationModeOpaque,
 	}
 
 	err = mgr.AddPolicy(badPolicy)
@@ -693,12 +693,12 @@ func TestGetFactories(t *testing.T) {
 
 	// Add a policy
 	policy := common.ReplicationPolicy{
-		ID:              "factory-test",
-		SourceBackend:   "local",
+		ID:                 "factory-test",
+		SourceBackend:      "local",
 		DestinationBackend: "local",
-		CheckInterval:   5 * time.Minute,
-		Enabled:         true,
-		ReplicationMode: common.ReplicationModeOpaque,
+		CheckInterval:      5 * time.Minute,
+		Enabled:            true,
+		ReplicationMode:    common.ReplicationModeOpaque,
 	}
 
 	err = mgr.AddPolicy(policy)

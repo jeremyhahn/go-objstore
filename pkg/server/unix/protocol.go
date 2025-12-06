@@ -27,10 +27,10 @@ type Request struct {
 
 // Response represents a JSON-RPC 2.0 response
 type Response struct {
-	JSONRPC string        `json:"jsonrpc"`
-	Result  any           `json:"result,omitempty"`
-	Error   *RPCError     `json:"error,omitempty"`
-	ID      any           `json:"id"`
+	JSONRPC string    `json:"jsonrpc"`
+	Result  any       `json:"result,omitempty"`
+	Error   *RPCError `json:"error,omitempty"`
+	ID      any       `json:"id"`
 }
 
 // RPCError represents a JSON-RPC 2.0 error
@@ -42,33 +42,33 @@ type RPCError struct {
 
 // Method names
 const (
-	MethodPut               = "put"
-	MethodGet               = "get"
-	MethodDelete            = "delete"
-	MethodExists            = "exists"
-	MethodList              = "list"
-	MethodGetMetadata       = "get_metadata"
-	MethodUpdateMetadata    = "update_metadata"
-	MethodArchive           = "archive"
-	MethodAddPolicy         = "add_policy"
-	MethodRemovePolicy      = "remove_policy"
-	MethodGetPolicies       = "get_policies"
-	MethodApplyPolicies     = "apply_policies"
-	MethodAddReplPolicy     = "add_replication_policy"
-	MethodRemoveReplPolicy  = "remove_replication_policy"
-	MethodGetReplPolicy     = "get_replication_policy"
-	MethodGetReplPolicies   = "get_replication_policies"
-	MethodTriggerRepl       = "trigger_replication"
-	MethodGetReplStatus     = "get_replication_status"
-	MethodHealth            = "health"
-	MethodPing              = "ping"
+	MethodPut              = "put"
+	MethodGet              = "get"
+	MethodDelete           = "delete"
+	MethodExists           = "exists"
+	MethodList             = "list"
+	MethodGetMetadata      = "get_metadata"
+	MethodUpdateMetadata   = "update_metadata"
+	MethodArchive          = "archive"
+	MethodAddPolicy        = "add_policy"
+	MethodRemovePolicy     = "remove_policy"
+	MethodGetPolicies      = "get_policies"
+	MethodApplyPolicies    = "apply_policies"
+	MethodAddReplPolicy    = "add_replication_policy"
+	MethodRemoveReplPolicy = "remove_replication_policy"
+	MethodGetReplPolicy    = "get_replication_policy"
+	MethodGetReplPolicies  = "get_replication_policies"
+	MethodTriggerRepl      = "trigger_replication"
+	MethodGetReplStatus    = "get_replication_status"
+	MethodHealth           = "health"
+	MethodPing             = "ping"
 )
 
 // PutParams represents parameters for the put method
 type PutParams struct {
-	Key      string            `json:"key"`
-	Data     string            `json:"data"` // Base64 encoded
-	Metadata *MetadataParams   `json:"metadata,omitempty"`
+	Key      string          `json:"key"`
+	Data     string          `json:"data"` // Base64 encoded
+	Metadata *MetadataParams `json:"metadata,omitempty"`
 }
 
 // GetParams represents parameters for the get method
@@ -160,9 +160,9 @@ type ExistsResult struct {
 
 // ListResult represents the result of a list operation
 type ListResult struct {
-	Objects      []ObjectInfo `json:"objects"`
-	NextCursor   string       `json:"next_cursor,omitempty"`
-	IsTruncated  bool         `json:"is_truncated"`
+	Objects     []ObjectInfo `json:"objects"`
+	NextCursor  string       `json:"next_cursor,omitempty"`
+	IsTruncated bool         `json:"is_truncated"`
 }
 
 // ObjectInfo represents information about an object
@@ -181,10 +181,10 @@ type ApplyPoliciesResult struct {
 
 // TriggerReplicationResult represents the result of trigger_replication
 type TriggerReplicationResult struct {
-	ObjectsSynced  int      `json:"objects_synced"`
-	ObjectsFailed  int      `json:"objects_failed"`
-	BytesTransferred int64  `json:"bytes_transferred"`
-	Errors         []string `json:"errors,omitempty"`
+	ObjectsSynced    int      `json:"objects_synced"`
+	ObjectsFailed    int      `json:"objects_failed"`
+	BytesTransferred int64    `json:"bytes_transferred"`
+	Errors           []string `json:"errors,omitempty"`
 }
 
 // ReplicationStatusResult represents replication status

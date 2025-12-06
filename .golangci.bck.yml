@@ -1,0 +1,240 @@
+run:
+  timeout: 5m
+  tests: false
+  build-tags:
+    - local
+    - awss3
+    - minio
+    - gcpstorage
+    - azureblob
+    - glacier
+    - azurearchive
+
+linters-settings:
+  gofmt:
+    rewrite-rules:
+      - pattern: 'interface{}'
+        replacement: 'any'
+  goimports:
+    local-prefixes: github.com/jeremyhahn/go-objstore
+  govet:
+    enable:
+      - shadow
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+  misspell:
+    locale: US
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - performance
+    disabled-checks:
+      - appendAssign
+      - hugeParam
+      - ifElseChain
+  staticcheck:
+    checks:
+      - SA*
+      - ST*
+      - '-SA4005'
+      - '-SA1019'
+  goconst:
+    min-len: 3
+    min-occurrences: 3
+  lll:
+    line-length: 120
+    tab-width: 1
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - gosec
+    - goconst
+    - err113
+    - ineffassign
+    - misspell
+    - unconvert
+  disable:
+    - unused
+    - staticcheck
+    - gocritic
+  fast: false
+
+issues:
+  exclude-rules:
+    - path: '_test\.go$'
+      linters:
+        - errcheck
+        - gosec
+        - gocritic
+        - err113
+        - goconst
+        - staticcheck
+        - unused
+        - ineffassign
+    - path: 'test_errors\.go$'
+      linters:
+        - unused
+    - path: 'test_helpers\.go$'
+      linters:
+        - unused
+    - path: 'mock_.*\.go$'
+      linters:
+        - unused
+    - path: 'test/integration'
+      linters:
+        - errcheck
+        - gosec
+        - err113
+    - path: 'cmd/'
+      linters:
+        - errcheck
+        - err113
+        - gocritic
+        - gofmt
+    - path: 'examples/'
+      linters:
+        - errcheck
+        - err113
+        - gocritic
+    - text: 'Error return value of .* is not checked'
+      linters:
+        - errcheck
+      path: 'test/'
+    - text: 'G104'
+      linters:
+        - gosec
+    - text: 'do not define dynamic errors'
+      linters:
+        - err113
+      path: '_test\.go$'
+    - text: 'SA1012: do not pass a nil Context'
+      linters:
+        - staticcheck
+    - text: 'ifElseChain'
+      linters:
+        - gocritic
+    - text: 'is unused'
+      linters:
+        - unused
+    - text: 'func.*is unused'
+      linters:
+        - unused
+    - text: 'type.*is unused'
+      linters:
+        - unused
+    - text: 'var.*is unused'
+      linters:
+        - unused
+    - text: 'QF1003:'
+      linters:
+        - staticcheck
+    - text: 'QF1008:'
+      linters:
+        - staticcheck
+    - text: 'shadow'
+      linters:
+        - govet
+    - text: 'exitAfterDefer'
+      linters:
+        - gocritic
+    - text: 'octalLiteral'
+      linters:
+        - gocritic
+    - text: 'emptyStringTest'
+      linters:
+        - gocritic
+    - text: 'paramTypeCombine'
+      linters:
+        - gocritic
+    - text: 'unnecessaryBlock'
+      linters:
+        - gocritic
+    - text: 'commentedOutCode'
+      linters:
+        - gocritic
+    - text: 'builtinShadow'
+      linters:
+        - gocritic
+    - text: 'preferStringWriter'
+      linters:
+        - gocritic
+    - text: 'S1009'
+      linters:
+        - gosimple
+    - text: 'ineffectual assignment'
+      linters:
+        - ineffassign
+    - text: 'unused'
+      linters:
+        - unused
+      path: '_test\.go$'
+    - text: 'is unused'
+      linters:
+        - unused
+      path: '_test\.go$'
+    - text: 'make it a constant'
+      linters:
+        - goconst
+      path: '_test\.go$'
+    - text: 'SA1019.*deprecated'
+      linters:
+        - staticcheck
+    - text: 'has 3 occurrences'
+      linters:
+        - goconst
+    - text: 'has 4 occurrences'
+      linters:
+        - goconst
+    - text: 'Error return value of.*is not checked'
+      linters:
+        - errcheck
+      path: 'pkg/(local|audit)/'
+    - text: '`cancelled` is a misspelling of `canceled`'
+      linters:
+        - misspell
+    - text: 'context\.(Canceled|DeadlineExceeded)'
+      linters:
+        - err113
+    - text: 'http\.ErrServerClosed'
+      linters:
+        - err113
+    - text: 'common\.ErrPolicyNotFound'
+      linters:
+        - err113
+    - text: 'QF1008:'
+      linters:
+        - staticcheck
+    - text: 'QF1003:'
+      linters:
+        - staticcheck
+    - text: 'S1009:'
+      linters:
+        - staticcheck
+    - text: 'ST1011:'
+      linters:
+        - staticcheck
+    - text: 'ifElseChain:'
+      linters:
+        - gocritic
+    - path: 'pkg/(server|storagefs|replication)/'
+      linters:
+        - errcheck
+        - gocritic
+        - staticcheck
+        - unconvert
+    - path: 'pkg/(s3|minio)/'
+      linters:
+        - unused
+        - staticcheck
+    - path: 'pkg/azure/'
+      linters:
+        - staticcheck
+        - gocritic
+
+output:
+  print-issued-lines: true
+  print-linter-name: true
+  sort-results: true

@@ -40,8 +40,8 @@ const (
 // EncryptionConfig specifies encryption settings for a replication layer.
 type EncryptionConfig struct {
 	Enabled    bool   `json:"enabled"`
-	Provider   string `json:"provider"`      // "noop", "custom"
-	DefaultKey string `json:"default_key"`   // Provider-agnostic key ID
+	Provider   string `json:"provider"`    // "noop", "custom"
+	DefaultKey string `json:"default_key"` // Provider-agnostic key ID
 }
 
 // EncryptionPolicy defines the three-layer encryption configuration.
@@ -53,17 +53,17 @@ type EncryptionPolicy struct {
 
 // ReplicationPolicy defines a replication configuration.
 type ReplicationPolicy struct {
-	ID                  string                 `json:"id"`
-	SourceBackend       string                 `json:"source_backend"`
-	SourceSettings      map[string]string      `json:"source_settings"`
-	SourcePrefix        string                 `json:"source_prefix,omitempty"`
-	DestinationBackend  string                 `json:"destination_backend"`
-	DestinationSettings map[string]string      `json:"destination_settings"`
-	CheckInterval       time.Duration          `json:"check_interval"`
-	LastSyncTime        time.Time              `json:"last_sync_time"`
-	Enabled             bool                   `json:"enabled"`
-	ReplicationMode     ReplicationMode        `json:"replication_mode"`
-	Encryption          *EncryptionPolicy      `json:"encryption,omitempty"`
+	ID                  string            `json:"id"`
+	SourceBackend       string            `json:"source_backend"`
+	SourceSettings      map[string]string `json:"source_settings"`
+	SourcePrefix        string            `json:"source_prefix,omitempty"`
+	DestinationBackend  string            `json:"destination_backend"`
+	DestinationSettings map[string]string `json:"destination_settings"`
+	CheckInterval       time.Duration     `json:"check_interval"`
+	LastSyncTime        time.Time         `json:"last_sync_time"`
+	Enabled             bool              `json:"enabled"`
+	ReplicationMode     ReplicationMode   `json:"replication_mode"`
+	Encryption          *EncryptionPolicy `json:"encryption,omitempty"`
 }
 
 // SyncResult contains the results of a sync operation.

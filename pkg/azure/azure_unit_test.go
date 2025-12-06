@@ -580,7 +580,7 @@ func TestAzure_Archive_Errors(t *testing.T) {
 func TestAzure_AddPolicy_Success(t *testing.T) {
 	mockMgmt := &mockManagementPoliciesClient{}
 	a := &Azure{
-		mgmtClient:    mockMgmt,
+		mgmtClient:     mockMgmt,
 		subscriptionID: "test-sub",
 		resourceGroup:  "test-rg",
 		accountName:    "testaccount",
@@ -684,7 +684,7 @@ func TestAzure_AddPolicy_Success(t *testing.T) {
 func TestAzure_AddPolicy_Archive(t *testing.T) {
 	mockMgmt := &mockManagementPoliciesClient{}
 	a := &Azure{
-		mgmtClient:    mockMgmt,
+		mgmtClient:     mockMgmt,
 		subscriptionID: "test-sub",
 		resourceGroup:  "test-rg",
 		accountName:    "testaccount",
@@ -775,7 +775,7 @@ func TestAzure_AddPolicy_Archive(t *testing.T) {
 func TestAzure_AddPolicy_InvalidID(t *testing.T) {
 	mockMgmt := &mockManagementPoliciesClient{}
 	a := &Azure{
-		mgmtClient:    mockMgmt,
+		mgmtClient:     mockMgmt,
 		subscriptionID: "test-sub",
 		resourceGroup:  "test-rg",
 		accountName:    "testaccount",
@@ -797,7 +797,7 @@ func TestAzure_AddPolicy_InvalidID(t *testing.T) {
 func TestAzure_AddPolicy_InvalidAction(t *testing.T) {
 	mockMgmt := &mockManagementPoliciesClient{}
 	a := &Azure{
-		mgmtClient:    mockMgmt,
+		mgmtClient:     mockMgmt,
 		subscriptionID: "test-sub",
 		resourceGroup:  "test-rg",
 		accountName:    "testaccount",
@@ -834,7 +834,7 @@ func TestAzure_AddPolicy_NoManagementClient(t *testing.T) {
 func TestAzure_RemovePolicy(t *testing.T) {
 	mockMgmt := &mockManagementPoliciesClient{}
 	a := &Azure{
-		mgmtClient:    mockMgmt,
+		mgmtClient:     mockMgmt,
 		subscriptionID: "test-sub",
 		resourceGroup:  "test-rg",
 		accountName:    "testaccount",
@@ -874,7 +874,7 @@ func TestAzure_RemovePolicy_NoManagementClient(t *testing.T) {
 func TestAzure_RemovePolicy_NonExistent(t *testing.T) {
 	mockMgmt := &mockManagementPoliciesClient{}
 	a := &Azure{
-		mgmtClient:    mockMgmt,
+		mgmtClient:     mockMgmt,
 		subscriptionID: "test-sub",
 		resourceGroup:  "test-rg",
 		accountName:    "testaccount",
@@ -890,7 +890,7 @@ func TestAzure_RemovePolicy_NonExistent(t *testing.T) {
 func TestAzure_RemovePolicy_MultipleRules(t *testing.T) {
 	mockMgmt := &mockManagementPoliciesClient{}
 	a := &Azure{
-		mgmtClient:    mockMgmt,
+		mgmtClient:     mockMgmt,
 		subscriptionID: "test-sub",
 		resourceGroup:  "test-rg",
 		accountName:    "testaccount",
@@ -948,7 +948,7 @@ func TestAzure_GetPolicies_NoManagementClient(t *testing.T) {
 func TestAzure_GetPolicies_Empty(t *testing.T) {
 	mockMgmt := &mockManagementPoliciesClient{}
 	a := &Azure{
-		mgmtClient:    mockMgmt,
+		mgmtClient:     mockMgmt,
 		subscriptionID: "test-sub",
 		resourceGroup:  "test-rg",
 		accountName:    "testaccount",
@@ -967,7 +967,7 @@ func TestAzure_GetPolicies_Empty(t *testing.T) {
 func TestAzure_GetPolicies_Multiple(t *testing.T) {
 	mockMgmt := &mockManagementPoliciesClient{}
 	a := &Azure{
-		mgmtClient:    mockMgmt,
+		mgmtClient:     mockMgmt,
 		subscriptionID: "test-sub",
 		resourceGroup:  "test-rg",
 		accountName:    "testaccount",

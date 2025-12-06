@@ -43,10 +43,10 @@ func TestSyncIncrementalSyncError(t *testing.T) {
 	source.getError = errors.New("get error")
 
 	policy := common.ReplicationPolicy{
-		ID:              "sync-error-test",
-		SourceBackend:   "local",
+		ID:                 "sync-error-test",
+		SourceBackend:      "local",
 		DestinationBackend: "local",
-		ReplicationMode: common.ReplicationModeOpaque,
+		ReplicationMode:    common.ReplicationModeOpaque,
 	}
 
 	syncer := &Syncer{
@@ -91,10 +91,10 @@ func TestSyncIncrementalDeleteError(t *testing.T) {
 	}
 
 	policy := common.ReplicationPolicy{
-		ID:              "delete-error-test",
-		SourceBackend:   "local",
+		ID:                 "delete-error-test",
+		SourceBackend:      "local",
 		DestinationBackend: "local",
-		ReplicationMode: common.ReplicationModeOpaque,
+		ReplicationMode:    common.ReplicationModeOpaque,
 	}
 
 	syncer := &Syncer{
@@ -154,10 +154,10 @@ func TestSyncAllMetricsUpdateWithErrors(t *testing.T) {
 	}
 
 	policy := common.ReplicationPolicy{
-		ID:              "metrics-errors-test",
-		SourceBackend:   "local",
+		ID:                 "metrics-errors-test",
+		SourceBackend:      "local",
 		DestinationBackend: "local",
-		ReplicationMode: common.ReplicationModeOpaque,
+		ReplicationMode:    common.ReplicationModeOpaque,
 	}
 
 	syncer := &Syncer{
@@ -209,14 +209,14 @@ func TestSyncPolicyParallelMetricsUpdate(t *testing.T) {
 	}
 
 	policy := common.ReplicationPolicy{
-		ID:              "parallel-metrics-test",
-		SourceBackend:   "local",
-		SourceSettings:  map[string]string{"path": "/tmp/src"},
-		DestinationBackend: "local",
+		ID:                  "parallel-metrics-test",
+		SourceBackend:       "local",
+		SourceSettings:      map[string]string{"path": "/tmp/src"},
+		DestinationBackend:  "local",
 		DestinationSettings: map[string]string{"path": "/tmp/dst"},
-		CheckInterval:   5 * time.Minute,
-		Enabled:         true,
-		ReplicationMode: common.ReplicationModeOpaque,
+		CheckInterval:       5 * time.Minute,
+		Enabled:             true,
+		ReplicationMode:     common.ReplicationModeOpaque,
 	}
 
 	err = mgr.AddPolicy(policy)
@@ -283,10 +283,10 @@ func TestSyncAllParallelEmptyKeys(t *testing.T) {
 	// No data - should result in no changes
 
 	policy := common.ReplicationPolicy{
-		ID:              "empty-parallel-test",
-		SourceBackend:   "local",
+		ID:                 "empty-parallel-test",
+		SourceBackend:      "local",
 		DestinationBackend: "local",
-		ReplicationMode: common.ReplicationModeOpaque,
+		ReplicationMode:    common.ReplicationModeOpaque,
 	}
 
 	syncer := &Syncer{
@@ -352,12 +352,12 @@ func TestGetFactoriesNoopDefaults(t *testing.T) {
 // TestNewSyncerOpaqueMode tests syncer creation in opaque mode
 func TestNewSyncerOpaqueMode(t *testing.T) {
 	policy := common.ReplicationPolicy{
-		ID:              "opaque-test",
-		SourceBackend:   "local",
-		SourceSettings:  map[string]string{"path": "/tmp/src"},
-		DestinationBackend: "local",
+		ID:                  "opaque-test",
+		SourceBackend:       "local",
+		SourceSettings:      map[string]string{"path": "/tmp/src"},
+		DestinationBackend:  "local",
 		DestinationSettings: map[string]string{"path": "/tmp/dst"},
-		ReplicationMode: common.ReplicationModeOpaque,
+		ReplicationMode:     common.ReplicationModeOpaque,
 		Encryption: &common.EncryptionPolicy{
 			Source: &common.EncryptionConfig{
 				Enabled: true,

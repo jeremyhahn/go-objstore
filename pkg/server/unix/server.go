@@ -102,7 +102,9 @@ func (s *Server) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	s.mu.Lock()
 	s.listener = listener
+	s.mu.Unlock()
 
 	// Set socket permissions
 	if err := os.Chmod(s.config.SocketPath, s.config.SocketPermissions); err != nil {
@@ -221,12 +223,13 @@ func (s *Server) processRequest(ctx context.Context, data []byte) *Response {
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.mu.Lock()
 	s.closed = true
+	listener := s.listener
 	s.mu.Unlock()
 
 	s.config.Logger.Info(ctx, "Shutting down Unix socket server")
 
-	if s.listener != nil {
-		s.listener.Close()
+	if listener != nil {
+		listener.Close()
 	}
 
 	// Wait for active connections to finish

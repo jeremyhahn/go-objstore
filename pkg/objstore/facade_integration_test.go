@@ -124,7 +124,7 @@ func TestFacadeIntegrationMultipleBackends(t *testing.T) {
 		metadata := &common.Metadata{
 			ContentType: "text/plain",
 			Custom: map[string]string{
-				"author": "test",
+				"author":  "test",
 				"version": "1.0",
 			},
 		}

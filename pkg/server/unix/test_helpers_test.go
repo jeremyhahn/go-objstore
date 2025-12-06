@@ -26,18 +26,21 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
+	"github.com/jeremyhahn/go-objstore/pkg/replication"
 )
 
 // MockStorage implements common.Storage for testing
 type MockStorage struct {
 	objects  map[string][]byte
 	metadata map[string]*common.Metadata
+	policies map[string]common.LifecyclePolicy
 }
 
 func NewMockStorage() *MockStorage {
 	return &MockStorage{
 		objects:  make(map[string][]byte),
 		metadata: make(map[string]*common.Metadata),
+		policies: make(map[string]common.LifecyclePolicy),
 	}
 }
 
@@ -178,15 +181,21 @@ func (m *MockStorage) RunLifecycle(ctx context.Context) error {
 }
 
 func (m *MockStorage) AddPolicy(policy common.LifecyclePolicy) error {
+	m.policies[policy.ID] = policy
 	return nil
 }
 
 func (m *MockStorage) RemovePolicy(id string) error {
+	delete(m.policies, id)
 	return nil
 }
 
 func (m *MockStorage) GetPolicies() ([]common.LifecyclePolicy, error) {
-	return []common.LifecyclePolicy{}, nil
+	policies := make([]common.LifecyclePolicy, 0, len(m.policies))
+	for _, p := range m.policies {
+		policies = append(policies, p)
+	}
+	return policies, nil
 }
 
 // mockReadCloser wraps a reader with a Close method
@@ -217,14 +226,14 @@ func readAll(data io.Reader) ([]byte, error) {
 // mockLogger implements adapters.Logger for testing
 type mockLogger struct{}
 
-func (l *mockLogger) Debug(ctx context.Context, msg string, fields ...adapters.Field)    {}
-func (l *mockLogger) Info(ctx context.Context, msg string, fields ...adapters.Field)     {}
-func (l *mockLogger) Warn(ctx context.Context, msg string, fields ...adapters.Field)     {}
-func (l *mockLogger) Error(ctx context.Context, msg string, fields ...adapters.Field)    {}
-func (l *mockLogger) WithFields(fields ...adapters.Field) adapters.Logger                { return l }
-func (l *mockLogger) WithContext(ctx context.Context) adapters.Logger                    { return l }
-func (l *mockLogger) SetLevel(level adapters.LogLevel)                                   {}
-func (l *mockLogger) GetLevel() adapters.LogLevel                                        { return adapters.DebugLevel }
+func (l *mockLogger) Debug(ctx context.Context, msg string, fields ...adapters.Field) {}
+func (l *mockLogger) Info(ctx context.Context, msg string, fields ...adapters.Field)  {}
+func (l *mockLogger) Warn(ctx context.Context, msg string, fields ...adapters.Field)  {}
+func (l *mockLogger) Error(ctx context.Context, msg string, fields ...adapters.Field) {}
+func (l *mockLogger) WithFields(fields ...adapters.Field) adapters.Logger             { return l }
+func (l *mockLogger) WithContext(ctx context.Context) adapters.Logger                 { return l }
+func (l *mockLogger) SetLevel(level adapters.LogLevel)                                {}
+func (l *mockLogger) GetLevel() adapters.LogLevel                                     { return adapters.DebugLevel }
 
 // initTestFacade initializes the objstore facade with a mock storage for testing.
 func initTestFacade(t *testing.T, storage common.Storage) {
@@ -271,4 +280,162 @@ func tempSocketPath(t *testing.T) string {
 func cleanupSocket(t *testing.T, path string) {
 	t.Helper()
 	os.Remove(path)
+}
+
+// MockReplicableStorage implements common.Storage and common.Replicable for testing
+type MockReplicableStorage struct {
+	*MockStorage
+	replMgr *MockReplicationManager
+}
+
+// NewMockReplicableStorage creates a storage that supports replication
+func NewMockReplicableStorage() *MockReplicableStorage {
+	return &MockReplicableStorage{
+		MockStorage: NewMockStorage(),
+		replMgr:     NewMockReplicationManager(),
+	}
+}
+
+// GetReplicationManager implements common.Replicable
+func (m *MockReplicableStorage) GetReplicationManager() (common.ReplicationManager, error) {
+	return m.replMgr, nil
+}
+
+// MockReplicationManager implements common.ReplicationManager for testing
+type MockReplicationManager struct {
+	policies map[string]common.ReplicationPolicy
+	statuses map[string]*MockReplicationStatus
+}
+
+// MockReplicationStatus holds mock status data
+type MockReplicationStatus struct {
+	PolicyID           string
+	LastSyncTime       time.Time
+	TotalObjectsSynced int64
+	TotalErrors        int64
+	SyncCount          int
+}
+
+// NewMockReplicationManager creates a new mock replication manager
+func NewMockReplicationManager() *MockReplicationManager {
+	return &MockReplicationManager{
+		policies: make(map[string]common.ReplicationPolicy),
+		statuses: make(map[string]*MockReplicationStatus),
+	}
+}
+
+func (m *MockReplicationManager) AddPolicy(policy common.ReplicationPolicy) error {
+	m.policies[policy.ID] = policy
+	m.statuses[policy.ID] = &MockReplicationStatus{
+		PolicyID:     policy.ID,
+		LastSyncTime: time.Now(),
+	}
+	return nil
+}
+
+func (m *MockReplicationManager) RemovePolicy(id string) error {
+	if _, ok := m.policies[id]; !ok {
+		return common.ErrPolicyNotFound
+	}
+	delete(m.policies, id)
+	delete(m.statuses, id)
+	return nil
+}
+
+func (m *MockReplicationManager) GetPolicy(id string) (*common.ReplicationPolicy, error) {
+	policy, ok := m.policies[id]
+	if !ok {
+		return nil, common.ErrPolicyNotFound
+	}
+	return &policy, nil
+}
+
+func (m *MockReplicationManager) GetPolicies() ([]common.ReplicationPolicy, error) {
+	policies := make([]common.ReplicationPolicy, 0, len(m.policies))
+	for _, p := range m.policies {
+		policies = append(policies, p)
+	}
+	return policies, nil
+}
+
+func (m *MockReplicationManager) SyncAll(ctx context.Context) (*common.SyncResult, error) {
+	synced := 0
+	for id := range m.policies {
+		if m.statuses[id] != nil {
+			m.statuses[id].SyncCount++
+			m.statuses[id].LastSyncTime = time.Now()
+		}
+		synced++
+	}
+	return &common.SyncResult{
+		Synced:     synced,
+		Failed:     0,
+		BytesTotal: 1024,
+	}, nil
+}
+
+func (m *MockReplicationManager) SyncPolicy(ctx context.Context, policyID string) (*common.SyncResult, error) {
+	if _, ok := m.policies[policyID]; !ok {
+		return nil, common.ErrPolicyNotFound
+	}
+	if m.statuses[policyID] != nil {
+		m.statuses[policyID].SyncCount++
+		m.statuses[policyID].LastSyncTime = time.Now()
+	}
+	return &common.SyncResult{
+		Synced:     1,
+		Failed:     0,
+		BytesTotal: 512,
+	}, nil
+}
+
+func (m *MockReplicationManager) SetBackendEncrypterFactory(policyID string, factory common.EncrypterFactory) error {
+	return nil
+}
+
+func (m *MockReplicationManager) SetSourceEncrypterFactory(policyID string, factory common.EncrypterFactory) error {
+	return nil
+}
+
+func (m *MockReplicationManager) SetDestinationEncrypterFactory(policyID string, factory common.EncrypterFactory) error {
+	return nil
+}
+
+func (m *MockReplicationManager) Run(ctx context.Context) {
+	// No-op for testing
+}
+
+// GetReplicationStatus returns mock status for the policy
+func (m *MockReplicationManager) GetReplicationStatus(id string) (*replication.ReplicationStatus, error) {
+	status, ok := m.statuses[id]
+	if !ok {
+		return nil, common.ErrPolicyNotFound
+	}
+	return &replication.ReplicationStatus{
+		PolicyID:           status.PolicyID,
+		LastSyncTime:       status.LastSyncTime,
+		TotalObjectsSynced: status.TotalObjectsSynced,
+		TotalErrors:        status.TotalErrors,
+		SyncCount:          int64(status.SyncCount),
+	}, nil
+}
+
+// initTestFacadeWithReplication initializes the facade with a replicable storage
+func initTestFacadeWithReplication(t *testing.T, storage *MockReplicableStorage) {
+	t.Helper()
+	objstore.Reset()
+	err := objstore.Initialize(&objstore.FacadeConfig{
+		Backends:       map[string]common.Storage{"default": storage},
+		DefaultBackend: "default",
+	})
+	if err != nil {
+		t.Fatalf("Failed to initialize facade: %v", err)
+	}
+}
+
+// createTestHandlerWithReplication creates a Handler with replication manager for testing
+func createTestHandlerWithReplication(t *testing.T, storage *MockReplicableStorage) *Handler {
+	t.Helper()
+	initTestFacadeWithReplication(t, storage)
+	return NewHandler("", &mockLogger{})
 }

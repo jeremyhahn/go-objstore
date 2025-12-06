@@ -313,12 +313,12 @@ func TestHandleGetReplicationPolicy_ErrorPaths(t *testing.T) {
 		handler := setupReplicationTestHandler(t, storage)
 
 		storage.repMgr.AddPolicy(common.ReplicationPolicy{
-			ID:                  "test-encryption",
-			SourceBackend:       "local",
-			DestinationBackend:  "s3",
-			CheckInterval:       5 * time.Minute,
-			Enabled:             true,
-			ReplicationMode:     common.ReplicationModeTransparent,
+			ID:                 "test-encryption",
+			SourceBackend:      "local",
+			DestinationBackend: "s3",
+			CheckInterval:      5 * time.Minute,
+			Enabled:            true,
+			ReplicationMode:    common.ReplicationModeTransparent,
 			Encryption: &common.EncryptionPolicy{
 				Backend: &common.EncryptionConfig{
 					Enabled:  true,
@@ -400,10 +400,10 @@ func TestHandleDeleteReplicationPolicy_ErrorPaths(t *testing.T) {
 
 		// Add policy first
 		storage.repMgr.AddPolicy(common.ReplicationPolicy{
-			ID:                  "test-id",
-			SourceBackend:       "local",
-			DestinationBackend:  "s3",
-			CheckInterval:       5 * time.Minute,
+			ID:                 "test-id",
+			SourceBackend:      "local",
+			DestinationBackend: "s3",
+			CheckInterval:      5 * time.Minute,
 		})
 
 		req := httptest.NewRequest(http.MethodDelete, "/replication/policies/test-id", nil)
@@ -480,10 +480,10 @@ func TestHandleTriggerReplication_ErrorPaths(t *testing.T) {
 
 		customMgr.MockReplicationManager.policies = map[string]common.ReplicationPolicy{
 			"test": {
-				ID:                  "test",
-				SourceBackend:       "local",
-				DestinationBackend:  "s3",
-				CheckInterval:       5 * time.Minute,
+				ID:                 "test",
+				SourceBackend:      "local",
+				DestinationBackend: "s3",
+				CheckInterval:      5 * time.Minute,
 			},
 		}
 

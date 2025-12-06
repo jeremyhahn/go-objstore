@@ -43,10 +43,10 @@ func TestSyncIncrementalWithChangelog(t *testing.T) {
 	}
 
 	policy := common.ReplicationPolicy{
-		ID:              "incremental-test",
-		SourceBackend:   "local",
+		ID:                 "incremental-test",
+		SourceBackend:      "local",
 		DestinationBackend: "local",
-		ReplicationMode: common.ReplicationModeOpaque,
+		ReplicationMode:    common.ReplicationModeOpaque,
 	}
 
 	syncer := &Syncer{
@@ -96,10 +96,10 @@ func TestSyncIncrementalWithDelete(t *testing.T) {
 	}
 
 	policy := common.ReplicationPolicy{
-		ID:              "delete-test",
-		SourceBackend:   "local",
+		ID:                 "delete-test",
+		SourceBackend:      "local",
 		DestinationBackend: "local",
-		ReplicationMode: common.ReplicationModeOpaque,
+		ReplicationMode:    common.ReplicationModeOpaque,
 	}
 
 	syncer := &Syncer{
@@ -146,10 +146,10 @@ func TestSyncIncrementalWithUnknownOperation(t *testing.T) {
 	dest := newExtendedMockStorage()
 
 	policy := common.ReplicationPolicy{
-		ID:              "unknown-op-test",
-		SourceBackend:   "local",
+		ID:                 "unknown-op-test",
+		SourceBackend:      "local",
 		DestinationBackend: "local",
-		ReplicationMode: common.ReplicationModeOpaque,
+		ReplicationMode:    common.ReplicationModeOpaque,
 	}
 
 	syncer := &Syncer{
@@ -200,10 +200,10 @@ func TestSyncObjectMetadataError(t *testing.T) {
 	// Don't add metadata - will cause GetMetadata to fail
 
 	policy := common.ReplicationPolicy{
-		ID:              "metadata-error-test",
-		SourceBackend:   "local",
+		ID:                 "metadata-error-test",
+		SourceBackend:      "local",
 		DestinationBackend: "local",
-		ReplicationMode: common.ReplicationModeOpaque,
+		ReplicationMode:    common.ReplicationModeOpaque,
 	}
 
 	syncer := &Syncer{
@@ -237,10 +237,10 @@ func TestSyncObjectGetError(t *testing.T) {
 	source.getError = common.ErrInternal
 
 	policy := common.ReplicationPolicy{
-		ID:              "get-error-test",
-		SourceBackend:   "local",
+		ID:                 "get-error-test",
+		SourceBackend:      "local",
 		DestinationBackend: "local",
-		ReplicationMode: common.ReplicationModeOpaque,
+		ReplicationMode:    common.ReplicationModeOpaque,
 	}
 
 	syncer := &Syncer{
@@ -265,10 +265,10 @@ func TestSyncerClose(t *testing.T) {
 	dest := newExtendedMockStorage()
 
 	policy := common.ReplicationPolicy{
-		ID:              "close-test",
-		SourceBackend:   "local",
+		ID:                 "close-test",
+		SourceBackend:      "local",
 		DestinationBackend: "local",
-		ReplicationMode: common.ReplicationModeOpaque,
+		ReplicationMode:    common.ReplicationModeOpaque,
 	}
 
 	syncer := &Syncer{
@@ -351,10 +351,10 @@ func TestSyncAllParallelSubmitError(t *testing.T) {
 	}
 
 	policy := common.ReplicationPolicy{
-		ID:              "submit-test",
-		SourceBackend:   "local",
+		ID:                 "submit-test",
+		SourceBackend:      "local",
 		DestinationBackend: "local",
-		ReplicationMode: common.ReplicationModeOpaque,
+		ReplicationMode:    common.ReplicationModeOpaque,
 	}
 
 	syncer := &Syncer{
