@@ -23,7 +23,7 @@ import (
 
 func TestSetupRoutes(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	SetupRoutes(router, handler)
@@ -70,7 +70,7 @@ func TestSetupRoutes(t *testing.T) {
 
 func TestRoutesCRUDOperations(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	SetupRoutes(router, handler)
@@ -116,7 +116,7 @@ func TestRoutesCRUDOperations(t *testing.T) {
 
 func TestRoutesMetadataOperations(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	SetupRoutes(router, handler)
@@ -144,7 +144,7 @@ func TestRoutesMetadataOperations(t *testing.T) {
 
 func TestRoutesAPIVersioning(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	SetupRoutes(router, handler)
@@ -171,7 +171,7 @@ func TestRoutesAPIVersioning(t *testing.T) {
 
 func TestRoutesSwagger(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	SetupRoutes(router, handler)
@@ -190,7 +190,7 @@ func TestRoutesSwagger(t *testing.T) {
 
 func TestRoutesWithTrailingSlash(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	SetupRoutes(router, handler)

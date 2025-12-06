@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
+	"github.com/jeremyhahn/go-objstore/pkg/replication"
 )
 
 // MockStorageWithReplication extends MockStorage to support replication
@@ -46,20 +47,35 @@ func (m *MockStorageWithReplication) GetReplicationManager() (common.Replication
 
 // MockReplicationManager implements common.ReplicationManager for testing
 type MockReplicationManager struct {
-	policies      map[string]common.ReplicationPolicy
-	syncCalled    bool
-	syncPolicyID  string
-	syncAllCalled bool
-	addError      error
-	removeError   error
-	getError      error
-	syncError     error
+	policies            map[string]common.ReplicationPolicy
+	replicationStatuses map[string]*replication.ReplicationStatus
+	syncCalled          bool
+	syncPolicyID        string
+	syncAllCalled       bool
+	addError            error
+	removeError         error
+	getError            error
+	syncError           error
+	getStatusError      error
 }
 
 func NewMockReplicationManager() *MockReplicationManager {
 	return &MockReplicationManager{
-		policies: make(map[string]common.ReplicationPolicy),
+		policies:            make(map[string]common.ReplicationPolicy),
+		replicationStatuses: make(map[string]*replication.ReplicationStatus),
 	}
+}
+
+// GetReplicationStatus implements the optional status provider interface
+func (m *MockReplicationManager) GetReplicationStatus(id string) (*replication.ReplicationStatus, error) {
+	if m.getStatusError != nil {
+		return nil, m.getStatusError
+	}
+	status, exists := m.replicationStatuses[id]
+	if !exists {
+		return nil, common.ErrPolicyNotFound
+	}
+	return status, nil
 }
 
 func (m *MockReplicationManager) AddPolicy(policy common.ReplicationPolicy) error {
@@ -163,6 +179,7 @@ func TestToolRegistry_RegisterReplicationTools(t *testing.T) {
 		"objstore_list_replication_policies",
 		"objstore_get_replication_policy",
 		"objstore_trigger_replication",
+		"objstore_get_replication_status",
 	}
 
 	for _, toolName := range expectedTools {
@@ -184,7 +201,7 @@ func TestToolRegistry_RegisterReplicationTools(t *testing.T) {
 
 func TestToolExecutor_ExecuteAddReplicationPolicy(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 
 	tests := []struct {
 		name      string
@@ -340,7 +357,7 @@ func TestToolExecutor_ExecuteAddReplicationPolicy(t *testing.T) {
 
 func TestToolExecutor_ExecuteRemoveReplicationPolicy(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 
 	// Add a policy first
 	storage.repMgr.AddPolicy(common.ReplicationPolicy{
@@ -405,7 +422,7 @@ func TestToolExecutor_ExecuteRemoveReplicationPolicy(t *testing.T) {
 
 func TestToolExecutor_ExecuteListReplicationPolicies(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 
 	// Add some policies
 	storage.repMgr.AddPolicy(common.ReplicationPolicy{
@@ -448,7 +465,7 @@ func TestToolExecutor_ExecuteListReplicationPolicies(t *testing.T) {
 
 func TestToolExecutor_ExecuteGetReplicationPolicy(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 
 	// Add a policy
 	storage.repMgr.AddPolicy(common.ReplicationPolicy{
@@ -519,7 +536,7 @@ func TestToolExecutor_ExecuteGetReplicationPolicy(t *testing.T) {
 
 func TestToolExecutor_ExecuteTriggerReplication(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 
 	// Add a policy
 	storage.repMgr.AddPolicy(common.ReplicationPolicy{
@@ -608,7 +625,7 @@ func TestToolExecutor_ExecuteTriggerReplication(t *testing.T) {
 
 func TestReplicationToolsWithoutSupport(t *testing.T) {
 	storage := NewMockStorage() // Regular storage without replication support
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 
 	tools := []string{
 		"objstore_add_replication_policy",
@@ -703,5 +720,91 @@ func TestParseEncryptionConfig(t *testing.T) {
 				t.Errorf("expected DefaultKey %s, got %s", tt.expected.DefaultKey, result.DefaultKey)
 			}
 		})
+	}
+}
+
+// Tests for GetReplicationStatus
+
+func TestToolExecutor_ExecuteGetReplicationStatus_Success(t *testing.T) {
+	storage := NewMockStorageWithReplication()
+	executor := createTestToolExecutor(t, storage)
+
+	// Set up a replication status
+	storage.repMgr.replicationStatuses["test-policy"] = &replication.ReplicationStatus{
+		PolicyID:           "test-policy",
+		SourceBackend:      "local",
+		DestinationBackend: "s3",
+		Enabled:            true,
+		TotalObjectsSynced: 100,
+		TotalBytesSynced:   1024 * 1024,
+	}
+
+	result, err := executor.Execute(context.Background(), "objstore_get_replication_status", map[string]any{
+		"policy_id": "test-policy",
+	})
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+		return
+	}
+
+	var resultMap map[string]any
+	if err := json.Unmarshal([]byte(result), &resultMap); err != nil {
+		t.Errorf("failed to parse result: %v", err)
+	}
+	if !resultMap["success"].(bool) {
+		t.Error("expected success to be true")
+	}
+	if resultMap["policy_id"].(string) != "test-policy" {
+		t.Errorf("expected policy_id 'test-policy', got %s", resultMap["policy_id"])
+	}
+}
+
+func TestToolExecutor_ExecuteGetReplicationStatus_MissingPolicyID(t *testing.T) {
+	storage := NewMockStorageWithReplication()
+	executor := createTestToolExecutor(t, storage)
+
+	_, err := executor.Execute(context.Background(), "objstore_get_replication_status", map[string]any{})
+	if err == nil {
+		t.Error("expected error, got nil")
+	}
+}
+
+func TestToolExecutor_ExecuteGetReplicationStatus_NotFound(t *testing.T) {
+	storage := NewMockStorageWithReplication()
+	executor := createTestToolExecutor(t, storage)
+
+	_, err := executor.Execute(context.Background(), "objstore_get_replication_status", map[string]any{
+		"policy_id": "nonexistent",
+	})
+	if err == nil {
+		t.Error("expected error, got nil")
+	}
+}
+
+func TestToolExecutor_ExecuteGetReplicationStatus_ReplicationNotSupported(t *testing.T) {
+	storage := NewMockStorage() // Regular storage without replication support
+	executor := createTestToolExecutor(t, storage)
+
+	_, err := executor.Execute(context.Background(), "objstore_get_replication_status", map[string]any{
+		"policy_id": "test-policy",
+	})
+	if err == nil {
+		t.Error("expected error for unsupported storage, got nil")
+	}
+	if !strings.Contains(err.Error(), "replication not supported") {
+		t.Errorf("expected 'replication not supported' error, got: %v", err)
+	}
+}
+
+func TestToolExecutor_ExecuteGetReplicationStatus_Error(t *testing.T) {
+	storage := NewMockStorageWithReplication()
+	storage.repMgr.getStatusError = common.ErrInternal
+	executor := createTestToolExecutor(t, storage)
+
+	_, err := executor.Execute(context.Background(), "objstore_get_replication_status", map[string]any{
+		"policy_id": "test-policy",
+	})
+	if err == nil {
+		t.Error("expected error, got nil")
 	}
 }

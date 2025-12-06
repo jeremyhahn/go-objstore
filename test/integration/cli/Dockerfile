@@ -14,7 +14,7 @@ RUN apk add --no-cache \
 # Set working directory
 WORKDIR /app
 
-# Copy go module files
+# Copy go module files first for better caching
 COPY go.mod go.sum ./
 
 # Download dependencies
@@ -29,5 +29,9 @@ RUN go build -tags "local awss3 minio gcpstorage azureblob glacier azurearchive"
 # Create test storage directory
 RUN mkdir -p /test-storage
 
-# Run tests by default with all backends
-CMD ["go", "test", "-v", "-tags", "local awss3 minio gcpstorage azureblob glacier azurearchive", "./test/integration/cli/...", "-timeout", "10m"]
+# Default environment
+ENV OBJECTSTORE_BACKEND=local
+ENV OBJECTSTORE_BACKEND_PATH=/test-storage
+
+# Run tests by default with integration tag
+CMD ["go", "test", "-v", "-tags", "integration,local,awss3,minio,gcpstorage,azureblob,glacier,azurearchive", "./test/integration/cli/...", "-timeout", "10m"]

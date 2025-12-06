@@ -23,8 +23,23 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/common"
+	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	"github.com/jeremyhahn/go-objstore/pkg/server/middleware"
 )
+
+// initServerTestFacade initializes the objstore facade with a mock storage for testing.
+func initServerTestFacade(t *testing.T, storage common.Storage) {
+	t.Helper()
+	objstore.Reset()
+	err := objstore.Initialize(&objstore.FacadeConfig{
+		Backends:       map[string]common.Storage{"default": storage},
+		DefaultBackend: "default",
+	})
+	if err != nil {
+		t.Fatalf("Failed to initialize facade: %v", err)
+	}
+}
 
 // Test NewServer with nil logger (should use default)
 func TestNewServerNilLogger(t *testing.T) {
@@ -36,6 +51,7 @@ func TestNewServerNilLogger(t *testing.T) {
 		Mode:   gin.TestMode,
 	}
 
+	initServerTestFacade(t, storage)
 	server, err := NewServer(storage, config)
 	if err != nil {
 		t.Fatalf("NewServer() with nil logger failed: %v", err)
@@ -56,6 +72,7 @@ func TestNewServerNilAuthenticator(t *testing.T) {
 		Mode:          gin.TestMode,
 	}
 
+	initServerTestFacade(t, storage)
 	server, err := NewServer(storage, config)
 	if err != nil {
 		t.Fatalf("NewServer() with nil authenticator failed: %v", err)
@@ -77,6 +94,7 @@ func TestNewServerNilAuditLoggerWithAuditEnabled(t *testing.T) {
 		Mode:        gin.TestMode,
 	}
 
+	initServerTestFacade(t, storage)
 	server, err := NewServer(storage, config)
 	if err != nil {
 		t.Fatalf("NewServer() with nil audit logger failed: %v", err)
@@ -98,6 +116,7 @@ func TestNewServerNilAuditLoggerWithAuditDisabled(t *testing.T) {
 		Mode:        gin.TestMode,
 	}
 
+	initServerTestFacade(t, storage)
 	server, err := NewServer(storage, config)
 	if err != nil {
 		t.Fatalf("NewServer() with nil audit logger and audit disabled failed: %v", err)
@@ -126,6 +145,7 @@ func TestNewServerAllMiddlewareEnabled(t *testing.T) {
 		SecurityHeadersConfig: middleware.DefaultSecurityHeadersConfig(),
 	}
 
+	initServerTestFacade(t, storage)
 	server, err := NewServer(storage, config)
 	if err != nil {
 		t.Fatalf("NewServer() with all middleware failed: %v", err)
@@ -161,6 +181,7 @@ func TestNewServerAllMiddlewareDisabled(t *testing.T) {
 		Mode:                  gin.TestMode,
 	}
 
+	initServerTestFacade(t, storage)
 	server, err := NewServer(storage, config)
 	if err != nil {
 		t.Fatalf("NewServer() with all middleware disabled failed: %v", err)
@@ -194,6 +215,7 @@ func TestNewServerWithRateLimiting(t *testing.T) {
 		Mode: gin.TestMode,
 	}
 
+	initServerTestFacade(t, storage)
 	server, err := NewServer(storage, config)
 	if err != nil {
 		t.Fatalf("NewServer() with rate limiting failed: %v", err)
@@ -221,6 +243,7 @@ func TestNewServerWithSecurityHeaders(t *testing.T) {
 		Mode: gin.TestMode,
 	}
 
+	initServerTestFacade(t, storage)
 	server, err := NewServer(storage, config)
 	if err != nil {
 		t.Fatalf("NewServer() with security headers failed: %v", err)
@@ -241,6 +264,7 @@ func TestNewServerWithRequestID(t *testing.T) {
 		Mode:            gin.TestMode,
 	}
 
+	initServerTestFacade(t, storage)
 	server, err := NewServer(storage, config)
 	if err != nil {
 		t.Fatalf("NewServer() with request ID failed: %v", err)
@@ -267,6 +291,7 @@ func TestNewServerWithAuditMiddleware(t *testing.T) {
 		Mode:        gin.TestMode,
 	}
 
+	initServerTestFacade(t, storage)
 	server, err := NewServer(storage, config)
 	if err != nil {
 		t.Fatalf("NewServer() with audit middleware failed: %v", err)
@@ -287,6 +312,7 @@ func TestNewServerWithAuditDisabled(t *testing.T) {
 		Mode:        gin.TestMode,
 	}
 
+	initServerTestFacade(t, storage)
 	server, err := NewServer(storage, config)
 	if err != nil {
 		t.Fatalf("NewServer() with audit disabled failed: %v", err)
@@ -386,6 +412,7 @@ func TestServerWithZeroTimeouts(t *testing.T) {
 		Mode:         gin.TestMode,
 	}
 
+	initServerTestFacade(t, storage)
 	server, err := NewServer(storage, config)
 	if err != nil {
 		t.Fatalf("NewServer() with zero timeouts failed: %v", err)
@@ -413,6 +440,7 @@ func TestServerShutdownAlreadyStopped(t *testing.T) {
 		Mode: gin.TestMode,
 	}
 
+	initServerTestFacade(t, storage)
 	server, err := NewServer(storage, config)
 	if err != nil {
 		t.Fatalf("NewServer() failed: %v", err)
@@ -445,7 +473,8 @@ func TestServerWithDifferentHosts(t *testing.T) {
 				Mode: gin.TestMode,
 			}
 
-			server, err := NewServer(storage, config)
+			initServerTestFacade(t, storage)
+	server, err := NewServer(storage, config)
 			if err != nil {
 				t.Errorf("NewServer() with host %s failed: %v", host, err)
 			}
@@ -472,7 +501,8 @@ func TestServerWithDifferentPorts(t *testing.T) {
 				Mode: gin.TestMode,
 			}
 
-			server, err := NewServer(storage, config)
+			initServerTestFacade(t, storage)
+	server, err := NewServer(storage, config)
 			if err != nil {
 				t.Errorf("NewServer() with port %d failed: %v", port, err)
 			}
@@ -490,6 +520,7 @@ func TestServerWithDifferentPorts(t *testing.T) {
 // Test server Handler() method
 func TestServerHandlerMethod(t *testing.T) {
 	storage := NewMockStorage()
+	initServerTestFacade(t, storage)
 	server, err := NewServer(storage, nil)
 	if err != nil {
 		t.Fatalf("NewServer() failed: %v", err)
@@ -509,6 +540,7 @@ func TestServerHandlerMethod(t *testing.T) {
 // Test server Router() method
 func TestServerRouterMethod(t *testing.T) {
 	storage := NewMockStorage()
+	initServerTestFacade(t, storage)
 	server, err := NewServer(storage, nil)
 	if err != nil {
 		t.Fatalf("NewServer() failed: %v", err)
@@ -534,6 +566,7 @@ func TestServerAddressMethod(t *testing.T) {
 		Mode: gin.TestMode,
 	}
 
+	initServerTestFacade(t, storage)
 	server, err := NewServer(storage, config)
 	if err != nil {
 		t.Fatalf("NewServer() failed: %v", err)
@@ -561,6 +594,7 @@ func TestNewServerWithCustomLogger(t *testing.T) {
 		Mode:   gin.TestMode,
 	}
 
+	initServerTestFacade(t, storage)
 	server, err := NewServer(storage, config)
 	if err != nil {
 		t.Fatalf("NewServer() with custom logger failed: %v", err)
@@ -582,6 +616,7 @@ func TestNewServerWithCustomAuthenticator(t *testing.T) {
 		Mode:          gin.TestMode,
 	}
 
+	initServerTestFacade(t, storage)
 	server, err := NewServer(storage, config)
 	if err != nil {
 		t.Fatalf("NewServer() with custom authenticator failed: %v", err)
@@ -604,6 +639,7 @@ func TestNewServerWithCustomAuditLogger(t *testing.T) {
 		Mode:        gin.TestMode,
 	}
 
+	initServerTestFacade(t, storage)
 	server, err := NewServer(storage, config)
 	if err != nil {
 		t.Fatalf("NewServer() with custom audit logger failed: %v", err)

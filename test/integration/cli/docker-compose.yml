@@ -7,14 +7,12 @@ services:
       context: ../../..
       dockerfile: test/integration/cli/Dockerfile
     volumes:
-      - ../../..:/app
       - test-storage:/test-storage
-    working_dir: /app
     environment:
       - OBJECTSTORE_BACKEND=local
       - OBJECTSTORE_BACKEND_PATH=/test-storage
       - GO_TEST_TIMEOUT=10m
-    command: go test -v -tags "local awss3 minio gcpstorage azureblob glacier azurearchive" ./test/integration/cli/... -timeout 10m
+    # Note: Tests run in the container where the binary is pre-built at /usr/local/bin/objstore
 
 volumes:
   test-storage:

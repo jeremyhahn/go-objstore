@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  objstore:
+    build:
+      context: ../../../../../
+      dockerfile: Dockerfile
+    container_name: objstore-test
+    ports:
+      - "8080:8080"   # REST API
+      - "50051:50051" # gRPC
+      - "8443:8443"   # QUIC/HTTP3
+    environment:
+      - BACKEND_TYPE=local
+      - LOCAL_BASE_PATH=/data
+      - REST_ENABLED=true
+      - REST_PORT=8080
+      - GRPC_ENABLED=true
+      - GRPC_PORT=50051
+      - QUIC_ENABLED=true
+      - QUIC_PORT=8443
+    volumes:
+      - test-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  test-data:

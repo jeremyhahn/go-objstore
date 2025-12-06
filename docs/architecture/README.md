@@ -43,8 +43,17 @@ Automatic data retention and archival policies. Define rules for deleting old ob
 ### Interface-Based Design
 Everything implements well-defined interfaces. Storage backends implement `Storage`, servers implement `Server`, and adapters implement specific interfaces for logging, authentication, and TLS.
 
+### Facade Pattern
+The `objstore` package provides a centralized API for all storage operations. The facade pattern:
+- Provides a single entry point for all storage operations
+- Handles input validation and sanitization at a single point
+- Routes operations to the appropriate backend using `backend:key` syntax
+- Ensures consistent error handling across all access methods
+
+Initialize the facade once at application startup, then use `objstore.*` functions throughout your code.
+
 ### Factory Pattern
-The factory pattern abstracts backend creation. Instead of importing and instantiating specific backends, you use the factory with a backend type string and configuration map.
+The factory pattern abstracts backend creation. The facade uses the factory internally when you provide `BackendConfigs`. For advanced use cases, you can also create backends directly with the factory and pass them to the facade.
 
 ### Pluggable Adapters
 Custom logging, authentication, and TLS configuration are injected through adapter interfaces. This allows integration with existing systems without modifying core code.

@@ -93,7 +93,7 @@ func TestPutObjectStorageError(t *testing.T) {
 		MockStorage: NewMockStorage(),
 		putErr:      errTestStorageError,
 	}
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.PUT("/objects/*key", handler.PutObject)
@@ -113,7 +113,7 @@ func TestGetObjectMetadataError(t *testing.T) {
 		MockStorage: NewMockStorage(),
 		metadataErr: errTestMetadataError,
 	}
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.GET("/objects/*key", handler.GetObject)
@@ -133,7 +133,7 @@ func TestDeleteObjectExistsError(t *testing.T) {
 		MockStorage: NewMockStorage(),
 		existsErr:   errTestExistsCheck,
 	}
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.DELETE("/objects/*key", handler.DeleteObject)
@@ -155,7 +155,7 @@ func TestDeleteObjectDeleteError(t *testing.T) {
 	}
 	storage.PutWithContext(context.Background(), "test.txt", strings.NewReader("content"))
 
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.DELETE("/objects/*key", handler.DeleteObject)
@@ -175,7 +175,7 @@ func TestHeadObjectExistsError(t *testing.T) {
 		MockStorage: NewMockStorage(),
 		existsErr:   errors.New("exists error"),
 	}
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.HEAD("/objects/*key", handler.HeadObject)
@@ -196,7 +196,7 @@ func TestListObjectsError(t *testing.T) {
 		return nil, errors.New("list error")
 	}
 
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.GET("/objects", handler.ListObjects)
@@ -213,7 +213,7 @@ func TestListObjectsError(t *testing.T) {
 
 func TestListObjectsNegativeLimit(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.GET("/objects", handler.ListObjects)
@@ -236,7 +236,7 @@ func TestListObjectsLargeLimit(t *testing.T) {
 		storage.PutWithContext(context.Background(), key, strings.NewReader("content"))
 	}
 
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.GET("/objects", handler.ListObjects)
@@ -258,7 +258,7 @@ func TestGetObjectMetadataHandler(t *testing.T) {
 		metadataErr: errTestMetadataError,
 	}
 
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.GET("/metadata/:key", handler.GetObjectMetadata)
@@ -279,7 +279,7 @@ func TestUpdateObjectMetadataExistsError(t *testing.T) {
 		existsErr:   errors.New("exists error"),
 	}
 
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.PUT("/metadata/:key", handler.UpdateObjectMetadata)
@@ -305,7 +305,7 @@ func TestUpdateObjectMetadataUpdateError(t *testing.T) {
 	}
 	storage.PutWithContext(context.Background(), "test.txt", strings.NewReader("content"))
 
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.PUT("/metadata/:key", handler.UpdateObjectMetadata)
@@ -356,7 +356,7 @@ func TestRespondWithListObjectsWithPrefixes(t *testing.T) {
 
 func TestPutObjectMultipartNoMetadata(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.PUT("/objects/*key", handler.PutObject)
@@ -384,7 +384,7 @@ func TestPutObjectMultipartNoMetadata(t *testing.T) {
 
 func TestGetObjectNoContentType(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	// Add test object without content type
 	storage.PutWithMetadata(context.Background(), "test.txt", strings.NewReader("test content"), &common.Metadata{
@@ -411,7 +411,7 @@ func TestGetObjectNoContentType(t *testing.T) {
 
 func TestGetObjectNoSize(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	// Add test object without size
 	storage.PutWithMetadata(context.Background(), "test.txt", strings.NewReader("test content"), &common.Metadata{
@@ -434,7 +434,7 @@ func TestGetObjectNoSize(t *testing.T) {
 
 func TestGetObjectWithContentEncoding(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	// Add test object with content encoding
 	storage.PutWithMetadata(context.Background(), "test.txt", strings.NewReader("test content"), &common.Metadata{
@@ -462,7 +462,7 @@ func TestGetObjectWithContentEncoding(t *testing.T) {
 
 func TestHeadObjectWithMetadata(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	// Add test object with full metadata
 	storage.PutWithMetadata(context.Background(), "test.txt", strings.NewReader("test content"), &common.Metadata{
@@ -495,7 +495,7 @@ func TestHeadObjectWithMetadata(t *testing.T) {
 
 func TestPutObjectNoBody(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.PUT("/objects/*key", handler.PutObject)
@@ -513,7 +513,7 @@ func TestPutObjectNoBody(t *testing.T) {
 
 func TestGetObjectWithAllHeaders(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	// Add test object with all metadata fields
 	now := time.Now()

@@ -174,8 +174,8 @@ test:
 	@echo "$(GREEN)✓ Unit tests complete$(RESET)"
 
 .PHONY: integration-test
-## integration-test: Run all integration tests (all backends)
-integration-test: integration-test-local integration-test-s3 integration-test-minio integration-test-azure integration-test-gcs integration-test-factory
+## integration-test: Run all integration tests (all backends + CLI + replication)
+integration-test: integration-test-local integration-test-s3 integration-test-minio integration-test-azure integration-test-gcs integration-test-factory integration-test-replication integration-test-cli
 	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
 
 .PHONY: integration-test-local
@@ -236,6 +236,15 @@ integration-test-factory:
 	@cd test/integration/factory && $(DOCKER_COMPOSE) down -v
 	@echo "$(GREEN)✓ Factory integration tests complete$(RESET)"
 
+.PHONY: integration-test-replication
+## integration-test-replication: Run replication integration tests
+integration-test-replication:
+	@echo "$(CYAN)$(BOLD)→ Running replication integration tests...$(RESET)"
+	@cd test/integration/replication && $(DOCKER_COMPOSE) down -v >/dev/null 2>&1 || true
+	@cd test/integration/replication && $(DOCKER_COMPOSE) run --rm test
+	@cd test/integration/replication && $(DOCKER_COMPOSE) down -v
+	@echo "$(GREEN)✓ Replication integration tests complete$(RESET)"
+
 .PHONY: integration-test-encryption
 ## integration-test-encryption: Run encryption integration tests
 integration-test-encryption:
@@ -243,14 +252,18 @@ integration-test-encryption:
 	@$(GO) test -tags=integration -v ./pkg/encryption
 	@echo "$(GREEN)✓ Encryption integration tests complete$(RESET)"
 
-.PHONY: test-cli
-## test-cli: Run CLI integration tests in Docker
-test-cli:
+.PHONY: integration-test-cli
+## integration-test-cli: Run CLI integration tests in Docker
+integration-test-cli:
 	@echo "$(CYAN)$(BOLD)→ Running CLI integration tests...$(RESET)"
 	@cd test/integration/cli && $(DOCKER_COMPOSE) down -v >/dev/null 2>&1 || true
-	@cd test/integration/cli && $(DOCKER_COMPOSE) up --abort-on-container-exit --exit-code-from test
+	@cd test/integration/cli && $(DOCKER_COMPOSE) up --build --abort-on-container-exit --exit-code-from test
 	@cd test/integration/cli && $(DOCKER_COMPOSE) down -v
 	@echo "$(GREEN)✓ CLI integration tests complete$(RESET)"
+
+.PHONY: test-cli
+## test-cli: Alias for integration-test-cli
+test-cli: integration-test-cli
 
 .PHONY: test-servers
 ## test-servers: Run server integration tests (gRPC, REST, QUIC, MCP) in Docker
@@ -265,9 +278,95 @@ test-servers:
 	@echo "$(GREEN)✓ Server integration tests complete$(RESET)"
 
 .PHONY: integration-test-all
-## integration-test-all: Run all integration tests including CLI and servers
-integration-test-all: integration-test test-cli test-servers
-	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
+## integration-test-all: Run all integration tests including servers
+integration-test-all: integration-test test-servers
+	@echo "$(GREEN)$(BOLD)✓ All integration tests complete (including servers)!$(RESET)"
+
+# ==============================================================================
+# SDK Tests
+# ==============================================================================
+
+.PHONY: test-sdks
+## test-sdks: Run ALL SDK unit tests (TypeScript, Go, Python, Ruby, Rust, C#, JavaScript)
+test-sdks:
+	@echo "$(CYAN)$(BOLD)→ Running all SDK unit tests...$(RESET)"
+	@cd api/sdks && $(MAKE) test
+
+.PHONY: integration-test-sdks
+## integration-test-sdks: Run ALL SDK integration tests (TypeScript, Go, Python, Ruby, Rust, C#, JavaScript)
+integration-test-sdks:
+	@echo "$(CYAN)$(BOLD)→ Running all SDK integration tests...$(RESET)"
+	@cd api/sdks && $(MAKE) integration-test
+
+.PHONY: test-sdk-typescript
+## test-sdk-typescript: Run TypeScript SDK unit tests
+test-sdk-typescript:
+	@cd api/sdks/typescript && $(MAKE) test
+
+.PHONY: test-sdk-go
+## test-sdk-go: Run Go SDK unit tests
+test-sdk-go:
+	@cd api/sdks/go && $(MAKE) test
+
+.PHONY: test-sdk-python
+## test-sdk-python: Run Python SDK unit tests
+test-sdk-python:
+	@cd api/sdks/python && $(MAKE) test
+
+.PHONY: test-sdk-ruby
+## test-sdk-ruby: Run Ruby SDK unit tests
+test-sdk-ruby:
+	@cd api/sdks/ruby && $(MAKE) test
+
+.PHONY: test-sdk-rust
+## test-sdk-rust: Run Rust SDK unit tests
+test-sdk-rust:
+	@cd api/sdks/rust && $(MAKE) test
+
+.PHONY: test-sdk-csharp
+## test-sdk-csharp: Run C# SDK unit tests
+test-sdk-csharp:
+	@cd api/sdks/csharp && $(MAKE) test
+
+.PHONY: test-sdk-javascript
+## test-sdk-javascript: Run JavaScript SDK unit tests
+test-sdk-javascript:
+	@cd api/sdks/javascript && $(MAKE) test
+
+.PHONY: integration-test-sdk-typescript
+## integration-test-sdk-typescript: Run TypeScript SDK integration tests
+integration-test-sdk-typescript:
+	@cd api/sdks/typescript && $(MAKE) integration-test
+
+.PHONY: integration-test-sdk-go
+## integration-test-sdk-go: Run Go SDK integration tests
+integration-test-sdk-go:
+	@cd api/sdks/go && $(MAKE) integration-test
+
+.PHONY: integration-test-sdk-python
+## integration-test-sdk-python: Run Python SDK integration tests
+integration-test-sdk-python:
+	@cd api/sdks/python && $(MAKE) integration-test
+
+.PHONY: integration-test-sdk-ruby
+## integration-test-sdk-ruby: Run Ruby SDK integration tests
+integration-test-sdk-ruby:
+	@cd api/sdks/ruby && $(MAKE) integration-test
+
+.PHONY: integration-test-sdk-rust
+## integration-test-sdk-rust: Run Rust SDK integration tests
+integration-test-sdk-rust:
+	@cd api/sdks/rust && $(MAKE) integration-test
+
+.PHONY: integration-test-sdk-csharp
+## integration-test-sdk-csharp: Run C# SDK integration tests
+integration-test-sdk-csharp:
+	@cd api/sdks/csharp && $(MAKE) integration-test
+
+.PHONY: integration-test-sdk-javascript
+## integration-test-sdk-javascript: Run JavaScript SDK integration tests
+integration-test-sdk-javascript:
+	@cd api/sdks/javascript && $(MAKE) integration-test
 
 # ==============================================================================
 # Cloud Integration Tests (Real AWS S3, GCP, Azure)
@@ -559,8 +658,8 @@ pre-commit: clean
 ## clean: Clean up build artifacts and test outputs
 clean:
 	@echo "$(CYAN)$(BOLD)→ Cleaning up...$(RESET)"
-	@$(GOCLEAN) -cache
-	@$(GOCLEAN) -testcache
+	@$(GOCLEAN) -cache 2>/dev/null || true
+	@$(GOCLEAN) -testcache 2>/dev/null || true
 	@rm -rf $(BIN_DIR) $(COVERAGE_DIR)
 	@rm -f coverage.html coverage-check.sh
 	@rm -f examples/c_client/libobjstore.h
@@ -575,6 +674,16 @@ clean:
 	@find . -type f -name "*.html" ! -path "./vendor/*" ! -path "./.git/*" ! -path "./docs/*" ! -path "./coverage/*" -delete
 	@find /tmp -type f -name "*objstore*.log" -o -name "*test*.log" -o -name "*objstore*.log" 2>/dev/null | xargs -r rm -f
 	@rm -f objstore-server objstore-quic-server objstore.pb.go objstore_grpc.pb.go
+	@# Clean SDK build artifacts (may require sudo if created by Docker)
+	@rm -rf api/sdks/javascript/node_modules api/sdks/javascript/coverage api/sdks/javascript/dist 2>/dev/null || true
+	@rm -rf api/sdks/typescript/node_modules api/sdks/typescript/coverage api/sdks/typescript/dist 2>/dev/null || true
+	@rm -rf api/sdks/python/.venv api/sdks/python/venv api/sdks/python/.pytest_cache api/sdks/python/.mypy_cache 2>/dev/null || true
+	@rm -rf api/sdks/python/*.egg-info api/sdks/python/dist api/sdks/python/build api/sdks/python/htmlcov 2>/dev/null || true
+	@find api/sdks/python -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+	@rm -rf api/sdks/ruby/coverage api/sdks/ruby/.bundle api/sdks/ruby/vendor 2>/dev/null || true
+	@rm -rf api/sdks/rust/target 2>/dev/null || true
+	@rm -rf api/sdks/csharp/bin api/sdks/csharp/obj api/sdks/csharp/Tests/bin api/sdks/csharp/Tests/obj 2>/dev/null || true
+	@rm -rf api/sdks/go/bin 2>/dev/null || true
 	@echo "$(GREEN)✓ Clean complete$(RESET)"
 
 .PHONY: lib
@@ -612,15 +721,16 @@ help:
 	@echo "  $(YELLOW)lint$(RESET)                         Run golangci-lint for code quality"
 	@echo "  $(YELLOW)security$(RESET)                     Run security checks (gosec + govulncheck)"
 	@echo "  $(YELLOW)pre-commit$(RESET)                   Run all pre-commit checks"
-	@echo "  $(YELLOW)integration-test$(RESET)             Run storage backend integration tests"
+	@echo "  $(YELLOW)integration-test$(RESET)             Run all integration tests (backends + CLI)"
 	@echo "  $(YELLOW)integration-test-local$(RESET)       Run local storage integration tests"
 	@echo "  $(YELLOW)integration-test-s3$(RESET)          Run S3 integration tests"
 	@echo "  $(YELLOW)integration-test-minio$(RESET)       Run MinIO integration tests"
 	@echo "  $(YELLOW)integration-test-azure$(RESET)       Run Azure integration tests"
 	@echo "  $(YELLOW)integration-test-gcs$(RESET)         Run GCS integration tests"
-	@echo "  $(YELLOW)test-cli$(RESET)                     Run CLI integration tests"
+	@echo "  $(YELLOW)integration-test-replication$(RESET) Run replication integration tests"
+	@echo "  $(YELLOW)integration-test-cli$(RESET)         Run CLI integration tests"
 	@echo "  $(YELLOW)test-servers$(RESET)                 Run server integration tests (gRPC, REST, QUIC, MCP)"
-	@echo "  $(YELLOW)integration-test-all$(RESET)         Run all integration tests"
+	@echo "  $(YELLOW)integration-test-all$(RESET)         Run all integration tests including servers"
 	@echo "  $(YELLOW)test-cloud$(RESET)                   Run all cloud backend tests (real AWS/GCP/Azure)"
 	@echo "  $(YELLOW)test-cloud-s3$(RESET)                Run AWS S3 cloud tests"
 	@echo "  $(YELLOW)test-cloud-gcs$(RESET)               Run Google Cloud Storage tests"

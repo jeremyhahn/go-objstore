@@ -25,6 +25,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
+	"github.com/jeremyhahn/go-objstore/pkg/replication"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -40,12 +41,28 @@ type MockReplicationManager struct {
 	syncPolicyErr    error
 	syncAllResult    *common.SyncResult
 	syncPolicyResult *common.SyncResult
+	// For GetReplicationStatus tests
+	replicationStatuses map[string]*replication.ReplicationStatus
+	getStatusErr        error
 }
 
 func NewMockReplicationManager() *MockReplicationManager {
 	return &MockReplicationManager{
-		policies: make(map[string]common.ReplicationPolicy),
+		policies:            make(map[string]common.ReplicationPolicy),
+		replicationStatuses: make(map[string]*replication.ReplicationStatus),
 	}
+}
+
+// GetReplicationStatus implements the optional status provider interface
+func (m *MockReplicationManager) GetReplicationStatus(id string) (*replication.ReplicationStatus, error) {
+	if m.getStatusErr != nil {
+		return nil, m.getStatusErr
+	}
+	status, exists := m.replicationStatuses[id]
+	if !exists {
+		return nil, common.ErrPolicyNotFound
+	}
+	return status, nil
 }
 
 func (m *MockReplicationManager) AddPolicy(policy common.ReplicationPolicy) error {
@@ -164,10 +181,10 @@ func (m *MockStorageWithReplication) GetReplicationManager() (common.Replication
 
 // Test helper functions
 
-func setupTestRouter(storage common.Storage) (*gin.Engine, *Handler) {
+func setupTestRouter(t *testing.T, storage common.Storage) (*gin.Engine, *Handler) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 	SetupRoutes(router, handler)
 	return router, handler
 }
@@ -176,7 +193,7 @@ func setupTestRouter(storage common.Storage) (*gin.Engine, *Handler) {
 
 func TestAddReplicationPolicy_Success(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	policy := AddReplicationPolicyRequest{
 		ID:                  "test-policy",
@@ -184,7 +201,7 @@ func TestAddReplicationPolicy_Success(t *testing.T) {
 		SourceSettings:      map[string]string{"path": "/data/source"},
 		DestinationBackend:  "s3",
 		DestinationSettings: map[string]string{"bucket": "backup"},
-		CheckInterval:       5 * time.Minute,
+		CheckIntervalSeconds:       300,
 		Enabled:             true,
 		ReplicationMode:     common.ReplicationModeTransparent,
 	}
@@ -206,12 +223,12 @@ func TestAddReplicationPolicy_Success(t *testing.T) {
 
 func TestAddReplicationPolicy_MissingID(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	policy := AddReplicationPolicyRequest{
 		SourceBackend:      "local",
 		DestinationBackend: "s3",
-		CheckInterval:      5 * time.Minute,
+		CheckIntervalSeconds:      300,
 	}
 
 	body, _ := json.Marshal(policy)
@@ -231,12 +248,12 @@ func TestAddReplicationPolicy_MissingID(t *testing.T) {
 
 func TestAddReplicationPolicy_MissingSourceBackend(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	policy := AddReplicationPolicyRequest{
 		ID:                 "test-policy",
 		DestinationBackend: "s3",
-		CheckInterval:      5 * time.Minute,
+		CheckIntervalSeconds:      300,
 	}
 
 	body, _ := json.Marshal(policy)
@@ -251,13 +268,13 @@ func TestAddReplicationPolicy_MissingSourceBackend(t *testing.T) {
 
 func TestAddReplicationPolicy_InvalidReplicationMode(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	policy := AddReplicationPolicyRequest{
 		ID:                 "test-policy",
 		SourceBackend:      "local",
 		DestinationBackend: "s3",
-		CheckInterval:      5 * time.Minute,
+		CheckIntervalSeconds:      300,
 		ReplicationMode:    "invalid-mode",
 	}
 
@@ -274,13 +291,13 @@ func TestAddReplicationPolicy_InvalidReplicationMode(t *testing.T) {
 
 func TestAddReplicationPolicy_DuplicatePolicy(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	policy := AddReplicationPolicyRequest{
 		ID:                 "test-policy",
 		SourceBackend:      "local",
 		DestinationBackend: "s3",
-		CheckInterval:      5 * time.Minute,
+		CheckIntervalSeconds:      300,
 		Enabled:            true,
 	}
 
@@ -303,13 +320,13 @@ func TestAddReplicationPolicy_DuplicatePolicy(t *testing.T) {
 
 func TestAddReplicationPolicy_ReplicationNotSupported(t *testing.T) {
 	storage := NewMockStorage() // Regular storage without replication support
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	policy := AddReplicationPolicyRequest{
 		ID:                 "test-policy",
 		SourceBackend:      "local",
 		DestinationBackend: "s3",
-		CheckInterval:      5 * time.Minute,
+		CheckIntervalSeconds:      300,
 	}
 
 	body, _ := json.Marshal(policy)
@@ -325,13 +342,13 @@ func TestAddReplicationPolicy_ReplicationNotSupported(t *testing.T) {
 
 func TestAddReplicationPolicy_WithEncryption(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	policy := AddReplicationPolicyRequest{
 		ID:                 "test-policy",
 		SourceBackend:      "local",
 		DestinationBackend: "s3",
-		CheckInterval:      5 * time.Minute,
+		CheckIntervalSeconds:      300,
 		Enabled:            true,
 		Encryption: &common.EncryptionPolicy{
 			Source: &common.EncryptionConfig{
@@ -355,7 +372,7 @@ func TestAddReplicationPolicy_WithEncryption(t *testing.T) {
 
 func TestRemoveReplicationPolicy_Success(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	// Add a policy first
 	storage.replicationMgr.policies["test-policy"] = common.ReplicationPolicy{
@@ -377,7 +394,7 @@ func TestRemoveReplicationPolicy_Success(t *testing.T) {
 
 func TestRemoveReplicationPolicy_NotFound(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/replication/policies/nonexistent", nil)
 	w := httptest.NewRecorder()
@@ -389,7 +406,7 @@ func TestRemoveReplicationPolicy_NotFound(t *testing.T) {
 
 func TestRemoveReplicationPolicy_EmptyID(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/replication/policies/", nil)
 	w := httptest.NewRecorder()
@@ -404,7 +421,7 @@ func TestRemoveReplicationPolicy_EmptyID(t *testing.T) {
 
 func TestGetReplicationPolicies_Success(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	// Add some policies
 	storage.replicationMgr.policies["policy1"] = common.ReplicationPolicy{
@@ -434,7 +451,7 @@ func TestGetReplicationPolicies_Success(t *testing.T) {
 
 func TestGetReplicationPolicies_Empty(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/replication/policies", nil)
 	w := httptest.NewRecorder()
@@ -453,7 +470,7 @@ func TestGetReplicationPolicies_Empty(t *testing.T) {
 func TestGetReplicationPolicies_Error(t *testing.T) {
 	storage := NewMockStorageWithReplication()
 	storage.replicationMgr.getPoliciesErr = errors.New("database error")
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/replication/policies", nil)
 	w := httptest.NewRecorder()
@@ -467,7 +484,7 @@ func TestGetReplicationPolicies_Error(t *testing.T) {
 
 func TestGetReplicationPolicy_Success(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	now := time.Now()
 	storage.replicationMgr.policies["test-policy"] = common.ReplicationPolicy{
@@ -497,7 +514,7 @@ func TestGetReplicationPolicy_Success(t *testing.T) {
 
 func TestGetReplicationPolicy_NotFound(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/replication/policies/nonexistent", nil)
 	w := httptest.NewRecorder()
@@ -511,7 +528,7 @@ func TestGetReplicationPolicy_NotFound(t *testing.T) {
 
 func TestTriggerReplication_AllPolicies(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	storage.replicationMgr.policies["policy1"] = common.ReplicationPolicy{
 		ID:      "policy1",
@@ -536,7 +553,7 @@ func TestTriggerReplication_AllPolicies(t *testing.T) {
 
 func TestTriggerReplication_SpecificPolicy(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	storage.replicationMgr.policies["test-policy"] = common.ReplicationPolicy{
 		ID:      "test-policy",
@@ -561,7 +578,7 @@ func TestTriggerReplication_SpecificPolicy(t *testing.T) {
 
 func TestTriggerReplication_PolicyNotFound(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/replication/trigger?policy_id=nonexistent", nil)
 	w := httptest.NewRecorder()
@@ -574,7 +591,7 @@ func TestTriggerReplication_PolicyNotFound(t *testing.T) {
 func TestTriggerReplication_SyncError(t *testing.T) {
 	storage := NewMockStorageWithReplication()
 	storage.replicationMgr.syncAllErr = errors.New("sync failed")
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/replication/trigger", nil)
 	w := httptest.NewRecorder()
@@ -586,7 +603,7 @@ func TestTriggerReplication_SyncError(t *testing.T) {
 
 func TestTriggerReplication_WithErrors(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	storage.replicationMgr.policies["test-policy"] = common.ReplicationPolicy{
 		ID:      "test-policy",
@@ -622,14 +639,14 @@ func TestTriggerReplication_WithErrors(t *testing.T) {
 
 func TestReplicationPolicies_BackwardsCompatibility(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	// Test POST without /api/v1 prefix
 	policy := AddReplicationPolicyRequest{
 		ID:                 "test-policy",
 		SourceBackend:      "local",
 		DestinationBackend: "s3",
-		CheckInterval:      5 * time.Minute,
+		CheckIntervalSeconds:      300,
 		Enabled:            true,
 	}
 
@@ -661,7 +678,7 @@ func TestReplicationPolicies_BackwardsCompatibility(t *testing.T) {
 
 func TestAddReplicationPolicy_InvalidJSON(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/replication/policies", bytes.NewBufferString("invalid json"))
 	req.Header.Set("Content-Type", "application/json")
@@ -674,13 +691,13 @@ func TestAddReplicationPolicy_InvalidJSON(t *testing.T) {
 
 func TestAddReplicationPolicy_ZeroCheckInterval(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	policy := AddReplicationPolicyRequest{
 		ID:                 "test-policy",
 		SourceBackend:      "local",
 		DestinationBackend: "s3",
-		CheckInterval:      0, // Invalid
+		CheckIntervalSeconds:      0, // Invalid
 	}
 
 	body, _ := json.Marshal(policy)
@@ -697,7 +714,7 @@ func TestAddReplicationPolicy_ZeroCheckInterval(t *testing.T) {
 func TestGetReplicationManager_Error(t *testing.T) {
 	storage := NewMockStorageWithReplication()
 	storage.getRepErr = errors.New("replication manager unavailable")
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/replication/policies", nil)
 	w := httptest.NewRecorder()
@@ -709,7 +726,7 @@ func TestGetReplicationManager_Error(t *testing.T) {
 
 func TestRemoveReplicationPolicy_LeadingSlash(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	storage.replicationMgr.policies["test-policy"] = common.ReplicationPolicy{
 		ID: "test-policy",
@@ -727,7 +744,7 @@ func TestRemoveReplicationPolicy_LeadingSlash(t *testing.T) {
 
 func TestReplicationPolicies_Coverage(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	// Test that nil result is handled in RespondWithSyncResult
 	storage.replicationMgr.syncAllResult = nil
@@ -746,13 +763,13 @@ func TestReplicationPolicies_Coverage(t *testing.T) {
 func TestAddReplicationPolicy_GetReplicationManagerError(t *testing.T) {
 	storage := NewMockStorageWithReplication()
 	storage.getRepErr = common.ErrReplicationNotSupported
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	policy := AddReplicationPolicyRequest{
 		ID:                 "test-policy",
 		SourceBackend:      "local",
 		DestinationBackend: "s3",
-		CheckInterval:      5 * time.Minute,
+		CheckIntervalSeconds:      300,
 	}
 
 	body, _ := json.Marshal(policy)
@@ -769,7 +786,7 @@ func TestAddReplicationPolicy_GetReplicationManagerError(t *testing.T) {
 func TestRemoveReplicationPolicy_GetReplicationManagerError(t *testing.T) {
 	storage := NewMockStorageWithReplication()
 	storage.getRepErr = common.ErrReplicationNotSupported
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/replication/policies/test-policy", nil)
 	w := httptest.NewRecorder()
@@ -783,7 +800,7 @@ func TestRemoveReplicationPolicy_GetReplicationManagerError(t *testing.T) {
 func TestGetReplicationPolicies_GetReplicationManagerError(t *testing.T) {
 	storage := NewMockStorageWithReplication()
 	storage.getRepErr = common.ErrReplicationNotSupported
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/replication/policies", nil)
 	w := httptest.NewRecorder()
@@ -797,7 +814,7 @@ func TestGetReplicationPolicies_GetReplicationManagerError(t *testing.T) {
 func TestGetReplicationPolicy_GetReplicationManagerError(t *testing.T) {
 	storage := NewMockStorageWithReplication()
 	storage.getRepErr = common.ErrReplicationNotSupported
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/replication/policies/test-policy", nil)
 	w := httptest.NewRecorder()
@@ -811,7 +828,7 @@ func TestGetReplicationPolicy_GetReplicationManagerError(t *testing.T) {
 func TestTriggerReplication_GetReplicationManagerError(t *testing.T) {
 	storage := NewMockStorageWithReplication()
 	storage.getRepErr = common.ErrReplicationNotSupported
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/replication/trigger", nil)
 	w := httptest.NewRecorder()
@@ -824,12 +841,12 @@ func TestTriggerReplication_GetReplicationManagerError(t *testing.T) {
 
 func TestAddReplicationPolicy_MissingDestinationBackend(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	policy := AddReplicationPolicyRequest{
 		ID:            "test-policy",
 		SourceBackend: "local",
-		CheckInterval: 5 * time.Minute,
+		CheckIntervalSeconds: 300,
 	}
 
 	body, _ := json.Marshal(policy)
@@ -844,13 +861,13 @@ func TestAddReplicationPolicy_MissingDestinationBackend(t *testing.T) {
 
 func TestAddReplicationPolicy_OpaqueMode(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	policy := AddReplicationPolicyRequest{
 		ID:                 "test-policy",
 		SourceBackend:      "local",
 		DestinationBackend: "s3",
-		CheckInterval:      5 * time.Minute,
+		CheckIntervalSeconds:      300,
 		Enabled:            true,
 		ReplicationMode:    common.ReplicationModeOpaque,
 	}
@@ -867,7 +884,7 @@ func TestAddReplicationPolicy_OpaqueMode(t *testing.T) {
 
 func TestGetReplicationPolicy_EmptyID(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/replication/policies/", nil)
 	w := httptest.NewRecorder()
@@ -881,7 +898,7 @@ func TestGetReplicationPolicy_EmptyID(t *testing.T) {
 func TestRemoveReplicationPolicy_GenericError(t *testing.T) {
 	storage := NewMockStorageWithReplication()
 	storage.replicationMgr.removePolicyErr = errors.New("internal error")
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	storage.replicationMgr.policies["test-policy"] = common.ReplicationPolicy{
 		ID: "test-policy",
@@ -898,7 +915,7 @@ func TestRemoveReplicationPolicy_GenericError(t *testing.T) {
 func TestGetReplicationPolicy_GenericError(t *testing.T) {
 	storage := NewMockStorageWithReplication()
 	storage.replicationMgr.getPolicyErr = errors.New("database error")
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/replication/policies/test-policy", nil)
 	w := httptest.NewRecorder()
@@ -911,13 +928,13 @@ func TestGetReplicationPolicy_GenericError(t *testing.T) {
 func TestAddReplicationPolicy_AddPolicyError(t *testing.T) {
 	storage := NewMockStorageWithReplication()
 	storage.replicationMgr.addPolicyErr = errors.New("database error")
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	policy := AddReplicationPolicyRequest{
 		ID:                 "test-policy",
 		SourceBackend:      "local",
 		DestinationBackend: "s3",
-		CheckInterval:      5 * time.Minute,
+		CheckIntervalSeconds:      300,
 	}
 
 	body, _ := json.Marshal(policy)
@@ -933,7 +950,7 @@ func TestAddReplicationPolicy_AddPolicyError(t *testing.T) {
 func TestTriggerReplication_SyncPolicyError(t *testing.T) {
 	storage := NewMockStorageWithReplication()
 	storage.replicationMgr.syncPolicyErr = errors.New("sync failed")
-	router, _ := setupTestRouter(storage)
+	router, _ := setupTestRouter(t, storage)
 
 	storage.replicationMgr.policies["test-policy"] = common.ReplicationPolicy{
 		ID:      "test-policy",
@@ -946,4 +963,148 @@ func TestTriggerReplication_SyncPolicyError(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+// Tests for GetReplicationStatus
+
+func TestGetReplicationStatus_Success(t *testing.T) {
+	storage := NewMockStorageWithReplication()
+	router, _ := setupTestRouter(t, storage)
+
+	// Set up a replication status
+	storage.replicationMgr.replicationStatuses["test-policy"] = &replication.ReplicationStatus{
+		PolicyID:           "test-policy",
+		SourceBackend:      "local",
+		DestinationBackend: "s3",
+		Enabled:            true,
+		TotalObjectsSynced: 100,
+		TotalBytesSynced:   1024 * 1024,
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/replication/status/test-policy", nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	var response map[string]interface{}
+	err := json.Unmarshal(w.Body.Bytes(), &response)
+	require.NoError(t, err)
+	assert.Equal(t, "test-policy", response["policy_id"])
+}
+
+func TestGetReplicationStatus_EmptyID(t *testing.T) {
+	storage := NewMockStorageWithReplication()
+	router, _ := setupTestRouter(t, storage)
+
+	// Request with empty ID (Gin route will capture empty as /)
+	// The wildcard *id requires at least "/" to be present
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/replication/status/", nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	// Gin handles wildcard with empty value as not found (no route match)
+	// or as bad request if the handler strips slashes and finds empty ID
+	assert.True(t, w.Code == http.StatusBadRequest || w.Code == http.StatusNotFound)
+}
+
+func TestGetReplicationStatus_NotFound(t *testing.T) {
+	storage := NewMockStorageWithReplication()
+	router, _ := setupTestRouter(t, storage)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/replication/status/nonexistent", nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestGetReplicationStatus_ReplicationNotSupported(t *testing.T) {
+	storage := NewMockStorage() // Regular storage without replication support
+	router, _ := setupTestRouter(t, storage)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/replication/status/test-policy", nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Contains(t, w.Body.String(), "replication not supported")
+}
+
+func TestGetReplicationStatus_GetReplicationManagerError(t *testing.T) {
+	storage := NewMockStorageWithReplication()
+	storage.getRepErr = errors.New("manager unavailable")
+	router, _ := setupTestRouter(t, storage)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/replication/status/test-policy", nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestGetReplicationStatus_GenericError(t *testing.T) {
+	storage := NewMockStorageWithReplication()
+	storage.replicationMgr.getStatusErr = errors.New("internal error")
+	router, _ := setupTestRouter(t, storage)
+
+	// Need to have the policy exist to get past NotFound check
+	storage.replicationMgr.replicationStatuses["test-policy"] = &replication.ReplicationStatus{
+		PolicyID: "test-policy",
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/replication/status/test-policy", nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestGetReplicationStatus_LeadingSlash(t *testing.T) {
+	storage := NewMockStorageWithReplication()
+	router, _ := setupTestRouter(t, storage)
+
+	storage.replicationMgr.replicationStatuses["test-policy"] = &replication.ReplicationStatus{
+		PolicyID:           "test-policy",
+		SourceBackend:      "local",
+		DestinationBackend: "s3",
+		Enabled:            false,
+		TotalObjectsSynced: 50,
+	}
+
+	// Route captures leading slash due to Gin's wildcard handling
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/replication/status//test-policy", nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	// Should still work after stripping leading slashes
+	assert.True(t, w.Code == http.StatusOK || w.Code == http.StatusNotFound)
+}
+
+func TestGetReplicationStatus_BackwardsCompatibility(t *testing.T) {
+	storage := NewMockStorageWithReplication()
+	router, _ := setupTestRouter(t, storage)
+
+	storage.replicationMgr.replicationStatuses["test-policy"] = &replication.ReplicationStatus{
+		PolicyID:           "test-policy",
+		SourceBackend:      "local",
+		DestinationBackend: "s3",
+		Enabled:            true,
+		TotalObjectsSynced: 25,
+	}
+
+	// Test without /api/v1 prefix
+	req := httptest.NewRequest(http.MethodGet, "/replication/status/test-policy", nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
 }

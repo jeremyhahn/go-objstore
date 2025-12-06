@@ -102,12 +102,71 @@ All backend implementations are safe for concurrent use from multiple goroutines
 - Lowest cost per GB
 - Not suitable for frequently accessed data
 
-## Factory Pattern
+## Facade Pattern
 
-The factory abstracts backend creation through a simple interface:
+The recommended way to use go-objstore is through the `objstore` facade package. The facade provides:
+- Centralized API with input validation
+- Multi-backend routing via `backend:key` syntax
+- Security validation for all inputs
+- Simple initialization
 
+### Simplified Initialization (Recommended)
+
+The facade can create backends internally via the factory:
+
+```go
+import "github.com/jeremyhahn/go-objstore/pkg/objstore"
+
+err := objstore.Initialize(&objstore.FacadeConfig{
+    BackendConfigs: map[string]objstore.BackendConfig{
+        "default": {
+            Type:     "local",
+            Settings: map[string]string{"path": "/data/storage"},
+        },
+        "archive": {
+            Type:     "s3",
+            Settings: map[string]string{"bucket": "my-archive"},
+        },
+    },
+    DefaultBackend: "default",
+})
 ```
-storage := factory.NewStorage(backendType, configMap)
+
+### Using the Facade API
+
+After initialization, use the facade functions directly:
+
+```go
+// Store an object (uses default backend)
+objstore.Put("key.txt", reader)
+
+// Retrieve an object
+data, _ := objstore.Get("key.txt")
+
+// Use specific backend with backend:key syntax
+objstore.PutWithContext(ctx, "archive:backup.tar", reader)
+objstore.GetWithContext(ctx, "archive:backup.tar")
+```
+
+## Factory Pattern (Internal)
+
+The factory is now primarily used internally by the facade. Direct factory usage is still supported for legacy code or advanced use cases:
+
+```go
+import (
+    "github.com/jeremyhahn/go-objstore/pkg/factory"
+    "github.com/jeremyhahn/go-objstore/pkg/objstore"
+    "github.com/jeremyhahn/go-objstore/pkg/common"
+)
+
+// Create storage manually
+storage, _ := factory.NewStorage("local", map[string]string{"path": "/data"})
+
+// Initialize facade with pre-configured storage
+objstore.Initialize(&objstore.FacadeConfig{
+    Backends: map[string]common.Storage{"default": storage},
+    DefaultBackend: "default",
+})
 ```
 
 The factory handles:
@@ -115,8 +174,6 @@ The factory handles:
 - Configuration parsing and validation
 - Backend initialization with proper credentials
 - Error handling for missing dependencies
-
-This allows application code to remain independent of specific backend implementations.
 
 ## Build Tags
 

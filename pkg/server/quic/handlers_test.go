@@ -38,9 +38,13 @@ func setupTestHandler(t *testing.T) (*Handler, common.Storage) {
 		t.Fatalf("Failed to configure storage: %v", err)
 	}
 
+	initTestFacade(t, storage)
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()
-	handler := NewHandler(storage, 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	if err != nil {
+		t.Fatalf("Failed to create handler: %v", err)
+	}
 	return handler, storage
 }
 
@@ -1656,9 +1660,13 @@ func TestHandlerExistsStorageError(t *testing.T) {
 	mockStorage := newMockErrorStorage()
 	mockStorage.existsError = errors.New("storage unavailable")
 
+	initTestFacade(t, mockStorage)
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()
-	handler := NewHandler(mockStorage, 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	if err != nil {
+		t.Fatalf("Failed to create handler: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/objects/test-key?exists=true", nil)
 	w := httptest.NewRecorder()
@@ -1677,9 +1685,13 @@ func TestHandlerUpdateMetadataStorageError(t *testing.T) {
 	mockStorage.objects["test-key"] = []byte("data")
 	mockStorage.metadata["test-key"] = &common.Metadata{}
 
+	initTestFacade(t, mockStorage)
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()
-	handler := NewHandler(mockStorage, 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	if err != nil {
+		t.Fatalf("Failed to create handler: %v", err)
+	}
 
 	metadataReq := map[string]any{
 		"content_type": "application/json",
@@ -1704,9 +1716,13 @@ func TestHandlerArchiveStorageError(t *testing.T) {
 	mockStorage.objects["test-key"] = []byte("data")
 	mockStorage.metadata["test-key"] = &common.Metadata{}
 
+	initTestFacade(t, mockStorage)
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()
-	handler := NewHandler(mockStorage, 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	if err != nil {
+		t.Fatalf("Failed to create handler: %v", err)
+	}
 
 	archiveReq := map[string]any{
 		"key":                  "test-key",
@@ -1729,9 +1745,13 @@ func TestHandlerGetPoliciesStorageError(t *testing.T) {
 	mockStorage := newMockErrorStorage()
 	mockStorage.getPoliciesError = errors.New("database connection lost")
 
+	initTestFacade(t, mockStorage)
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()
-	handler := NewHandler(mockStorage, 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	if err != nil {
+		t.Fatalf("Failed to create handler: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/policies", nil)
 	w := httptest.NewRecorder()
@@ -1758,9 +1778,13 @@ func TestHandlerGetPoliciesWithPrefixFilter(t *testing.T) {
 	}
 	mockStorage.policies = []common.LifecyclePolicy{policy1, policy2}
 
+	initTestFacade(t, mockStorage)
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()
-	handler := NewHandler(mockStorage, 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	if err != nil {
+		t.Fatalf("Failed to create handler: %v", err)
+	}
 
 	// Test with prefix filter
 	req := httptest.NewRequest(http.MethodGet, "/policies?prefix=logs/", nil)
@@ -1786,9 +1810,13 @@ func TestHandlerAddPolicyStorageError(t *testing.T) {
 	mockStorage := newMockErrorStorage()
 	mockStorage.addPolicyError = errors.New("policy storage full")
 
+	initTestFacade(t, mockStorage)
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()
-	handler := NewHandler(mockStorage, 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	if err != nil {
+		t.Fatalf("Failed to create handler: %v", err)
+	}
 
 	policyReq := map[string]any{
 		"id":                "test-policy",
@@ -1811,9 +1839,13 @@ func TestHandlerAddPolicyStorageError(t *testing.T) {
 func TestHandlerRemovePolicyNotFound(t *testing.T) {
 	mockStorage := newMockErrorStorage()
 
+	initTestFacade(t, mockStorage)
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()
-	handler := NewHandler(mockStorage, 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	if err != nil {
+		t.Fatalf("Failed to create handler: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodDelete, "/policies/nonexistent-id", nil)
 	w := httptest.NewRecorder()
@@ -1828,9 +1860,13 @@ func TestHandlerRemovePolicyStorageError(t *testing.T) {
 	mockStorage := newMockErrorStorage()
 	mockStorage.removePolicyError = errors.New("database error")
 
+	initTestFacade(t, mockStorage)
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()
-	handler := NewHandler(mockStorage, 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	if err != nil {
+		t.Fatalf("Failed to create handler: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodDelete, "/policies/test-policy", nil)
 	w := httptest.NewRecorder()
@@ -1844,9 +1880,13 @@ func TestHandlerRemovePolicyStorageError(t *testing.T) {
 func TestHandlerAddPolicyConflict(t *testing.T) {
 	mockStorage := newMockErrorStorage()
 
+	initTestFacade(t, mockStorage)
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()
-	handler := NewHandler(mockStorage, 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	if err != nil {
+		t.Fatalf("Failed to create handler: %v", err)
+	}
 
 	// Add policy first time
 	policyReq := map[string]any{
@@ -1895,9 +1935,13 @@ func TestHandlerGetWithFullMetadata(t *testing.T) {
 		},
 	}
 
+	initTestFacade(t, mockStorage)
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()
-	handler := NewHandler(mockStorage, 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	if err != nil {
+		t.Fatalf("Failed to create handler: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/objects/test-key", nil)
 	w := httptest.NewRecorder()
@@ -1929,9 +1973,13 @@ func TestHandlerListWithPaginationAndDelimiter(t *testing.T) {
 		mockStorage.metadata[key] = &common.Metadata{Size: 4}
 	}
 
+	initTestFacade(t, mockStorage)
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()
-	handler := NewHandler(mockStorage, 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	if err != nil {
+		t.Fatalf("Failed to create handler: %v", err)
+	}
 
 	// Test with delimiter and max results for pagination
 	req := httptest.NewRequest(http.MethodGet, "/objects?delimiter=/&max=2", nil)
@@ -1962,9 +2010,13 @@ func TestHandlerListStorageError(t *testing.T) {
 	mockStorage := newMockErrorStorage()
 	mockStorage.listError = errors.New("database connection lost")
 
+	initTestFacade(t, mockStorage)
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()
-	handler := NewHandler(mockStorage, 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	if err != nil {
+		t.Fatalf("Failed to create handler: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/objects", nil)
 	w := httptest.NewRecorder()
@@ -1979,9 +2031,13 @@ func TestHandlerDeleteStorageError(t *testing.T) {
 	mockStorage := newMockErrorStorage()
 	mockStorage.deleteError = errors.New("permission denied")
 
+	initTestFacade(t, mockStorage)
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()
-	handler := NewHandler(mockStorage, 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	if err != nil {
+		t.Fatalf("Failed to create handler: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodDelete, "/objects/test-key", nil)
 	w := httptest.NewRecorder()

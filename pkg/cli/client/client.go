@@ -62,7 +62,8 @@ type Client interface {
 
 // Config holds configuration for creating a client
 type Config struct {
-	ServerURL string
-	Protocol  string // rest, grpc, or quic
-	TLSConfig *adapters.TLSConfig
+	ServerURL  string
+	Protocol   string // rest, grpc, quic, or unix
+	TLSConfig  *adapters.TLSConfig
+	UnixSocket string // Path to Unix socket (for unix protocol)
 }

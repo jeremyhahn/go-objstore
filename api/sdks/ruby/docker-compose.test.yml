@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  objstore-rest:
+    image: ghcr.io/jeremyhahn/go-objstore:latest
+    container_name: objstore-rest-test
+    ports:
+      - "8080:8080"
+    environment:
+      - OBJSTORE_BACKEND=local
+      - OBJSTORE_LOCAL_PATH=/data
+      - OBJSTORE_REST_ENABLED=true
+      - OBJSTORE_REST_PORT=8080
+      - OBJSTORE_GRPC_ENABLED=false
+      - OBJSTORE_QUIC_ENABLED=false
+    volumes:
+      - objstore-rest-data:/data
+    command: ["/app/objstore-server"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  objstore-grpc:
+    image: ghcr.io/jeremyhahn/go-objstore:latest
+    container_name: objstore-grpc-test
+    ports:
+      - "50051:50051"
+    environment:
+      - OBJSTORE_BACKEND=local
+      - OBJSTORE_LOCAL_PATH=/data
+      - OBJSTORE_REST_ENABLED=false
+      - OBJSTORE_GRPC_ENABLED=true
+      - OBJSTORE_GRPC_PORT=50051
+      - OBJSTORE_QUIC_ENABLED=false
+    volumes:
+      - objstore-grpc-data:/data
+    command: ["/app/objstore-server"]
+    healthcheck:
+      test: ["CMD", "grpc-health-probe", "-addr=localhost:50051"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  objstore-quic:
+    image: ghcr.io/jeremyhahn/go-objstore:latest
+    container_name: objstore-quic-test
+    ports:
+      - "4433:4433/udp"
+      - "4433:4433/tcp"
+    environment:
+      - OBJSTORE_BACKEND=local
+      - OBJSTORE_LOCAL_PATH=/data
+      - OBJSTORE_REST_ENABLED=false
+      - OBJSTORE_GRPC_ENABLED=false
+      - OBJSTORE_QUIC_ENABLED=true
+      - OBJSTORE_QUIC_PORT=4433
+    volumes:
+      - objstore-quic-data:/data
+    command: ["/app/objstore-server"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "https://localhost:4433/health", "--no-check-certificate"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+volumes:
+  objstore-rest-data:
+  objstore-grpc-data:
+  objstore-quic-data:

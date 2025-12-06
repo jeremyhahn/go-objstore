@@ -15,9 +15,9 @@ package quic
 
 
 import (
-	"errors"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,6 +28,7 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
+	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 )
 
 // Constants
@@ -46,7 +47,7 @@ const (
 
 // Handler implements HTTP/3 request handlers for object storage operations.
 type Handler struct {
-	storage            common.Storage
+	backend            string // Backend name (empty = default)
 	maxRequestBodySize int64
 	readTimeout        time.Duration
 	writeTimeout       time.Duration
@@ -54,16 +55,28 @@ type Handler struct {
 	authenticator      adapters.Authenticator
 }
 
-// NewHandler creates a new HTTP/3 handler.
-func NewHandler(storage common.Storage, maxRequestBodySize int64, readTimeout, writeTimeout time.Duration, logger adapters.Logger, authenticator adapters.Authenticator) *Handler {
+// NewHandler creates a new HTTP/3 handler using the ObjstoreFacade.
+// The facade must be initialized before calling this function.
+func NewHandler(backend string, maxRequestBodySize int64, readTimeout, writeTimeout time.Duration, logger adapters.Logger, authenticator adapters.Authenticator) (*Handler, error) {
+	if !objstore.IsInitialized() {
+		return nil, objstore.ErrNotInitialized
+	}
 	return &Handler{
-		storage:            storage,
+		backend:            backend,
 		maxRequestBodySize: maxRequestBodySize,
 		readTimeout:        readTimeout,
 		writeTimeout:       writeTimeout,
 		logger:             logger,
 		authenticator:      authenticator,
+	}, nil
+}
+
+// keyRef builds a key reference with optional backend prefix.
+func (h *Handler) keyRef(key string) string {
+	if h.backend == "" {
+		return key
 	}
+	return h.backend + ":" + key
 }
 
 // ServeHTTP handles HTTP/3 requests and routes them to appropriate handlers.
@@ -248,8 +261,8 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request, key string) 
 		}
 	}
 
-	// Store the object
-	err := h.storage.PutWithMetadata(ctx, key, limitedReader, metadata)
+	// Store the object using facade
+	err := objstore.PutWithMetadata(ctx, h.keyRef(key), limitedReader, metadata)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
@@ -274,15 +287,15 @@ func (h *Handler) handleGet(w http.ResponseWriter, r *http.Request, key string) 
 	ctx, cancel := context.WithTimeout(r.Context(), h.readTimeout)
 	defer cancel()
 
-	// Get object metadata first
-	info, err := h.storage.GetMetadata(ctx, key)
+	// Get object metadata first using facade
+	info, err := objstore.GetMetadata(ctx, h.keyRef(key))
 	if err != nil || info == nil {
 		http.Error(w, "object not found", http.StatusNotFound)
 		return
 	}
 
-	// Get object data
-	reader, err := h.storage.GetWithContext(ctx, key)
+	// Get object data using facade
+	reader, err := objstore.GetWithContext(ctx, h.keyRef(key))
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
@@ -327,8 +340,8 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request, key strin
 	ctx, cancel := context.WithTimeout(r.Context(), h.writeTimeout)
 	defer cancel()
 
-	// Delete the object
-	err := h.storage.DeleteWithContext(ctx, key)
+	// Delete the object using facade
+	err := objstore.DeleteWithContext(ctx, h.keyRef(key))
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
@@ -346,8 +359,8 @@ func (h *Handler) handleHead(w http.ResponseWriter, r *http.Request, key string)
 	ctx, cancel := context.WithTimeout(r.Context(), h.readTimeout)
 	defer cancel()
 
-	// Get object metadata
-	info, err := h.storage.GetMetadata(ctx, key)
+	// Get object metadata using facade
+	info, err := objstore.GetMetadata(ctx, h.keyRef(key))
 	if err != nil || info == nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
@@ -402,8 +415,8 @@ func (h *Handler) handleList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// List objects
-	result, err := h.storage.ListWithOptions(ctx, options)
+	// List objects using facade
+	result, err := objstore.ListWithOptions(ctx, h.backend, options)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
@@ -440,7 +453,8 @@ func (h *Handler) handleExists(w http.ResponseWriter, r *http.Request, key strin
 	ctx, cancel := context.WithTimeout(r.Context(), h.readTimeout)
 	defer cancel()
 
-	exists, err := h.storage.Exists(ctx, key)
+	// Check existence using facade
+	exists, err := objstore.Exists(ctx, h.keyRef(key))
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
@@ -483,8 +497,8 @@ func (h *Handler) handleUpdateMetadata(w http.ResponseWriter, r *http.Request, k
 		Custom:          req.Custom,
 	}
 
-	// Update metadata
-	err := h.storage.UpdateMetadata(ctx, key, metadata)
+	// Update metadata using facade
+	err := objstore.UpdateMetadata(ctx, h.keyRef(key), metadata)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
@@ -543,8 +557,8 @@ func (h *Handler) handleArchive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Archive the object
-	err = h.storage.Archive(req.Key, archiver)
+	// Archive the object using facade
+	err = objstore.Archive(h.keyRef(req.Key), archiver)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
@@ -584,7 +598,8 @@ func (h *Handler) handleGetPolicies(w http.ResponseWriter, r *http.Request) {
 
 	prefix := r.URL.Query().Get("prefix")
 
-	policies, err := h.storage.GetPolicies()
+	// Get policies using facade
+	policies, err := objstore.GetPolicies(h.backend)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
@@ -688,7 +703,8 @@ func (h *Handler) handleAddPolicy(w http.ResponseWriter, r *http.Request) {
 		policy.Destination = archiver
 	}
 
-	err := h.storage.AddPolicy(policy)
+	// Add policy using facade
+	err := objstore.AddPolicy(h.backend, policy)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
@@ -729,7 +745,8 @@ func (h *Handler) handlePolicyByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.storage.RemovePolicy(id)
+	// Remove policy using facade
+	err := objstore.RemovePolicy(h.backend, id)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
@@ -763,7 +780,8 @@ func (h *Handler) handleApplyPolicies(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), h.writeTimeout)
 	defer cancel()
 
-	policies, err := h.storage.GetPolicies()
+	// Get policies using facade
+	policies, err := objstore.GetPolicies(h.backend)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
@@ -791,7 +809,8 @@ func (h *Handler) handleApplyPolicies(w http.ResponseWriter, r *http.Request) {
 	opts := &common.ListOptions{
 		Prefix: "",
 	}
-	result, err := h.storage.ListWithOptions(ctx, opts)
+	// List objects using facade
+	result, err := objstore.ListWithOptions(ctx, h.backend, opts)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
@@ -819,10 +838,10 @@ func (h *Handler) handleApplyPolicies(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			// Apply action
+			// Apply action using facade
 			switch policy.Action {
 			case "delete":
-				if err := h.storage.DeleteWithContext(ctx, obj.Key); err != nil {
+				if err := objstore.DeleteWithContext(ctx, h.keyRef(obj.Key)); err != nil {
 					h.logger.Error(ctx, "Failed to delete object during policy application",
 						adapters.Field{Key: "key", Value: obj.Key},
 						adapters.Field{Key: "error", Value: err.Error()},
@@ -832,7 +851,7 @@ func (h *Handler) handleApplyPolicies(w http.ResponseWriter, r *http.Request) {
 				objectsProcessed++
 			case "archive":
 				if policy.Destination != nil {
-					if err := h.storage.Archive(obj.Key, policy.Destination); err != nil {
+					if err := objstore.Archive(h.keyRef(obj.Key), policy.Destination); err != nil {
 						h.logger.Error(ctx, "Failed to archive object during policy application",
 							adapters.Field{Key: "key", Value: obj.Key},
 							adapters.Field{Key: "error", Value: err.Error()},

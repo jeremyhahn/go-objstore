@@ -16,11 +16,11 @@
 package quic
 
 import (
-	"io"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -28,24 +28,40 @@ import (
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
+	replicationPkg "github.com/jeremyhahn/go-objstore/pkg/replication"
 )
 
 // MockReplicationManager implements common.ReplicationManager for testing
 type MockReplicationManager struct {
-	policies      map[string]common.ReplicationPolicy
-	syncCalled    bool
-	syncPolicyID  string
-	syncAllCalled bool
-	addError      error
-	removeError   error
-	getError      error
-	syncError     error
+	policies            map[string]common.ReplicationPolicy
+	replicationStatuses map[string]*replicationPkg.ReplicationStatus
+	syncCalled          bool
+	syncPolicyID        string
+	syncAllCalled       bool
+	addError            error
+	removeError         error
+	getError            error
+	syncError           error
+	getStatusError      error
 }
 
 func NewMockReplicationManager() *MockReplicationManager {
 	return &MockReplicationManager{
-		policies: make(map[string]common.ReplicationPolicy),
+		policies:            make(map[string]common.ReplicationPolicy),
+		replicationStatuses: make(map[string]*replicationPkg.ReplicationStatus),
 	}
+}
+
+// GetReplicationStatus implements the optional status provider interface
+func (m *MockReplicationManager) GetReplicationStatus(id string) (*replicationPkg.ReplicationStatus, error) {
+	if m.getStatusError != nil {
+		return nil, m.getStatusError
+	}
+	status, exists := m.replicationStatuses[id]
+	if !exists {
+		return nil, common.ErrPolicyNotFound
+	}
+	return status, nil
 }
 
 func (m *MockReplicationManager) AddPolicy(policy common.ReplicationPolicy) error {
@@ -192,15 +208,16 @@ func NewMockStorageNoReplication() *MockStorageNoReplication {
 
 // MockStorageNoReplication doesn't implement GetReplicationManager
 
-func setupReplicationTestHandler(storage common.Storage) *Handler {
+func setupReplicationTestHandler(t *testing.T, storage common.Storage) *Handler {
+	t.Helper()
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()
-	return NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	return createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
 }
 
 func TestHandleAddReplicationPolicy(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	handler := setupReplicationTestHandler(storage)
+	handler := setupReplicationTestHandler(t, storage)
 
 	tests := []struct {
 		name           string
@@ -319,7 +336,7 @@ func TestHandleAddReplicationPolicy(t *testing.T) {
 
 func TestHandleGetReplicationPolicies(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	handler := setupReplicationTestHandler(storage)
+	handler := setupReplicationTestHandler(t, storage)
 
 	// Add some policies
 	storage.repMgr.AddPolicy(common.ReplicationPolicy{
@@ -365,7 +382,7 @@ func TestHandleGetReplicationPolicies(t *testing.T) {
 
 func TestHandleGetReplicationPolicy(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	handler := setupReplicationTestHandler(storage)
+	handler := setupReplicationTestHandler(t, storage)
 
 	// Add a policy
 	storage.repMgr.AddPolicy(common.ReplicationPolicy{
@@ -425,7 +442,7 @@ func TestHandleGetReplicationPolicy(t *testing.T) {
 
 func TestHandleDeleteReplicationPolicy(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	handler := setupReplicationTestHandler(storage)
+	handler := setupReplicationTestHandler(t, storage)
 
 	// Add a policy
 	storage.repMgr.AddPolicy(common.ReplicationPolicy{
@@ -470,7 +487,7 @@ func TestHandleDeleteReplicationPolicy(t *testing.T) {
 
 func TestHandleTriggerReplication(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	handler := setupReplicationTestHandler(storage)
+	handler := setupReplicationTestHandler(t, storage)
 
 	// Add a policy
 	storage.repMgr.AddPolicy(common.ReplicationPolicy{
@@ -558,7 +575,7 @@ func TestHandleTriggerReplication(t *testing.T) {
 
 func TestHandleReplicationPolicyByID_InvalidMethod(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	handler := setupReplicationTestHandler(storage)
+	handler := setupReplicationTestHandler(t, storage)
 
 	req := httptest.NewRequest(http.MethodPost, "/replication/policies/test", nil)
 	w := httptest.NewRecorder()
@@ -572,7 +589,7 @@ func TestHandleReplicationPolicyByID_InvalidMethod(t *testing.T) {
 
 func TestHandleTriggerReplication_InvalidMethod(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	handler := setupReplicationTestHandler(storage)
+	handler := setupReplicationTestHandler(t, storage)
 
 	req := httptest.NewRequest(http.MethodGet, "/replication/trigger", nil)
 	w := httptest.NewRecorder()
@@ -590,7 +607,7 @@ func TestReplicationWithoutSupport(t *testing.T) {
 		common.Storage
 	}{}
 
-	handler := setupReplicationTestHandler(storage)
+	handler := setupReplicationTestHandler(t, storage)
 
 	tests := []struct {
 		name    string
@@ -656,7 +673,7 @@ func TestReplicationWithoutSupport(t *testing.T) {
 
 func TestReplicationErrorHandling(t *testing.T) {
 	storage := NewMockStorageWithReplication()
-	handler := setupReplicationTestHandler(storage)
+	handler := setupReplicationTestHandler(t, storage)
 
 	// Add a policy first
 	storage.repMgr.AddPolicy(common.ReplicationPolicy{
@@ -701,4 +718,119 @@ func TestReplicationErrorHandling(t *testing.T) {
 			t.Errorf("expected status 500, got %d", w.Code)
 		}
 	})
+}
+
+// Tests for GetReplicationStatus
+
+func TestHandleGetReplicationStatus_Success(t *testing.T) {
+	storage := NewMockStorageWithReplication()
+	handler := setupReplicationTestHandler(t, storage)
+
+	// Set up a replication status
+	storage.repMgr.replicationStatuses["test-policy"] = &replicationPkg.ReplicationStatus{
+		PolicyID:           "test-policy",
+		SourceBackend:      "local",
+		DestinationBackend: "s3",
+		Enabled:            true,
+		TotalObjectsSynced: 100,
+		TotalBytesSynced:   1024 * 1024,
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/replication/status/test-policy", nil)
+	w := httptest.NewRecorder()
+
+	handler.handleGetReplicationStatus(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var response map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if !response["success"].(bool) {
+		t.Error("expected success to be true")
+	}
+
+	if response["policy_id"].(string) != "test-policy" {
+		t.Errorf("expected policy_id 'test-policy', got %s", response["policy_id"])
+	}
+}
+
+func TestHandleGetReplicationStatus_EmptyID(t *testing.T) {
+	storage := NewMockStorageWithReplication()
+	handler := setupReplicationTestHandler(t, storage)
+
+	req := httptest.NewRequest(http.MethodGet, "/replication/status/", nil)
+	w := httptest.NewRecorder()
+
+	handler.handleGetReplicationStatus(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400, got %d", w.Code)
+	}
+}
+
+func TestHandleGetReplicationStatus_NotFound(t *testing.T) {
+	storage := NewMockStorageWithReplication()
+	handler := setupReplicationTestHandler(t, storage)
+
+	req := httptest.NewRequest(http.MethodGet, "/replication/status/nonexistent", nil)
+	w := httptest.NewRecorder()
+
+	handler.handleGetReplicationStatus(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected status 404, got %d", w.Code)
+	}
+}
+
+func TestHandleGetReplicationStatus_ReplicationNotSupported(t *testing.T) {
+	// Create storage without replication support
+	storage := &struct {
+		common.Storage
+	}{}
+
+	handler := setupReplicationTestHandler(t, storage)
+
+	req := httptest.NewRequest(http.MethodGet, "/replication/status/test-policy", nil)
+	w := httptest.NewRecorder()
+
+	handler.handleGetReplicationStatus(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected status 500, got %d", w.Code)
+	}
+}
+
+func TestHandleGetReplicationStatus_GetReplicationManagerError(t *testing.T) {
+	storage := NewMockStorageWithReplication()
+	storage.repErr = errors.New("manager unavailable")
+	handler := setupReplicationTestHandler(t, storage)
+
+	req := httptest.NewRequest(http.MethodGet, "/replication/status/test-policy", nil)
+	w := httptest.NewRecorder()
+
+	handler.handleGetReplicationStatus(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected status 500, got %d", w.Code)
+	}
+}
+
+func TestHandleGetReplicationStatus_GenericError(t *testing.T) {
+	storage := NewMockStorageWithReplication()
+	storage.repMgr.getStatusError = errors.New("internal error")
+	handler := setupReplicationTestHandler(t, storage)
+
+	req := httptest.NewRequest(http.MethodGet, "/replication/status/test-policy", nil)
+	w := httptest.NewRecorder()
+
+	handler.handleGetReplicationStatus(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected status 500, got %d", w.Code)
+	}
 }

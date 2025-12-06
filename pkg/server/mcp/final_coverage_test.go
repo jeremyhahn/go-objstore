@@ -31,7 +31,7 @@ import (
 // TestCompleteWorkflow tests a complete workflow to maximize coverage
 func TestCompleteWorkflow(t *testing.T) {
 	storage := NewMockStorage()
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 	ctx := context.Background()
 
 	// Put with metadata including all fields
@@ -126,7 +126,7 @@ func TestCompleteWorkflow(t *testing.T) {
 // TestResourceWorkflow tests complete resource workflow
 func TestResourceWorkflow(t *testing.T) {
 	storage := NewMockStorage()
-	manager := NewResourceManager(storage, "resources/")
+	manager := createTestResourceManager(t, storage, "resources/")
 	ctx := context.Background()
 
 	// Add multiple objects
@@ -165,7 +165,7 @@ func TestResourceWorkflow(t *testing.T) {
 // TestErrorPaths tests error handling paths
 func TestErrorPaths(t *testing.T) {
 	storage := NewMockStorage()
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 	ctx := context.Background()
 
 	// Get non-existent object
@@ -207,10 +207,7 @@ func TestErrorPaths(t *testing.T) {
 // TestHTTPHandler_RequestBodyReadError tests HTTP handler with unreadable body
 func TestHTTPHandler_RequestBodyReadError(t *testing.T) {
 	storage := NewMockStorage()
-	server, _ := NewServer(&ServerConfig{
-		Mode:    ModeHTTP,
-		Storage: storage,
-	})
+	server := createTestServer(t, storage, ModeHTTP)
 	httpHandler := NewHTTPHandler(server)
 
 	// Create a request with invalid body that can't be read
@@ -236,10 +233,7 @@ func (b *badReader) Read(p []byte) (int, error) {
 // TestHandleResourcesListWithParams tests resources/list with cursor parameter
 func TestHandleResourcesListWithParams(t *testing.T) {
 	storage := NewMockStorage()
-	server, _ := NewServer(&ServerConfig{
-		Mode:    ModeStdio,
-		Storage: storage,
-	})
+	server := createTestServer(t, storage, ModeStdio)
 	handler := NewRPCHandler(server)
 
 	// Add test objects
@@ -271,7 +265,7 @@ func TestHandleResourcesListWithParams(t *testing.T) {
 // TestResourceManager_ReadResourceNoContentType tests ReadResource when metadata has no ContentType
 func TestResourceManager_ReadResourceNoContentType(t *testing.T) {
 	storage := NewMockStorage()
-	manager := NewResourceManager(storage, "")
+	manager := createTestResourceManager(t, storage, "")
 
 	// Add test object WITHOUT metadata
 	testContent := "hello world"
@@ -297,7 +291,7 @@ func TestResourceManager_ReadResourceNoContentType(t *testing.T) {
 // TestResourceManager_ListResourcesNoMetadata tests ListResources when objects have no metadata
 func TestResourceManager_ListResourcesNoMetadata(t *testing.T) {
 	storage := NewMockStorage()
-	manager := NewResourceManager(storage, "")
+	manager := createTestResourceManager(t, storage, "")
 
 	// Manually add objects to storage without metadata
 	storage.objects["file1.txt"] = []byte("data1")
@@ -321,9 +315,10 @@ func TestResourceManager_ListResourcesNoMetadata(t *testing.T) {
 // TestServer_StartWithInvalidMode tests Start with invalid server mode
 func TestServer_StartWithInvalidMode(t *testing.T) {
 	storage := NewMockStorage()
+	initTestFacade(t, storage)
 	server, _ := NewServer(&ServerConfig{
 		Mode:    ServerMode("invalid"),
-		Storage: storage,
+		Backend: "",
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -346,9 +341,10 @@ func TestAuthenticationMiddleware_FailedAuth(t *testing.T) {
 	}
 
 	storage := NewMockStorage()
+	initTestFacade(t, storage)
 	server, _ := NewServer(&ServerConfig{
 		Mode:          ModeHTTP,
-		Storage:       storage,
+		Backend:       "",
 		Authenticator: failingAuth,
 	})
 
@@ -378,9 +374,10 @@ func TestAuthenticationMiddleware_SuccessfulAuth(t *testing.T) {
 	}
 
 	storage := NewMockStorage()
+	initTestFacade(t, storage)
 	server, _ := NewServer(&ServerConfig{
 		Mode:          ModeHTTP,
-		Storage:       storage,
+		Backend:       "",
 		Authenticator: successAuth,
 	})
 
@@ -456,10 +453,7 @@ func (m *MockAuthenticator) ValidatePermission(ctx context.Context, principal *a
 // TestHTTPHandler_ContentTypeHeader tests that Content-Type header is set
 func TestHTTPHandler_ContentTypeHeader(t *testing.T) {
 	storage := NewMockStorage()
-	server, _ := NewServer(&ServerConfig{
-		Mode:    ModeHTTP,
-		Storage: storage,
-	})
+	server := createTestServer(t, storage, ModeHTTP)
 	httpHandler := NewHTTPHandler(server)
 
 	req := httptest.NewRequest("POST", "/", bytes.NewBufferString(`{
@@ -479,7 +473,7 @@ func TestHTTPHandler_ContentTypeHeader(t *testing.T) {
 
 // TestResourceManager_ExtractNameEdgeCase tests extractName with various paths
 func TestResourceManager_ExtractNameEdgeCase(t *testing.T) {
-	manager := NewResourceManager(nil, "")
+	manager := NewResourceManager("", "")
 
 	tests := []struct {
 		key          string

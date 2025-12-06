@@ -106,8 +106,9 @@ func newMockReplicationStorage() *mockReplicationStorage {
 // TestHandleReplicationPolicies_GET tests the router for GET requests
 func TestHandleReplicationPolicies_GET(t *testing.T) {
 	storage := newMockReplicationStorage()
+	initTestFacade(t, storage)
 	handler := &Handler{
-		storage:     storage,
+		backend:     "",
 		readTimeout: 5 * time.Second,
 	}
 
@@ -124,8 +125,9 @@ func TestHandleReplicationPolicies_GET(t *testing.T) {
 // TestHandleReplicationPolicies_POST tests the router for POST requests
 func TestHandleReplicationPolicies_POST(t *testing.T) {
 	storage := newMockReplicationStorage()
+	initTestFacade(t, storage)
 	handler := &Handler{
-		storage:      storage,
+		backend:      "",
 		writeTimeout: 5 * time.Second,
 	}
 
@@ -160,8 +162,9 @@ func TestHandleReplicationPolicies_POST(t *testing.T) {
 // TestHandleReplicationPolicies_MethodNotAllowed tests unsupported HTTP methods
 func TestHandleReplicationPolicies_MethodNotAllowed(t *testing.T) {
 	storage := newMockReplicationStorage()
+	initTestFacade(t, storage)
 	handler := &Handler{
-		storage:     storage,
+		backend:     "",
 		readTimeout: 5 * time.Second,
 	}
 
@@ -178,8 +181,9 @@ func TestHandleReplicationPolicies_MethodNotAllowed(t *testing.T) {
 // TestHandleReplicationPolicies_DELETE tests DELETE method
 func TestHandleReplicationPolicies_DELETE(t *testing.T) {
 	storage := newMockReplicationStorage()
+	initTestFacade(t, storage)
 	handler := &Handler{
-		storage:     storage,
+		backend:     "",
 		readTimeout: 5 * time.Second,
 	}
 
@@ -236,8 +240,9 @@ func (m *mockSimpleStorage) Archive(key string, destination common.Archiver) err
 func TestHandleApplyPolicies_NoPolicies(t *testing.T) {
 	// Use a storage with no policies
 	storage := newMockLifecycleStorage()
+	initTestFacade(t, storage)
 	handler := &Handler{
-		storage:      storage,
+		backend:      "",
 		writeTimeout: 5 * time.Second,
 	}
 
@@ -266,8 +271,9 @@ func TestHandleApplyPolicies_Success(t *testing.T) {
 	}
 	storage.policies = []common.LifecyclePolicy{policy}
 
+	initTestFacade(t, storage)
 	handler := &Handler{
-		storage:      storage,
+		backend:      "",
 		writeTimeout: 5 * time.Second,
 	}
 
@@ -288,8 +294,9 @@ func TestHandleGetReplicationPolicies_Error(t *testing.T) {
 	storage := newMockReplicationStorage()
 	storage.replManager = nil // Simulate unsupported replication
 	
+	initTestFacade(t, storage)
 	handler := &Handler{
-		storage:     storage,
+		backend:     "",
 		readTimeout: 5 * time.Second,
 	}
 
@@ -307,8 +314,9 @@ func TestHandleGetReplicationPolicies_Error(t *testing.T) {
 // TestHandleAddReplicationPolicy_MissingFields tests validation
 func TestHandleAddReplicationPolicy_MissingFields(t *testing.T) {
 	storage := newMockReplicationStorage()
+	initTestFacade(t, storage)
 	handler := &Handler{
-		storage:      storage,
+		backend:      "",
 		writeTimeout: 5 * time.Second,
 	}
 
@@ -368,8 +376,9 @@ func TestHandleGetReplicationPolicy_Success(t *testing.T) {
 	}
 	storage.replManager.AddPolicy(policy)
 	
+	initTestFacade(t, storage)
 	handler := &Handler{
-		storage:     storage,
+		backend:     "",
 		readTimeout: 5 * time.Second,
 	}
 
@@ -386,8 +395,9 @@ func TestHandleGetReplicationPolicy_Success(t *testing.T) {
 // TestHandleGetReplicationPolicy_NotFound tests missing policy
 func TestHandleGetReplicationPolicy_NotFound(t *testing.T) {
 	storage := newMockReplicationStorage()
+	initTestFacade(t, storage)
 	handler := &Handler{
-		storage:     storage,
+		backend:     "",
 		readTimeout: 5 * time.Second,
 	}
 
@@ -413,8 +423,9 @@ func TestHandleDeleteReplicationPolicy_Success(t *testing.T) {
 	}
 	storage.replManager.AddPolicy(policy)
 	
+	initTestFacade(t, storage)
 	handler := &Handler{
-		storage:      storage,
+		backend:      "",
 		writeTimeout: 5 * time.Second,
 	}
 
@@ -440,8 +451,9 @@ func TestHandleReplicationPolicyByID_GET(t *testing.T) {
 	}
 	storage.replManager.AddPolicy(policy)
 	
+	initTestFacade(t, storage)
 	handler := &Handler{
-		storage:     storage,
+		backend:     "",
 		readTimeout: 5 * time.Second,
 	}
 
@@ -467,8 +479,9 @@ func TestHandleReplicationPolicyByID_DELETE(t *testing.T) {
 	}
 	storage.replManager.AddPolicy(policy)
 	
+	initTestFacade(t, storage)
 	handler := &Handler{
-		storage:      storage,
+		backend:      "",
 		writeTimeout: 5 * time.Second,
 	}
 
@@ -494,8 +507,9 @@ func TestHandleTriggerReplication_Success(t *testing.T) {
 	}
 	storage.replManager.AddPolicy(policy)
 	
+	initTestFacade(t, storage)
 	handler := &Handler{
-		storage:      storage,
+		backend:      "",
 		writeTimeout: 5 * time.Second,
 	}
 
@@ -515,8 +529,9 @@ func TestHandleTriggerReplication_Success(t *testing.T) {
 // TestHandleTriggerReplication_EmptyPolicyID tests empty policy_id (returns success with empty result)
 func TestHandleTriggerReplication_EmptyPolicyID(t *testing.T) {
 	storage := newMockReplicationStorage()
+	initTestFacade(t, storage)
 	handler := &Handler{
-		storage:      storage,
+		backend:      "",
 		writeTimeout: 5 * time.Second,
 	}
 
@@ -538,8 +553,9 @@ func TestHandleTriggerReplication_EmptyPolicyID(t *testing.T) {
 // TestHandleHealth tests health check endpoint
 func TestHandleHealth(t *testing.T) {
 	storage := newMockLifecycleStorage()
+	initTestFacade(t, storage)
 	handler := &Handler{
-		storage:     storage,
+		backend:     "",
 		readTimeout: 5 * time.Second,
 	}
 
@@ -557,8 +573,9 @@ func TestHandleExists_Success(t *testing.T) {
 	storage := newMockLifecycleStorage()
 	storage.data["test-key"] = []byte("test data")
 
+	initTestFacade(t, storage)
 	handler := &Handler{
-		storage:     storage,
+		backend:     "",
 		readTimeout: 5 * time.Second,
 	}
 
@@ -576,8 +593,9 @@ func TestHandleExists_Success(t *testing.T) {
 func TestHandleExists_NotFound(t *testing.T) {
 	storage := newMockLifecycleStorage()
 
+	initTestFacade(t, storage)
 	handler := &Handler{
-		storage:     storage,
+		backend:     "",
 		readTimeout: 5 * time.Second,
 	}
 
@@ -594,8 +612,9 @@ func TestHandleExists_NotFound(t *testing.T) {
 // TestHandleApplyPolicies_MethodNotAllowed tests non-POST methods
 func TestHandleApplyPolicies_MethodNotAllowed(t *testing.T) {
 	storage := newMockLifecycleStorage()
+	initTestFacade(t, storage)
 	handler := &Handler{
-		storage:      storage,
+		backend:      "",
 		writeTimeout: 5 * time.Second,
 	}
 
@@ -619,8 +638,9 @@ func TestHandleGetReplicationPolicies_EmptyList(t *testing.T) {
 		},
 	}
 
+	initTestFacade(t, storage)
 	handler := &Handler{
-		storage:     storage,
+		backend:     "",
 		readTimeout: 5 * time.Second,
 	}
 
@@ -637,8 +657,9 @@ func TestHandleGetReplicationPolicies_EmptyList(t *testing.T) {
 // TestHandleDeleteReplicationPolicy_EmptyID tests deleting with empty policy ID
 func TestHandleDeleteReplicationPolicy_EmptyID(t *testing.T) {
 	storage := newMockReplicationStorage()
+	initTestFacade(t, storage)
 	handler := &Handler{
-		storage:      storage,
+		backend:      "",
 		writeTimeout: 5 * time.Second,
 	}
 
@@ -656,8 +677,9 @@ func TestHandleDeleteReplicationPolicy_EmptyID(t *testing.T) {
 // TestHandleGetReplicationPolicy_EmptyID tests getting policy with empty ID
 func TestHandleGetReplicationPolicy_EmptyID(t *testing.T) {
 	storage := newMockReplicationStorage()
+	initTestFacade(t, storage)
 	handler := &Handler{
-		storage:     storage,
+		backend:     "",
 		readTimeout: 5 * time.Second,
 	}
 
@@ -675,8 +697,9 @@ func TestHandleGetReplicationPolicy_EmptyID(t *testing.T) {
 // TestHandleAddReplicationPolicy_InvalidSourceBackend tests invalid source backend
 func TestHandleAddReplicationPolicy_InvalidSourceBackend(t *testing.T) {
 	storage := newMockReplicationStorage()
+	initTestFacade(t, storage)
 	handler := &Handler{
-		storage:      storage,
+		backend:      "",
 		writeTimeout: 5 * time.Second,
 	}
 
@@ -704,8 +727,9 @@ func TestHandleAddReplicationPolicy_InvalidSourceBackend(t *testing.T) {
 // TestHandleAddReplicationPolicy_InvalidDestinationBackend tests invalid destination backend
 func TestHandleAddReplicationPolicy_InvalidDestinationBackend(t *testing.T) {
 	storage := newMockReplicationStorage()
+	initTestFacade(t, storage)
 	handler := &Handler{
-		storage:      storage,
+		backend:      "",
 		writeTimeout: 5 * time.Second,
 	}
 
@@ -734,8 +758,9 @@ func TestHandleAddReplicationPolicy_InvalidDestinationBackend(t *testing.T) {
 // TestHandleAddReplicationPolicy_InvalidJSON tests invalid JSON request body
 func TestHandleAddReplicationPolicy_InvalidJSON(t *testing.T) {
 	storage := newMockReplicationStorage()
+	initTestFacade(t, storage)
 	handler := &Handler{
-		storage:      storage,
+		backend:      "",
 		writeTimeout: 5 * time.Second,
 	}
 

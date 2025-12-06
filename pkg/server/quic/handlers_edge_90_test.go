@@ -42,7 +42,7 @@ func TestHandleExists_StorageError(t *testing.T) {
 	storage := &mockStorageWithExistsError{
 		mockLifecycleStorage: newMockLifecycleStorage(),
 	}
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	req := httptest.NewRequest(http.MethodGet, "/objects/test.txt?exists=true", nil)
 	w := httptest.NewRecorder()
@@ -68,7 +68,7 @@ func TestHandleGet_MetadataError(t *testing.T) {
 	storage := &mockStorageWithGetMetadataError{
 		mockLifecycleStorage: newMockLifecycleStorage(),
 	}
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	req := httptest.NewRequest(http.MethodGet, "/objects/test.txt", nil)
 	w := httptest.NewRecorder()
@@ -84,7 +84,7 @@ func TestHandleGet_MetadataError(t *testing.T) {
 func TestHandleGetPolicies_StorageError(t *testing.T) {
 	storage := newMockLifecycleStorage()
 	storage.getPoliciesError = errors.New("database error")
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	req := httptest.NewRequest(http.MethodGet, "/policies", nil)
 	w := httptest.NewRecorder()
@@ -100,7 +100,7 @@ func TestHandleGetPolicies_StorageError(t *testing.T) {
 func TestHandleAddPolicy_StorageError(t *testing.T) {
 	storage := newMockLifecycleStorage()
 	storage.addPolicyError = errors.New("database error")
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	policy := map[string]any{
 		"id":                "test-policy",
@@ -123,7 +123,7 @@ func TestHandleAddPolicy_StorageError(t *testing.T) {
 // TestHandleUpdateMetadata_WithCustomMetadata tests update with custom metadata
 func TestHandleUpdateMetadata_WithCustomMetadata(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	// Add object
 	storage.PutWithContext(context.Background(), "test.txt", bytes.NewReader([]byte("data")))
@@ -150,7 +150,7 @@ func TestHandleUpdateMetadata_WithCustomMetadata(t *testing.T) {
 // TestServeHTTP_PoliciesRoute tests policies routing
 func TestServeHTTP_PoliciesRoute(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	// Test GET /policies
 	req := httptest.NewRequest(http.MethodGet, "/policies", nil)
@@ -192,7 +192,7 @@ func TestServeHTTP_PoliciesRoute(t *testing.T) {
 // TestHandleGet_NilMetadata tests get with nil metadata
 func TestHandleGet_NilMetadata(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	// Add object
 	storage.PutWithContext(context.Background(), "test.txt", bytes.NewReader([]byte("data")))
@@ -212,7 +212,7 @@ func TestHandleGet_NilMetadata(t *testing.T) {
 // TestHandleGet_AllHeadersSet tests get with all metadata fields set
 func TestHandleGet_AllHeadersSet(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	metadata := &common.Metadata{
 		ContentType:     "application/octet-stream",
