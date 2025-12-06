@@ -134,11 +134,12 @@ func TestServerStartMultipleTimes(t *testing.T) {
 	// Test starting server multiple times to cover all state transitions
 	storage := local.New()
 	storage.Configure(map[string]string{"path": t.TempDir()})
+	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
 	opts := DefaultOptions().
 		WithAddr(":0").
-		WithStorage(storage).
+		WithBackend("").
 		WithTLSConfig(tlsConfig)
 
 	server, _ := New(opts)
@@ -177,11 +178,12 @@ func TestServerStartMultipleTimes(t *testing.T) {
 func TestServerMultipleStopCalls(t *testing.T) {
 	storage := local.New()
 	storage.Configure(map[string]string{"path": t.TempDir()})
+	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
 	opts := DefaultOptions().
 		WithAddr(":0").
-		WithStorage(storage).
+		WithBackend("").
 		WithTLSConfig(tlsConfig)
 
 	server, _ := New(opts)

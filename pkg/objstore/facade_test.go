@@ -172,7 +172,81 @@ func (m *mockStorage) GetPolicies() ([]common.LifecyclePolicy, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
-	return []common.LifecyclePolicy{}, nil
+	return []common.LifecyclePolicy{
+		{ID: "policy-1", Prefix: "logs/"},
+	}, nil
+}
+
+// mockReplicationStorage extends mockStorage with replication capabilities
+type mockReplicationStorage struct {
+	*mockStorage
+	replicationManager *mockReplicationManager
+}
+
+func newMockReplicationStorage(name string) *mockReplicationStorage {
+	return &mockReplicationStorage{
+		mockStorage:        newMockStorage(name),
+		replicationManager: &mockReplicationManager{},
+	}
+}
+
+func (m *mockReplicationStorage) GetReplicationManager() (common.ReplicationManager, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.replicationManager, nil
+}
+
+// mockReplicationManager implements common.ReplicationManager
+type mockReplicationManager struct{}
+
+func (m *mockReplicationManager) AddPolicy(policy common.ReplicationPolicy) error {
+	return nil
+}
+
+func (m *mockReplicationManager) RemovePolicy(id string) error {
+	return nil
+}
+
+func (m *mockReplicationManager) GetPolicy(id string) (*common.ReplicationPolicy, error) {
+	return &common.ReplicationPolicy{ID: id}, nil
+}
+
+func (m *mockReplicationManager) GetPolicies() ([]common.ReplicationPolicy, error) {
+	return []common.ReplicationPolicy{}, nil
+}
+
+func (m *mockReplicationManager) SyncAll(ctx context.Context) (*common.SyncResult, error) {
+	return &common.SyncResult{}, nil
+}
+
+func (m *mockReplicationManager) SyncPolicy(ctx context.Context, policyID string) (*common.SyncResult, error) {
+	return &common.SyncResult{}, nil
+}
+
+func (m *mockReplicationManager) SetBackendEncrypterFactory(policyID string, factory common.EncrypterFactory) error {
+	return nil
+}
+
+func (m *mockReplicationManager) SetSourceEncrypterFactory(policyID string, factory common.EncrypterFactory) error {
+	return nil
+}
+
+func (m *mockReplicationManager) SetDestinationEncrypterFactory(policyID string, factory common.EncrypterFactory) error {
+	return nil
+}
+
+func (m *mockReplicationManager) Run(ctx context.Context) {
+	// No-op for testing
+}
+
+// mockArchiver implements common.Archiver for testing
+type mockArchiver struct {
+	err error
+}
+
+func (m *mockArchiver) Put(key string, data io.Reader) error {
+	return m.err
 }
 
 func TestInitialize(t *testing.T) {
@@ -673,6 +747,682 @@ func TestReset(t *testing.T) {
 	})
 	if err != nil {
 		t.Errorf("Failed to re-initialize facade: %v", err)
+	}
+}
+
+func TestDelete(t *testing.T) {
+	Reset()
+	mock := newMockStorage("local")
+	mock.objects["delete-me.txt"] = []byte("data")
+
+	err := Initialize(&FacadeConfig{
+		Backends: map[string]common.Storage{
+			"local": mock,
+		},
+		DefaultBackend: "local",
+	})
+	if err != nil {
+		t.Fatalf("Failed to initialize facade: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		key     string
+		wantErr bool
+	}{
+		{"valid delete", "delete-me.txt", false},
+		{"invalid key empty", "", true},
+		{"invalid key path traversal", "../test.txt", true},
+		{"invalid key absolute", "/etc/passwd", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := Delete(tt.key)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Delete() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestList(t *testing.T) {
+	Reset()
+	mock := newMockStorage("local")
+	mock.objects["logs/app.log"] = []byte("log1")
+	mock.objects["logs/error.log"] = []byte("log2")
+	mock.objects["data/file.txt"] = []byte("data")
+
+	err := Initialize(&FacadeConfig{
+		Backends: map[string]common.Storage{
+			"local": mock,
+		},
+		DefaultBackend: "local",
+	})
+	if err != nil {
+		t.Fatalf("Failed to initialize facade: %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		prefix    string
+		wantCount int
+		wantErr   bool
+	}{
+		{"list logs", "logs/", 2, false},
+		{"list data", "data/", 1, false},
+		{"list all", "", 3, false},
+		{"invalid prefix", "../", 0, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			keys, err := List(tt.prefix)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("List() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && len(keys) != tt.wantCount {
+				t.Errorf("Expected %d keys, got %d", tt.wantCount, len(keys))
+			}
+		})
+	}
+}
+
+func TestGet(t *testing.T) {
+	Reset()
+	mock := newMockStorage("local")
+	mock.objects["test.txt"] = []byte("hello world")
+
+	err := Initialize(&FacadeConfig{
+		Backends: map[string]common.Storage{
+			"local": mock,
+		},
+		DefaultBackend: "local",
+	})
+	if err != nil {
+		t.Fatalf("Failed to initialize facade: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		key     string
+		want    string
+		wantErr bool
+	}{
+		{"valid get", "test.txt", "hello world", false},
+		{"non-existent", "missing.txt", "", true},
+		{"invalid key empty", "", "", true},
+		{"invalid key path traversal", "../test.txt", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reader, err := Get(tt.key)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Get() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if !tt.wantErr {
+				defer reader.Close()
+				content, _ := io.ReadAll(reader)
+				if string(content) != tt.want {
+					t.Errorf("Expected %q, got %q", tt.want, string(content))
+				}
+			}
+		})
+	}
+}
+
+func TestGetMetadata(t *testing.T) {
+	Reset()
+	mock := newMockStorage("local")
+	mock.objects["test.txt"] = []byte("hello world")
+
+	err := Initialize(&FacadeConfig{
+		Backends: map[string]common.Storage{
+			"local": mock,
+		},
+		DefaultBackend: "local",
+	})
+	if err != nil {
+		t.Fatalf("Failed to initialize facade: %v", err)
+	}
+
+	ctx := context.Background()
+
+	tests := []struct {
+		name    string
+		keyRef  string
+		wantErr bool
+	}{
+		{"valid metadata", "test.txt", false},
+		{"with backend prefix", "local:test.txt", false},
+		{"non-existent", "missing.txt", true},
+		{"invalid key", "../test.txt", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			metadata, err := GetMetadata(ctx, tt.keyRef)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("GetMetadata() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			if !tt.wantErr && metadata == nil {
+				t.Error("Expected non-nil metadata")
+			}
+		})
+	}
+}
+
+func TestUpdateMetadata(t *testing.T) {
+	Reset()
+	mock := newMockStorage("local")
+	mock.objects["test.txt"] = []byte("hello world")
+
+	err := Initialize(&FacadeConfig{
+		Backends: map[string]common.Storage{
+			"local": mock,
+		},
+		DefaultBackend: "local",
+	})
+	if err != nil {
+		t.Fatalf("Failed to initialize facade: %v", err)
+	}
+
+	ctx := context.Background()
+
+	tests := []struct {
+		name     string
+		keyRef   string
+		metadata *common.Metadata
+		wantErr  bool
+	}{
+		{
+			name:   "valid update",
+			keyRef: "test.txt",
+			metadata: &common.Metadata{
+				ContentType: "text/plain",
+				Custom:      map[string]string{"author": "test"},
+			},
+			wantErr: false,
+		},
+		{
+			name:   "with backend prefix",
+			keyRef: "local:test.txt",
+			metadata: &common.Metadata{
+				ContentType: "text/plain",
+			},
+			wantErr: false,
+		},
+		{
+			name:     "invalid key",
+			keyRef:   "../test.txt",
+			metadata: &common.Metadata{},
+			wantErr:  true,
+		},
+		{
+			name:   "invalid metadata too many entries",
+			keyRef: "test.txt",
+			metadata: func() *common.Metadata {
+				m := &common.Metadata{Custom: make(map[string]string)}
+				for i := 0; i < 101; i++ {
+					m.Custom[string(rune('a'+i))] = "value"
+				}
+				return m
+			}(),
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := UpdateMetadata(ctx, tt.keyRef, tt.metadata)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("UpdateMetadata() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestArchive(t *testing.T) {
+	Reset()
+	mock := newMockStorage("local")
+	mock.objects["archive-me.txt"] = []byte("data to archive")
+
+	err := Initialize(&FacadeConfig{
+		Backends: map[string]common.Storage{
+			"local": mock,
+		},
+		DefaultBackend: "local",
+	})
+	if err != nil {
+		t.Fatalf("Failed to initialize facade: %v", err)
+	}
+
+	archiver := &mockArchiver{}
+
+	tests := []struct {
+		name    string
+		keyRef  string
+		wantErr bool
+	}{
+		{"valid archive", "archive-me.txt", false},
+		{"with backend prefix", "local:archive-me.txt", false},
+		{"invalid key", "../test.txt", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := Archive(tt.keyRef, archiver)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Archive() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestAddPolicy(t *testing.T) {
+	Reset()
+	mock := newMockStorage("local")
+
+	err := Initialize(&FacadeConfig{
+		Backends: map[string]common.Storage{
+			"local": mock,
+		},
+		DefaultBackend: "local",
+	})
+	if err != nil {
+		t.Fatalf("Failed to initialize facade: %v", err)
+	}
+
+	tests := []struct {
+		name        string
+		backendName string
+		policy      common.LifecyclePolicy
+		wantErr     bool
+	}{
+		{
+			name:        "valid policy default backend",
+			backendName: "",
+			policy: common.LifecyclePolicy{
+				ID:     "policy-1",
+				Prefix: "logs/",
+			},
+			wantErr: false,
+		},
+		{
+			name:        "valid policy specific backend",
+			backendName: "local",
+			policy: common.LifecyclePolicy{
+				ID:     "policy-2",
+				Prefix: "data/",
+			},
+			wantErr: false,
+		},
+		{
+			name:        "invalid backend name",
+			backendName: "INVALID",
+			policy:      common.LifecyclePolicy{},
+			wantErr:     true,
+		},
+		{
+			name:        "invalid policy prefix",
+			backendName: "",
+			policy: common.LifecyclePolicy{
+				ID:     "policy-3",
+				Prefix: "../etc/",
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := AddPolicy(tt.backendName, tt.policy)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("AddPolicy() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestRemovePolicy(t *testing.T) {
+	Reset()
+	mock := newMockStorage("local")
+
+	err := Initialize(&FacadeConfig{
+		Backends: map[string]common.Storage{
+			"local": mock,
+		},
+		DefaultBackend: "local",
+	})
+	if err != nil {
+		t.Fatalf("Failed to initialize facade: %v", err)
+	}
+
+	tests := []struct {
+		name        string
+		backendName string
+		policyID    string
+		wantErr     bool
+	}{
+		{"remove from default backend", "", "policy-1", false},
+		{"remove from specific backend", "local", "policy-2", false},
+		{"invalid backend name", "INVALID", "policy-3", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := RemovePolicy(tt.backendName, tt.policyID)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("RemovePolicy() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestGetPolicies(t *testing.T) {
+	Reset()
+	mock := newMockStorage("local")
+
+	err := Initialize(&FacadeConfig{
+		Backends: map[string]common.Storage{
+			"local": mock,
+		},
+		DefaultBackend: "local",
+	})
+	if err != nil {
+		t.Fatalf("Failed to initialize facade: %v", err)
+	}
+
+	tests := []struct {
+		name        string
+		backendName string
+		wantErr     bool
+	}{
+		{"get from default backend", "", false},
+		{"get from specific backend", "local", false},
+		{"invalid backend name", "INVALID", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			policies, err := GetPolicies(tt.backendName)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("GetPolicies() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			if !tt.wantErr && policies == nil {
+				t.Error("Expected non-nil policies")
+			}
+		})
+	}
+}
+
+func TestGetReplicationManager(t *testing.T) {
+	Reset()
+
+	// Create a storage that supports replication
+	replicableStorage := newMockReplicationStorage("local")
+
+	// Create a storage that does not support replication
+	nonReplicableStorage := newMockStorage("simple")
+
+	err := Initialize(&FacadeConfig{
+		Backends: map[string]common.Storage{
+			"replicable":     replicableStorage,
+			"non-replicable": nonReplicableStorage,
+		},
+		DefaultBackend: "replicable",
+	})
+	if err != nil {
+		t.Fatalf("Failed to initialize facade: %v", err)
+	}
+
+	tests := []struct {
+		name        string
+		backendName string
+		wantErr     bool
+	}{
+		{"get from replicable backend", "replicable", false},
+		{"get from default (replicable)", "", false},
+		{"get from non-replicable backend", "non-replicable", true},
+		{"invalid backend name", "INVALID", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager, err := GetReplicationManager(tt.backendName)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("GetReplicationManager() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			if !tt.wantErr && manager == nil {
+				t.Error("Expected non-nil replication manager")
+			}
+		})
+	}
+}
+
+func TestInitializeWithBackendConfigs(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  *FacadeConfig
+		wantErr bool
+	}{
+		{
+			name: "valid BackendConfigs",
+			config: &FacadeConfig{
+				BackendConfigs: map[string]BackendConfig{
+					"local": {
+						Type:     "local",
+						Settings: map[string]string{"path": "/tmp/test-backend-configs"},
+					},
+				},
+				DefaultBackend: "local",
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid backend type",
+			config: &FacadeConfig{
+				BackendConfigs: map[string]BackendConfig{
+					"invalid": {
+						Type:     "nonexistent-backend-type",
+						Settings: map[string]string{},
+					},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "mixed backends and backendconfigs",
+			config: &FacadeConfig{
+				Backends: map[string]common.Storage{
+					"mock": newMockStorage("mock"),
+				},
+				BackendConfigs: map[string]BackendConfig{
+					"local": {
+						Type:     "local",
+						Settings: map[string]string{"path": "/tmp/test-mixed"},
+					},
+				},
+				DefaultBackend: "mock",
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			Reset()
+
+			err := Initialize(tt.config)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Initialize() with BackendConfigs error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			if !tt.wantErr && !IsInitialized() {
+				t.Error("Expected facade to be initialized")
+			}
+		})
+	}
+}
+
+func TestPutWithContext(t *testing.T) {
+	Reset()
+	mock := newMockStorage("local")
+	err := Initialize(&FacadeConfig{
+		Backends: map[string]common.Storage{
+			"local": mock,
+		},
+		DefaultBackend: "local",
+	})
+	if err != nil {
+		t.Fatalf("Failed to initialize facade: %v", err)
+	}
+
+	ctx := context.Background()
+
+	tests := []struct {
+		name    string
+		keyRef  string
+		data    string
+		wantErr bool
+	}{
+		{"valid put", "test.txt", "hello world", false},
+		{"with backend prefix", "local:test2.txt", "data", false},
+		{"invalid key empty", "", "data", true},
+		{"invalid key path traversal", "../test.txt", "data", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := PutWithContext(ctx, tt.keyRef, strings.NewReader(tt.data))
+			if (err != nil) != tt.wantErr {
+				t.Errorf("PutWithContext() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestListWithOptionsSpecificBackend(t *testing.T) {
+	Reset()
+	mock := newMockStorage("local")
+	mock.objects["test/a.txt"] = []byte("a")
+	mock.objects["test/b.txt"] = []byte("b")
+
+	err := Initialize(&FacadeConfig{
+		Backends: map[string]common.Storage{
+			"local": mock,
+		},
+		DefaultBackend: "local",
+	})
+	if err != nil {
+		t.Fatalf("Failed to initialize facade: %v", err)
+	}
+
+	ctx := context.Background()
+	opts := &common.ListOptions{
+		Prefix:     "test/",
+		MaxResults: 10,
+	}
+
+	// Test with specific backend name
+	result, err := ListWithOptions(ctx, "local", opts)
+	if err != nil {
+		t.Errorf("ListWithOptions() with specific backend error = %v", err)
+	}
+	if len(result.Objects) != 2 {
+		t.Errorf("Expected 2 objects, got %d", len(result.Objects))
+	}
+
+	// Test with invalid prefix in options
+	invalidOpts := &common.ListOptions{
+		Prefix: "../etc/",
+	}
+	_, err = ListWithOptions(ctx, "", invalidOpts)
+	if err == nil {
+		t.Error("Expected error for invalid prefix")
+	}
+}
+
+func TestFacadeNotInitialized(t *testing.T) {
+	Reset()
+
+	ctx := context.Background()
+
+	// Test all functions when facade is not initialized
+	_, err := Backend("local")
+	if err != ErrNotInitialized {
+		t.Errorf("Backend() expected ErrNotInitialized, got %v", err)
+	}
+
+	_, err = DefaultBackend()
+	if err != ErrNotInitialized {
+		t.Errorf("DefaultBackend() expected ErrNotInitialized, got %v", err)
+	}
+
+	err = Put("test.txt", strings.NewReader("data"))
+	if err != ErrNotInitialized {
+		t.Errorf("Put() expected ErrNotInitialized, got %v", err)
+	}
+
+	_, err = Get("test.txt")
+	if err != ErrNotInitialized {
+		t.Errorf("Get() expected ErrNotInitialized, got %v", err)
+	}
+
+	err = Delete("test.txt")
+	if err != ErrNotInitialized {
+		t.Errorf("Delete() expected ErrNotInitialized, got %v", err)
+	}
+
+	_, err = List("")
+	if err != ErrNotInitialized {
+		t.Errorf("List() expected ErrNotInitialized, got %v", err)
+	}
+
+	_, err = Exists(ctx, "test.txt")
+	if err != ErrNotInitialized {
+		t.Errorf("Exists() expected ErrNotInitialized, got %v", err)
+	}
+
+	_, err = GetMetadata(ctx, "test.txt")
+	if err != ErrNotInitialized {
+		t.Errorf("GetMetadata() expected ErrNotInitialized, got %v", err)
+	}
+
+	err = UpdateMetadata(ctx, "test.txt", &common.Metadata{})
+	if err != ErrNotInitialized {
+		t.Errorf("UpdateMetadata() expected ErrNotInitialized, got %v", err)
+	}
+
+	err = Archive("test.txt", &mockArchiver{})
+	if err != ErrNotInitialized {
+		t.Errorf("Archive() expected ErrNotInitialized, got %v", err)
+	}
+
+	err = AddPolicy("", common.LifecyclePolicy{})
+	if err != ErrNotInitialized {
+		t.Errorf("AddPolicy() expected ErrNotInitialized, got %v", err)
+	}
+
+	err = RemovePolicy("", "policy-1")
+	if err != ErrNotInitialized {
+		t.Errorf("RemovePolicy() expected ErrNotInitialized, got %v", err)
+	}
+
+	_, err = GetPolicies("")
+	if err != ErrNotInitialized {
+		t.Errorf("GetPolicies() expected ErrNotInitialized, got %v", err)
+	}
+
+	_, err = GetReplicationManager("")
+	if err != ErrNotInitialized {
+		t.Errorf("GetReplicationManager() expected ErrNotInitialized, got %v", err)
 	}
 }
 

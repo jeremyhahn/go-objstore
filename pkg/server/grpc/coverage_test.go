@@ -104,7 +104,7 @@ func TestWithAudit(t *testing.T) {
 func TestServer_WithReflection(t *testing.T) {
 	storage := newMockStorage()
 
-	server, err := NewServer(storage, WithAddress("127.0.0.1:0"), WithReflection(true))
+	server, err := newTestServer(t, storage, WithAddress("127.0.0.1:0"), WithReflection(true))
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}
@@ -144,8 +144,8 @@ func TestBuildServerOptions_TLSError(t *testing.T) {
 		ClientCAFile:   "/nonexistent/ca.pem",
 	}
 
+	initTestFacade(t, storage)
 	server, err := NewServer(
-		storage,
 		WithAddress("127.0.0.1:0"),
 		WithAdapterTLS(invalidTLSConfig),
 	)
@@ -180,8 +180,8 @@ func TestBuildServerOptions_RateLimiting(t *testing.T) {
 		Burst:             5,
 	}
 
+	initTestFacade(t, storage)
 	server, err := NewServer(
-		storage,
 		WithAddress("127.0.0.1:0"),
 		WithRateLimit(true, rateLimitConfig),
 	)
@@ -203,8 +203,8 @@ func TestBuildServerOptions_RateLimiting(t *testing.T) {
 func TestBuildServerOptions_RequestIDDisabled(t *testing.T) {
 	storage := newMockStorage()
 
+	initTestFacade(t, storage)
 	server, err := NewServer(
-		storage,
 		WithAddress("127.0.0.1:0"),
 		WithRequestID(false),
 	)
@@ -225,8 +225,8 @@ func TestBuildServerOptions_RequestIDDisabled(t *testing.T) {
 func TestBuildServerOptions_AuditDisabled(t *testing.T) {
 	storage := newMockStorage()
 
+	initTestFacade(t, storage)
 	server, err := NewServer(
-		storage,
 		WithAddress("127.0.0.1:0"),
 		WithAudit(false),
 	)
@@ -251,8 +251,8 @@ func TestBuildServerOptions_LegacyTLS(t *testing.T) {
 		MinVersion: tls.VersionTLS12,
 	}
 
+	initTestFacade(t, storage)
 	server, err := NewServer(
-		storage,
 		WithAddress("127.0.0.1:0"),
 		WithTLS(tlsConfig),
 	)
@@ -549,7 +549,7 @@ func TestAuthenticationStreamInterceptor_NoMetadata(t *testing.T) {
 func TestServer_StartFailure_InvalidAddress(t *testing.T) {
 	storage := newMockStorage()
 
-	server, err := NewServer(storage, WithAddress("invalid:address:format"))
+	server, err := newTestServer(t, storage, WithAddress("invalid:address:format"))
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}
@@ -565,7 +565,7 @@ func TestServer_StartFailure_InvalidAddress(t *testing.T) {
 func TestGet_StorageReadError(t *testing.T) {
 	storage := newMockStorage()
 
-	server, err := NewServer(storage, WithAddress("127.0.0.1:0"))
+	server, err := newTestServer(t, storage, WithAddress("127.0.0.1:0"))
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}
@@ -634,7 +634,7 @@ func TestExists_StorageError(t *testing.T) {
 		shouldFailExists: true,
 	}
 
-	server, err := NewServer(storage, WithAddress("127.0.0.1:0"))
+	server, err := newTestServer(t, storage, WithAddress("127.0.0.1:0"))
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}
@@ -730,7 +730,7 @@ func TestPut_StorageError(t *testing.T) {
 		mockStorage: newMockStorage(),
 	}
 
-	server, err := NewServer(storage, WithAddress("127.0.0.1:0"))
+	server, err := newTestServer(t, storage, WithAddress("127.0.0.1:0"))
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}
@@ -794,8 +794,8 @@ func TestServer_AllInterceptors(t *testing.T) {
 		Burst:             10,
 	}
 
+	initTestFacade(t, storage)
 	server, err := NewServer(
-		storage,
 		WithAddress("127.0.0.1:0"),
 		WithRateLimit(true, rateLimitConfig),
 		WithRequestID(true),
@@ -854,8 +854,8 @@ func TestBuildServerOptions_ValidAdapterTLS(t *testing.T) {
 		ServerKeyFile:  keyFile,
 	}
 
+	initTestFacade(t, storage)
 	server, err := NewServer(
-		storage,
 		WithAddress("127.0.0.1:0"),
 		WithAdapterTLS(tlsConfig),
 	)
@@ -880,8 +880,8 @@ func TestServer_CustomInterceptors(t *testing.T) {
 		return handler(srv, ss)
 	}
 
+	initTestFacade(t, storage)
 	server, err := NewServer(
-		storage,
 		WithAddress("127.0.0.1:0"),
 		WithUnaryInterceptor(customUnaryInterceptor),
 		WithStreamInterceptor(customStreamInterceptor),
@@ -944,7 +944,7 @@ func TestServer_CustomInterceptors(t *testing.T) {
 func TestApplyPolicies_NoPolicies(t *testing.T) {
 	storage := newMockLifecycleStorage()
 	
-	server, err := NewServer(storage, WithAddress("127.0.0.1:0"))
+	server, err := newTestServer(t, storage, WithAddress("127.0.0.1:0"))
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}
@@ -997,7 +997,7 @@ func TestApplyPolicies_WithPolicies(t *testing.T) {
 	storage.data["test/object.txt"] = []byte("data")
 	storage.metadata["test/object.txt"] = &common.Metadata{Size: 4}
 
-	server, err := NewServer(storage, WithAddress("127.0.0.1:0"))
+	server, err := newTestServer(t, storage, WithAddress("127.0.0.1:0"))
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}
@@ -1054,7 +1054,7 @@ func TestApplyPolicies_PrefixFiltering(t *testing.T) {
 	storage.data["logs/error.log"] = []byte("error log")
 	storage.metadata["logs/error.log"] = &common.Metadata{Size: 9}
 
-	server, err := NewServer(storage, WithAddress("127.0.0.1:0"))
+	server, err := newTestServer(t, storage, WithAddress("127.0.0.1:0"))
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}

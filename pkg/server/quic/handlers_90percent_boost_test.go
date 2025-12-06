@@ -29,7 +29,7 @@ import (
 // TestHandleGet_ContextTimeout tests GET request with context timeout
 func TestHandleGet_ContextTimeout(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 1*time.Nanosecond, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 1*time.Nanosecond, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	// Add object
 	storage.PutWithContext(context.Background(), "test.txt", bytes.NewReader([]byte("data")))
@@ -52,7 +52,7 @@ func TestHandleGet_ContextTimeout(t *testing.T) {
 // TestHandleExists_ContextTimeout tests EXISTS request with context timeout
 func TestHandleExists_ContextTimeout(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 1*time.Nanosecond, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 1*time.Nanosecond, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	req := httptest.NewRequest(http.MethodGet, "/objects/test.txt?exists=true", nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
@@ -72,7 +72,7 @@ func TestHandleExists_ContextTimeout(t *testing.T) {
 // TestHandleHealth_AllMethods tests health endpoint with different HTTP methods
 func TestHandleHealth_AllMethods(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	methods := []string{
 		http.MethodGet,
@@ -101,7 +101,7 @@ func TestHandleHealth_AllMethods(t *testing.T) {
 // TestHandleGet_EmptyContentType tests GET with object that has no content type
 func TestHandleGet_EmptyContentType(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	// Add object with minimal metadata
 	metadata := &common.Metadata{
@@ -131,7 +131,7 @@ func TestHandleGet_EmptyContentType(t *testing.T) {
 // TestHandleExists_ExistingObject tests exists check for existing object
 func TestHandleExists_ExistingObject(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	// Add object
 	storage.PutWithContext(context.Background(), "exists.txt", bytes.NewReader([]byte("data")))
@@ -149,7 +149,7 @@ func TestHandleExists_ExistingObject(t *testing.T) {
 // TestApplyPolicies_ErrorInDeleteContinues tests that delete errors don't stop processing
 func TestApplyPolicies_ErrorInDeleteContinues(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	// Add policy
 	storage.AddPolicy(common.LifecyclePolicy{
@@ -180,7 +180,7 @@ func TestApplyPolicies_ErrorInDeleteContinues(t *testing.T) {
 func TestApplyPolicies_ErrorInArchiveContinues(t *testing.T) {
 	storage := newMockLifecycleStorage()
 	storage.archiveError = nil // Will succeed
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	// Add policy with archive action and destination
 	storage.AddPolicy(common.LifecyclePolicy{

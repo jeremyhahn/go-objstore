@@ -32,7 +32,7 @@ import (
 func TestHandleGet_ErrorPaths(t *testing.T) {
 	t.Run("metadata not found returns nil", func(t *testing.T) {
 		storage := newMockLifecycleStorage()
-		handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+		handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 		req := httptest.NewRequest(http.MethodGet, "/objects/nonexistent.txt", nil)
 		w := httptest.NewRecorder()
@@ -46,7 +46,7 @@ func TestHandleGet_ErrorPaths(t *testing.T) {
 
 	t.Run("get object with all metadata", func(t *testing.T) {
 		storage := newMockLifecycleStorage()
-		handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+		handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 		// Add object
 		storage.PutWithContext(context.Background(), "test.txt", bytes.NewReader([]byte("test data")))
@@ -68,7 +68,7 @@ func TestHandleGet_ErrorPaths(t *testing.T) {
 
 	t.Run("get object with custom metadata headers", func(t *testing.T) {
 		storage := newMockLifecycleStorage()
-		handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+		handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 		// Add object with custom metadata
 		metadata := &common.Metadata{
@@ -119,7 +119,7 @@ func TestHandleGet_ErrorPaths(t *testing.T) {
 func TestHandleExists_ErrorPaths(t *testing.T) {
 	t.Run("exists check for non-existent object", func(t *testing.T) {
 		customStor := newMockLifecycleStorage()
-		handler := NewHandler(customStor, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+		handler := createHandlerWithStorage(t, customStor, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 		req := httptest.NewRequest(http.MethodGet, "/objects/test.txt?exists=true", nil)
 		w := httptest.NewRecorder()
@@ -145,7 +145,7 @@ func TestHandleExists_ErrorPaths(t *testing.T) {
 func TestHandleUpdateMetadata_ErrorPaths(t *testing.T) {
 	t.Run("update metadata on non-existent object", func(t *testing.T) {
 		storage := newMockLifecycleStorage()
-		handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+		handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 		metadataUpdate := map[string]any{
 			"content_type": "application/json",
@@ -168,7 +168,7 @@ func TestHandleUpdateMetadata_ErrorPaths(t *testing.T) {
 // TestHandleHealth_JSONEncodeError tests health endpoint with JSON encode scenario
 func TestHandleHealth_JSONEncodeError(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()
@@ -197,7 +197,7 @@ func TestHandleHealth_JSONEncodeError(t *testing.T) {
 func TestHandlePut_LargeBody(t *testing.T) {
 	storage := newMockLifecycleStorage()
 	// Set very small max request body size
-	handler := NewHandler(storage, 100, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 100, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	// Create a body larger than max size
 	largeBody := strings.NewReader(strings.Repeat("a", 1000))
@@ -215,7 +215,7 @@ func TestHandlePut_LargeBody(t *testing.T) {
 // TestHandleList_EmptyResult tests listing with no objects
 func TestHandleList_EmptyResult(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	req := httptest.NewRequest(http.MethodGet, "/objects?prefix=nonexistent/", nil)
 	w := httptest.NewRecorder()
@@ -250,7 +250,7 @@ func TestHandleList_EmptyResult(t *testing.T) {
 // TestServeHTTP_UnknownRoute tests unknown route handling
 func TestServeHTTP_UnknownRoute(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	req := httptest.NewRequest(http.MethodGet, "/unknown/route", nil)
 	w := httptest.NewRecorder()
@@ -265,7 +265,7 @@ func TestServeHTTP_UnknownRoute(t *testing.T) {
 // TestHandlePolicyByID_InvalidMethod tests policy by ID with invalid method
 func TestHandlePolicyByID_InvalidMethod(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	req := httptest.NewRequest(http.MethodPost, "/policies/test-id", nil)
 	w := httptest.NewRecorder()
@@ -280,7 +280,7 @@ func TestHandlePolicyByID_InvalidMethod(t *testing.T) {
 // TestHandleAddPolicy_ConflictError tests adding duplicate policy
 func TestHandleAddPolicy_ConflictError(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	// Add policy first time
 	policy := map[string]any{
@@ -315,7 +315,7 @@ func TestHandleAddPolicy_ConflictError(t *testing.T) {
 // TestHandleGetPolicies_WithPrefix tests getting policies filtered by prefix
 func TestHandleGetPolicies_WithPrefix(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	// Add policies with different prefixes
 	storage.AddPolicy(common.LifecyclePolicy{
@@ -360,7 +360,7 @@ func TestHandleGetPolicies_WithPrefix(t *testing.T) {
 func TestHandleArchive_ErrorScenarios(t *testing.T) {
 	t.Run("archive with invalid destination type", func(t *testing.T) {
 		storage := newMockLifecycleStorage()
-		handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+		handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 		// Add object
 		storage.PutWithContext(context.Background(), "test.txt", bytes.NewReader([]byte("data")))
@@ -389,7 +389,7 @@ func TestHandleArchive_ErrorScenarios(t *testing.T) {
 // TestHandleList_WithMaxResults tests listing with max_results parameter
 func TestHandleList_WithMaxResults(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	handler := NewHandler(storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
+	handler := createHandlerWithStorage(t, storage, 10*1024*1024, 30*time.Second, 30*time.Second, &mockLogger{}, &mockAuthenticator{})
 
 	// Add multiple objects
 	for i := 0; i < 10; i++ {

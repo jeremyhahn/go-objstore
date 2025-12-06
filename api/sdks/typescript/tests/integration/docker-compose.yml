@@ -1,0 +1,81 @@
+version: '3.8'
+
+services:
+  objstore-rest:
+    image: go-objstore:latest
+    container_name: objstore-rest-test
+    build:
+      context: ../../../../..
+      dockerfile: Dockerfile
+      args:
+        BUILD_TAGS: local
+    ports:
+      - "8080:8080"
+    environment:
+      - OBJSTORE_BACKEND=local
+      - OBJSTORE_LOCAL_PATH=/data
+      - OBJSTORE_REST_ENABLED=true
+      - OBJSTORE_REST_PORT=8080
+    volumes:
+      - objstore-data-rest:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - objstore-test
+
+  objstore-grpc:
+    image: go-objstore:latest
+    container_name: objstore-grpc-test
+    build:
+      context: ../../../../..
+      dockerfile: Dockerfile
+      args:
+        BUILD_TAGS: local
+    ports:
+      - "50051:50051"
+    environment:
+      - OBJSTORE_BACKEND=local
+      - OBJSTORE_LOCAL_PATH=/data
+      - OBJSTORE_GRPC_ENABLED=true
+      - OBJSTORE_GRPC_PORT=50051
+    volumes:
+      - objstore-data-grpc:/data
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=localhost:50051"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - objstore-test
+
+  objstore-quic:
+    image: go-objstore:latest
+    container_name: objstore-quic-test
+    build:
+      context: ../../../../..
+      dockerfile: Dockerfile
+      args:
+        BUILD_TAGS: local
+    ports:
+      - "8443:8443/udp"
+    environment:
+      - OBJSTORE_BACKEND=local
+      - OBJSTORE_LOCAL_PATH=/data
+      - OBJSTORE_QUIC_ENABLED=true
+      - OBJSTORE_QUIC_PORT=8443
+    volumes:
+      - objstore-data-quic:/data
+    networks:
+      - objstore-test
+
+volumes:
+  objstore-data-rest:
+  objstore-data-grpc:
+  objstore-data-quic:
+
+networks:
+  objstore-test:
+    driver: bridge

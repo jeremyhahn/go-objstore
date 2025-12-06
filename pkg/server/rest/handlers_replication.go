@@ -16,24 +16,16 @@ package rest
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jeremyhahn/go-objstore/pkg/audit"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
+	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	"github.com/jeremyhahn/go-objstore/pkg/replication"
 )
 
 // AddReplicationPolicy handles adding a new replication policy
-// @Summary Add replication policy
-// @Description Add a new replication policy for automatic object replication
-// @Tags replication
-// @Accept json
-// @Produce json
-// @Param request body AddReplicationPolicyRequest true "Replication policy request"
-// @Success 201 {object} SuccessResponse
-// @Failure 400 {object} ErrorResponse
-// @Failure 500 {object} ErrorResponse
-// @Router /replication/policies [post]
 func (h *Handler) AddReplicationPolicy(c *gin.Context) {
 	var req AddReplicationPolicyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -57,8 +49,8 @@ func (h *Handler) AddReplicationPolicy(c *gin.Context) {
 		return
 	}
 
-	if req.CheckInterval <= 0 {
-		RespondWithError(c, http.StatusBadRequest, "check_interval must be positive")
+	if req.CheckIntervalSeconds <= 0 {
+		RespondWithError(c, http.StatusBadRequest, "check_interval_seconds must be positive")
 		return
 	}
 
@@ -79,7 +71,7 @@ func (h *Handler) AddReplicationPolicy(c *gin.Context) {
 		SourcePrefix:        req.SourcePrefix,
 		DestinationBackend:  req.DestinationBackend,
 		DestinationSettings: req.DestinationSettings,
-		CheckInterval:       req.CheckInterval,
+		CheckInterval:       time.Duration(req.CheckIntervalSeconds) * time.Second,
 		Enabled:             req.Enabled,
 		ReplicationMode:     req.ReplicationMode,
 		Encryption:          req.Encryption,
@@ -90,16 +82,8 @@ func (h *Handler) AddReplicationPolicy(c *gin.Context) {
 		policy.ReplicationMode = common.ReplicationModeTransparent
 	}
 
-	// Get replication manager from storage
-	repSupport, ok := h.storage.(interface {
-		GetReplicationManager() (common.ReplicationManager, error)
-	})
-	if !ok {
-		RespondWithError(c, http.StatusInternalServerError, "replication not supported by this storage backend")
-		return
-	}
-
-	repMgr, err := repSupport.GetReplicationManager()
+	// Get replication manager from facade
+	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
 		if errors.Is(err, common.ErrReplicationNotSupported) {
 			RespondWithError(c, http.StatusInternalServerError, "replication not supported by this storage backend")
@@ -119,10 +103,9 @@ func (h *Handler) AddReplicationPolicy(c *gin.Context) {
 
 	if err != nil {
 		_ = auditLogger.LogObjectMutation(c.Request.Context(), "replication_policy_add_failed",
-			userID, principal, "default", req.ID, c.ClientIP(), requestID, 0,
-			audit.ResultFailure, err) // #nosec G104 -- Audit logging errors are logged internally
+			userID, principal, h.backend, req.ID, c.ClientIP(), requestID, 0,
+			audit.ResultFailure, err)
 
-		// Check for duplicate policy error
 		if err.Error() == "policy already exists" {
 			RespondWithError(c, http.StatusConflict, common.SanitizeErrorMessage(err))
 			return
@@ -132,8 +115,8 @@ func (h *Handler) AddReplicationPolicy(c *gin.Context) {
 	}
 
 	_ = auditLogger.LogObjectMutation(c.Request.Context(), "replication_policy_added",
-		userID, principal, "default", req.ID, c.ClientIP(), requestID, 0,
-		audit.ResultSuccess, nil) // #nosec G104 -- Audit logging errors are logged internally
+		userID, principal, h.backend, req.ID, c.ClientIP(), requestID, 0,
+		audit.ResultSuccess, nil)
 
 	RespondWithSuccess(c, http.StatusCreated, "replication policy added successfully", gin.H{
 		"id": req.ID,
@@ -141,16 +124,6 @@ func (h *Handler) AddReplicationPolicy(c *gin.Context) {
 }
 
 // RemoveReplicationPolicy handles removing a replication policy
-// @Summary Remove replication policy
-// @Description Remove an existing replication policy by ID
-// @Tags replication
-// @Produce json
-// @Param id path string true "Policy ID"
-// @Success 200 {object} SuccessResponse
-// @Failure 400 {object} ErrorResponse
-// @Failure 404 {object} ErrorResponse
-// @Failure 500 {object} ErrorResponse
-// @Router /replication/policies/{id} [delete]
 func (h *Handler) RemoveReplicationPolicy(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
@@ -163,16 +136,8 @@ func (h *Handler) RemoveReplicationPolicy(c *gin.Context) {
 		id = id[1:]
 	}
 
-	// Get replication manager from storage
-	repSupport, ok := h.storage.(interface {
-		GetReplicationManager() (common.ReplicationManager, error)
-	})
-	if !ok {
-		RespondWithError(c, http.StatusInternalServerError, "replication not supported by this storage backend")
-		return
-	}
-
-	repMgr, err := repSupport.GetReplicationManager()
+	// Get replication manager from facade
+	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
 		if errors.Is(err, common.ErrReplicationNotSupported) {
 			RespondWithError(c, http.StatusInternalServerError, "replication not supported by this storage backend")
@@ -192,8 +157,8 @@ func (h *Handler) RemoveReplicationPolicy(c *gin.Context) {
 
 	if err != nil {
 		_ = auditLogger.LogObjectMutation(c.Request.Context(), "replication_policy_remove_failed",
-			userID, principal, "default", id, c.ClientIP(), requestID, 0,
-			audit.ResultFailure, err) // #nosec G104 -- Audit logging errors are logged internally
+			userID, principal, h.backend, id, c.ClientIP(), requestID, 0,
+			audit.ResultFailure, err)
 
 		if errors.Is(err, common.ErrPolicyNotFound) {
 			RespondWithError(c, http.StatusNotFound, common.SanitizeErrorMessage(err))
@@ -204,8 +169,8 @@ func (h *Handler) RemoveReplicationPolicy(c *gin.Context) {
 	}
 
 	_ = auditLogger.LogObjectMutation(c.Request.Context(), "replication_policy_removed",
-		userID, principal, "default", id, c.ClientIP(), requestID, 0,
-		audit.ResultSuccess, nil) // #nosec G104 -- Audit logging errors are logged internally
+		userID, principal, h.backend, id, c.ClientIP(), requestID, 0,
+		audit.ResultSuccess, nil)
 
 	RespondWithSuccess(c, http.StatusOK, "replication policy removed successfully", gin.H{
 		"id": id,
@@ -213,24 +178,9 @@ func (h *Handler) RemoveReplicationPolicy(c *gin.Context) {
 }
 
 // GetReplicationPolicies handles listing all replication policies
-// @Summary List replication policies
-// @Description Retrieve all replication policies
-// @Tags replication
-// @Produce json
-// @Success 200 {object} GetReplicationPoliciesResponse
-// @Failure 500 {object} ErrorResponse
-// @Router /replication/policies [get]
 func (h *Handler) GetReplicationPolicies(c *gin.Context) {
-	// Get replication manager from storage
-	repSupport, ok := h.storage.(interface {
-		GetReplicationManager() (common.ReplicationManager, error)
-	})
-	if !ok {
-		RespondWithError(c, http.StatusInternalServerError, "replication not supported by this storage backend")
-		return
-	}
-
-	repMgr, err := repSupport.GetReplicationManager()
+	// Get replication manager from facade
+	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
 		if errors.Is(err, common.ErrReplicationNotSupported) {
 			RespondWithError(c, http.StatusInternalServerError, "replication not supported by this storage backend")
@@ -251,15 +201,6 @@ func (h *Handler) GetReplicationPolicies(c *gin.Context) {
 }
 
 // GetReplicationPolicy handles retrieving a specific replication policy
-// @Summary Get replication policy
-// @Description Retrieve a specific replication policy by ID
-// @Tags replication
-// @Produce json
-// @Param id path string true "Policy ID"
-// @Success 200 {object} ReplicationPolicyResponse
-// @Failure 404 {object} ErrorResponse
-// @Failure 500 {object} ErrorResponse
-// @Router /replication/policies/{id} [get]
 func (h *Handler) GetReplicationPolicy(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
@@ -272,16 +213,8 @@ func (h *Handler) GetReplicationPolicy(c *gin.Context) {
 		id = id[1:]
 	}
 
-	// Get replication manager from storage
-	repSupport, ok := h.storage.(interface {
-		GetReplicationManager() (common.ReplicationManager, error)
-	})
-	if !ok {
-		RespondWithError(c, http.StatusInternalServerError, "replication not supported by this storage backend")
-		return
-	}
-
-	repMgr, err := repSupport.GetReplicationManager()
+	// Get replication manager from facade
+	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
 		if errors.Is(err, common.ErrReplicationNotSupported) {
 			RespondWithError(c, http.StatusInternalServerError, "replication not supported by this storage backend")
@@ -305,29 +238,27 @@ func (h *Handler) GetReplicationPolicy(c *gin.Context) {
 	RespondWithReplicationPolicy(c, policy)
 }
 
-// TriggerReplication handles manually triggering replication
-// @Summary Trigger replication
-// @Description Manually trigger replication for all policies or a specific policy
-// @Tags replication
-// @Produce json
-// @Param policy_id query string false "Policy ID (empty for all policies)"
-// @Success 200 {object} TriggerReplicationResponse
-// @Failure 400 {object} ErrorResponse
-// @Failure 500 {object} ErrorResponse
-// @Router /replication/trigger [post]
-func (h *Handler) TriggerReplication(c *gin.Context) {
-	policyID := c.Query("policy_id")
+// TriggerReplicationRequest represents a request to trigger replication
+type TriggerReplicationRequest struct {
+	PolicyID    string `json:"policy_id,omitempty"`
+	Parallel    bool   `json:"parallel,omitempty"`
+	WorkerCount int    `json:"worker_count,omitempty"`
+}
 
-	// Get replication manager from storage
-	repSupport, ok := h.storage.(interface {
-		GetReplicationManager() (common.ReplicationManager, error)
-	})
-	if !ok {
-		RespondWithError(c, http.StatusInternalServerError, "replication not supported by this storage backend")
-		return
+// TriggerReplication handles manually triggering replication
+func (h *Handler) TriggerReplication(c *gin.Context) {
+	var req TriggerReplicationRequest
+	// Try to bind JSON body, but don't fail if empty (allows query param fallback)
+	_ = c.ShouldBindJSON(&req)
+
+	// Fallback to query parameter for backwards compatibility
+	policyID := req.PolicyID
+	if policyID == "" {
+		policyID = c.Query("policy_id")
 	}
 
-	repMgr, err := repSupport.GetReplicationManager()
+	// Get replication manager from facade
+	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
 		if errors.Is(err, common.ErrReplicationNotSupported) {
 			RespondWithError(c, http.StatusInternalServerError, "replication not supported by this storage backend")
@@ -355,8 +286,8 @@ func (h *Handler) TriggerReplication(c *gin.Context) {
 
 	if err != nil {
 		_ = auditLogger.LogObjectMutation(c.Request.Context(), "replication_trigger_failed",
-			userID, principal, "default", policyID, c.ClientIP(), requestID, 0,
-			audit.ResultFailure, err) // #nosec G104 -- Audit logging errors are logged internally
+			userID, principal, h.backend, policyID, c.ClientIP(), requestID, 0,
+			audit.ResultFailure, err)
 
 		if errors.Is(err, common.ErrPolicyNotFound) {
 			RespondWithError(c, http.StatusNotFound, common.SanitizeErrorMessage(err))
@@ -367,22 +298,13 @@ func (h *Handler) TriggerReplication(c *gin.Context) {
 	}
 
 	_ = auditLogger.LogObjectMutation(c.Request.Context(), "replication_triggered",
-		userID, principal, "default", policyID, c.ClientIP(), requestID, result.BytesTotal,
-		audit.ResultSuccess, nil) // #nosec G104 -- Audit logging errors are logged internally
+		userID, principal, h.backend, policyID, c.ClientIP(), requestID, result.BytesTotal,
+		audit.ResultSuccess, nil)
 
 	RespondWithSyncResult(c, result)
 }
 
 // GetReplicationStatus handles retrieving replication status for a specific policy
-// @Summary Get replication status
-// @Description Retrieve status and metrics for a specific replication policy by ID
-// @Tags replication
-// @Produce json
-// @Param id path string true "Policy ID"
-// @Success 200 {object} ReplicationStatusResponse
-// @Failure 404 {object} ErrorResponse
-// @Failure 500 {object} ErrorResponse
-// @Router /replication/status/{id} [get]
 func (h *Handler) GetReplicationStatus(c *gin.Context) {
 	id := c.Param("id")
 	if id == "" {
@@ -395,16 +317,8 @@ func (h *Handler) GetReplicationStatus(c *gin.Context) {
 		id = id[1:]
 	}
 
-	// Get replication manager from storage
-	repSupport, ok := h.storage.(interface {
-		GetReplicationManager() (common.ReplicationManager, error)
-	})
-	if !ok {
-		RespondWithError(c, http.StatusInternalServerError, "replication not supported by this storage backend")
-		return
-	}
-
-	repMgr, err := repSupport.GetReplicationManager()
+	// Get replication manager from facade
+	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
 		if errors.Is(err, common.ErrReplicationNotSupported) {
 			RespondWithError(c, http.StatusInternalServerError, "replication not supported by this storage backend")
@@ -414,10 +328,16 @@ func (h *Handler) GetReplicationStatus(c *gin.Context) {
 		return
 	}
 
-	// Get replication status
-	replicationStatus, err := repMgr.(interface {
+	// Get replication status - type assert to access GetReplicationStatus method
+	statusProvider, ok := repMgr.(interface {
 		GetReplicationStatus(id string) (*replication.ReplicationStatus, error)
-	}).GetReplicationStatus(id)
+	})
+	if !ok {
+		RespondWithError(c, http.StatusInternalServerError, "replication status not supported by this backend")
+		return
+	}
+
+	replicationStatus, err := statusProvider.GetReplicationStatus(id)
 	if err != nil {
 		if errors.Is(err, common.ErrPolicyNotFound) {
 			RespondWithError(c, http.StatusNotFound, common.SanitizeErrorMessage(err))

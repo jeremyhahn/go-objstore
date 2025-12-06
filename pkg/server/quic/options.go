@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
-	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/quic-go/quic-go"
 )
 
@@ -26,9 +25,6 @@ import (
 type Options struct {
 	// Addr is the UDP address to listen on (e.g., ":4433")
 	Addr string
-
-	// Storage is the storage backend to use
-	Storage common.Storage
 
 	// TLSConfig is the TLS configuration for QUIC
 	// Must be TLS 1.3 or later
@@ -72,6 +68,10 @@ type Options struct {
 
 	// AdapterTLSConfig is the TLS/mTLS configuration using the adapter (preferred over TLSConfig)
 	AdapterTLSConfig *adapters.TLSConfig
+
+	// Backend is the name of the backend to use when using the facade.
+	// If empty, the default backend is used.
+	Backend string
 }
 
 // DefaultOptions returns a new Options instance with sensible defaults.
@@ -108,10 +108,6 @@ func DefaultOptions() *Options {
 func (o *Options) Validate() error {
 	if o.Addr == "" {
 		return ErrInvalidAddr
-	}
-
-	if o.Storage == nil {
-		return ErrStorageRequired
 	}
 
 	// Build TLS config from AdapterTLSConfig if provided
@@ -159,12 +155,6 @@ func (o *Options) Validate() error {
 // WithAddr sets the UDP address to listen on.
 func (o *Options) WithAddr(addr string) *Options {
 	o.Addr = addr
-	return o
-}
-
-// WithStorage sets the storage backend.
-func (o *Options) WithStorage(storage common.Storage) *Options {
-	o.Storage = storage
 	return o
 }
 
@@ -222,5 +212,11 @@ func (o *Options) WithAuthenticator(auth adapters.Authenticator) *Options {
 // WithAdapterTLS sets the TLS configuration using the adapter.
 func (o *Options) WithAdapterTLS(config *adapters.TLSConfig) *Options {
 	o.AdapterTLSConfig = config
+	return o
+}
+
+// WithBackend sets the backend name for facade-based operation.
+func (o *Options) WithBackend(backend string) *Options {
+	o.Backend = backend
 	return o
 }

@@ -49,17 +49,16 @@ if err != nil {
 err = storage.Put(key, data)
 ```
 
-### After (Facade Pattern)
+### After (Facade Pattern - Simplified API)
 
 ```go
-// Application startup - initialize facade ONCE
-backends := map[string]common.Storage{
-    "local": localStorage,
-    "s3":    s3Storage,
-}
-
+// Application startup - initialize facade ONCE with simplified API
+// The facade creates backends internally via the factory
 err := objstore.Initialize(&objstore.FacadeConfig{
-    Backends:       backends,
+    BackendConfigs: map[string]objstore.BackendConfig{
+        "local": {Type: "local", Settings: map[string]string{"path": "/data"}},
+        "s3":    {Type: "s3", Settings: map[string]string{"bucket": "mybucket"}},
+    },
     DefaultBackend: "local",
 })
 
@@ -68,51 +67,83 @@ err = objstore.Put(key, data)                          // Uses default backend
 err = objstore.PutWithContext(ctx, "s3:key", data)     // Uses specific backend
 ```
 
+### Legacy Pattern (Still Supported)
+
+For advanced use cases or when you need to configure storage backends manually:
+
+```go
+// Create backends manually using factory
+local, _ := factory.NewStorage("local", map[string]string{"path": "/data"})
+s3, _ := factory.NewStorage("s3", map[string]string{"bucket": "mybucket"})
+
+// Initialize facade with pre-configured storage instances
+err := objstore.Initialize(&objstore.FacadeConfig{
+    Backends: map[string]common.Storage{
+        "local": local,
+        "s3":    s3,
+    },
+    DefaultBackend: "local",
+})
+```
+
 ## Migration Steps
 
 ### 1. Server Initialization Pattern
 
 All servers should:
-1. Create storage backends using the factory
-2. Initialize the facade at startup
+1. Initialize the facade at application startup (before creating servers)
+2. Create servers with a backend name (empty string for default)
 3. Use facade functions in all handlers
 
-**Example: gRPC Server**
+**Example: Application Main**
+
+```go
+// cmd/myserver/main.go
+
+func main() {
+    // Initialize facade with simplified API
+    err := objstore.Initialize(&objstore.FacadeConfig{
+        BackendConfigs: map[string]objstore.BackendConfig{
+            "default": {
+                Type:     "local",
+                Settings: map[string]string{"path": "/data/storage"},
+            },
+        },
+        DefaultBackend: "default",
+    })
+    if err != nil {
+        log.Fatalf("Failed to initialize objstore: %v", err)
+    }
+
+    // Create server - uses backend name, not storage instance
+    server, err := grpcserver.NewServer(
+        grpcserver.WithAddress(":50051"),
+        grpcserver.WithBackend(""), // Empty string = default backend
+    )
+    if err != nil {
+        log.Fatalf("Failed to create server: %v", err)
+    }
+
+    server.Start()
+}
+```
+
+**Server Struct Pattern:**
 
 ```go
 // pkg/server/grpc/server.go
 
 type Server struct {
     api.UnimplementedObjectStoreServer
-    // Remove: storage common.Storage  // OLD
-    // Facade is now accessed globally via objstore package
+    backend string  // Backend name (empty = default)
 }
 
-func New(opts ...Option) (*Server, error) {
-    cfg := defaultOptions()
-    for _, opt := range opts {
-        opt(cfg)
+// keyRef constructs a key reference with backend prefix if needed
+func (s *Server) keyRef(key string) string {
+    if s.backend == "" {
+        return key
     }
-
-    // Create backends
-    backends := make(map[string]common.Storage)
-    for name, settings := range cfg.Backends {
-        storage, err := factory.NewStorage(name, settings)
-        if err != nil {
-            return nil, fmt.Errorf("failed to create backend %s: %w", name, err)
-        }
-        backends[name] = storage
-    }
-
-    // Initialize facade
-    if err := objstore.Initialize(&objstore.FacadeConfig{
-        Backends:       backends,
-        DefaultBackend: cfg.DefaultBackend,
-    }); err != nil {
-        return nil, fmt.Errorf("failed to initialize facade: %w", err)
-    }
-
-    return &Server{}, nil
+    return s.backend + ":" + key
 }
 ```
 
@@ -315,25 +346,48 @@ err := objstore.PutWithContext(ctx, "INVALID:key", data)
 
 ## Testing
 
-### Unit Tests
+### Test Helper Pattern
 
-Test individual handlers by initializing a test facade:
+Create a test helper function to initialize the facade consistently:
+
+```go
+// test_helpers_test.go
+func initTestFacade(t *testing.T, storage common.Storage) {
+    t.Helper()
+    objstore.Reset()
+    err := objstore.Initialize(&objstore.FacadeConfig{
+        Backends:       map[string]common.Storage{"default": storage},
+        DefaultBackend: "default",
+    })
+    if err != nil {
+        t.Fatalf("Failed to initialize facade: %v", err)
+    }
+}
+
+func createTestServer(t *testing.T, storage common.Storage) *Server {
+    t.Helper()
+    initTestFacade(t, storage)
+    server, err := NewServer(&ServerConfig{
+        Backend: "", // Use default backend
+    })
+    if err != nil {
+        t.Fatalf("Failed to create server: %v", err)
+    }
+    return server
+}
+```
+
+### Unit Tests
 
 ```go
 func TestHandler(t *testing.T) {
-    objstore.Reset() // Reset before each test
-
-    mockStorage := newMockStorage()
-    err := objstore.Initialize(&objstore.FacadeConfig{
-        Backends: map[string]common.Storage{
-            "test": mockStorage,
-        },
-        DefaultBackend: "test",
-    })
-    require.NoError(t, err)
+    storage := local.NewMemoryStorage()
+    server := createTestServer(t, storage)
     defer objstore.Reset()
 
     // Test your handler
+    err := server.HandlePut(ctx, "test.txt", data)
+    require.NoError(t, err)
 }
 ```
 
@@ -343,20 +397,12 @@ Integration tests with real backends:
 
 ```go
 func TestServerIntegration(t *testing.T) {
-    objstore.Reset()
-
     local, err := factory.NewStorage("local", map[string]string{
         "path": t.TempDir(),
     })
     require.NoError(t, err)
 
-    err = objstore.Initialize(&objstore.FacadeConfig{
-        Backends: map[string]common.Storage{
-            "local": local,
-        },
-        DefaultBackend: "local",
-    })
-    require.NoError(t, err)
+    server := createTestServer(t, local)
     defer objstore.Reset()
 
     // Run integration tests

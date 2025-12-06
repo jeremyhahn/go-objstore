@@ -25,11 +25,12 @@ import (
 func TestListenAndServe_SuccessfulStart(t *testing.T) {
 	storage := local.New()
 	storage.Configure(map[string]string{"path": t.TempDir()})
+	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
 	opts := DefaultOptions().
 		WithAddr(":0").
-		WithStorage(storage).
+		WithBackend("").
 		WithTLSConfig(tlsConfig)
 
 	// Run ListenAndServe in a goroutine since it blocks indefinitely
@@ -66,12 +67,13 @@ func TestListenAndServe_SuccessfulStart(t *testing.T) {
 func TestListenAndServe_WithStartFailure(t *testing.T) {
 	storage := local.New()
 	storage.Configure(map[string]string{"path": t.TempDir()})
+	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
 	// Use invalid port range to cause Start() to fail
 	opts := DefaultOptions().
 		WithAddr(":99999"). // Invalid port
-		WithStorage(storage).
+		WithBackend("").
 		WithTLSConfig(tlsConfig)
 
 	err := ListenAndServe(opts)
@@ -84,11 +86,12 @@ func TestListenAndServe_WithStartFailure(t *testing.T) {
 func TestServerStart_LoggingOnError(t *testing.T) {
 	storage := local.New()
 	storage.Configure(map[string]string{"path": t.TempDir()})
+	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
 	opts := DefaultOptions().
 		WithAddr(":0").
-		WithStorage(storage).
+		WithBackend("").
 		WithTLSConfig(tlsConfig)
 
 	server, err := New(opts)
@@ -126,11 +129,12 @@ func TestServerStart_LoggingOnError(t *testing.T) {
 func TestServerStop_ContextLogging(t *testing.T) {
 	storage := local.New()
 	storage.Configure(map[string]string{"path": t.TempDir()})
+	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
 	opts := DefaultOptions().
 		WithAddr(":0").
-		WithStorage(storage).
+		WithBackend("").
 		WithTLSConfig(tlsConfig)
 
 	server, err := New(opts)
@@ -164,12 +168,13 @@ func TestServerStop_ContextLogging(t *testing.T) {
 func TestServerStart_ListenUDPError(t *testing.T) {
 	storage := local.New()
 	storage.Configure(map[string]string{"path": t.TempDir()})
+	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
 	// Use an address that will fail to bind
 	opts := DefaultOptions().
 		WithAddr("256.256.256.256:12345"). // Invalid IP address
-		WithStorage(storage).
+		WithBackend("").
 		WithTLSConfig(tlsConfig)
 
 	server, err := New(opts)
@@ -192,11 +197,12 @@ func TestServerStart_ListenUDPError(t *testing.T) {
 func TestServerStop_ErrorFromClose(t *testing.T) {
 	storage := local.New()
 	storage.Configure(map[string]string{"path": t.TempDir()})
+	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
 	opts := DefaultOptions().
 		WithAddr(":0").
-		WithStorage(storage).
+		WithBackend("").
 		WithTLSConfig(tlsConfig)
 
 	server, err := New(opts)
@@ -230,11 +236,12 @@ func TestServerStop_ErrorFromClose(t *testing.T) {
 func TestServerServe_RunningFlagManagement(t *testing.T) {
 	storage := local.New()
 	storage.Configure(map[string]string{"path": t.TempDir()})
+	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
 	opts := DefaultOptions().
 		WithAddr(":0").
-		WithStorage(storage).
+		WithBackend("").
 		WithTLSConfig(tlsConfig)
 
 	server, err := New(opts)
@@ -273,11 +280,12 @@ func TestServerServe_RunningFlagManagement(t *testing.T) {
 func TestServerStart_NilContext(t *testing.T) {
 	storage := local.New()
 	storage.Configure(map[string]string{"path": t.TempDir()})
+	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
 	opts := DefaultOptions().
 		WithAddr(":0").
-		WithStorage(storage).
+		WithBackend("").
 		WithTLSConfig(tlsConfig)
 
 	server, err := New(opts)
@@ -313,11 +321,12 @@ func TestServerStart_NilContext(t *testing.T) {
 func TestServerStart_GoroutineExecution(t *testing.T) {
 	storage := local.New()
 	storage.Configure(map[string]string{"path": t.TempDir()})
+	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
 	opts := DefaultOptions().
 		WithAddr(":0").
-		WithStorage(storage).
+		WithBackend("").
 		WithTLSConfig(tlsConfig)
 
 	server, err := New(opts)

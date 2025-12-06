@@ -190,7 +190,7 @@ func (m *MockStorage) GetPolicies() ([]common.LifecyclePolicy, error) {
 
 func TestPutObject(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	tests := []struct {
 		name           string
@@ -235,7 +235,7 @@ func TestPutObject(t *testing.T) {
 
 func TestPutObjectMultipart(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.PUT("/objects/*key", handler.PutObject)
@@ -275,7 +275,7 @@ func TestPutObjectMultipart(t *testing.T) {
 
 func TestPutObjectWithMetadataHeader(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.PUT("/objects/*key", handler.PutObject)
@@ -302,7 +302,7 @@ func TestPutObjectWithMetadataHeader(t *testing.T) {
 
 func TestPutObjectInvalidMetadataJSON(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.PUT("/objects/*key", handler.PutObject)
@@ -324,7 +324,7 @@ func TestGetObjectError(t *testing.T) {
 	storage := NewMockStorage()
 	storage.PutWithContext(context.Background(), "test.txt", strings.NewReader("content"))
 
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.GET("/objects/*key", handler.GetObject)
@@ -343,7 +343,7 @@ func TestGetObjectError(t *testing.T) {
 
 func TestGetObject(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	// Add test object
 	storage.PutWithMetadata(context.Background(), "test.txt", strings.NewReader("test content"), &common.Metadata{
@@ -393,7 +393,7 @@ func TestGetObject(t *testing.T) {
 
 func TestDeleteObject(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	// Add test object
 	storage.PutWithContext(context.Background(), "test.txt", strings.NewReader("test content"))
@@ -434,7 +434,7 @@ func TestDeleteObject(t *testing.T) {
 
 func TestHeadObject(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	// Add test object
 	storage.PutWithMetadata(context.Background(), "test.txt", strings.NewReader("test content"), &common.Metadata{
@@ -478,7 +478,7 @@ func TestHeadObject(t *testing.T) {
 
 func TestListObjects(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	// Add test objects
 	storage.PutWithContext(context.Background(), "docs/test1.txt", strings.NewReader("content1"))
@@ -537,7 +537,7 @@ func TestListObjects(t *testing.T) {
 
 func TestListObjectsInvalidLimit(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.GET("/objects", handler.ListObjects)
@@ -554,7 +554,7 @@ func TestListObjectsInvalidLimit(t *testing.T) {
 
 func TestGetObjectMetadata(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	// Add test object
 	storage.PutWithMetadata(context.Background(), "test.txt", strings.NewReader("test content"), &common.Metadata{
@@ -601,7 +601,7 @@ func TestGetObjectMetadata(t *testing.T) {
 
 func TestUpdateObjectMetadata(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	// Add test object
 	storage.PutWithContext(context.Background(), "test.txt", strings.NewReader("test content"))
@@ -654,7 +654,7 @@ func TestUpdateObjectMetadata(t *testing.T) {
 
 func TestUpdateObjectMetadataInvalidJSON(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	// Add test object
 	storage.PutWithContext(context.Background(), "test.txt", strings.NewReader("test content"))
@@ -675,7 +675,7 @@ func TestUpdateObjectMetadataInvalidJSON(t *testing.T) {
 
 func TestHealthCheck(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.GET("/health", handler.HealthCheck)
@@ -701,7 +701,7 @@ func TestHealthCheck(t *testing.T) {
 
 func TestPutObjectWithLeadingSlash(t *testing.T) {
 	storage := NewMockStorage()
-	handler := NewHandler(storage)
+	handler := newTestHandler(t, storage)
 
 	router := gin.New()
 	router.PUT("/objects/*key", handler.PutObject)

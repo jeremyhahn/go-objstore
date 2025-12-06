@@ -27,11 +27,12 @@ import (
 func TestServer_StartHTTP_Integration(t *testing.T) {
 	storage := NewMockStorage()
 	storage.PutWithContext(context.Background(), "test.txt", strings.NewReader("hello world"))
+	initTestFacade(t, storage)
 
 	server, err := NewServer(&ServerConfig{
 		Mode:        ModeHTTP,
 		HTTPAddress: ":18080", // Use non-standard port
-		Storage:     storage,
+		Backend:     "",
 	})
 	if err != nil {
 		t.Fatalf("failed to create server: %v", err)
@@ -123,10 +124,11 @@ func TestServer_StartHTTP_Integration(t *testing.T) {
 // TestServer_InvalidMode tests invalid server mode
 func TestServer_InvalidMode(t *testing.T) {
 	storage := NewMockStorage()
+	initTestFacade(t, storage)
 
 	server, err := NewServer(&ServerConfig{
 		Mode:    ServerMode("invalid"),
-		Storage: storage,
+		Backend: "",
 	})
 	if err != nil {
 		t.Fatalf("failed to create server: %v", err)
@@ -148,11 +150,7 @@ func TestServer_InvalidMode(t *testing.T) {
 func TestHTTPHandler_FullFlow(t *testing.T) {
 	storage := NewMockStorage()
 	storage.PutWithContext(context.Background(), "test.txt", strings.NewReader("test data"))
-
-	server, _ := NewServer(&ServerConfig{
-		Mode:    ModeHTTP,
-		Storage: storage,
-	})
+	server := createTestServer(t, storage, ModeHTTP)
 	httpHandler := NewHTTPHandler(server)
 
 	// Test full flow: initialize -> tools/list -> tools/call
@@ -241,7 +239,7 @@ func TestHTTPHandler_FullFlow(t *testing.T) {
 // TestResourceManager_EdgeCases tests edge cases in resource management
 func TestResourceManager_EdgeCases(t *testing.T) {
 	storage := NewMockStorage()
-	manager := NewResourceManager(storage, "prefix/")
+	manager := createTestResourceManager(t, storage, "prefix/")
 
 	// Test with empty key
 	_, _, err := manager.ReadResource(context.Background(), "objstore://")

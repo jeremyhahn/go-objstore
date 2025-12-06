@@ -1,0 +1,57 @@
+# Build and test Dockerfile for C# SDK
+# Build context should be set to the project root (go-objstore)
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+
+WORKDIR /src
+
+# Create proto directory and copy proto file
+RUN mkdir -p /proto
+COPY api/proto/objstore.proto /proto/
+
+# Copy project files
+COPY api/sdks/csharp/ObjStore.SDK.csproj ./
+COPY api/sdks/csharp/Tests/Tests.csproj ./Tests/
+
+# Restore dependencies
+RUN dotnet restore ObjStore.SDK.csproj
+RUN dotnet restore Tests/Tests.csproj
+
+# Copy source code
+COPY api/sdks/csharp/ .
+
+# Build
+RUN dotnet build ObjStore.SDK.csproj --configuration Release --no-restore
+RUN dotnet build Tests/Tests.csproj --configuration Release --no-restore
+
+# Run unit tests
+FROM build AS test
+RUN dotnet test Tests/Tests.csproj \
+    --configuration Release \
+    --no-build \
+    --filter "FullyQualifiedName~Unit" \
+    --logger "trx;LogFileName=test-results.trx" \
+    --logger "console;verbosity=detailed" \
+    --collect:"XPlat Code Coverage" \
+    /p:CollectCoverage=true \
+    /p:CoverletOutputFormat=opencover
+
+# Run integration tests (requires server to be available)
+FROM build AS integration-test
+ENTRYPOINT ["dotnet", "test", "Tests/Tests.csproj", \
+    "--configuration", "Release", \
+    "--no-build", \
+    "--filter", "FullyQualifiedName~Integration", \
+    "--logger", "trx;LogFileName=integration-test-results.trx", \
+    "--logger", "console;verbosity=detailed"]
+
+# Package
+FROM build AS package
+RUN dotnet pack ObjStore.SDK.csproj \
+    --configuration Release \
+    --no-build \
+    --output /dist
+
+# Final stage
+FROM mcr.microsoft.com/dotnet/runtime:8.0
+WORKDIR /app
+COPY --from=package /dist .

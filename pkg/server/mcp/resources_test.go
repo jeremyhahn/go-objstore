@@ -25,7 +25,7 @@ import (
 
 func TestResourceManager_ListResources(t *testing.T) {
 	storage := NewMockStorage()
-	manager := NewResourceManager(storage, "")
+	manager := createTestResourceManager(t, storage, "")
 
 	// Add test objects
 	storage.PutWithContext(context.Background(), "file1.txt", strings.NewReader("data1"))
@@ -56,7 +56,7 @@ func TestResourceManager_ListResources(t *testing.T) {
 
 func TestResourceManager_ListResourcesWithPrefix(t *testing.T) {
 	storage := NewMockStorage()
-	manager := NewResourceManager(storage, "test/")
+	manager := createTestResourceManager(t, storage, "test/")
 
 	// Add test objects
 	storage.PutWithContext(context.Background(), "test/file1.txt", strings.NewReader("data1"))
@@ -82,7 +82,7 @@ func TestResourceManager_ListResourcesWithPrefix(t *testing.T) {
 
 func TestResourceManager_ReadResource(t *testing.T) {
 	storage := NewMockStorage()
-	manager := NewResourceManager(storage, "")
+	manager := createTestResourceManager(t, storage, "")
 
 	// Add test object
 	testContent := "hello world"
@@ -136,7 +136,7 @@ func TestResourceManager_ReadResource(t *testing.T) {
 }
 
 func TestResourceManager_ObjectKeyToURI(t *testing.T) {
-	manager := NewResourceManager(nil, "")
+	manager := NewResourceManager("", "")
 
 	tests := []struct {
 		key         string
@@ -167,7 +167,7 @@ func TestResourceManager_ObjectKeyToURI(t *testing.T) {
 }
 
 func TestResourceManager_URIToObjectKey(t *testing.T) {
-	manager := NewResourceManager(nil, "")
+	manager := NewResourceManager("", "")
 
 	tests := []struct {
 		uri         string
@@ -198,7 +198,7 @@ func TestResourceManager_URIToObjectKey(t *testing.T) {
 }
 
 func TestResourceManager_ExtractName(t *testing.T) {
-	manager := NewResourceManager(nil, "")
+	manager := NewResourceManager("", "")
 
 	tests := []struct {
 		key          string
@@ -233,7 +233,7 @@ func TestResourceManager_ExtractName(t *testing.T) {
 }
 
 func TestResourceManager_SubscribeToResource(t *testing.T) {
-	manager := NewResourceManager(nil, "")
+	manager := NewResourceManager("", "")
 
 	err := manager.SubscribeToResource(context.Background(), "objstore://test.txt")
 	if err == nil {
@@ -245,7 +245,7 @@ func TestResourceManager_SubscribeToResource(t *testing.T) {
 }
 
 func TestResourceManager_UnsubscribeFromResource(t *testing.T) {
-	manager := NewResourceManager(nil, "")
+	manager := NewResourceManager("", "")
 
 	err := manager.UnsubscribeFromResource(context.Background(), "objstore://test.txt")
 	if err == nil {
@@ -260,7 +260,8 @@ func TestResourceManager_ReadResourceWithReadError(t *testing.T) {
 	storage := &ErrorResourceMockStorage{
 		readError: true,
 	}
-	manager := NewResourceManager(storage, "")
+	initTestFacade(t, storage)
+	manager := NewResourceManager("", "")
 
 	_, _, err := manager.ReadResource(context.Background(), "objstore://test.txt")
 	if err == nil {
@@ -272,7 +273,8 @@ func TestResourceManager_ListResourcesWithStorageError(t *testing.T) {
 	storage := &ErrorResourceMockStorage{
 		listError: true,
 	}
-	manager := NewResourceManager(storage, "")
+	initTestFacade(t, storage)
+	manager := NewResourceManager("", "")
 
 	_, err := manager.ListResources(context.Background(), "")
 	if err == nil {

@@ -1,0 +1,88 @@
+services:
+  # Go ObjectStore server with local storage backend
+  objstore-server:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+      args:
+        BUILD_TAGS: local
+    command: ["/app/objstore-server", "--quic-self-signed"]
+    ports:
+      - "8080:8080"    # REST
+      - "50051:50051"  # gRPC
+      - "4433:4433"    # QUIC
+    environment:
+      - STORAGE_BACKEND=local
+      - STORAGE_PATH=/data
+      - LOG_LEVEL=info
+      - REST_ENABLED=true
+      - GRPC_ENABLED=true
+      - QUIC_ENABLED=true
+    volumes:
+      - objstore-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks:
+      - objstore-net
+
+  # Rust SDK unit tests
+  rust-unit-tests:
+    build:
+      context: ../../..
+      dockerfile: api/sdks/rust/Dockerfile
+    volumes:
+      - .:/app
+      - cargo-cache:/usr/local/cargo/registry
+    command: cargo test --lib --bins --tests
+    networks:
+      - objstore-net
+
+  # Rust SDK integration tests
+  rust-integration-tests:
+    build:
+      context: ../../..
+      dockerfile: api/sdks/rust/Dockerfile
+    depends_on:
+      objstore-server:
+        condition: service_healthy
+    environment:
+      # For integration_test.rs (full URL format)
+      - OBJSTORE_REST_URL=http://objstore-server:8080
+      - OBJSTORE_GRPC_URL=http://objstore-server:50051
+      - OBJSTORE_QUIC_URL=https://objstore-server:4433
+      # For integration_comprehensive.rs (host:port format)
+      - REST_HOST=objstore-server:8080
+      - GRPC_HOST=objstore-server:50051
+      - QUIC_HOST=objstore-server:4433
+    volumes:
+      - .:/app
+      - cargo-cache:/usr/local/cargo/registry
+    # Run all integration tests single-threaded to avoid race conditions
+    # Note: QUIC tests will gracefully skip if connection fails in Docker
+    command: cargo test --test '*' -- --ignored --test-threads=1
+    networks:
+      - objstore-net
+
+  # Rust SDK coverage tests
+  rust-coverage:
+    build:
+      context: ../../..
+      dockerfile: api/sdks/rust/Dockerfile.coverage
+    volumes:
+      - .:/app
+      - cargo-cache:/usr/local/cargo/registry
+    command: cargo llvm-cov --lib --bins --tests --summary-only
+    networks:
+      - objstore-net
+
+volumes:
+  objstore-data:
+  cargo-cache:
+
+networks:
+  objstore-net:
+    driver: bridge

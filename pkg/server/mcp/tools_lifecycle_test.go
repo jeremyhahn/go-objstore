@@ -279,7 +279,7 @@ func TestExecuteArchiveTool(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := tt.setupStorage()
-			executor := NewToolExecutor(storage)
+			executor := createTestToolExecutor(t, storage)
 
 			result, err := executor.Execute(context.Background(), "objstore_archive", tt.args)
 
@@ -467,7 +467,7 @@ func TestExecuteAddPolicyTool(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := tt.setupStorage()
-			executor := NewToolExecutor(storage)
+			executor := createTestToolExecutor(t, storage)
 
 			result, err := executor.Execute(context.Background(), "objstore_add_policy", tt.args)
 
@@ -556,7 +556,7 @@ func TestExecuteRemovePolicyTool(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := tt.setupStorage()
-			executor := NewToolExecutor(storage)
+			executor := createTestToolExecutor(t, storage)
 
 			result, err := executor.Execute(context.Background(), "objstore_remove_policy", tt.args)
 
@@ -640,7 +640,7 @@ func TestExecuteGetPoliciesTool(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := tt.setupStorage()
-			executor := NewToolExecutor(storage)
+			executor := createTestToolExecutor(t, storage)
 
 			result, err := executor.Execute(context.Background(), "objstore_get_policies", tt.args)
 
@@ -709,7 +709,7 @@ func TestToolRegistryLifecycleTools(t *testing.T) {
 
 func TestToolExecutor_executeApplyPolicies_NoPolicies(t *testing.T) {
 	storage := newMockLifecycleStorage()
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 
 	result, err := executor.executeApplyPolicies(context.Background(), map[string]any{})
 	if err != nil {
@@ -751,7 +751,7 @@ func TestToolExecutor_executeApplyPolicies_WithPolicies(t *testing.T) {
 	}
 	storage.AddPolicy(policy)
 
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 	result, err := executor.executeApplyPolicies(context.Background(), map[string]any{})
 	if err != nil {
 		t.Fatalf("executeApplyPolicies failed: %v", err)
@@ -770,7 +770,7 @@ func TestToolExecutor_executeApplyPolicies_GetPoliciesError(t *testing.T) {
 	storage := newMockLifecycleStorage()
 	storage.getPoliciesError = errors.New("database error")
 
-	executor := NewToolExecutor(storage)
+	executor := createTestToolExecutor(t, storage)
 	_, err := executor.executeApplyPolicies(context.Background(), map[string]any{})
 	if err == nil {
 		t.Error("Expected error from GetPolicies, got nil")

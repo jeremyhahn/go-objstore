@@ -23,11 +23,14 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
+	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	grpcserver "github.com/jeremyhahn/go-objstore/pkg/server/grpc"
 	mcpserver "github.com/jeremyhahn/go-objstore/pkg/server/mcp"
 	quicserver "github.com/jeremyhahn/go-objstore/pkg/server/quic"
 	restserver "github.com/jeremyhahn/go-objstore/pkg/server/rest"
+	unixserver "github.com/jeremyhahn/go-objstore/pkg/server/unix"
 )
 
 func main() {
@@ -40,6 +43,7 @@ func main() {
 	enableREST := flag.Bool("rest", true, "Enable REST server")
 	enableQUIC := flag.Bool("quic", true, "Enable QUIC/HTTP3 server")
 	enableMCP := flag.Bool("mcp", true, "Enable MCP server")
+	enableUnix := flag.Bool("unix", false, "Enable Unix socket server")
 
 	// gRPC server flags
 	grpcAddr := flag.String("grpc-addr", ":50051", "gRPC server address")
@@ -57,6 +61,9 @@ func main() {
 	mcpMode := flag.String("mcp-mode", "http", "MCP mode: stdio or http")
 	mcpAddr := flag.String("mcp-addr", ":8081", "MCP HTTP server address")
 
+	// Unix socket server flags
+	unixSocket := flag.String("unix-socket", "/var/run/objstore.sock", "Unix socket path")
+
 	flag.Parse()
 
 	// Create storage backend
@@ -66,6 +73,14 @@ func main() {
 	storage, err := factory.NewStorage(*backend, settings)
 	if err != nil {
 		log.Fatalf("Failed to create storage backend: %v", err)
+	}
+
+	// Initialize the objstore facade
+	if err := objstore.Initialize(&objstore.FacadeConfig{
+		Backends:       map[string]common.Storage{"default": storage},
+		DefaultBackend: "default",
+	}); err != nil {
+		log.Fatalf("Failed to initialize objstore facade: %v", err)
 	}
 
 	// Enhanced startup logging
@@ -94,11 +109,14 @@ func main() {
 	if *enableMCP {
 		log.Printf("  ✓ MCP Server: %s mode on %s", *mcpMode, *mcpAddr)
 	}
+	if *enableUnix {
+		log.Printf("  ✓ Unix Socket: %s", *unixSocket)
+	}
 	log.Println("============================================================")
 	log.Printf("Initialized %s storage backend", *backend)
 
 	// Channel for errors
-	errChan := make(chan error, 4)
+	errChan := make(chan error, 5)
 
 	// Start gRPC Server
 	if *enableGRPC {
@@ -107,7 +125,7 @@ func main() {
 				grpcserver.WithAddress(*grpcAddr),
 			}
 
-			server, err := grpcserver.NewServer(storage, opts...)
+			server, err := grpcserver.NewServer(opts...)
 			if err != nil {
 				errChan <- fmt.Errorf("failed to create gRPC server: %w", err)
 				return
@@ -167,7 +185,6 @@ func main() {
 			// Create server options
 			opts := quicserver.DefaultOptions().
 				WithAddr(*quicAddr).
-				WithStorage(storage).
 				WithTLSConfig(tlsConfig)
 
 			server, err := quicserver.New(opts)
@@ -201,7 +218,6 @@ func main() {
 			config := &mcpserver.ServerConfig{
 				Mode:        serverMode,
 				HTTPAddress: *mcpAddr,
-				Storage:     storage,
 			}
 
 			server, err := mcpserver.NewServer(config)
@@ -221,6 +237,32 @@ func main() {
 
 			if err := server.Start(ctx); err != nil {
 				errChan <- fmt.Errorf("MCP server error: %w", err)
+			}
+		}()
+	}
+
+	// Start Unix Socket Server
+	if *enableUnix {
+		go func() {
+			config := &unixserver.ServerConfig{
+				SocketPath: *unixSocket,
+				Backend:    "default",
+			}
+
+			server, err := unixserver.NewServer(config)
+			if err != nil {
+				errChan <- fmt.Errorf("failed to create Unix socket server: %w", err)
+				return
+			}
+
+			log.Printf("Starting Unix socket server on %s", *unixSocket)
+
+			// Create context that cancels on shutdown signal
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			if err := server.Start(ctx); err != nil {
+				errChan <- fmt.Errorf("Unix socket server error: %w", err)
 			}
 		}()
 	}

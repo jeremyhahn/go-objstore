@@ -1,0 +1,26 @@
+{
+  "env": {
+    "es2021": true,
+    "node": true,
+    "jest": true
+  },
+  "extends": [
+    "eslint:recommended",
+    "prettier"
+  ],
+  "parserOptions": {
+    "ecmaVersion": "latest",
+    "sourceType": "module"
+  },
+  "plugins": ["jest"],
+  "rules": {
+    "no-unused-vars": ["error", { "argsIgnorePattern": "^_" }],
+    "no-console": "off"
+  },
+  "ignorePatterns": [
+    "src/proto/**",
+    "dist/**",
+    "coverage/**",
+    "node_modules/**"
+  ]
+}

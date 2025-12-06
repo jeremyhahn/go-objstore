@@ -28,7 +28,22 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
+	"github.com/jeremyhahn/go-objstore/pkg/common"
+	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 )
+
+// initTLSTestFacade initializes the objstore facade with a mock storage for testing.
+func initTLSTestFacade(t *testing.T, storage common.Storage) {
+	t.Helper()
+	objstore.Reset()
+	err := objstore.Initialize(&objstore.FacadeConfig{
+		Backends:       map[string]common.Storage{"default": storage},
+		DefaultBackend: "default",
+	})
+	if err != nil {
+		t.Fatalf("Failed to initialize facade: %v", err)
+	}
+}
 
 // Test server Start with TLS configuration
 func TestServerStartWithTLS(t *testing.T) {
@@ -48,6 +63,7 @@ func TestServerStartWithTLS(t *testing.T) {
 		},
 	}
 
+	initTLSTestFacade(t, storage)
 	server, err := NewServer(storage, config)
 	if err != nil {
 		t.Fatalf("NewServer() with TLS config failed: %v", err)
@@ -95,6 +111,7 @@ func TestServerStartWithInvalidTLS(t *testing.T) {
 		},
 	}
 
+	initTLSTestFacade(t, storage)
 	server, err := NewServer(storage, config)
 	if err != nil {
 		t.Fatalf("NewServer() with invalid TLS config failed: %v", err)
@@ -197,6 +214,7 @@ func TestServerStartWithMTLS(t *testing.T) {
 		},
 	}
 
+	initTLSTestFacade(t, storage)
 	server, err := NewServer(storage, config)
 	if err != nil {
 		t.Fatalf("NewServer() with mTLS config failed: %v", err)

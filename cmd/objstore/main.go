@@ -16,11 +16,13 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
 	"github.com/jeremyhahn/go-objstore/pkg/cli"
+	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
 var (
@@ -546,6 +548,245 @@ Returns the backend status, version, and configuration information.`,
 	},
 }
 
+// Replication command group
+var replicationCmd = &cobra.Command{
+	Use:   "replication",
+	Short: "Manage replication policies",
+	Long: `Manage replication policies for cross-backend data synchronization.
+
+Replication policies enable automatic copying of objects between storage backends
+(e.g., from local to S3, or from S3 to another S3 bucket).`,
+	Example: `  objstore replication add my-policy local s3 --interval 1h     # Replicate local to S3 hourly
+  objstore replication list                                      # List all policies
+  objstore replication trigger my-policy                         # Trigger sync now
+  objstore replication status my-policy                          # Check sync status`,
+}
+
+var replicationAddCmd = &cobra.Command{
+	Use:   "add <id> <source-backend> <destination-backend>",
+	Short: "Add a replication policy",
+	Long: `Add a replication policy to automatically replicate objects between backends.
+
+Source and destination backends can be: local, s3, minio, gcs, azure.
+Use --source-* and --dest-* flags to configure backend-specific settings.`,
+	Example: `  objstore replication add backup-to-s3 local s3 --dest-bucket my-bucket --interval 1h
+  objstore replication add mirror minio s3 --source-bucket src --dest-bucket dst
+  objstore replication add logs-archive local glacier --prefix logs/ --interval 24h`,
+	Args: cobra.ExactArgs(3),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		id := args[0]
+		sourceBackend := args[1]
+		destBackend := args[2]
+
+		// Get settings from flags
+		sourceSettings := make(map[string]string)
+		destSettings := make(map[string]string)
+
+		if v, _ := cmd.Flags().GetString("source-bucket"); v != "" { //nolint:errcheck
+			sourceSettings["bucket"] = v
+		}
+		if v, _ := cmd.Flags().GetString("source-region"); v != "" { //nolint:errcheck
+			sourceSettings["region"] = v
+		}
+		if v, _ := cmd.Flags().GetString("source-path"); v != "" { //nolint:errcheck
+			sourceSettings["path"] = v
+		}
+		if v, _ := cmd.Flags().GetString("dest-bucket"); v != "" { //nolint:errcheck
+			destSettings["bucket"] = v
+		}
+		if v, _ := cmd.Flags().GetString("dest-region"); v != "" { //nolint:errcheck
+			destSettings["region"] = v
+		}
+		if v, _ := cmd.Flags().GetString("dest-path"); v != "" { //nolint:errcheck
+			destSettings["path"] = v
+		}
+
+		prefix, _ := cmd.Flags().GetString("prefix")             //nolint:errcheck
+		intervalStr, _ := cmd.Flags().GetString("interval")      //nolint:errcheck
+		mode, _ := cmd.Flags().GetString("mode")                 //nolint:errcheck
+		backendKey, _ := cmd.Flags().GetString("backend-key")    //nolint:errcheck
+		sourceDEK, _ := cmd.Flags().GetString("source-dek")      //nolint:errcheck
+		destDEK, _ := cmd.Flags().GetString("dest-dek")          //nolint:errcheck
+
+		// Parse interval
+		interval, err := time.ParseDuration(intervalStr)
+		if err != nil {
+			return fmt.Errorf("invalid interval: %w", err)
+		}
+
+		ctx, err := cli.NewCommandContext(globalConfig)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, cli.FormatError(err, cli.OutputFormat(globalConfig.OutputFormat)))
+			return err
+		}
+		defer func() { _ = ctx.Close() }()
+
+		if err := ctx.AddReplicationPolicyCommand(
+			id, sourceBackend, destBackend,
+			sourceSettings, destSettings,
+			prefix, interval, mode,
+			backendKey, sourceDEK, destDEK,
+		); err != nil {
+			fmt.Fprintln(os.Stderr, cli.FormatError(err, cli.OutputFormat(globalConfig.OutputFormat)))
+			return err
+		}
+
+		result := &cli.OperationResult{
+			Success: true,
+			Message: fmt.Sprintf("Successfully added replication policy '%s'", id),
+		}
+		fmt.Print(cli.FormatOperationResult(result, cli.OutputFormat(globalConfig.OutputFormat)))
+		return nil
+	},
+}
+
+var replicationRemoveCmd = &cobra.Command{
+	Use:   "remove <id>",
+	Short: "Remove a replication policy",
+	Long:  `Remove a replication policy by ID. This stops automatic replication for this policy.`,
+	Example: `  objstore replication remove backup-to-s3       # Remove policy by ID`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		id := args[0]
+
+		ctx, err := cli.NewCommandContext(globalConfig)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, cli.FormatError(err, cli.OutputFormat(globalConfig.OutputFormat)))
+			return err
+		}
+		defer func() { _ = ctx.Close() }()
+
+		if err := ctx.RemoveReplicationPolicyCommand(id); err != nil {
+			fmt.Fprintln(os.Stderr, cli.FormatError(err, cli.OutputFormat(globalConfig.OutputFormat)))
+			return err
+		}
+
+		result := &cli.OperationResult{
+			Success: true,
+			Message: fmt.Sprintf("Successfully removed replication policy '%s'", id),
+		}
+		fmt.Print(cli.FormatOperationResult(result, cli.OutputFormat(globalConfig.OutputFormat)))
+		return nil
+	},
+}
+
+var replicationListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all replication policies",
+	Long:  `List all configured replication policies with their settings and status.`,
+	Example: `  objstore replication list                      # List all policies
+  objstore replication list -o json              # List as JSON
+  objstore replication list -o table             # List as table`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		ctx, err := cli.NewCommandContext(globalConfig)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, cli.FormatError(err, cli.OutputFormat(globalConfig.OutputFormat)))
+			return err
+		}
+		defer func() { _ = ctx.Close() }()
+
+		policies, err := ctx.ListReplicationPoliciesCommand()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, cli.FormatError(err, cli.OutputFormat(globalConfig.OutputFormat)))
+			return err
+		}
+
+		fmt.Print(cli.FormatReplicationPoliciesResult(policies, cli.OutputFormat(globalConfig.OutputFormat)))
+		return nil
+	},
+}
+
+var replicationGetCmd = &cobra.Command{
+	Use:   "get <id>",
+	Short: "Get a specific replication policy",
+	Long:  `Retrieve details of a specific replication policy by ID.`,
+	Example: `  objstore replication get backup-to-s3          # Get policy details
+  objstore replication get backup-to-s3 -o json  # Get as JSON`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		id := args[0]
+
+		ctx, err := cli.NewCommandContext(globalConfig)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, cli.FormatError(err, cli.OutputFormat(globalConfig.OutputFormat)))
+			return err
+		}
+		defer func() { _ = ctx.Close() }()
+
+		policy, err := ctx.GetReplicationPolicyCommand(id)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, cli.FormatError(err, cli.OutputFormat(globalConfig.OutputFormat)))
+			return err
+		}
+
+		// Format single policy
+		fmt.Print(cli.FormatReplicationPoliciesResult([]common.ReplicationPolicy{*policy}, cli.OutputFormat(globalConfig.OutputFormat)))
+		return nil
+	},
+}
+
+var replicationTriggerCmd = &cobra.Command{
+	Use:   "trigger [policy-id]",
+	Short: "Trigger replication sync",
+	Long: `Manually trigger replication synchronization.
+
+If no policy ID is specified, all policies are synced.`,
+	Example: `  objstore replication trigger                    # Sync all policies
+  objstore replication trigger backup-to-s3      # Sync specific policy`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		policyID := ""
+		if len(args) > 0 {
+			policyID = args[0]
+		}
+
+		ctx, err := cli.NewCommandContext(globalConfig)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, cli.FormatError(err, cli.OutputFormat(globalConfig.OutputFormat)))
+			return err
+		}
+		defer func() { _ = ctx.Close() }()
+
+		result, err := ctx.TriggerReplicationCommand(policyID)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, cli.FormatError(err, cli.OutputFormat(globalConfig.OutputFormat)))
+			return err
+		}
+
+		fmt.Print(cli.FormatSyncResult(result, cli.OutputFormat(globalConfig.OutputFormat)))
+		return nil
+	},
+}
+
+var replicationStatusCmd = &cobra.Command{
+	Use:   "status <policy-id>",
+	Short: "Get replication status for a policy",
+	Long:  `Retrieve status and metrics for a specific replication policy.`,
+	Example: `  objstore replication status backup-to-s3       # Get sync status
+  objstore replication status backup-to-s3 -o json  # Get as JSON`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		policyID := args[0]
+
+		ctx, err := cli.NewCommandContext(globalConfig)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, cli.FormatError(err, cli.OutputFormat(globalConfig.OutputFormat)))
+			return err
+		}
+		defer func() { _ = ctx.Close() }()
+
+		status, err := ctx.GetReplicationStatusCommand(policyID)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, cli.FormatError(err, cli.OutputFormat(globalConfig.OutputFormat)))
+			return err
+		}
+
+		fmt.Print(cli.FormatReplicationStatus(status, cli.OutputFormat(globalConfig.OutputFormat)))
+		return nil
+	},
+}
+
 func init() {
 	// Set custom usage template to always show examples (even on errors)
 	cobra.AddTemplateFunc("hasExamples", func(cmd *cobra.Command) bool {
@@ -621,6 +862,28 @@ Use "{{.CommandPath}} [command] --help" for more information about a command.{{e
 	policyCmd.AddCommand(policyRemoveCmd)
 	policyCmd.AddCommand(policyApplyCmd)
 
+	// Replication add command flags
+	replicationAddCmd.Flags().String("source-bucket", "", "source bucket name")
+	replicationAddCmd.Flags().String("source-region", "", "source region")
+	replicationAddCmd.Flags().String("source-path", "", "source path for local backend")
+	replicationAddCmd.Flags().String("dest-bucket", "", "destination bucket name")
+	replicationAddCmd.Flags().String("dest-region", "", "destination region")
+	replicationAddCmd.Flags().String("dest-path", "", "destination path for local backend")
+	replicationAddCmd.Flags().String("prefix", "", "key prefix filter for replication")
+	replicationAddCmd.Flags().String("interval", "1h", "check interval (e.g., 30m, 1h, 24h)")
+	replicationAddCmd.Flags().String("mode", "transparent", "replication mode: transparent or opaque")
+	replicationAddCmd.Flags().String("backend-key", "", "encryption key for backend storage")
+	replicationAddCmd.Flags().String("source-dek", "", "data encryption key for source")
+	replicationAddCmd.Flags().String("dest-dek", "", "data encryption key for destination")
+
+	// Add replication subcommands
+	replicationCmd.AddCommand(replicationAddCmd)
+	replicationCmd.AddCommand(replicationRemoveCmd)
+	replicationCmd.AddCommand(replicationListCmd)
+	replicationCmd.AddCommand(replicationGetCmd)
+	replicationCmd.AddCommand(replicationTriggerCmd)
+	replicationCmd.AddCommand(replicationStatusCmd)
+
 	// Add commands to root
 	rootCmd.AddCommand(putCmd)
 	rootCmd.AddCommand(getCmd)
@@ -630,6 +893,7 @@ Use "{{.CommandPath}} [command] --help" for more information about a command.{{e
 	rootCmd.AddCommand(configCmd)
 	rootCmd.AddCommand(archiveCmd)
 	rootCmd.AddCommand(policyCmd)
+	rootCmd.AddCommand(replicationCmd)
 	rootCmd.AddCommand(healthCmd)
 
 	// Apply usage template to all commands to ensure examples always show

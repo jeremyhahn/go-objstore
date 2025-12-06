@@ -22,38 +22,28 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
-	"github.com/jeremyhahn/go-objstore/pkg/factory"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 )
 
 // Example demonstrating the new facade pattern for go-objstore
 
 func main() {
-	fmt.Println("=== go-objstore Facade Pattern Example ===\n")
+	fmt.Println("=== go-objstore Facade Pattern Example ===")
 
-	// Setup: Create storage backends using the factory
+	// Setup: Initialize facade with multiple backends using simplified API
+	// The facade creates storage backends internally via the factory
 	fmt.Println("1. Setting up storage backends...")
 
-	local, err := factory.NewStorage("local", map[string]string{
-		"path": "/tmp/objstore-local",
-	})
-	if err != nil {
-		log.Fatalf("Failed to create local storage: %v", err)
-	}
-
-	local2, err := factory.NewStorage("local", map[string]string{
-		"path": "/tmp/objstore-local2",
-	})
-	if err != nil {
-		log.Fatalf("Failed to create local2 storage: %v", err)
-	}
-
-	// Initialize the facade with multiple backends
-	// This is done ONCE at application startup
-	err = objstore.Initialize(&objstore.FacadeConfig{
-		Backends: map[string]common.Storage{
-			"primary":   local,
-			"secondary": local2,
+	err := objstore.Initialize(&objstore.FacadeConfig{
+		BackendConfigs: map[string]objstore.BackendConfig{
+			"primary": {
+				Type:     "local",
+				Settings: map[string]string{"path": "/tmp/objstore-local"},
+			},
+			"secondary": {
+				Type:     "local",
+				Settings: map[string]string{"path": "/tmp/objstore-local2"},
+			},
 		},
 		DefaultBackend: "primary",
 	})

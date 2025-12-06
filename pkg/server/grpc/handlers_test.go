@@ -172,7 +172,7 @@ func TestGet_Streaming(t *testing.T) {
 
 func TestGet_ContextCancellation(t *testing.T) {
 	storage := newMockStorage()
-	server, err := NewServer(storage, WithAddress("127.0.0.1:0"))
+	server, err := newTestServer(t, storage, WithAddress("127.0.0.1:0"))
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}
@@ -379,8 +379,8 @@ func TestPutWithMetadata(t *testing.T) {
 func TestServerOptions_DisableAll(t *testing.T) {
 	storage := newMockStorage()
 
+	initTestFacade(t, storage)
 	server, err := NewServer(
-		storage,
 		WithAddress("127.0.0.1:0"),
 		WithLogging(false),
 		WithMetrics(false),
@@ -433,7 +433,7 @@ func TestProtoToMetadata_NilLastModified(t *testing.T) {
 func TestServer_GetAddress_BeforeStart(t *testing.T) {
 	storage := newMockStorage()
 
-	server, err := NewServer(storage, WithAddress(":12345"))
+	server, err := newTestServer(t, storage, WithAddress(":12345"))
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}
@@ -447,7 +447,7 @@ func TestServer_GetAddress_BeforeStart(t *testing.T) {
 func TestServer_ForceStop(t *testing.T) {
 	storage := newMockStorage()
 
-	server, err := NewServer(storage, WithAddress("127.0.0.1:0"))
+	server, err := newTestServer(t, storage, WithAddress("127.0.0.1:0"))
 	if err != nil {
 		t.Fatalf("Failed to create server: %v", err)
 	}
