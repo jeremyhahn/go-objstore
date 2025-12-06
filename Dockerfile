@@ -1,6 +1,6 @@
 # Multi-stage build for go-objstore
 # Stage 1: Build the application
-FROM golang:1.24-alpine AS builder
+FROM golang:1.25.5-alpine AS builder
 
 # Install build dependencies
 RUN apk add --no-cache git ca-certificates make

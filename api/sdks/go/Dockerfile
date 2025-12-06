@@ -1,7 +1,7 @@
 # Dockerfile for Go SDK testing
 # Context should be the repository root
 
-FROM golang:1.24-alpine
+FROM golang:1.25.5-alpine
 
 # Install system dependencies including build tools for CGO
 RUN apk add --no-cache \
