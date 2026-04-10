@@ -3,8 +3,8 @@ module github.com/jeremyhahn/go-objstore/examples/encryption
 go 1.25.3
 
 require (
-	github.com/jeremyhahn/go-keychain v0.1.5-alpha
 	github.com/jeremyhahn/go-objstore v0.1.0-alpha
+	github.com/jeremyhahn/go-xkms v0.1.5-alpha
 )
 
 require (
@@ -15,5 +15,3 @@ require (
 	golang.org/x/crypto v0.45.0 // indirect
 	golang.org/x/sys v0.38.0 // indirect
 )
-
-replace github.com/jeremyhahn/go-objstore => ../..

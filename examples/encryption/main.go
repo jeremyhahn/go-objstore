@@ -48,7 +48,7 @@ func basicExample() {
 	encryptionConfig := &Config{
 		Enabled:    true,
 		DefaultKey: "primary", // Changed from DefaultKeyID to DefaultKey
-		Keychain: &KeychainConfig{
+		XKMS:&XKMSConfig{
 			Keystores: []*KeystoreConfig{
 				{
 					Name: "primary-keystore",
@@ -73,7 +73,7 @@ func basicExample() {
 		log.Fatalf("Invalid encryption config: %v", err)
 	}
 
-	// Create encrypter factory using the keychain adapter
+	// Create encrypter factory using the xKMS adapter
 	encrypterFactory, err := NewEncrypterFactory(encryptionConfig)
 	if err != nil {
 		log.Fatalf("Failed to create encrypter factory: %v", err)
@@ -124,7 +124,7 @@ func keyRotationExample() {
 	encryptionConfig := &Config{
 		Enabled:    true,
 		DefaultKey: "primary", // New encryptions use primary key
-		Keychain: &KeychainConfig{
+		XKMS:&XKMSConfig{
 			Keystores: []*KeystoreConfig{
 				{
 					Name: "rotation-keystore",
@@ -152,7 +152,7 @@ func keyRotationExample() {
 	fmt.Println("✓ Configuration supports multiple keys")
 	fmt.Printf("  Default key for new encryptions: %s\n", encryptionConfig.DefaultKey)
 	keyCount := 0
-	for _, ks := range encryptionConfig.Keychain.Keystores {
+	for _, ks := range encryptionConfig.XKMS.Keystores {
 		keyCount += len(ks.Keys)
 	}
 	fmt.Printf("  Available keys: %d\n", keyCount)
@@ -173,7 +173,7 @@ func configFileExample() {
 	fmt.Println("encryption:")
 	fmt.Println("  enabled: true")
 	fmt.Println("  default_key: primary")
-	fmt.Println("  keychain:")
+	fmt.Println("  xkms:")
 	fmt.Println("    keystores:")
 	fmt.Println("      - name: primary-keystore")
 	fmt.Println("        type: software")
@@ -190,7 +190,7 @@ func configFileExample() {
 	fmt.Println("encryption:")
 	fmt.Println("  enabled: true")
 	fmt.Println("  default_key: production")
-	fmt.Println("  keychain:")
+	fmt.Println("  xkms:")
 	fmt.Println("    keystores:")
 	fmt.Println("      - name: aws-kms")
 	fmt.Println("        type: awskms")
@@ -211,7 +211,7 @@ func createProductionEncryptedStorage(baseStorage common.Storage, keyID string) 
 	encryptionConfig := &Config{
 		Enabled:    true,
 		DefaultKey: keyID,
-		Keychain: &KeychainConfig{
+		XKMS:&XKMSConfig{
 			Keystores: []*KeystoreConfig{
 				{
 					Name: "production-keystore",

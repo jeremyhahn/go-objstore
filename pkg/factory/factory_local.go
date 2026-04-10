@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-//go:build local
+// No build tag - local storage is always available as the fundamental storage backend
 
 package factory
 
