@@ -184,5 +184,5 @@ go-objstore/
 - MCP: Model Context Protocol specification
 
 ### Related Projects
-- go-keychain: Key management library
+- go-xkms: Key management library
 - Storage SDKs: AWS SDK, Google Cloud SDK, Azure SDK

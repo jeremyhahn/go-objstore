@@ -1,6 +1,6 @@
 module github.com/jeremyhahn/go-objstore
 
-go 1.24.0
+go 1.25.6
 
 require (
 	cloud.google.com/go/storage v1.57.2

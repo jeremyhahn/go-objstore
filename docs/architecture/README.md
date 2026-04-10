@@ -29,7 +29,7 @@ A filesystem abstraction layer that wraps any storage backend with familiar file
 [Read more about StorageFS](storagefs.md)
 
 ### Encryption
-Optional at-rest encryption using go-keychain for key management. Supports AES-GCM encryption with multiple key sizes and backends including software keystores and hardware security modules.
+Optional at-rest encryption using go-xkms for key management. Supports AES-GCM encryption with multiple key sizes and backends including software keystores and hardware security modules.
 
 [Read more about encryption](encryption.md)
 

@@ -7,7 +7,7 @@ go-objstore provides optional at-rest encryption for all stored data through a c
 **Dependency Inversion:** go-objstore defines encryption interfaces but provides NO concrete implementations. This design eliminates hard dependencies on specific key management systems.
 
 **Pluggable Architecture:** You can use:
-- [go-keychain](https://github.com/jeremyhahn/go-keychain) (recommended)
+- [go-xkms](https://github.com/jeremyhahn/go-xkms) (recommended)
 - HashiCorp Vault
 - Cloud KMS services (AWS/GCP/Azure)
 - Your own custom key management
@@ -80,7 +80,7 @@ type EncrypterFactory interface {
 
 go-objstore **does not provide** key management. You must bring your own:
 
-**Option A:** Use [go-keychain](https://github.com/jeremyhahn/go-keychain)
+**Option A:** Use [go-xkms](https://github.com/jeremyhahn/go-xkms)
 - Enterprise-grade key management
 - Supports HSM, TPM, KMS, software keys
 - Implements `EncrypterFactory` interface
@@ -144,11 +144,11 @@ go-objstore is **key-management-agnostic**. Your `EncrypterFactory` determines w
 
 ### Common Implementations
 
-**go-keychain** (recommended for most use cases):
+**go-xkms** (recommended for most use cases):
 ```go
-import "github.com/jeremyhahn/go-keychain"
+import "github.com/jeremyhahn/go-xkms"
 
-kc, _ := keychain.New(config)
+kc, _ := xkms.New(config)
 encryptedStorage := common.NewEncryptedStorage(storage, kc)
 ```
 

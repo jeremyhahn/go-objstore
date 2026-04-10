@@ -11,9 +11,9 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package main provides an example of integrating go-keychain with go-objstore.
+// Package main provides an example of integrating go-xkms with go-objstore.
 // This file demonstrates how applications can implement go-objstore's encryption
-// interfaces using go-keychain as the backend.
+// interfaces using go-xkms as the backend.
 //
 // This is just one example - applications can use any encryption backend by
 // implementing common.Encrypter and common.EncrypterFactory interfaces.
@@ -30,11 +30,11 @@ import (
 	"io"
 	"strings"
 
-	"github.com/jeremyhahn/go-keychain/pkg/backend"
-	"github.com/jeremyhahn/go-keychain/pkg/backend/software"
-	"github.com/jeremyhahn/go-keychain/pkg/storage"
-	"github.com/jeremyhahn/go-keychain/pkg/storage/memory"
-	"github.com/jeremyhahn/go-keychain/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/storage/memory"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
@@ -49,7 +49,7 @@ var (
 	ErrEncryptionConfigRequired      = errors.New("encryption config is required")
 	ErrInvalidEncryptionConfig       = errors.New("invalid encryption config")
 	ErrEncryptionNotEnabled          = errors.New("encryption is not enabled")
-	ErrKeychainRequired              = errors.New("keychain configuration is required when encryption is enabled")
+	ErrXKMSRequired                  = errors.New("xkms configuration is required when encryption is enabled")
 	ErrKeystoreRequired              = errors.New("at least one keystore must be configured")
 	ErrKeystoreNameEmpty             = errors.New("keystore name cannot be empty")
 	ErrDuplicateKeystore             = errors.New("duplicate keystore name")
@@ -58,9 +58,9 @@ var (
 	ErrKeyCNEmpty                    = errors.New("key CN cannot be empty")
 	ErrKeyAlgorithmEmpty             = errors.New("key algorithm cannot be empty")
 	ErrDefaultKeyNotFoundInStore     = errors.New("default key not found in any keystore")
-	ErrNoKeychainConfigured          = errors.New("no keychain configured")
+	ErrNoXKMSConfigured              = errors.New("no xkms configured")
 	ErrKeyNotFoundInKeystore         = errors.New("key not found in any keystore")
-	ErrUnsupportedBackend            = errors.New("unsupported keychain backend type")
+	ErrUnsupportedBackend            = errors.New("unsupported xkms backend type")
 	ErrUnsupportedAlgorithm          = errors.New("unsupported key algorithm")
 	ErrUnsupportedKeySize            = errors.New("unsupported AES key size")
 	ErrUnsupportedCurve              = errors.New("unsupported curve")
@@ -69,15 +69,15 @@ var (
 	ErrFileBasedPKCS8NotImplemented  = errors.New("file-based PKCS#8 storage not yet implemented - use storage_type: memory for now")
 )
 
-// KeychainEncrypter implements common.Encrypter using go-keychain's SymmetricEncrypter.
-type KeychainEncrypter struct {
+// XKMSEncrypter implements common.Encrypter using go-xkms's SymmetricEncrypter.
+type XKMSEncrypter struct {
 	backend  types.SymmetricBackend
 	keyAttrs *backend.KeyAttributes
 	keyID    string
 }
 
-// NewKeychainEncrypter creates a new encrypter using go-keychain.
-func NewKeychainEncrypter(symBackend types.SymmetricBackend, keyAttrs *backend.KeyAttributes, keyID string) (*KeychainEncrypter, error) {
+// NewXKMSEncrypter creates a new encrypter using go-xkms.
+func NewXKMSEncrypter(symBackend types.SymmetricBackend, keyAttrs *backend.KeyAttributes, keyID string) (*XKMSEncrypter, error) {
 	if symBackend == nil {
 		return nil, ErrSymmetricBackendRequired
 	}
@@ -85,15 +85,15 @@ func NewKeychainEncrypter(symBackend types.SymmetricBackend, keyAttrs *backend.K
 		return nil, ErrKeyAttributesRequired
 	}
 
-	return &KeychainEncrypter{
+	return &XKMSEncrypter{
 		backend:  symBackend,
 		keyAttrs: keyAttrs,
 		keyID:    keyID,
 	}, nil
 }
 
-// Encrypt encrypts data using the symmetric key from go-keychain.
-func (k *KeychainEncrypter) Encrypt(ctx context.Context, plaintext io.Reader) (io.ReadCloser, error) {
+// Encrypt encrypts data using the symmetric key from go-xkms.
+func (k *XKMSEncrypter) Encrypt(ctx context.Context, plaintext io.Reader) (io.ReadCloser, error) {
 	encrypter, err := k.backend.SymmetricEncrypter(k.keyAttrs)
 	if err != nil {
 		return nil, err
@@ -135,8 +135,8 @@ func (k *KeychainEncrypter) Encrypt(ctx context.Context, plaintext io.Reader) (i
 	return io.NopCloser(bytes.NewReader(buf.Bytes())), nil
 }
 
-// Decrypt decrypts data using the symmetric key from go-keychain.
-func (k *KeychainEncrypter) Decrypt(ctx context.Context, ciphertext io.Reader) (io.ReadCloser, error) {
+// Decrypt decrypts data using the symmetric key from go-xkms.
+func (k *XKMSEncrypter) Decrypt(ctx context.Context, ciphertext io.Reader) (io.ReadCloser, error) {
 	encrypter, err := k.backend.SymmetricEncrypter(k.keyAttrs)
 	if err != nil {
 		return nil, err
@@ -191,7 +191,7 @@ func (k *KeychainEncrypter) Decrypt(ctx context.Context, ciphertext io.Reader) (
 }
 
 // Algorithm returns the encryption algorithm identifier
-func (k *KeychainEncrypter) Algorithm() string {
+func (k *XKMSEncrypter) Algorithm() string {
 	if k.keyAttrs.SymmetricAlgorithm != "" {
 		switch k.keyAttrs.SymmetricAlgorithm {
 		case types.SymmetricAES128GCM:
@@ -225,23 +225,23 @@ func (k *KeychainEncrypter) Algorithm() string {
 }
 
 // KeyID returns the key identifier
-func (k *KeychainEncrypter) KeyID() string {
+func (k *XKMSEncrypter) KeyID() string {
 	return k.keyID
 }
 
-// KeychainEncrypterFactory implements common.EncrypterFactory using go-keychain.
-type KeychainEncrypterFactory struct {
+// XKMSEncrypterFactory implements common.EncrypterFactory using go-xkms.
+type XKMSEncrypterFactory struct {
 	backend      types.SymmetricBackend
 	keyAttrsMap  map[string]*backend.KeyAttributes
 	defaultKeyID string
 }
 
-// NewKeychainEncrypterFactory creates a new encrypter factory.
-func NewKeychainEncrypterFactory(
+// NewXKMSEncrypterFactory creates a new encrypter factory.
+func NewXKMSEncrypterFactory(
 	symBackend types.SymmetricBackend,
 	keyAttrsMap map[string]*backend.KeyAttributes,
 	defaultKeyID string,
-) (*KeychainEncrypterFactory, error) {
+) (*XKMSEncrypterFactory, error) {
 	if symBackend == nil {
 		return nil, ErrSymmetricBackendRequired
 	}
@@ -255,7 +255,7 @@ func NewKeychainEncrypterFactory(
 		return nil, ErrDefaultKeyNotFound
 	}
 
-	return &KeychainEncrypterFactory{
+	return &XKMSEncrypterFactory{
 		backend:      symBackend,
 		keyAttrsMap:  keyAttrsMap,
 		defaultKeyID: defaultKeyID,
@@ -263,7 +263,7 @@ func NewKeychainEncrypterFactory(
 }
 
 // GetEncrypter returns an encrypter for the specified key ID.
-func (f *KeychainEncrypterFactory) GetEncrypter(keyID string) (common.Encrypter, error) {
+func (f *XKMSEncrypterFactory) GetEncrypter(keyID string) (common.Encrypter, error) {
 	if keyID == "" {
 		keyID = f.defaultKeyID
 	}
@@ -273,16 +273,16 @@ func (f *KeychainEncrypterFactory) GetEncrypter(keyID string) (common.Encrypter,
 		return nil, ErrKeyNotFound
 	}
 
-	return NewKeychainEncrypter(f.backend, keyAttrs, keyID)
+	return NewXKMSEncrypter(f.backend, keyAttrs, keyID)
 }
 
 // DefaultKeyID returns the default key ID
-func (f *KeychainEncrypterFactory) DefaultKeyID() string {
+func (f *XKMSEncrypterFactory) DefaultKeyID() string {
 	return f.defaultKeyID
 }
 
 // Close releases resources
-func (f *KeychainEncrypterFactory) Close() error {
+func (f *XKMSEncrypterFactory) Close() error {
 	if f.backend != nil {
 		return f.backend.Close()
 	}
@@ -293,13 +293,13 @@ func (f *KeychainEncrypterFactory) Close() error {
 
 // Config represents encryption configuration.
 type Config struct {
-	Enabled    bool            `yaml:"enabled" json:"enabled"`
-	DefaultKey string          `yaml:"default_key" json:"default_key"`
-	Keychain   *KeychainConfig `yaml:"keychain" json:"keychain"`
+	Enabled    bool        `yaml:"enabled" json:"enabled"`
+	DefaultKey string      `yaml:"default_key" json:"default_key"`
+	XKMS       *XKMSConfig `yaml:"xkms" json:"xkms"`
 }
 
-// KeychainConfig represents keychain configuration.
-type KeychainConfig struct {
+// XKMSConfig represents xKMS configuration.
+type XKMSConfig struct {
 	Keystores []*KeystoreConfig `yaml:"keystores" json:"keystores"`
 }
 
@@ -411,18 +411,18 @@ func (c *Config) Validate() error {
 		return ErrDefaultKeyRequired
 	}
 
-	if c.Keychain == nil {
-		return ErrKeychainRequired
+	if c.XKMS == nil {
+		return ErrXKMSRequired
 	}
 
-	if len(c.Keychain.Keystores) == 0 {
+	if len(c.XKMS.Keystores) == 0 {
 		return ErrKeystoreRequired
 	}
 
 	keystoreNames := make(map[string]bool)
 	hasDefaultKey := false
 
-	for _, keystore := range c.Keychain.Keystores {
+	for _, keystore := range c.XKMS.Keystores {
 		if keystore.Name == "" {
 			return ErrKeystoreNameEmpty
 		}
@@ -463,7 +463,7 @@ func (c *Config) Validate() error {
 }
 
 // NewEncrypterFactory creates an EncrypterFactory from configuration.
-// This shows how an application can integrate go-keychain with go-objstore.
+// This shows how an application can integrate go-xkms with go-objstore.
 func NewEncrypterFactory(config *Config) (common.EncrypterFactory, error) {
 	if config == nil {
 		return nil, ErrEncryptionConfigRequired
@@ -477,13 +477,13 @@ func NewEncrypterFactory(config *Config) (common.EncrypterFactory, error) {
 		return nil, ErrEncryptionNotEnabled
 	}
 
-	symBackend, err := createKeychainBackend(config.Keychain.Keystores)
+	symBackend, err := createXKMSBackend(config.XKMS.Keystores)
 	if err != nil {
 		return nil, err
 	}
 
 	keyAttrsMap := make(map[string]*backend.KeyAttributes)
-	for _, keystore := range config.Keychain.Keystores {
+	for _, keystore := range config.XKMS.Keystores {
 		for _, keyConfig := range keystore.Keys {
 			keyIdentifier := keyConfig.GetKeyIdentifier()
 			attrs, err := keyConfig.ToBackendKeyAttributes(keystore)
@@ -498,7 +498,7 @@ func NewEncrypterFactory(config *Config) (common.EncrypterFactory, error) {
 		}
 	}
 
-	factory, err := NewKeychainEncrypterFactory(symBackend, keyAttrsMap, config.DefaultKey)
+	factory, err := NewXKMSEncrypterFactory(symBackend, keyAttrsMap, config.DefaultKey)
 	if err != nil {
 		return nil, err
 	}
@@ -506,7 +506,7 @@ func NewEncrypterFactory(config *Config) (common.EncrypterFactory, error) {
 	return factory, nil
 }
 
-func createKeychainBackend(keystores []*KeystoreConfig) (types.SymmetricBackend, error) {
+func createXKMSBackend(keystores []*KeystoreConfig) (types.SymmetricBackend, error) {
 	if len(keystores) == 0 {
 		return nil, ErrKeystoreRequired
 	}
@@ -560,5 +560,5 @@ func ensureKeyExists(symBackend types.SymmetricBackend, attrs *backend.KeyAttrib
 }
 
 // Ensure interfaces are implemented
-var _ common.Encrypter = (*KeychainEncrypter)(nil)
-var _ common.EncrypterFactory = (*KeychainEncrypterFactory)(nil)
+var _ common.Encrypter = (*XKMSEncrypter)(nil)
+var _ common.EncrypterFactory = (*XKMSEncrypterFactory)(nil)

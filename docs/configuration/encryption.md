@@ -4,7 +4,7 @@ Configuration reference for at-rest encryption.
 
 ## Overview
 
-go-objstore provides encryption through an **abstraction layer** - you provide an implementation of the `Encrypter` and `EncrypterFactory` interfaces. This allows you to use **any key management solution** (go-keychain, HashiCorp Vault, cloud KMS, etc.) without hard-coded dependencies.
+go-objstore provides encryption through an **abstraction layer** - you provide an implementation of the `Encrypter` and `EncrypterFactory` interfaces. This allows you to use **any key management solution** (go-xkms, HashiCorp Vault, cloud KMS, etc.) without hard-coded dependencies.
 
 ## Programmatic API
 
@@ -23,7 +23,7 @@ storage, err := factory.NewStorage("s3", map[string]string{
 })
 
 // 2. Create your encrypter factory implementation
-// (using go-keychain, Vault, or your own implementation)
+// (using go-xkms, Vault, or your own implementation)
 encrypterFactory := myapp.NewEncrypterFactory(config)
 
 // 3. Wrap storage with encryption
@@ -76,7 +76,7 @@ type EncrypterFactory interface {
 
 You can use **any** key management solution by implementing the interfaces above:
 
-Use [go-keychain](https://github.com/jeremyhahn/go-keychain) which provides enterprise-grade key management with support for:
+Use [go-xkms](https://github.com/jeremyhahn/go-xkms) which provides enterprise-grade key management with support for:
 - **PKCS#8** - Software-based key files
 - **PKCS#11** - Hardware security modules (HSMs)
 - **TPM 2.0** - Trusted platform module
@@ -86,12 +86,12 @@ Use [go-keychain](https://github.com/jeremyhahn/go-keychain) which provides ente
 - **HashiCorp Vault** - Multi-cloud secrets management
 
 ```go
-import "github.com/jeremyhahn/go-keychain"
+import "github.com/jeremyhahn/go-xkms"
 
-// Create keychain with your configuration
-keychainConfig := &keychain.Config{
+// Create xKMS with your configuration
+xkmsConfig := &xkms.Config{
     DefaultKeyID: "primary",
-    Keystores: []keychain.KeystoreConfig{
+    Keystores: []xkms.KeystoreConfig{
         {
             Type: "software",
             Config: map[string]interface{}{
@@ -101,12 +101,12 @@ keychainConfig := &keychain.Config{
     },
 }
 
-kc, err := keychain.New(keychainConfig)
+kc, err := xkms.New(xkmsConfig)
 if err != nil {
     return err
 }
 
-// Use keychain as EncrypterFactory
+// Use xKMS as EncrypterFactory
 encryptedStorage := common.NewEncryptedStorage(storage, kc)
 ```
 
@@ -308,7 +308,7 @@ package main
 import (
     "github.com/jeremyhahn/go-objstore/pkg/common"
     "github.com/jeremyhahn/go-objstore/pkg/factory"
-    "github.com/jeremyhahn/go-keychain"
+    "github.com/jeremyhahn/go-xkms"
 )
 
 func main() {
@@ -321,10 +321,10 @@ func main() {
         panic(err)
     }
 
-    // 2. Set up encryption with go-keychain
-    keychainConfig := &keychain.Config{
+    // 2. Set up encryption with go-xkms
+    xkmsConfig := &xkms.Config{
         DefaultKeyID: "prod-2024",
-        Keystores: []keychain.KeystoreConfig{
+        Keystores: []xkms.KeystoreConfig{
             {
                 Type: "awskms",
                 Config: map[string]interface{}{
@@ -335,7 +335,7 @@ func main() {
         },
     }
 
-    kc, err := keychain.New(keychainConfig)
+    kc, err := xkms.New(xkmsConfig)
     if err != nil {
         panic(err)
     }
