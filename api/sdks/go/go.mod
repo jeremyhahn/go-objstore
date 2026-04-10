@@ -23,6 +23,3 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251111163417-95abcf5c77ba // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-// Use the local parent module for protobuf definitions
-replace github.com/jeremyhahn/go-objstore => ../../..

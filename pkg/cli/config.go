@@ -40,7 +40,7 @@ type Config struct {
 	EncryptionKeyID        string
 	EncryptionBackend      string
 	EncryptionBackendPath  string
-	EncryptionKeychainPath string
+	EncryptionXKMSPath string
 }
 
 // InitConfig initializes the configuration using Viper.
@@ -136,8 +136,8 @@ func (c *Config) GetStorageSettings() map[string]string {
 	if c.EncryptionBackendPath != "" {
 		settings["encryption_backend_path"] = c.EncryptionBackendPath
 	}
-	if c.EncryptionKeychainPath != "" {
-		settings["encryption_keychain_path"] = c.EncryptionKeychainPath
+	if c.EncryptionXKMSPath != "" {
+		settings["encryption_xkms_path"] = c.EncryptionXKMSPath
 	}
 
 	// For local backend, use persistent lifecycle manager so policies survive across CLI commands
