@@ -4,7 +4,7 @@ go 1.25.3
 
 require (
 	github.com/jeremyhahn/go-objstore v0.1.0-alpha
-	github.com/jeremyhahn/go-xkms v0.1.5-alpha
+	github.com/jeremyhahn/go-xkms v0.2.2-alpha
 )
 
 require (
