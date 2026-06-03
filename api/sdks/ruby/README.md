@@ -1,10 +1,11 @@
 # ObjectStore Ruby SDK
 
-A comprehensive Ruby SDK for go-objstore supporting REST, gRPC, and QUIC/HTTP3 protocols.
+A comprehensive Ruby SDK for go-objstore supporting REST, gRPC, QUIC/HTTP3, MCP, and Unix socket transports.
 
 ## Features
 
-- Support for multiple protocols: REST, gRPC, and QUIC/HTTP3
+- Support for multiple transports: REST, gRPC, QUIC/HTTP3, MCP (Model Context Protocol), and Unix domain socket
+- App-layer authentication: `token` (Bearer), `tenant_id` (X-Tenant-ID), and arbitrary `headers` on REST/QUIC/MCP; gRPC metadata on gRPC; peer-cred on Unix
 - Unified client interface with runtime protocol switching
 - **Streaming support for large files** - Memory-efficient uploads and downloads
 - Complete API coverage for all go-objstore operations
@@ -70,7 +71,15 @@ response = client.delete("my-file.txt")
 puts "Deleted: #{response.success?}"
 ```
 
-### Protocol Selection
+### Protocol / Transport Selection
+
+| Protocol | Symbol | Default Port | Notes |
+|----------|--------|-------------|-------|
+| REST (HTTP/1.1) | `:rest` | 8080 | Default |
+| gRPC | `:grpc` | 50051 | Requires grpc gem |
+| QUIC/HTTP3 | `:quic` | 4433 | Falls back to HTTP/1.1 |
+| MCP (HTTP JSON-RPC) | `:mcp` | 8081 | Model Context Protocol |
+| Unix socket (JSON-RPC) | `:unix` | — | Local socket only |
 
 ```ruby
 # REST (default)
@@ -79,11 +88,45 @@ client = ObjectStore::Client.new(protocol: :rest, port: 8080)
 # gRPC
 client = ObjectStore::Client.new(protocol: :grpc, port: 50051)
 
-# QUIC/HTTP3 (defaults to port 8443 with SSL)
+# QUIC/HTTP3 (defaults to port 4433 with SSL)
 client = ObjectStore::Client.new(protocol: :quic)
 
-# Switch protocols at runtime
-client.switch_protocol(:grpc)
+# MCP — HTTP POST JSON-RPC 2.0
+client = ObjectStore::Client.new(protocol: :mcp, port: 8081)
+
+# Unix domain socket — newline-delimited JSON-RPC 2.0
+client = ObjectStore::Client.new(protocol: :unix, socket_path: "/tmp/objstore.sock")
+
+# Switch transport at runtime
+client.switch_protocol(:mcp, port: 8081)
+client.switch_protocol(:unix)
+```
+
+### App-Layer Authentication
+
+When a `token`, `tenant_id`, or custom `headers` are provided they are
+threaded into every request automatically.
+
+| Transport | Token | Tenant ID | Custom Headers |
+|-----------|-------|-----------|----------------|
+| REST | `Authorization: Bearer <token>` | `X-Tenant-ID` | HTTP headers |
+| QUIC | `Authorization: Bearer <token>` | `X-Tenant-ID` | HTTP headers |
+| MCP | `Authorization: Bearer <token>` | `X-Tenant-ID` | HTTP headers |
+| gRPC | `authorization` metadata | `x-tenant-id` metadata | gRPC metadata |
+| Unix | — (peer credential, server-side) | — | — |
+
+```ruby
+# All three auth params may be combined
+client = ObjectStore::Client.new(
+  protocol: :rest,
+  host: "objstore.example.com",
+  port: 8080,
+  use_ssl: true,
+  timeout: 60,
+  token: "my-bearer-token",
+  tenant_id: "acme",
+  headers: { "X-Request-Source" => "ruby-sdk" }
+)
 ```
 
 ### Advanced Configuration
@@ -468,9 +511,14 @@ The SDK provides comprehensive error handling with input validation and descript
 - `ObjectStore::Error` - Base exception class
 - `ObjectStore::NotFoundError` - Resource not found (404)
 - `ObjectStore::ValidationError` - Server-side validation error (400)
+- `ObjectStore::AuthenticationError` - Unauthenticated (401)
+- `ObjectStore::AuthorizationError` - Forbidden (403)
+- `ObjectStore::AlreadyExistsError` - Resource already exists (409)
+- `ObjectStore::RateLimitError` - Rate limited (429)
 - `ObjectStore::TimeoutError` - Request timeout
 - `ObjectStore::ServerError` - Server error (5xx)
 - `ObjectStore::ConnectionError` - Network connection error
+- `ObjectStore::ProtocolError` - Malformed or unexpected wire response
 - `ArgumentError` - Client-side input validation error (Ruby standard)
 
 ### Basic Error Handling
@@ -486,6 +534,14 @@ rescue ObjectStore::NotFoundError => e
   puts "File not found: #{e.message}"
 rescue ObjectStore::ValidationError => e
   puts "Validation error: #{e.message}"
+rescue ObjectStore::AuthenticationError => e
+  puts "Authentication failed: #{e.message}"
+rescue ObjectStore::AuthorizationError => e
+  puts "Access denied: #{e.message}"
+rescue ObjectStore::AlreadyExistsError => e
+  puts "Already exists: #{e.message}"
+rescue ObjectStore::RateLimitError => e
+  puts "Rate limited: #{e.message}"
 rescue ObjectStore::TimeoutError => e
   puts "Request timed out: #{e.message}"
 rescue ObjectStore::ServerError => e
@@ -619,7 +675,7 @@ make format
 
 ### Integration Tests with Docker
 
-The integration tests use Docker Compose to start go-objstore servers with all three protocols:
+The integration tests use Docker Compose to start go-objstore servers with all five transports (REST, gRPC, QUIC, MCP, Unix):
 
 ```bash
 # Start Docker containers
@@ -682,6 +738,8 @@ The SDK maintains 95%+ code coverage across all components:
 - REST Client: 95%+
 - gRPC Client: 95%+
 - QUIC Client: 95%+
+- MCP Client: 95%+
+- Unix Client: 95%+
 - Unified Client: 100%
 - Streaming: 95%+
 - Validation: 100%
@@ -718,7 +776,7 @@ For issues and questions:
 
 ### 0.2.0
 
-- Go toolchain updated to 1.26.3
+- Go toolchain updated to 1.26.4
 - API parity across all SDKs
 
 ### 0.1.0 (2025-11-23)
@@ -727,4 +785,13 @@ For issues and questions:
 - Support for REST, gRPC, and QUIC/HTTP3 protocols
 - Complete API coverage
 - Comprehensive test suite
+
+### 0.3.0
+
+- MCP transport client: HTTP POST JSON-RPC 2.0 over `/` with `tools/call`, all 19 operations
+- Unix socket transport client: newline-delimited JSON-RPC 2.0, all 19 operations, base64 binary data
+- App-layer auth: `token` / `tenant_id` / `headers` on REST, QUIC, MCP (HTTP headers) and gRPC (metadata)
+- `switch_protocol` extended to `:mcp` and `:unix`
+- New unit specs: `mcp_client_spec.rb`, `unix_client_spec.rb`
+- New example: `examples/mcp_unix_example.rb`
 - Docker-based integration tests

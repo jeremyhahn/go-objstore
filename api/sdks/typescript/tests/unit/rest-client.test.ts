@@ -1,6 +1,16 @@
 import nock from 'nock';
 import { RestClient } from '../../src/clients/rest-client';
 import { HealthStatus, ReplicationMode } from '../../src/types';
+import {
+  ObjectNotFoundError,
+  AuthenticationError,
+  AuthorizationError,
+  ValidationError,
+  AlreadyExistsError,
+  RateLimitError,
+  ServerError,
+  ConnectionError,
+} from '../../src/errors';
 
 /**
  * Canonical REST client unit-test matrix.
@@ -76,10 +86,86 @@ describe('RestClient', () => {
   });
 
   // --------------------------------------------------------------------------
+  // typed HTTP error mapping
+  // --------------------------------------------------------------------------
+  describe('typed_errors', () => {
+    it('rest_404_maps_to_ObjectNotFoundError', async () => {
+      nock(baseUrl).get('/objects/missing').reply(404, { message: 'not found' });
+      const err = await client.get({ key: 'missing' }).then(
+        () => undefined,
+        (e) => e
+      );
+      expect(err).toBeInstanceOf(ObjectNotFoundError);
+      expect((err as Error).message).toContain('REST API error (404)');
+      expect((err as Error).message).toContain('not found');
+    });
+
+    it('rest_401_maps_to_AuthenticationError', async () => {
+      nock(baseUrl).get('/objects/k').reply(401, { message: 'unauthenticated' });
+      await expect(client.get({ key: 'k' })).rejects.toBeInstanceOf(AuthenticationError);
+    });
+
+    it('rest_403_maps_to_AuthorizationError', async () => {
+      nock(baseUrl).get('/objects/k').reply(403, { message: 'forbidden' });
+      await expect(client.get({ key: 'k' })).rejects.toBeInstanceOf(AuthorizationError);
+    });
+
+    it('rest_400_maps_to_ValidationError', async () => {
+      nock(baseUrl).get('/objects/k').reply(400, { message: 'bad request' });
+      await expect(client.get({ key: 'k' })).rejects.toBeInstanceOf(ValidationError);
+    });
+
+    it('rest_409_maps_to_AlreadyExistsError', async () => {
+      nock(baseUrl).get('/objects/k').reply(409, { message: 'already exists' });
+      const err = await client.get({ key: 'k' }).then(
+        () => undefined,
+        (e) => e
+      );
+      expect(err).toBeInstanceOf(AlreadyExistsError);
+      expect((err as AlreadyExistsError).statusCode).toBe(409);
+    });
+
+    it('rest_429_maps_to_RateLimitError', async () => {
+      nock(baseUrl).get('/objects/k').reply(429, { message: 'rate limited' });
+      const err = await client.get({ key: 'k' }).then(
+        () => undefined,
+        (e) => e
+      );
+      expect(err).toBeInstanceOf(RateLimitError);
+      expect((err as RateLimitError).statusCode).toBe(429);
+    });
+
+    it('rest_500_maps_to_ServerError', async () => {
+      nock(baseUrl).get('/objects/k').reply(500, { message: 'boom' });
+      const err = await client.get({ key: 'k' }).then(
+        () => undefined,
+        (e) => e
+      );
+      expect(err).toBeInstanceOf(ServerError);
+      expect((err as ServerError).statusCode).toBe(500);
+    });
+
+    it('rest_network_failure_maps_to_ConnectionError', async () => {
+      nock(baseUrl).get('/objects/k').replyWithError('ECONNREFUSED');
+      await expect(client.get({ key: 'k' })).rejects.toBeInstanceOf(ConnectionError);
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // delete
   // --------------------------------------------------------------------------
   describe('delete', () => {
-    it('rest_delete_success', async () => {
+    it('rest_delete_success_204_no_content', async () => {
+      const scope = nock(baseUrl).delete('/objects/test-key').reply(204);
+
+      const response = await client.delete({ key: 'test-key' });
+
+      expect(response.success).toBe(true);
+      expect(response.message).toBe('Object deleted successfully');
+      scope.done();
+    });
+
+    it('rest_delete_tolerates_legacy_200_body', async () => {
       const scope = nock(baseUrl).delete('/objects/test-key').reply(200, { message: 'deleted' });
 
       const response = await client.delete({ key: 'test-key' });
@@ -666,6 +752,87 @@ describe('RestClient', () => {
       } finally {
         nock.enableNetConnect();
       }
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // auth: token + tenantId forwarded as headers
+  // --------------------------------------------------------------------------
+  describe('auth', () => {
+    it('rest_auth_token_and_tenant', async () => {
+      const authClient = new RestClient({
+        baseUrl,
+        token: 'my-bearer',
+        tenantId: 'ten-1',
+      });
+      const scope = nock(baseUrl)
+        .matchHeader('authorization', 'Bearer my-bearer')
+        .matchHeader('x-tenant-id', 'ten-1')
+        .get('/health')
+        .reply(200, { status: 'healthy' });
+
+      await authClient.health();
+      scope.done();
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // getStream
+  // --------------------------------------------------------------------------
+  describe('getStream', () => {
+    it('rest_getStream_success', async () => {
+      nock(baseUrl).get('/objects/stream-key').reply(200, 'streamed content');
+
+      const stream = await client.getStream('stream-key');
+      const chunks: Buffer[] = [];
+      await new Promise<void>((resolve, reject) => {
+        stream.on('data', (chunk: Buffer) => chunks.push(chunk));
+        stream.on('end', resolve);
+        stream.on('error', reject);
+      });
+      expect(Buffer.concat(chunks).toString()).toContain('streamed content');
+    });
+
+    it('rest_getStream_error', async () => {
+      nock(baseUrl).get('/objects/missing-stream').reply(404, 'not found');
+      await expect(client.getStream('missing-stream')).rejects.toThrow();
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // putStream
+  // --------------------------------------------------------------------------
+  describe('putStream', () => {
+    it('rest_putStream_success', async () => {
+      nock(baseUrl)
+        .put('/objects/stream-put')
+        .reply(200, { message: 'stored' }, { etag: '"stream1"' });
+
+      const { Readable } = require('stream');
+      const stream = Readable.from([Buffer.from('hello'), Buffer.from(' world')]);
+      const resp = await client.putStream('stream-put', stream);
+      expect(resp.success).toBe(true);
+    });
+
+    it('rest_putStream_asyncIterable', async () => {
+      nock(baseUrl)
+        .put('/objects/stream-async')
+        .reply(200, { message: 'ok' });
+
+      async function* gen(): AsyncIterable<Buffer> {
+        yield Buffer.from('a');
+        yield Buffer.from('b');
+      }
+      const resp = await client.putStream('stream-async', gen());
+      expect(resp.success).toBe(true);
+    });
+
+    it('rest_putStream_error', async () => {
+      nock(baseUrl).put('/objects/stream-err').reply(500, { message: 'fail' });
+
+      const { Readable } = require('stream');
+      const stream = Readable.from([Buffer.from('data')]);
+      await expect(client.putStream('stream-err', stream)).rejects.toThrow('REST API error (500)');
     });
   });
 });

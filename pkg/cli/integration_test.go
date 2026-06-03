@@ -490,12 +490,13 @@ func TestCLI_PutWithMetadataCommand(t *testing.T) {
 	}
 }
 
-// TestCLI_ArchiveCommand tests the archive command
+// TestCLI_ArchiveCommand tests the archive command against the local
+// archiver, which is registered when the binary is built with the "local"
+// build tag.
 func TestCLI_ArchiveCommand(t *testing.T) {
-	t.Skip("Archive command requires archiver backend configuration")
 	cli := setupCLI(t)
 
-	// Create a second backend for archiving
+	// Create a second directory as the archive destination
 	archiveDir := t.TempDir()
 
 	// Put a file
@@ -509,10 +510,9 @@ func TestCLI_ArchiveCommand(t *testing.T) {
 		t.Fatalf("put command failed: %v", err)
 	}
 
-	// Archive the file
+	// Archive the file to the local archiver
 	stdout, stderr, err := cli.run(
-		"archive", "test/archive.txt",
-		"--destination-type", "local",
+		"archive", "test/archive.txt", "local",
 		"--destination-path", archiveDir,
 	)
 	if err != nil {
@@ -528,11 +528,21 @@ func TestCLI_ArchiveCommand(t *testing.T) {
 	if success, ok := result["success"].(bool); !ok || !success {
 		t.Error("Expected archive to succeed")
 	}
+
+	// Verify the object was written to the archive destination
+	archived, err := os.ReadFile(filepath.Join(archiveDir, "test", "archive.txt"))
+	if err != nil {
+		t.Fatalf("Failed to read archived object: %v", err)
+	}
+	if string(archived) != "archive me" {
+		t.Errorf("Archived content = %q, want %q", archived, "archive me")
+	}
 }
 
-// TestCLI_PolicyCommands tests the policy add/list/remove commands
+// TestCLI_PolicyCommands tests the policy add/list/remove commands against
+// the local backend, which supports lifecycle policies via its persistent
+// lifecycle manager.
 func TestCLI_PolicyCommands(t *testing.T) {
-	t.Skip("Policy commands require backend with lifecycle policy support")
 	cli := setupCLI(t)
 
 	// Add a policy (uses positional arguments: id prefix retention-days action)
@@ -601,6 +611,29 @@ func TestCLI_PolicyCommands(t *testing.T) {
 
 	if success, ok := removeResult["success"].(bool); !ok || !success {
 		t.Error("Expected policy remove to succeed")
+	}
+}
+
+// TestCLI_PolicyAddArchiveUnconfigured tests that adding an archive policy
+// without an available glacier archiver fails with a clear, actionable error
+// instead of failing obscurely when the policy is applied. The test binary is
+// built with only the "local" tag, so the glacier archiver is not registered.
+func TestCLI_PolicyAddArchiveUnconfigured(t *testing.T) {
+	cli := setupCLI(t)
+
+	stdout, stderr, err := cli.run(
+		"policy", "add",
+		"archive-policy",
+		"test/old/",
+		"30",
+		"archive",
+	)
+	if err == nil {
+		t.Fatalf("Expected policy add with archive action to fail\nStdout: %s", stdout)
+	}
+
+	if !strings.Contains(stderr, "glacier archiver") {
+		t.Errorf("Expected error naming the glacier archiver, got stderr: %s", stderr)
 	}
 }
 

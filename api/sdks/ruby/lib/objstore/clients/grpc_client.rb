@@ -15,11 +15,18 @@ module ObjectStore
       # @param port [Integer] Server port
       # @param use_ssl [Boolean] Whether to use TLS
       # @param timeout [Integer] Request timeout in seconds
-      def initialize(host: "localhost", port: 50051, use_ssl: false, timeout: 30)
+      # @param token [String, nil] Bearer token sent as "authorization" gRPC metadata
+      # @param headers [Hash] Additional key/value pairs sent as gRPC metadata on each call
+      # @param tenant_id [String, nil] Tenant identifier sent as "x-tenant-id" gRPC metadata
+      def initialize(host: "localhost", port: 50051, use_ssl: false, timeout: 30,
+                     token: nil, headers: {}, tenant_id: nil)
         @host = host
         @port = port
         @use_ssl = use_ssl
         @timeout = timeout
+        @token = token
+        @extra_headers = headers || {}
+        @tenant_id = tenant_id
         @stub = nil
       end
 
@@ -42,7 +49,7 @@ module ObjectStore
           data: data,
           metadata: build_metadata_proto(metadata_obj)
         )
-        response = @stub.put(request, deadline: grpc_deadline)
+        response = @stub.put(request, deadline: grpc_deadline, metadata: grpc_metadata)
 
         Models::PutResponse.new(
           success: response.success,
@@ -90,7 +97,7 @@ module ObjectStore
         chunks = []
         metadata = nil
 
-        @stub.get(request, deadline: grpc_deadline).each do |response|
+        @stub.get(request, deadline: grpc_deadline, metadata: grpc_metadata).each do |response|
           # Only append data if it's not empty
           chunks << response.data if response.data && !response.data.empty?
           # Parse metadata from the first response that has it
@@ -120,7 +127,7 @@ module ObjectStore
         metadata = nil
 
         # gRPC naturally supports streaming
-        @stub.get(request, deadline: grpc_deadline).each do |response|
+        @stub.get(request, deadline: grpc_deadline, metadata: grpc_metadata).each do |response|
           # Yield data chunks as they arrive
           if response.data && !response.data.empty?
             yield response.data if block_given?
@@ -145,7 +152,7 @@ module ObjectStore
         ensure_stub
 
         request = Objstore::V1::DeleteRequest.new(key: key)
-        response = @stub.delete(request, deadline: grpc_deadline)
+        response = @stub.delete(request, deadline: grpc_deadline, metadata: grpc_metadata)
 
         Models::DeleteResponse.new(
           success: response.success,
@@ -172,7 +179,7 @@ module ObjectStore
           max_results: max_results || 100,
           continue_from: continue_from || ""
         )
-        response = @stub.list(request, deadline: grpc_deadline)
+        response = @stub.list(request, deadline: grpc_deadline, metadata: grpc_metadata)
 
         # Handle nil or empty objects array
         objects = (response.objects || []).map do |obj|
@@ -201,7 +208,7 @@ module ObjectStore
         ensure_stub
 
         request = Objstore::V1::ExistsRequest.new(key: key)
-        response = @stub.exists(request, deadline: grpc_deadline)
+        response = @stub.exists(request, deadline: grpc_deadline, metadata: grpc_metadata)
 
         response.exists
       rescue GRPC::BadStatus => e
@@ -217,7 +224,7 @@ module ObjectStore
         ensure_stub
 
         request = Objstore::V1::GetMetadataRequest.new(key: key)
-        response = @stub.get_metadata(request, deadline: grpc_deadline)
+        response = @stub.get_metadata(request, deadline: grpc_deadline, metadata: grpc_metadata)
 
         Models::MetadataResponse.new(
           metadata: parse_metadata(response.metadata),
@@ -242,7 +249,7 @@ module ObjectStore
           key: key,
           metadata: build_metadata_proto(metadata_obj)
         )
-        response = @stub.update_metadata(request, deadline: grpc_deadline)
+        response = @stub.update_metadata(request, deadline: grpc_deadline, metadata: grpc_metadata)
 
         Models::UpdateMetadataResponse.new(
           success: response.success,
@@ -261,7 +268,7 @@ module ObjectStore
         ensure_stub
 
         request = Objstore::V1::HealthRequest.new(service: service || "")
-        response = @stub.health(request, deadline: grpc_deadline)
+        response = @stub.health(request, deadline: grpc_deadline, metadata: grpc_metadata)
 
         # Handle protobuf enum status
         status_name = case response.status
@@ -296,7 +303,7 @@ module ObjectStore
           destination_type: destination_type
         )
         destination_settings.each { |k, v| request.destination_settings[k.to_s] = v.to_s } if destination_settings
-        response = @stub.archive(request, deadline: grpc_deadline)
+        response = @stub.archive(request, deadline: grpc_deadline, metadata: grpc_metadata)
 
         Models::ArchiveResponse.new(
           success: response.success,
@@ -318,7 +325,7 @@ module ObjectStore
         request = Objstore::V1::AddPolicyRequest.new(
           policy: build_lifecycle_policy_proto(policy_obj)
         )
-        response = @stub.add_policy(request, deadline: grpc_deadline)
+        response = @stub.add_policy(request, deadline: grpc_deadline, metadata: grpc_metadata)
 
         { success: response.success, message: response.message }
       rescue GRPC::BadStatus => e
@@ -334,7 +341,7 @@ module ObjectStore
         ensure_stub
 
         request = Objstore::V1::RemovePolicyRequest.new(id: id)
-        response = @stub.remove_policy(request, deadline: grpc_deadline)
+        response = @stub.remove_policy(request, deadline: grpc_deadline, metadata: grpc_metadata)
 
         { success: response.success, message: response.message }
       rescue GRPC::BadStatus => e
@@ -350,7 +357,7 @@ module ObjectStore
         ensure_stub
 
         request = Objstore::V1::GetPoliciesRequest.new(prefix: prefix || "")
-        response = @stub.get_policies(request, deadline: grpc_deadline)
+        response = @stub.get_policies(request, deadline: grpc_deadline, metadata: grpc_metadata)
 
         policies = (response.policies || []).map { |p| parse_lifecycle_policy(p) }
 
@@ -366,7 +373,7 @@ module ObjectStore
         ensure_stub
 
         request = Objstore::V1::ApplyPoliciesRequest.new
-        response = @stub.apply_policies(request, deadline: grpc_deadline)
+        response = @stub.apply_policies(request, deadline: grpc_deadline, metadata: grpc_metadata)
 
         {
           success: response.success,
@@ -390,7 +397,7 @@ module ObjectStore
         request = Objstore::V1::AddReplicationPolicyRequest.new(
           policy: build_replication_policy_proto(policy_obj)
         )
-        response = @stub.add_replication_policy(request, deadline: grpc_deadline)
+        response = @stub.add_replication_policy(request, deadline: grpc_deadline, metadata: grpc_metadata)
 
         { success: response.success, message: response.message }
       rescue GRPC::BadStatus => e
@@ -406,7 +413,7 @@ module ObjectStore
         ensure_stub
 
         request = Objstore::V1::RemoveReplicationPolicyRequest.new(id: id)
-        response = @stub.remove_replication_policy(request, deadline: grpc_deadline)
+        response = @stub.remove_replication_policy(request, deadline: grpc_deadline, metadata: grpc_metadata)
 
         { success: response.success, message: response.message }
       rescue GRPC::BadStatus => e
@@ -420,7 +427,7 @@ module ObjectStore
         ensure_stub
 
         request = Objstore::V1::GetReplicationPoliciesRequest.new
-        response = @stub.get_replication_policies(request, deadline: grpc_deadline)
+        response = @stub.get_replication_policies(request, deadline: grpc_deadline, metadata: grpc_metadata)
 
         policies = (response.policies || []).map { |p| parse_replication_policy(p) }
 
@@ -438,7 +445,7 @@ module ObjectStore
         ensure_stub
 
         request = Objstore::V1::GetReplicationPolicyRequest.new(id: id)
-        response = @stub.get_replication_policy(request, deadline: grpc_deadline)
+        response = @stub.get_replication_policy(request, deadline: grpc_deadline, metadata: grpc_metadata)
 
         { policy: parse_replication_policy(response.policy) }
       rescue GRPC::BadStatus => e
@@ -460,7 +467,7 @@ module ObjectStore
           parallel: parallel || false,
           worker_count: worker_count || 4
         )
-        response = @stub.trigger_replication(request, deadline: grpc_deadline)
+        response = @stub.trigger_replication(request, deadline: grpc_deadline, metadata: grpc_metadata)
 
         {
           success: response.success,
@@ -480,7 +487,7 @@ module ObjectStore
         ensure_stub
 
         request = Objstore::V1::GetReplicationStatusRequest.new(id: id)
-        response = @stub.get_replication_status(request, deadline: grpc_deadline)
+        response = @stub.get_replication_status(request, deadline: grpc_deadline, metadata: grpc_metadata)
 
         {
           success: response.success,
@@ -524,12 +531,32 @@ module ObjectStore
         Time.now + @timeout
       end
 
+      # Build per-call gRPC metadata (keyword args for stub methods).
+      #
+      # Returns an empty hash when no auth params are configured so existing
+      # call sites continue to work without modification.
+      def grpc_metadata
+        meta = {}
+        meta["authorization"] = "Bearer #{@token}" if @token
+        meta["x-tenant-id"] = @tenant_id if @tenant_id
+        @extra_headers.each { |k, v| meta[k.to_s.downcase] = v.to_s }
+        meta
+      end
+
       def handle_grpc_error(error)
         case error.code
         when GRPC::Core::StatusCodes::NOT_FOUND
           raise ObjectStore::NotFoundError, error.details
         when GRPC::Core::StatusCodes::INVALID_ARGUMENT
           raise ObjectStore::ValidationError, error.details
+        when GRPC::Core::StatusCodes::UNAUTHENTICATED
+          raise ObjectStore::AuthenticationError, error.details
+        when GRPC::Core::StatusCodes::PERMISSION_DENIED
+          raise ObjectStore::AuthorizationError, error.details
+        when GRPC::Core::StatusCodes::ALREADY_EXISTS
+          raise ObjectStore::AlreadyExistsError, error.details
+        when GRPC::Core::StatusCodes::RESOURCE_EXHAUSTED
+          raise ObjectStore::RateLimitError, error.details
         when GRPC::Core::StatusCodes::DEADLINE_EXCEEDED
           raise ObjectStore::TimeoutError, error.details
         when GRPC::Core::StatusCodes::UNIMPLEMENTED

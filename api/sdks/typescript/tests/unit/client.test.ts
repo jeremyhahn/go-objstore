@@ -2,15 +2,21 @@ import { ObjectStoreClient } from '../../src/client';
 import { RestClient } from '../../src/clients/rest-client';
 import { GrpcClient } from '../../src/clients/grpc-client';
 import { QuicClient } from '../../src/clients/quic-client';
+import { McpClient } from '../../src/clients/mcp-client';
+import { UnixClient } from '../../src/clients/unix-client';
 import { HealthStatus } from '../../src/types';
 
 jest.mock('../../src/clients/rest-client');
 jest.mock('../../src/clients/grpc-client');
 jest.mock('../../src/clients/quic-client');
+jest.mock('../../src/clients/mcp-client');
+jest.mock('../../src/clients/unix-client');
 
 const MockRestClient = RestClient as jest.MockedClass<typeof RestClient>;
 const MockGrpcClient = GrpcClient as jest.MockedClass<typeof GrpcClient>;
 const MockQuicClient = QuicClient as jest.MockedClass<typeof QuicClient>;
+const MockMcpClient = McpClient as jest.MockedClass<typeof McpClient>;
+const MockUnixClient = UnixClient as jest.MockedClass<typeof UnixClient>;
 
 /**
  * Unified client tests: construction per protocol, delegation of a
@@ -52,6 +58,31 @@ describe('ObjectStoreClient', () => {
     it('unified_quic_requires_config', () => {
       expect(() => new ObjectStoreClient({ protocol: 'quic' })).toThrow(
         'QUIC configuration is required'
+      );
+    });
+
+    it('unified_constructs_mcp', () => {
+      new ObjectStoreClient({ protocol: 'mcp', mcp: { baseUrl: 'http://localhost:9090' } });
+      expect(MockMcpClient).toHaveBeenCalledWith({ baseUrl: 'http://localhost:9090' });
+    });
+
+    it('unified_mcp_requires_config', () => {
+      expect(() => new ObjectStoreClient({ protocol: 'mcp' })).toThrow(
+        'MCP configuration is required'
+      );
+    });
+
+    it('unified_constructs_unix', () => {
+      new ObjectStoreClient({
+        protocol: 'unix',
+        unix: { socketPath: '/tmp/objstore.sock' },
+      });
+      expect(MockUnixClient).toHaveBeenCalledWith({ socketPath: '/tmp/objstore.sock' });
+    });
+
+    it('unified_unix_requires_config', () => {
+      expect(() => new ObjectStoreClient({ protocol: 'unix' })).toThrow(
+        'Unix configuration is required'
       );
     });
 
@@ -99,6 +130,34 @@ describe('ObjectStoreClient', () => {
       const client = new ObjectStoreClient({
         protocol: 'quic',
         quic: { address: 'localhost:8443' },
+      });
+      const resp = await client.health();
+
+      expect(health).toHaveBeenCalled();
+      expect(resp.status).toBe(HealthStatus.SERVING);
+    });
+
+    it('unified_delegates_mcp', async () => {
+      const health = jest.fn().mockResolvedValue({ status: HealthStatus.SERVING });
+      MockMcpClient.prototype.health = health as any;
+
+      const client = new ObjectStoreClient({
+        protocol: 'mcp',
+        mcp: { baseUrl: 'http://localhost:9090' },
+      });
+      const resp = await client.health();
+
+      expect(health).toHaveBeenCalled();
+      expect(resp.status).toBe(HealthStatus.SERVING);
+    });
+
+    it('unified_delegates_unix', async () => {
+      const health = jest.fn().mockResolvedValue({ status: HealthStatus.SERVING });
+      MockUnixClient.prototype.health = health as any;
+
+      const client = new ObjectStoreClient({
+        protocol: 'unix',
+        unix: { socketPath: '/tmp/objstore.sock' },
       });
       const resp = await client.health();
 

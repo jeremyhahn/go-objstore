@@ -1,3 +1,4 @@
+import { Readable } from 'stream';
 import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
 import { join } from 'path';
@@ -92,6 +93,7 @@ import {
 export class GrpcClient implements IObjectStoreClient {
   private client: GrpcServiceClient;
   private protoPath: string;
+  private callMeta: grpc.Metadata;
 
   constructor(config: GrpcClientConfig) {
     // Try multiple paths to find the proto file
@@ -131,6 +133,20 @@ export class GrpcClient implements IObjectStoreClient {
       : grpc.credentials.createInsecure();
 
     this.client = new ObjectStoreService(config.address, credentials, config.options || {});
+
+    // Build per-call metadata from auth config.
+    this.callMeta = new grpc.Metadata();
+    if (config.token) {
+      this.callMeta.set('authorization', `Bearer ${config.token}`);
+    }
+    if (config.tenantId) {
+      this.callMeta.set('x-tenant-id', config.tenantId);
+    }
+    if (config.headers) {
+      for (const [k, v] of Object.entries(config.headers)) {
+        this.callMeta.set(k.toLowerCase(), v);
+      }
+    }
   }
 
   async put(request: PutRequest): Promise<PutResponse> {
@@ -142,7 +158,7 @@ export class GrpcClient implements IObjectStoreClient {
         metadata: request.metadata ? this.serializeMetadata(request.metadata) : undefined,
       };
 
-      this.client.put(grpcRequest, (error: grpc.ServiceError | null, response: ProtoPutResponse) => {
+      this.client.put(grpcRequest, this.callMeta, (error: grpc.ServiceError | null, response: ProtoPutResponse) => {
         if (error) {
           reject(this.handleGrpcError(error));
           return;
@@ -160,7 +176,7 @@ export class GrpcClient implements IObjectStoreClient {
   async get(request: GetRequest): Promise<GetResponse> {
     validateGetRequest(request);
     return new Promise((resolve, reject) => {
-      const call = this.client.get({ key: request.key });
+      const call = this.client.get({ key: request.key }, this.callMeta);
       const chunks: Buffer[] = [];
       let metadata: Metadata | undefined;
 
@@ -189,7 +205,7 @@ export class GrpcClient implements IObjectStoreClient {
   async delete(request: DeleteRequest): Promise<DeleteResponse> {
     validateDeleteRequest(request);
     return new Promise((resolve, reject) => {
-      this.client.delete({ key: request.key }, (error: grpc.ServiceError | null, response: ProtoDeleteResponse) => {
+      this.client.delete({ key: request.key }, this.callMeta, (error: grpc.ServiceError | null, response: ProtoDeleteResponse) => {
         if (error) {
           reject(this.handleGrpcError(error));
           return;
@@ -213,7 +229,7 @@ export class GrpcClient implements IObjectStoreClient {
         continueFrom: request.continueFrom || '',
       };
 
-      this.client.list(grpcRequest, (error: grpc.ServiceError | null, response: ProtoListResponse) => {
+      this.client.list(grpcRequest, this.callMeta, (error: grpc.ServiceError | null, response: ProtoListResponse) => {
         if (error) {
           reject(this.handleGrpcError(error));
           return;
@@ -235,7 +251,7 @@ export class GrpcClient implements IObjectStoreClient {
   async exists(request: ExistsRequest): Promise<ExistsResponse> {
     validateExistsRequest(request);
     return new Promise((resolve, reject) => {
-      this.client.exists({ key: request.key }, (error: grpc.ServiceError | null, response: ProtoExistsResponse) => {
+      this.client.exists({ key: request.key }, this.callMeta, (error: grpc.ServiceError | null, response: ProtoExistsResponse) => {
         if (error) {
           reject(this.handleGrpcError(error));
           return;
@@ -251,7 +267,7 @@ export class GrpcClient implements IObjectStoreClient {
   async getMetadata(request: GetMetadataRequest): Promise<MetadataResponse> {
     validateGetMetadataRequest(request);
     return new Promise((resolve, reject) => {
-      this.client.getMetadata({ key: request.key }, (error: grpc.ServiceError | null, response: ProtoMetadataResponse) => {
+      this.client.getMetadata({ key: request.key }, this.callMeta, (error: grpc.ServiceError | null, response: ProtoMetadataResponse) => {
         if (error) {
           reject(this.handleGrpcError(error));
           return;
@@ -274,7 +290,7 @@ export class GrpcClient implements IObjectStoreClient {
         metadata: this.serializeMetadata(request.metadata),
       };
 
-      this.client.updateMetadata(grpcRequest, (error: grpc.ServiceError | null, response: ProtoUpdateMetadataResponse) => {
+      this.client.updateMetadata(grpcRequest, this.callMeta, (error: grpc.ServiceError | null, response: ProtoUpdateMetadataResponse) => {
         if (error) {
           reject(this.handleGrpcError(error));
           return;
@@ -290,7 +306,7 @@ export class GrpcClient implements IObjectStoreClient {
 
   async health(request: HealthRequest = {}): Promise<HealthResponse> {
     return new Promise((resolve, reject) => {
-      this.client.health({ service: request.service || '' }, (error: grpc.ServiceError | null, response: ProtoHealthResponse) => {
+      this.client.health({ service: request.service || '' }, this.callMeta, (error: grpc.ServiceError | null, response: ProtoHealthResponse) => {
         if (error) {
           reject(this.handleGrpcError(error));
           return;
@@ -313,7 +329,7 @@ export class GrpcClient implements IObjectStoreClient {
         destinationSettings: request.destinationSettings || {},
       };
 
-      this.client.archive(grpcRequest, (error: grpc.ServiceError | null, response: ProtoArchiveResponse) => {
+      this.client.archive(grpcRequest, this.callMeta, (error: grpc.ServiceError | null, response: ProtoArchiveResponse) => {
         if (error) {
           reject(this.handleGrpcError(error));
           return;
@@ -341,7 +357,7 @@ export class GrpcClient implements IObjectStoreClient {
         },
       };
 
-      this.client.addPolicy(grpcRequest, (error: grpc.ServiceError | null, response: ProtoAddPolicyResponse) => {
+      this.client.addPolicy(grpcRequest, this.callMeta, (error: grpc.ServiceError | null, response: ProtoAddPolicyResponse) => {
         if (error) {
           reject(this.handleGrpcError(error));
           return;
@@ -358,7 +374,7 @@ export class GrpcClient implements IObjectStoreClient {
   async removePolicy(request: RemovePolicyRequest): Promise<RemovePolicyResponse> {
     validateRemovePolicyRequest(request);
     return new Promise((resolve, reject) => {
-      this.client.removePolicy({ id: request.id }, (error: grpc.ServiceError | null, response: ProtoRemovePolicyResponse) => {
+      this.client.removePolicy({ id: request.id }, this.callMeta, (error: grpc.ServiceError | null, response: ProtoRemovePolicyResponse) => {
         if (error) {
           reject(this.handleGrpcError(error));
           return;
@@ -374,7 +390,7 @@ export class GrpcClient implements IObjectStoreClient {
 
   async getPolicies(request: GetPoliciesRequest = {}): Promise<GetPoliciesResponse> {
     return new Promise((resolve, reject) => {
-      this.client.getPolicies({ prefix: request.prefix || '' }, (error: grpc.ServiceError | null, response: ProtoGetPoliciesResponse) => {
+      this.client.getPolicies({ prefix: request.prefix || '' }, this.callMeta, (error: grpc.ServiceError | null, response: ProtoGetPoliciesResponse) => {
         if (error) {
           reject(this.handleGrpcError(error));
           return;
@@ -398,7 +414,7 @@ export class GrpcClient implements IObjectStoreClient {
 
   async applyPolicies(_request: ApplyPoliciesRequest = {}): Promise<ApplyPoliciesResponse> {
     return new Promise((resolve, reject) => {
-      this.client.applyPolicies({}, (error: grpc.ServiceError | null, response: ProtoApplyPoliciesResponse) => {
+      this.client.applyPolicies({}, this.callMeta, (error: grpc.ServiceError | null, response: ProtoApplyPoliciesResponse) => {
         if (error) {
           reject(this.handleGrpcError(error));
           return;
@@ -434,7 +450,7 @@ export class GrpcClient implements IObjectStoreClient {
         },
       };
 
-      this.client.addReplicationPolicy(grpcRequest, (error: grpc.ServiceError | null, response: ProtoAddReplicationPolicyResponse) => {
+      this.client.addReplicationPolicy(grpcRequest, this.callMeta, (error: grpc.ServiceError | null, response: ProtoAddReplicationPolicyResponse) => {
         if (error) {
           reject(this.handleGrpcError(error));
           return;
@@ -453,7 +469,7 @@ export class GrpcClient implements IObjectStoreClient {
   ): Promise<RemoveReplicationPolicyResponse> {
     validateRemoveReplicationPolicyRequest(request);
     return new Promise((resolve, reject) => {
-      this.client.removeReplicationPolicy({ id: request.id }, (error: grpc.ServiceError | null, response: ProtoRemoveReplicationPolicyResponse) => {
+      this.client.removeReplicationPolicy({ id: request.id }, this.callMeta, (error: grpc.ServiceError | null, response: ProtoRemoveReplicationPolicyResponse) => {
         if (error) {
           reject(this.handleGrpcError(error));
           return;
@@ -471,7 +487,7 @@ export class GrpcClient implements IObjectStoreClient {
     _request: GetReplicationPoliciesRequest = {}
   ): Promise<GetReplicationPoliciesResponse> {
     return new Promise((resolve, reject) => {
-      this.client.getReplicationPolicies({}, (error: grpc.ServiceError | null, response: ProtoGetReplicationPoliciesResponse) => {
+      this.client.getReplicationPolicies({}, this.callMeta, (error: grpc.ServiceError | null, response: ProtoGetReplicationPoliciesResponse) => {
         if (error) {
           reject(this.handleGrpcError(error));
           return;
@@ -501,7 +517,7 @@ export class GrpcClient implements IObjectStoreClient {
   ): Promise<GetReplicationPolicyResponse> {
     validateGetReplicationPolicyRequest(request);
     return new Promise((resolve, reject) => {
-      this.client.getReplicationPolicy({ id: request.id }, (error: grpc.ServiceError | null, response: ProtoGetReplicationPolicyResponse) => {
+      this.client.getReplicationPolicy({ id: request.id }, this.callMeta, (error: grpc.ServiceError | null, response: ProtoGetReplicationPolicyResponse) => {
         if (error) {
           reject(this.handleGrpcError(error));
           return;
@@ -537,7 +553,7 @@ export class GrpcClient implements IObjectStoreClient {
         workerCount: request.workerCount || 0,
       };
 
-      this.client.triggerReplication(grpcRequest, (error: grpc.ServiceError | null, response: ProtoTriggerReplicationResponse) => {
+      this.client.triggerReplication(grpcRequest, this.callMeta, (error: grpc.ServiceError | null, response: ProtoTriggerReplicationResponse) => {
         if (error) {
           reject(this.handleGrpcError(error));
           return;
@@ -567,7 +583,7 @@ export class GrpcClient implements IObjectStoreClient {
   ): Promise<GetReplicationStatusResponse> {
     validateGetReplicationStatusRequest(request);
     return new Promise((resolve, reject) => {
-      this.client.getReplicationStatus({ id: request.id }, (error: grpc.ServiceError | null, response: ProtoGetReplicationStatusResponse) => {
+      this.client.getReplicationStatus({ id: request.id }, this.callMeta, (error: grpc.ServiceError | null, response: ProtoGetReplicationStatusResponse) => {
         if (error) {
           reject(this.handleGrpcError(error));
           return;
@@ -596,6 +612,45 @@ export class GrpcClient implements IObjectStoreClient {
         });
       });
     });
+  }
+
+  /**
+   * Stream an object from the backend using the gRPC server-streaming Get RPC.
+   * Each data chunk is emitted as-is; the caller reads a standard Node.js Readable.
+   */
+  getStream(key: string): Readable {
+    const call = this.client.get({ key }, this.callMeta);
+    const readable = new Readable({
+      objectMode: false,
+      read() {
+        // driven by push() calls below
+      },
+    });
+    call.on('data', (response: ProtoGetResponse) => {
+      if (response.data) {
+        readable.push(Buffer.from(response.data));
+      }
+    });
+    call.on('end', () => {
+      readable.push(null);
+    });
+    call.on('error', (error: grpc.ServiceError) => {
+      readable.destroy(this.handleGrpcError(error));
+    });
+    return readable;
+  }
+
+  /**
+   * Upload a stream as an object. Buffers the stream and delegates to put().
+   * Full buffering is acceptable here because gRPC unary Put is the only
+   * upload RPC exposed by the server.
+   */
+  async putStream(key: string, stream: Readable | AsyncIterable<Buffer>): Promise<PutResponse> {
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) {
+      chunks.push(chunk as Buffer);
+    }
+    return this.put({ key, data: Buffer.concat(chunks) });
   }
 
   async close(): Promise<void> {

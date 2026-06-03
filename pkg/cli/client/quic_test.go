@@ -26,7 +26,7 @@ import (
 )
 
 func TestQUICClient_Put(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPut {
 			t.Errorf("expected PUT, got %s", r.Method)
 		}
@@ -34,19 +34,16 @@ func TestQUICClient_Put(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewQUICClient(&Config{ServerURL: server.URL})
-	if err != nil {
-		t.Fatalf("failed to create client: %v", err)
-	}
+	client := newQUICTestClient(t, server.URL)
 
-	err = client.Put(context.Background(), "test.txt", strings.NewReader("hello"), nil)
+	err := client.Put(context.Background(), "test.txt", strings.NewReader("hello"), nil)
 	if err != nil {
 		t.Errorf("Put failed: %v", err)
 	}
 }
 
 func TestQUICClient_PutWithMetadata(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if ct := r.Header.Get("Content-Type"); ct != "text/plain" {
 			t.Errorf("expected Content-Type text/plain, got %s", ct)
 		}
@@ -60,10 +57,7 @@ func TestQUICClient_PutWithMetadata(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewQUICClient(&Config{ServerURL: server.URL})
-	if err != nil {
-		t.Fatalf("failed to create client: %v", err)
-	}
+	client := newQUICTestClient(t, server.URL)
 
 	metadata := &common.Metadata{
 		ContentType:     "text/plain",
@@ -71,7 +65,7 @@ func TestQUICClient_PutWithMetadata(t *testing.T) {
 		Custom:          map[string]string{"author": "test"},
 	}
 
-	err = client.Put(context.Background(), "test.txt", strings.NewReader("hello"), metadata)
+	err := client.Put(context.Background(), "test.txt", strings.NewReader("hello"), metadata)
 	if err != nil {
 		t.Errorf("Put with metadata failed: %v", err)
 	}
@@ -79,7 +73,7 @@ func TestQUICClient_PutWithMetadata(t *testing.T) {
 
 func TestQUICClient_Get(t *testing.T) {
 	content := "hello world"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.Header().Set("ETag", "abc123")
 		w.Header().Set("X-Custom-Version", "1.0")
@@ -88,10 +82,7 @@ func TestQUICClient_Get(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewQUICClient(&Config{ServerURL: server.URL})
-	if err != nil {
-		t.Fatalf("failed to create client: %v", err)
-	}
+	client := newQUICTestClient(t, server.URL)
 
 	reader, metadata, err := client.Get(context.Background(), "test.txt")
 	if err != nil {
@@ -122,7 +113,7 @@ func TestQUICClient_Get(t *testing.T) {
 }
 
 func TestQUICClient_Delete(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
 			t.Errorf("expected DELETE, got %s", r.Method)
 		}
@@ -130,19 +121,16 @@ func TestQUICClient_Delete(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewQUICClient(&Config{ServerURL: server.URL})
-	if err != nil {
-		t.Fatalf("failed to create client: %v", err)
-	}
+	client := newQUICTestClient(t, server.URL)
 
-	err = client.Delete(context.Background(), "test.txt")
+	err := client.Delete(context.Background(), "test.txt")
 	if err != nil {
 		t.Errorf("Delete failed: %v", err)
 	}
 }
 
 func TestQUICClient_Exists(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodHead {
 			t.Errorf("expected HEAD, got %s", r.Method)
 		}
@@ -154,10 +142,7 @@ func TestQUICClient_Exists(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewQUICClient(&Config{ServerURL: server.URL})
-	if err != nil {
-		t.Fatalf("failed to create client: %v", err)
-	}
+	client := newQUICTestClient(t, server.URL)
 
 	exists, err := client.Exists(context.Background(), "exists.txt")
 	if err != nil {
@@ -177,16 +162,13 @@ func TestQUICClient_Exists(t *testing.T) {
 }
 
 func TestQUICClient_List(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"objects":[{"key":"file1.txt"}]}`))
 	}))
 	defer server.Close()
 
-	client, err := NewQUICClient(&Config{ServerURL: server.URL})
-	if err != nil {
-		t.Fatalf("failed to create client: %v", err)
-	}
+	client := newQUICTestClient(t, server.URL)
 
 	result, err := client.List(context.Background(), &common.ListOptions{})
 	if err != nil {
@@ -199,7 +181,7 @@ func TestQUICClient_List(t *testing.T) {
 }
 
 func TestQUICClient_List_WithOptions(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("prefix") != "test/" {
 			t.Errorf("expected prefix test/, got %s", r.URL.Query().Get("prefix"))
 		}
@@ -217,7 +199,7 @@ func TestQUICClient_List_WithOptions(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	result, err := client.List(context.Background(), &common.ListOptions{
 		Prefix:       "test/",
 		Delimiter:    "/",
@@ -242,7 +224,7 @@ func TestQUICClient_List_WithOptions(t *testing.T) {
 }
 
 func TestQUICClient_GetMetadata(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		w.Header().Set("Content-Length", "50")
 		w.Header().Set("Content-Encoding", "gzip")
@@ -252,10 +234,7 @@ func TestQUICClient_GetMetadata(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewQUICClient(&Config{ServerURL: server.URL})
-	if err != nil {
-		t.Fatalf("failed to create client: %v", err)
-	}
+	client := newQUICTestClient(t, server.URL)
 
 	metadata, err := client.GetMetadata(context.Background(), "test.txt")
 	if err != nil {
@@ -284,7 +263,7 @@ func TestQUICClient_GetMetadata(t *testing.T) {
 }
 
 func TestQUICClient_UpdateMetadata(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPatch {
 			t.Errorf("expected PATCH, got %s", r.Method)
 		}
@@ -301,24 +280,21 @@ func TestQUICClient_UpdateMetadata(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewQUICClient(&Config{ServerURL: server.URL})
-	if err != nil {
-		t.Fatalf("failed to create client: %v", err)
-	}
+	client := newQUICTestClient(t, server.URL)
 
 	metadata := &common.Metadata{
 		ContentType:     "text/plain",
 		ContentEncoding: "gzip",
 		Custom:          map[string]string{"version": "2.0"},
 	}
-	err = client.UpdateMetadata(context.Background(), "test.txt", metadata)
+	err := client.UpdateMetadata(context.Background(), "test.txt", metadata)
 	if err != nil {
 		t.Errorf("UpdateMetadata failed: %v", err)
 	}
 }
 
 func TestQUICClient_Archive(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Errorf("expected POST, got %s", r.Method)
 		}
@@ -329,19 +305,16 @@ func TestQUICClient_Archive(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewQUICClient(&Config{ServerURL: server.URL})
-	if err != nil {
-		t.Fatalf("failed to create client: %v", err)
-	}
+	client := newQUICTestClient(t, server.URL)
 
-	err = client.Archive(context.Background(), "test.txt", "glacier", map[string]string{"vault": "test-vault", "tier": "expedited"})
+	err := client.Archive(context.Background(), "test.txt", "glacier", map[string]string{"vault": "test-vault", "tier": "expedited"})
 	if err != nil {
 		t.Errorf("Archive failed: %v", err)
 	}
 }
 
 func TestQUICClient_Policies(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(r.URL.Path, "apply"):
 			w.Write([]byte(`{"policies_count":1,"objects_processed":3}`))
@@ -355,10 +328,7 @@ func TestQUICClient_Policies(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewQUICClient(&Config{ServerURL: server.URL})
-	if err != nil {
-		t.Fatalf("failed to create client: %v", err)
-	}
+	client := newQUICTestClient(t, server.URL)
 
 	// Test AddPolicy
 	policy := common.LifecyclePolicy{
@@ -367,7 +337,7 @@ func TestQUICClient_Policies(t *testing.T) {
 		Retention: time.Hour,
 		Action:    "delete",
 	}
-	err = client.AddPolicy(context.Background(), policy)
+	err := client.AddPolicy(context.Background(), policy)
 	if err != nil {
 		t.Errorf("AddPolicy failed: %v", err)
 	}
@@ -413,17 +383,14 @@ func TestQUICClient_Policies(t *testing.T) {
 }
 
 func TestQUICClient_Health(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
 
-	client, err := NewQUICClient(&Config{ServerURL: server.URL})
-	if err != nil {
-		t.Fatalf("failed to create client: %v", err)
-	}
+	client := newQUICTestClient(t, server.URL)
 
-	err = client.Health(context.Background())
+	err := client.Health(context.Background())
 	if err != nil {
 		t.Errorf("Health failed: %v", err)
 	}
@@ -451,12 +418,12 @@ func TestNewQUICClient_InvalidURL(t *testing.T) {
 // Additional error case tests
 
 func TestQUICClient_Put_Error(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	err := client.Put(context.Background(), "test.txt", strings.NewReader("data"), nil)
 	if err == nil {
 		t.Error("expected error on server failure")
@@ -464,12 +431,12 @@ func TestQUICClient_Put_Error(t *testing.T) {
 }
 
 func TestQUICClient_Get_Error(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	_, _, err := client.Get(context.Background(), "missing.txt")
 	if err == nil {
 		t.Error("expected error for missing file")
@@ -477,12 +444,12 @@ func TestQUICClient_Get_Error(t *testing.T) {
 }
 
 func TestQUICClient_Delete_Error(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	err := client.Delete(context.Background(), "test.txt")
 	if err == nil {
 		t.Error("expected error on server failure")
@@ -490,12 +457,12 @@ func TestQUICClient_Delete_Error(t *testing.T) {
 }
 
 func TestQUICClient_List_Error(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	_, err := client.List(context.Background(), &common.ListOptions{})
 	if err == nil {
 		t.Error("expected error on server failure")
@@ -503,13 +470,13 @@ func TestQUICClient_List_Error(t *testing.T) {
 }
 
 func TestQUICClient_List_InvalidJSON(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("not json"))
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	_, err := client.List(context.Background(), &common.ListOptions{})
 	if err == nil {
 		t.Error("expected error on invalid JSON")
@@ -517,12 +484,12 @@ func TestQUICClient_List_InvalidJSON(t *testing.T) {
 }
 
 func TestQUICClient_GetMetadata_Error(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	_, err := client.GetMetadata(context.Background(), "missing.txt")
 	if err == nil {
 		t.Error("expected error for missing file")
@@ -530,12 +497,12 @@ func TestQUICClient_GetMetadata_Error(t *testing.T) {
 }
 
 func TestQUICClient_UpdateMetadata_Error(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	err := client.UpdateMetadata(context.Background(), "missing.txt", &common.Metadata{})
 	if err == nil {
 		t.Error("expected error for missing file")
@@ -543,12 +510,12 @@ func TestQUICClient_UpdateMetadata_Error(t *testing.T) {
 }
 
 func TestQUICClient_Archive_Error(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	err := client.Archive(context.Background(), "test.txt", "glacier", nil)
 	if err == nil {
 		t.Error("expected error on server failure")
@@ -556,12 +523,12 @@ func TestQUICClient_Archive_Error(t *testing.T) {
 }
 
 func TestQUICClient_AddPolicy_Error(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	err := client.AddPolicy(context.Background(), common.LifecyclePolicy{})
 	if err == nil {
 		t.Error("expected error on bad request")
@@ -569,12 +536,12 @@ func TestQUICClient_AddPolicy_Error(t *testing.T) {
 }
 
 func TestQUICClient_RemovePolicy_Error(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	err := client.RemovePolicy(context.Background(), "missing")
 	if err == nil {
 		t.Error("expected error for missing policy")
@@ -582,12 +549,12 @@ func TestQUICClient_RemovePolicy_Error(t *testing.T) {
 }
 
 func TestQUICClient_GetPolicies_Error(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	_, err := client.GetPolicies(context.Background())
 	if err == nil {
 		t.Error("expected error on server failure")
@@ -595,13 +562,13 @@ func TestQUICClient_GetPolicies_Error(t *testing.T) {
 }
 
 func TestQUICClient_GetPolicies_InvalidJSON(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("not json"))
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	_, err := client.GetPolicies(context.Background())
 	if err == nil {
 		t.Error("expected error on invalid JSON")
@@ -609,12 +576,12 @@ func TestQUICClient_GetPolicies_InvalidJSON(t *testing.T) {
 }
 
 func TestQUICClient_ApplyPolicies_Error(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	_, _, err := client.ApplyPolicies(context.Background())
 	if err == nil {
 		t.Error("expected error on server failure")
@@ -622,13 +589,13 @@ func TestQUICClient_ApplyPolicies_Error(t *testing.T) {
 }
 
 func TestQUICClient_ApplyPolicies_InvalidJSON(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("bad"))
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	_, _, err := client.ApplyPolicies(context.Background())
 	if err == nil {
 		t.Error("expected error on invalid JSON")
@@ -636,12 +603,12 @@ func TestQUICClient_ApplyPolicies_InvalidJSON(t *testing.T) {
 }
 
 func TestQUICClient_Health_Error(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	err := client.Health(context.Background())
 	if err == nil {
 		t.Error("expected error on unhealthy server")
@@ -649,7 +616,7 @@ func TestQUICClient_Health_Error(t *testing.T) {
 }
 
 func TestQUICClient_List_NilOptions(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Verify no query parameters when nil options
 		if len(r.URL.Query()) > 0 {
 			t.Error("expected no query parameters with nil options")
@@ -659,7 +626,7 @@ func TestQUICClient_List_NilOptions(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	_, err := client.List(context.Background(), nil)
 	if err != nil {
 		t.Errorf("List with nil options failed: %v", err)
@@ -667,12 +634,12 @@ func TestQUICClient_List_NilOptions(t *testing.T) {
 }
 
 func TestQUICClient_Delete_WithStatusOK(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK) // Test with OK instead of NoContent
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	err := client.Delete(context.Background(), "test.txt")
 	if err != nil {
 		t.Errorf("Delete with StatusOK failed: %v", err)
@@ -693,7 +660,7 @@ func TestRESTClient_Delete_WithStatusOK(t *testing.T) {
 }
 
 func TestQUICClient_GetPolicies_WithMultiplePolicies(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"policies":[
 			{"id":"policy1","prefix":"tmp/","retention_seconds":3600,"action":"delete"},
@@ -702,7 +669,7 @@ func TestQUICClient_GetPolicies_WithMultiplePolicies(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	policies, err := client.GetPolicies(context.Background())
 	if err != nil {
 		t.Fatalf("GetPolicies failed: %v", err)
@@ -722,13 +689,13 @@ func TestQUICClient_GetPolicies_WithMultiplePolicies(t *testing.T) {
 }
 
 func TestQUICClient_ApplyPolicies_WithResults(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"policies_count":5,"objects_processed":125}`))
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	count, processed, err := client.ApplyPolicies(context.Background())
 	if err != nil {
 		t.Fatalf("ApplyPolicies failed: %v", err)
@@ -744,7 +711,7 @@ func TestQUICClient_ApplyPolicies_WithResults(t *testing.T) {
 }
 
 func TestQUICClient_RemovePolicy_WithStatusOK(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, "/policy-to-remove") {
 			t.Errorf("expected policy path, got %s", r.URL.Path)
 		}
@@ -752,7 +719,7 @@ func TestQUICClient_RemovePolicy_WithStatusOK(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	err := client.RemovePolicy(context.Background(), "policy-to-remove")
 	if err != nil {
 		t.Errorf("RemovePolicy failed: %v", err)
@@ -760,12 +727,12 @@ func TestQUICClient_RemovePolicy_WithStatusOK(t *testing.T) {
 }
 
 func TestQUICClient_AddPolicy_WithLongRetention(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	policy := common.LifecyclePolicy{
 		ID:        "long-term",
 		Prefix:    "archive/",
@@ -780,7 +747,7 @@ func TestQUICClient_AddPolicy_WithLongRetention(t *testing.T) {
 
 // QUIC Replication tests
 func TestQUICClient_AddReplicationPolicy(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Errorf("expected POST, got %s", r.Method)
 		}
@@ -791,7 +758,7 @@ func TestQUICClient_AddReplicationPolicy(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	policy := common.ReplicationPolicy{
 		ID:                  "test-policy",
 		SourceBackend:       "local",
@@ -808,13 +775,13 @@ func TestQUICClient_AddReplicationPolicy(t *testing.T) {
 }
 
 func TestQUICClient_AddReplicationPolicy_Error(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte("invalid policy"))
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	policy := common.ReplicationPolicy{ID: "test"}
 
 	err := client.AddReplicationPolicy(context.Background(), policy)
@@ -824,7 +791,7 @@ func TestQUICClient_AddReplicationPolicy_Error(t *testing.T) {
 }
 
 func TestQUICClient_RemoveReplicationPolicy(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
 			t.Errorf("expected DELETE, got %s", r.Method)
 		}
@@ -835,7 +802,7 @@ func TestQUICClient_RemoveReplicationPolicy(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	err := client.RemoveReplicationPolicy(context.Background(), "test-policy")
 	if err != nil {
 		t.Errorf("RemoveReplicationPolicy failed: %v", err)
@@ -843,13 +810,13 @@ func TestQUICClient_RemoveReplicationPolicy(t *testing.T) {
 }
 
 func TestQUICClient_RemoveReplicationPolicy_Error(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		w.Write([]byte("policy not found"))
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	err := client.RemoveReplicationPolicy(context.Background(), "missing")
 	if err == nil {
 		t.Error("expected error for missing policy")
@@ -857,7 +824,7 @@ func TestQUICClient_RemoveReplicationPolicy_Error(t *testing.T) {
 }
 
 func TestQUICClient_GetReplicationPolicy(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			t.Errorf("expected GET, got %s", r.Method)
 		}
@@ -867,7 +834,7 @@ func TestQUICClient_GetReplicationPolicy(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	policy, err := client.GetReplicationPolicy(context.Background(), "test-policy")
 	if err != nil {
 		t.Fatalf("GetReplicationPolicy failed: %v", err)
@@ -878,13 +845,13 @@ func TestQUICClient_GetReplicationPolicy(t *testing.T) {
 }
 
 func TestQUICClient_GetReplicationPolicy_Error(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		w.Write([]byte("policy not found"))
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	_, err := client.GetReplicationPolicy(context.Background(), "missing")
 	if err == nil {
 		t.Error("expected error for missing policy")
@@ -892,13 +859,13 @@ func TestQUICClient_GetReplicationPolicy_Error(t *testing.T) {
 }
 
 func TestQUICClient_GetReplicationPolicy_InvalidJSON(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{invalid json`))
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	_, err := client.GetReplicationPolicy(context.Background(), "test")
 	if err == nil {
 		t.Error("expected error on invalid JSON")
@@ -906,7 +873,7 @@ func TestQUICClient_GetReplicationPolicy_InvalidJSON(t *testing.T) {
 }
 
 func TestQUICClient_GetReplicationPolicies(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			t.Errorf("expected GET, got %s", r.Method)
 		}
@@ -919,7 +886,7 @@ func TestQUICClient_GetReplicationPolicies(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	policies, err := client.GetReplicationPolicies(context.Background())
 	if err != nil {
 		t.Fatalf("GetReplicationPolicies failed: %v", err)
@@ -933,13 +900,13 @@ func TestQUICClient_GetReplicationPolicies(t *testing.T) {
 }
 
 func TestQUICClient_GetReplicationPolicies_Error(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte("internal error"))
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	_, err := client.GetReplicationPolicies(context.Background())
 	if err == nil {
 		t.Error("expected error on server failure")
@@ -947,13 +914,13 @@ func TestQUICClient_GetReplicationPolicies_Error(t *testing.T) {
 }
 
 func TestQUICClient_GetReplicationPolicies_InvalidJSON(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`[{invalid`))
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	_, err := client.GetReplicationPolicies(context.Background())
 	if err == nil {
 		t.Error("expected error on invalid JSON")
@@ -961,7 +928,7 @@ func TestQUICClient_GetReplicationPolicies_InvalidJSON(t *testing.T) {
 }
 
 func TestQUICClient_TriggerReplication(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Errorf("expected POST, got %s", r.Method)
 		}
@@ -974,7 +941,7 @@ func TestQUICClient_TriggerReplication(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	result, err := client.TriggerReplication(context.Background(), "test-policy")
 	if err != nil {
 		t.Fatalf("TriggerReplication failed: %v", err)
@@ -988,7 +955,7 @@ func TestQUICClient_TriggerReplication(t *testing.T) {
 }
 
 func TestQUICClient_TriggerReplication_EmptyPolicyID(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("policy_id") != "" {
 			t.Error("expected empty policy_id")
 		}
@@ -998,7 +965,7 @@ func TestQUICClient_TriggerReplication_EmptyPolicyID(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	result, err := client.TriggerReplication(context.Background(), "")
 	if err != nil {
 		t.Fatalf("TriggerReplication failed: %v", err)
@@ -1009,13 +976,13 @@ func TestQUICClient_TriggerReplication_EmptyPolicyID(t *testing.T) {
 }
 
 func TestQUICClient_TriggerReplication_Error(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte("invalid policy"))
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	_, err := client.TriggerReplication(context.Background(), "invalid")
 	if err == nil {
 		t.Error("expected error on bad request")
@@ -1023,13 +990,13 @@ func TestQUICClient_TriggerReplication_Error(t *testing.T) {
 }
 
 func TestQUICClient_TriggerReplication_InvalidJSON(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{bad json`))
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	_, err := client.TriggerReplication(context.Background(), "test")
 	if err == nil {
 		t.Error("expected error on invalid JSON")
@@ -1037,12 +1004,12 @@ func TestQUICClient_TriggerReplication_InvalidJSON(t *testing.T) {
 }
 
 func TestQUICClient_AddReplicationPolicy_WithStatusOK(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK) // Test with OK instead of Created
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	policy := common.ReplicationPolicy{ID: "test"}
 
 	err := client.AddReplicationPolicy(context.Background(), policy)
@@ -1052,12 +1019,12 @@ func TestQUICClient_AddReplicationPolicy_WithStatusOK(t *testing.T) {
 }
 
 func TestQUICClient_RemoveReplicationPolicy_WithStatusOK(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK) // Test with OK instead of NoContent
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	err := client.RemoveReplicationPolicy(context.Background(), "test-policy")
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
@@ -1066,13 +1033,13 @@ func TestQUICClient_RemoveReplicationPolicy_WithStatusOK(t *testing.T) {
 
 // Additional error path tests with error response bodies
 func TestQUICClient_Put_ErrorWithBody(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte("internal server error"))
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	err := client.Put(context.Background(), "test.txt", strings.NewReader("data"), nil)
 	if err == nil || !strings.Contains(err.Error(), "internal server error") {
 		t.Errorf("expected error with body, got %v", err)
@@ -1080,13 +1047,13 @@ func TestQUICClient_Put_ErrorWithBody(t *testing.T) {
 }
 
 func TestQUICClient_Get_ErrorWithBody(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		w.Write([]byte("not found"))
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	_, _, err := client.Get(context.Background(), "missing.txt")
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Errorf("expected error with body, got %v", err)
@@ -1094,13 +1061,13 @@ func TestQUICClient_Get_ErrorWithBody(t *testing.T) {
 }
 
 func TestQUICClient_Delete_ErrorWithBody(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte("delete failed"))
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	err := client.Delete(context.Background(), "test.txt")
 	if err == nil || !strings.Contains(err.Error(), "delete failed") {
 		t.Errorf("expected error with body, got %v", err)
@@ -1108,13 +1075,13 @@ func TestQUICClient_Delete_ErrorWithBody(t *testing.T) {
 }
 
 func TestQUICClient_List_ErrorWithBody(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte("list failed"))
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	_, err := client.List(context.Background(), &common.ListOptions{})
 	if err == nil || !strings.Contains(err.Error(), "list failed") {
 		t.Errorf("expected error with body, got %v", err)
@@ -1122,13 +1089,13 @@ func TestQUICClient_List_ErrorWithBody(t *testing.T) {
 }
 
 func TestQUICClient_UpdateMetadata_ErrorWithBody(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		w.Write([]byte("file not found"))
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	err := client.UpdateMetadata(context.Background(), "missing.txt", &common.Metadata{})
 	if err == nil || !strings.Contains(err.Error(), "file not found") {
 		t.Errorf("expected error with body, got %v", err)
@@ -1136,13 +1103,13 @@ func TestQUICClient_UpdateMetadata_ErrorWithBody(t *testing.T) {
 }
 
 func TestQUICClient_Archive_ErrorWithBody(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte("archive failed"))
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	err := client.Archive(context.Background(), "test.txt", "glacier", nil)
 	if err == nil || !strings.Contains(err.Error(), "archive failed") {
 		t.Errorf("expected error with body, got %v", err)
@@ -1150,13 +1117,13 @@ func TestQUICClient_Archive_ErrorWithBody(t *testing.T) {
 }
 
 func TestQUICClient_AddPolicy_ErrorWithBody(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte("invalid policy"))
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	err := client.AddPolicy(context.Background(), common.LifecyclePolicy{})
 	if err == nil || !strings.Contains(err.Error(), "invalid policy") {
 		t.Errorf("expected error with body, got %v", err)
@@ -1164,13 +1131,13 @@ func TestQUICClient_AddPolicy_ErrorWithBody(t *testing.T) {
 }
 
 func TestQUICClient_RemovePolicy_ErrorWithBody(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		w.Write([]byte("policy not found"))
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	err := client.RemovePolicy(context.Background(), "missing")
 	if err == nil || !strings.Contains(err.Error(), "policy not found") {
 		t.Errorf("expected error with body, got %v", err)
@@ -1178,13 +1145,13 @@ func TestQUICClient_RemovePolicy_ErrorWithBody(t *testing.T) {
 }
 
 func TestQUICClient_GetPolicies_ErrorWithBody(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte("server error"))
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	_, err := client.GetPolicies(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "server error") {
 		t.Errorf("expected error with body, got %v", err)
@@ -1192,13 +1159,13 @@ func TestQUICClient_GetPolicies_ErrorWithBody(t *testing.T) {
 }
 
 func TestQUICClient_ApplyPolicies_ErrorWithBody(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte("apply failed"))
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	_, _, err := client.ApplyPolicies(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "apply failed") {
 		t.Errorf("expected error with body, got %v", err)
@@ -1206,13 +1173,13 @@ func TestQUICClient_ApplyPolicies_ErrorWithBody(t *testing.T) {
 }
 
 func TestQUICClient_Health_ErrorWithBody(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		w.Write([]byte("service unavailable"))
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	err := client.Health(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "service unavailable") {
 		t.Errorf("expected error with body, got %v", err)
@@ -1220,13 +1187,13 @@ func TestQUICClient_Health_ErrorWithBody(t *testing.T) {
 }
 
 func TestQUICClient_AddReplicationPolicy_ErrorWithBody(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte("bad policy"))
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	policy := common.ReplicationPolicy{ID: "test"}
 
 	err := client.AddReplicationPolicy(context.Background(), policy)
@@ -1236,13 +1203,13 @@ func TestQUICClient_AddReplicationPolicy_ErrorWithBody(t *testing.T) {
 }
 
 func TestQUICClient_RemoveReplicationPolicy_ErrorWithBody(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		w.Write([]byte("not found"))
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	err := client.RemoveReplicationPolicy(context.Background(), "missing")
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Errorf("expected error with body, got %v", err)
@@ -1250,13 +1217,13 @@ func TestQUICClient_RemoveReplicationPolicy_ErrorWithBody(t *testing.T) {
 }
 
 func TestQUICClient_GetReplicationPolicy_ErrorWithBody(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		w.Write([]byte("policy not found"))
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	_, err := client.GetReplicationPolicy(context.Background(), "missing")
 	if err == nil || !strings.Contains(err.Error(), "policy not found") {
 		t.Errorf("expected error with body, got %v", err)
@@ -1264,13 +1231,13 @@ func TestQUICClient_GetReplicationPolicy_ErrorWithBody(t *testing.T) {
 }
 
 func TestQUICClient_GetReplicationPolicies_ErrorWithBody(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte("server error"))
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	_, err := client.GetReplicationPolicies(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "server error") {
 		t.Errorf("expected error with body, got %v", err)
@@ -1278,13 +1245,13 @@ func TestQUICClient_GetReplicationPolicies_ErrorWithBody(t *testing.T) {
 }
 
 func TestQUICClient_TriggerReplication_ErrorWithBody(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		w.Write([]byte("trigger failed"))
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	_, err := client.TriggerReplication(context.Background(), "invalid")
 	if err == nil || !strings.Contains(err.Error(), "trigger failed") {
 		t.Errorf("expected error with body, got %v", err)

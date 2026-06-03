@@ -496,6 +496,14 @@ impl GrpcClient {
     pub async fn close(&self) -> Result<()> {
         Ok(())
     }
+
+    /// Return a clone of the underlying gRPC stub (used by the streaming extension).
+    #[allow(dead_code)]
+    pub(crate) fn grpc_client_clone(
+        &self,
+    ) -> pb::object_store_client::ObjectStoreClient<tonic::transport::Channel> {
+        self.client.clone()
+    }
 }
 
 // Helper functions for converting between protobuf and SDK types
@@ -990,12 +998,10 @@ mod tests {
 
     #[test]
     fn grpc_get_not_found() {
-        // NOTE: conversion-layer. NOT_FOUND arrives as a gRPC status.
+        // NOTE: conversion-layer. NOT_FOUND arrives as a gRPC status and maps
+        // to Error::NotFound per the canonical table.
         let err: Error = tonic::Status::not_found("missing").into();
-        assert!(matches!(err, Error::GrpcStatus(_)));
-        if let Error::GrpcStatus(s) = err {
-            assert_eq!(s.code(), tonic::Code::NotFound);
-        }
+        assert!(matches!(err, Error::NotFound(_)));
     }
 
     // ---- delete ----
@@ -1030,9 +1036,9 @@ mod tests {
 
     #[test]
     fn grpc_delete_not_found() {
-        // NOTE: conversion-layer.
+        // NOTE: conversion-layer. Maps to Error::NotFound per the canonical table.
         let err: Error = tonic::Status::not_found("missing").into();
-        assert!(matches!(err, Error::GrpcStatus(_)));
+        assert!(matches!(err, Error::NotFound(_)));
     }
 
     // ---- list ----
@@ -1692,6 +1698,43 @@ mod tests {
         assert_eq!(get.key, "");
         let del = pb::DeleteRequest { key: String::new() };
         assert_eq!(del.key, "");
+    }
+
+    #[test]
+    fn grpc_status_code_canonical_mapping() {
+        // Every row of the canonical gRPC code table, asserted through the
+        // same From<tonic::Status> conversion the async methods use via `?`:
+        // NotFound, PermissionDenied -> Forbidden, Unauthenticated,
+        // AlreadyExists, ResourceExhausted -> RateLimited, InvalidArgument;
+        // unmapped codes stay GrpcStatus.
+        assert!(matches!(
+            Error::from(tonic::Status::not_found("m")),
+            Error::NotFound(_)
+        ));
+        assert!(matches!(
+            Error::from(tonic::Status::permission_denied("m")),
+            Error::Forbidden(_)
+        ));
+        assert!(matches!(
+            Error::from(tonic::Status::unauthenticated("m")),
+            Error::Unauthenticated(_)
+        ));
+        assert!(matches!(
+            Error::from(tonic::Status::already_exists("m")),
+            Error::AlreadyExists(_)
+        ));
+        assert!(matches!(
+            Error::from(tonic::Status::resource_exhausted("m")),
+            Error::RateLimited(_)
+        ));
+        assert!(matches!(
+            Error::from(tonic::Status::invalid_argument("m")),
+            Error::InvalidArgument(_)
+        ));
+        assert!(matches!(
+            Error::from(tonic::Status::internal("m")),
+            Error::GrpcStatus(_)
+        ));
     }
 
     // ---- retained conversion-helper coverage ----

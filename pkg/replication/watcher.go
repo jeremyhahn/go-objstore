@@ -385,6 +385,8 @@ func (w *FSNotifyWatcher) shouldIgnore(path string) bool {
 }
 
 // shouldProcess determines if an event should be processed based on debouncing.
+// It also evicts entries that are older than 10× the debounce delay to prevent
+// the lastEvent map from growing without bound on long-running watchers.
 func (w *FSNotifyWatcher) shouldProcess(path string) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -397,6 +399,16 @@ func (w *FSNotifyWatcher) shouldProcess(path string) bool {
 	}
 
 	w.lastEvent[path] = now
+
+	// Periodic eviction: sweep entries older than 10× debounce delay.
+	// Using 10× keeps recently-active paths warm while bounding memory growth.
+	evictBefore := now.Add(-10 * w.debounceDelay)
+	for p, t := range w.lastEvent {
+		if t.Before(evictBefore) {
+			delete(w.lastEvent, p)
+		}
+	}
+
 	return true
 }
 

@@ -16,7 +16,6 @@ package cli
 import (
 	"bytes"
 	"errors"
-	"io"
 	"testing"
 	"time"
 
@@ -82,18 +81,6 @@ func (m *mockLifecycleStorage) GetPolicies() ([]common.LifecyclePolicy, error) {
 		return nil, m.getPoliciesError
 	}
 	return m.policies, nil
-}
-
-// mockArchiver for testing
-type mockArchiver struct {
-	putError error
-}
-
-func (m *mockArchiver) Put(key string, data io.Reader) error {
-	if m.putError != nil {
-		return m.putError
-	}
-	return nil
 }
 
 // TestArchiveCommand tests the archive command

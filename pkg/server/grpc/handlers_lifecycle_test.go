@@ -85,18 +85,6 @@ func (m *mockLifecycleStorage) Archive(key string, destination common.Archiver) 
 	return nil
 }
 
-// mockArchiver implements the Archiver interface for testing
-type mockArchiver struct {
-	putError error
-}
-
-func (m *mockArchiver) Put(key string, data any) error {
-	if m.putError != nil {
-		return m.putError
-	}
-	return nil
-}
-
 // TestArchive tests the Archive gRPC handler
 func TestArchive(t *testing.T) {
 	tests := []struct {

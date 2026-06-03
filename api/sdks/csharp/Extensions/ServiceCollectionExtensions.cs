@@ -201,4 +201,112 @@ public static class ServiceCollectionExtensions
             PooledConnectionLifetime = TimeSpan.FromMinutes(5)
         });
     }
+
+    /// <summary>
+    /// Adds ObjectStore MCP client to the service collection with typed HttpClient.
+    /// The MCP transport uses HTTP POST JSON-RPC 2.0 requests to the base URL.
+    /// </summary>
+    /// <param name="services">The service collection</param>
+    /// <param name="configureOptions">Configuration action for client options</param>
+    /// <returns>IHttpClientBuilder for further configuration</returns>
+    public static IHttpClientBuilder AddObjectStoreMcpClient(
+        this IServiceCollection services,
+        Action<ObjectStoreClientOptions> configureOptions)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configureOptions);
+
+        services.Configure(configureOptions);
+
+        return services.AddHttpClient<IObjectStoreClient, McpClient>((serviceProvider, client) =>
+        {
+            var options = serviceProvider.GetRequiredService<IOptions<ObjectStoreClientOptions>>().Value;
+            client.BaseAddress = new Uri(options.BaseUrl);
+
+            if (options.Timeout.HasValue)
+            {
+                client.Timeout = options.Timeout.Value;
+            }
+        });
+    }
+
+    /// <summary>
+    /// Adds ObjectStore MCP client to the service collection from configuration.
+    /// The MCP transport uses HTTP POST JSON-RPC 2.0 requests to the base URL.
+    /// </summary>
+    /// <param name="services">The service collection</param>
+    /// <param name="configuration">Configuration section containing ObjectStore settings</param>
+    /// <returns>IHttpClientBuilder for further configuration</returns>
+    public static IHttpClientBuilder AddObjectStoreMcpClient(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        services.Configure<ObjectStoreClientOptions>(configuration);
+
+        return services.AddHttpClient<IObjectStoreClient, McpClient>((serviceProvider, client) =>
+        {
+            var options = serviceProvider.GetRequiredService<IOptions<ObjectStoreClientOptions>>().Value;
+            client.BaseAddress = new Uri(options.BaseUrl);
+
+            if (options.Timeout.HasValue)
+            {
+                client.Timeout = options.Timeout.Value;
+            }
+        });
+    }
+
+    /// <summary>
+    /// Adds ObjectStore Unix domain socket client to the service collection.
+    /// Authentication is peer-credential based on the server side; no token is transmitted.
+    /// </summary>
+    /// <param name="services">The service collection</param>
+    /// <param name="configureOptions">Configuration action for client options</param>
+    /// <returns>The service collection</returns>
+    public static IServiceCollection AddObjectStoreUnixClient(
+        this IServiceCollection services,
+        Action<ObjectStoreClientOptions> configureOptions)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configureOptions);
+
+        services.Configure(configureOptions);
+
+        services.AddSingleton<IObjectStoreClient>(serviceProvider =>
+        {
+            var options = serviceProvider.GetRequiredService<IOptions<ObjectStoreClientOptions>>().Value;
+            var logger = serviceProvider.GetService<ILogger<UnixClient>>();
+            return new UnixClient(options.BaseUrl, logger) { MaxBufferSize = options.MaxBufferSize };
+        });
+
+        return services;
+    }
+
+    /// <summary>
+    /// Adds ObjectStore Unix domain socket client to the service collection from configuration.
+    /// Authentication is peer-credential based on the server side; no token is transmitted.
+    /// </summary>
+    /// <param name="services">The service collection</param>
+    /// <param name="configuration">Configuration section containing ObjectStore settings</param>
+    /// <returns>The service collection</returns>
+    public static IServiceCollection AddObjectStoreUnixClient(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        services.Configure<ObjectStoreClientOptions>(configuration);
+
+        services.AddSingleton<IObjectStoreClient>(serviceProvider =>
+        {
+            var options = serviceProvider.GetRequiredService<IOptions<ObjectStoreClientOptions>>().Value;
+            var logger = serviceProvider.GetService<ILogger<UnixClient>>();
+            return new UnixClient(options.BaseUrl, logger) { MaxBufferSize = options.MaxBufferSize };
+        });
+
+        return services;
+    }
 }

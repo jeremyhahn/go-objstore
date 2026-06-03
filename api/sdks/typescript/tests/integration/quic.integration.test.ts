@@ -24,7 +24,9 @@
 describe('QUIC Integration', () => {
   it.skip(
     'QUIC integration is explicitly skipped — ' +
-      'TypeScript/Node has no native HTTP/3 transport. ' +
+      'TypeScript/Node has no native HTTP/3 transport, so QuicClient speaks ' +
+      'HTTP/1.1 over TCP and cannot reach the bundled QUIC server, which is ' +
+      'UDP/HTTP3-only. ' +
       'Coverage provided by REST + gRPC integration suites and QUIC unit tests.',
     () => {}
   );

@@ -183,14 +183,6 @@ func TestValidateClientCertificate(t *testing.T) {
 	}
 }
 
-func TestCreateSelfSignedCert(t *testing.T) {
-	// This should return an error indicating it's not implemented
-	_, _, err := CreateSelfSignedCert()
-	if err == nil {
-		t.Error("CreateSelfSignedCert() should return error for unimplemented function")
-	}
-}
-
 func TestTLSConfig_Chaining(t *testing.T) {
 	// Test that methods can be chained
 	config := NewTLSConfig().

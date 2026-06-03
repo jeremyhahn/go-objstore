@@ -337,6 +337,42 @@ func TestQUICClientCanonical(t *testing.T) {
 		assert.ErrorIs(t, quicStatus(t, http.StatusNotFound).RemoveReplicationPolicy(ctx, "r1"), ErrObjectNotFound)
 	})
 
+	// --------------------------------------------------- canonical sentinels
+
+	t.Run("quic_error_sentinel_mapping", func(t *testing.T) {
+		// Every row of the canonical HTTP status table must surface as the
+		// matching SDK sentinel via errors.Is.
+		cases := []struct {
+			status   int
+			sentinel error
+		}{
+			{http.StatusBadRequest, ErrInvalidArgument},
+			{http.StatusUnauthorized, ErrUnauthenticated},
+			{http.StatusForbidden, ErrPermissionDenied},
+			{http.StatusNotFound, ErrObjectNotFound},
+			{http.StatusConflict, ErrAlreadyExists},
+			{http.StatusTooManyRequests, ErrRateLimited},
+		}
+		for _, tc := range cases {
+			_, err := quicStatus(t, tc.status).Get(ctx, "k")
+			assert.ErrorIs(t, err, tc.sentinel, "GET status %d", tc.status)
+
+			_, err = quicStatus(t, tc.status).Put(ctx, "k", []byte("d"), nil)
+			assert.ErrorIs(t, err, tc.sentinel, "PUT status %d", tc.status)
+		}
+
+		// Rate limiting keeps the retryable temporary-failure contract.
+		_, err := quicStatus(t, http.StatusTooManyRequests).Get(ctx, "k")
+		assert.ErrorIs(t, err, ErrTemporaryFailure)
+
+		// 5xx stays a plain server error with no sentinel attached.
+		_, err = quicStatus(t, http.StatusInternalServerError).Get(ctx, "k")
+		require.Error(t, err)
+		for _, tc := range cases {
+			assert.NotErrorIs(t, err, tc.sentinel)
+		}
+	})
+
 	// --------------------------------------------------------- cross-cutting
 
 	t.Run("quic_metadata_round_trip", func(t *testing.T) {

@@ -46,6 +46,20 @@ func main() {
 	// Example 3: Managing policies
 	fmt.Println("\n3. Policy Management")
 	policyManagementExample()
+
+	// Example 4: Glacier archival (skips unless built with the awss3 and
+	// glacier build tags and AWS credentials are configured)
+	fmt.Println("\n4. Glacier Archival")
+	glacierArchiveExample()
+
+	// Example 5: Multi-tier archival (skips unless built with the awss3 and
+	// glacier build tags and AWS credentials are configured)
+	fmt.Println("\n5. Multi-Tier Archival")
+	multiTierArchivalExample()
+
+	// Example 6: Running a lifecycle manager loop
+	fmt.Println("\n6. Lifecycle Manager")
+	lifecycleManagerExample()
 }
 
 func deletePolicyExample() {
@@ -226,8 +240,6 @@ func policyManagementExample() {
 }
 
 // Example: Real-world usage with Glacier archival
-//
-//nolint:unused
 func glacierArchiveExample() {
 	// Create S3 storage for active data
 	s3Storage, err := factory.NewStorage("s3", map[string]string{
@@ -278,25 +290,35 @@ func glacierArchiveExample() {
 }
 
 // Example: Multi-tier archival strategy
-//
-//nolint:unused
 func multiTierArchivalExample() {
 	// Tier 1: Active data in S3
-	activeStorage, _ := factory.NewStorage("s3", map[string]string{
+	activeStorage, err := factory.NewStorage("s3", map[string]string{
 		"bucket": "active-data",
 		"region": "us-east-1",
 	})
+	if err != nil {
+		log.Printf("Skipping multi-tier example: %v", err)
+		return
+	}
 
 	// Tier 2: Warm data in local storage
-	warmStorage, _ := factory.NewArchiver("local", map[string]string{
+	warmStorage, err := factory.NewArchiver("local", map[string]string{
 		configKeyPath: "/mnt/warm-storage",
 	})
+	if err != nil {
+		log.Printf("Skipping multi-tier example: %v", err)
+		return
+	}
 
 	// Tier 3: Cold data in Glacier
-	coldStorage, _ := factory.NewArchiver("glacier", map[string]string{
+	coldStorage, err := factory.NewArchiver("glacier", map[string]string{
 		"vaultName": "cold-archive",
 		"region":    "us-east-1",
 	})
+	if err != nil {
+		log.Printf("Skipping multi-tier example: %v", err)
+		return
+	}
 
 	// Move to warm storage after 30 days
 	warmPolicy := common.LifecyclePolicy{
@@ -329,19 +351,62 @@ func multiTierArchivalExample() {
 	fmt.Println("  - Cold (Glacier): Data > 365 days")
 }
 
+// Example: Running a lifecycle manager against local storage. Creates a
+// policy with a tiny retention period, then runs the manager loop briefly so
+// it deletes the expired object before the context cancels the loop.
+func lifecycleManagerExample() {
+	storage, err := factory.NewStorage("local", map[string]string{
+		configKeyPath: "/tmp/objstore-lifecycle-manager",
+	})
+	if err != nil {
+		log.Printf("Skipping lifecycle manager example: %v", err)
+		return
+	}
+
+	if err := storage.Put("temp/demo.txt", bytes.NewReader([]byte("temp data"))); err != nil {
+		log.Printf("Skipping lifecycle manager example: %v", err)
+		return
+	}
+
+	policy := common.LifecyclePolicy{
+		ID:        "delete-temp-demo",
+		Prefix:    "temp/",
+		Action:    actionDelete,
+		Retention: time.Millisecond,
+	}
+	if err := storage.AddPolicy(policy); err != nil {
+		log.Printf("Skipping lifecycle manager example: %v", err)
+		return
+	}
+	fmt.Println("  ✓ Added delete policy with 1ms retention for temp/ objects")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 700*time.Millisecond)
+	defer cancel()
+	runLifecycleManager(ctx, storage, 200*time.Millisecond)
+	fmt.Println("  ✓ Lifecycle manager enforced policies and stopped")
+
+	// Cleanup
+	if err := storage.RemovePolicy(policy.ID); err != nil {
+		log.Printf("Warning: Failed to remove policy %s: %v", policy.ID, err)
+	}
+}
+
 // Note: In production, you would run a lifecycle manager service that:
 // 1. Periodically scans objects in storage
 // 2. Checks their age against policy rules
 // 3. Executes delete or archive actions automatically
 // 4. Logs all lifecycle actions for audit trail
-//
-//nolint:unused
-func runLifecycleManager(storage common.Storage, interval time.Duration) {
-	ctx := context.Background()
+func runLifecycleManager(ctx context.Context, storage common.Storage, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	for range ticker.C {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
 		policies, err := storage.GetPolicies()
 		if err != nil {
 			log.Printf("Failed to get policies: %v", err)

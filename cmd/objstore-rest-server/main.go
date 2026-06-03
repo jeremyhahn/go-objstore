@@ -14,12 +14,14 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	restserver "github.com/jeremyhahn/go-objstore/pkg/server/rest"
@@ -31,6 +33,7 @@ func main() {
 	port := flag.Int("port", 8080, "REST server port")
 	backend := flag.String("backend", "local", "Storage backend (local, s3, gcs, azure)")
 	storagePath := flag.String("path", "/tmp/objstore", "Storage path for local backend")
+	metricsPublic := flag.Bool("metrics-public", false, "Expose /metrics without authorization")
 
 	flag.Parse()
 
@@ -44,10 +47,11 @@ func main() {
 		},
 		DefaultBackend: "default",
 	}); err != nil {
-		log.Fatalf("Failed to initialize objstore facade: %v", err)
+		slog.Error("Failed to initialize objstore facade", "error", err)
+		os.Exit(1)
 	}
 
-	log.Printf("Initialized %s storage backend", *backend)
+	slog.Info("Initialized storage backend", "backend", *backend)
 
 	// Enable replication on the default backend
 	policyPath := *storagePath + "/.replication-policies.json"
@@ -55,31 +59,25 @@ func main() {
 		PolicyFilePath:  policyPath,
 		RunInBackground: false,
 	}); err != nil {
-		log.Printf("Warning: Failed to enable replication: %v", err)
+		slog.Warn("Failed to enable replication", "error", err)
 	} else {
-		log.Printf("Replication enabled with policy file: %s", policyPath)
+		slog.Info("Replication enabled", "policy_file", policyPath)
 	}
 
 	// Create server configuration
 	config := restserver.DefaultServerConfig()
 	config.Host = *host
 	config.Port = *port
+	config.MetricsPublic = *metricsPublic
 
 	// Create and start server (storage param is nil since handler uses facade)
 	server, err := restserver.NewServer(nil, config)
 	if err != nil {
-		log.Fatalf("Failed to create REST server: %v", err)
+		slog.Error("Failed to create REST server", "error", err)
+		os.Exit(1)
 	}
 
-	log.Printf("Starting REST server on %s:%d", config.Host, config.Port)
-	log.Println("")
-	log.Println("API Endpoints:")
-	log.Println("  PUT    /objects/{key}      - Store an object")
-	log.Println("  GET    /objects/{key}      - Retrieve an object")
-	log.Println("  DELETE /objects/{key}      - Delete an object")
-	log.Println("  HEAD   /objects/{key}      - Get object metadata")
-	log.Println("  GET    /objects            - List objects")
-	log.Println("")
+	slog.Info("Starting REST server", "host", config.Host, "port", config.Port)
 
 	// Start server in goroutine
 	errChan := make(chan error, 1)
@@ -95,11 +93,16 @@ func main() {
 
 	select {
 	case err := <-errChan:
-		log.Printf("Server error: %v", err)
+		slog.Error("Server error", "error", err)
 	case sig := <-sigChan:
-		log.Printf("Received signal: %v", sig)
+		slog.Info("Received signal", "signal", sig.String())
 	}
 
-	fmt.Println("\nShutting down REST server...")
-	fmt.Println("Server stopped")
+	slog.Info("Shutting down REST server")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := server.Shutdown(ctx); err != nil {
+		slog.Error("REST server shutdown error", "error", err)
+	}
+	slog.Info("Server stopped")
 }

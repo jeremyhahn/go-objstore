@@ -15,11 +15,18 @@ package grpc
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"errors"
+	"net/http"
 	"testing"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 )
 
 func TestMetricsCollector(t *testing.T) {
@@ -456,5 +463,102 @@ func TestChainStreamInterceptors(t *testing.T) {
 
 	if callOrder[0] != 1 || callOrder[1] != 2 || callOrder[2] != 3 {
 		t.Errorf("Unexpected call order: %v", callOrder)
+	}
+}
+
+// captureMTLSAuthenticator fails metadata authentication so the interceptors
+// fall back to mTLS, and captures the *tls.ConnectionState passed to
+// AuthenticateMTLS for inspection.
+type captureMTLSAuthenticator struct {
+	capturedState *tls.ConnectionState
+}
+
+func (c *captureMTLSAuthenticator) AuthenticateHTTP(ctx context.Context, req *http.Request) (*adapters.Principal, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (c *captureMTLSAuthenticator) AuthenticateGRPC(ctx context.Context, md metadata.MD) (*adapters.Principal, error) {
+	return nil, errors.New("metadata auth failed")
+}
+
+func (c *captureMTLSAuthenticator) AuthenticateMTLS(ctx context.Context, state *tls.ConnectionState) (*adapters.Principal, error) {
+	c.capturedState = state
+	return &adapters.Principal{ID: "mtls-user", Name: "MTLS User"}, nil
+}
+
+// newTLSPeerContext returns a context carrying gRPC peer info with the given
+// TLS connection state.
+func newTLSPeerContext(state tls.ConnectionState) context.Context {
+	return peer.NewContext(context.Background(), &peer.Peer{
+		AuthInfo: credentials.TLSInfo{State: state},
+	})
+}
+
+// testTLSConnectionState builds a connection state with both PeerCertificates
+// and VerifiedChains populated, mirroring what the TLS handshake produces
+// under RequireAndVerifyClientCert.
+func testTLSConnectionState() tls.ConnectionState {
+	leaf := &x509.Certificate{Subject: pkix.Name{CommonName: "client"}}
+	ca := &x509.Certificate{Subject: pkix.Name{CommonName: "ca"}}
+	return tls.ConnectionState{
+		PeerCertificates: []*x509.Certificate{leaf},
+		VerifiedChains:   [][]*x509.Certificate{{leaf, ca}},
+	}
+}
+
+func TestAuthenticationUnaryInterceptor_MTLSPropagatesVerifiedChains(t *testing.T) {
+	auth := &captureMTLSAuthenticator{}
+	interceptor := AuthenticationUnaryInterceptor(auth, adapters.NewNoOpLogger())
+
+	state := testTLSConnectionState()
+	ctx := newTLSPeerContext(state)
+	info := &grpc.UnaryServerInfo{FullMethod: "/test.Service/Method"}
+
+	handler := func(ctx context.Context, req any) (any, error) {
+		return "response", nil
+	}
+
+	if _, err := interceptor(ctx, "request", info, handler); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if auth.capturedState == nil {
+		t.Fatal("AuthenticateMTLS was not called")
+	}
+	if len(auth.capturedState.VerifiedChains) != 1 {
+		t.Fatalf("VerifiedChains not propagated: got %d chains, want 1", len(auth.capturedState.VerifiedChains))
+	}
+	if len(auth.capturedState.VerifiedChains[0]) != 2 {
+		t.Errorf("VerifiedChains[0] length = %d, want 2", len(auth.capturedState.VerifiedChains[0]))
+	}
+	if len(auth.capturedState.PeerCertificates) != 1 {
+		t.Errorf("PeerCertificates length = %d, want 1", len(auth.capturedState.PeerCertificates))
+	}
+}
+
+func TestAuthenticationStreamInterceptor_MTLSPropagatesVerifiedChains(t *testing.T) {
+	auth := &captureMTLSAuthenticator{}
+	interceptor := AuthenticationStreamInterceptor(auth, adapters.NewNoOpLogger())
+
+	state := testTLSConnectionState()
+	ctx := newTLSPeerContext(state)
+	info := &grpc.StreamServerInfo{FullMethod: "/test.Service/StreamMethod"}
+
+	handler := func(srv any, ss grpc.ServerStream) error {
+		return nil
+	}
+
+	if err := interceptor(nil, &mockServerStream{ctx: ctx}, info, handler); err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	if auth.capturedState == nil {
+		t.Fatal("AuthenticateMTLS was not called")
+	}
+	if len(auth.capturedState.VerifiedChains) != 1 {
+		t.Fatalf("VerifiedChains not propagated: got %d chains, want 1", len(auth.capturedState.VerifiedChains))
+	}
+	if len(auth.capturedState.PeerCertificates) != 1 {
+		t.Errorf("PeerCertificates length = %d, want 1", len(auth.capturedState.PeerCertificates))
 	}
 }

@@ -15,17 +15,28 @@ package mcp
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"time"
+	"unicode/utf8"
 
+	"github.com/jeremyhahn/go-objstore/pkg/adapters"
+	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/common"
+	servererrors "github.com/jeremyhahn/go-objstore/pkg/server/errors"
+	"github.com/jeremyhahn/go-objstore/pkg/server/jsonrpc"
+	"github.com/jeremyhahn/go-objstore/pkg/server/metrics"
+	"github.com/jeremyhahn/go-objstore/pkg/server/middleware"
 	"github.com/jeremyhahn/go-objstore/pkg/version"
 	"github.com/sourcegraph/jsonrpc2"
 )
 
 const (
-	jsonRPCVersion = "2.0"
+	jsonRPCVersion = jsonrpc.Version
 
 	// methodToolsCall is the JSON-RPC method name for invoking an MCP tool.
 	methodToolsCall = "tools/call"
@@ -52,52 +63,92 @@ const (
 	fieldDestinationSettings = "destination_settings"
 )
 
-// JSONRPCRequest represents a JSON-RPC 2.0 request
-type JSONRPCRequest struct {
-	JSONRPC string          `json:"jsonrpc"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params,omitempty"`
-	ID      any             `json:"id"`
-}
+// JSONRPCRequest, JSONRPCResponse, and JSONRPCError are the JSON-RPC 2.0
+// envelope types shared with the unix transport via pkg/server/jsonrpc. Kept
+// as local aliases for source compatibility.
+type (
+	// JSONRPCRequest represents a JSON-RPC 2.0 request.
+	JSONRPCRequest = jsonrpc.Request
+	// JSONRPCResponse represents a JSON-RPC 2.0 response.
+	JSONRPCResponse = jsonrpc.Response
+	// JSONRPCError represents a JSON-RPC 2.0 error.
+	JSONRPCError = jsonrpc.Error
+)
 
-// JSONRPCResponse represents a JSON-RPC 2.0 response
-type JSONRPCResponse struct {
-	JSONRPC string        `json:"jsonrpc"`
-	Result  any           `json:"result,omitempty"`
-	Error   *JSONRPCError `json:"error,omitempty"`
-	ID      any           `json:"id"`
-}
-
-// JSONRPCError represents a JSON-RPC 2.0 error
-type JSONRPCError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-	Data    any    `json:"data,omitempty"`
-}
-
-// Standard JSON-RPC error codes
+// JSON-RPC error codes, shared with the unix transport via
+// pkg/server/jsonrpc. Kept as local aliases for source compatibility.
 const (
-	ErrCodeParseError     = -32700
-	ErrCodeInvalidRequest = -32600
-	ErrCodeMethodNotFound = -32601
-	ErrCodeInvalidParams  = -32602
-	ErrCodeInternalError  = -32603
+	ErrCodeParseError     = jsonrpc.CodeParseError
+	ErrCodeInvalidRequest = jsonrpc.CodeInvalidRequest
+	ErrCodeMethodNotFound = jsonrpc.CodeMethodNotFound
+	ErrCodeInvalidParams  = jsonrpc.CodeInvalidParams
+	ErrCodeInternalError  = jsonrpc.CodeInternal
+
+	// ErrCodeForbidden is the implementation-defined code for authorization
+	// denials, distinct from malformed-request errors.
+	ErrCodeForbidden = jsonrpc.CodeForbidden
 )
 
 // RPCHandler handles JSON-RPC requests
 type RPCHandler struct {
-	server *Server
+	server       *Server
+	enforceAuthz bool
 }
 
-// NewRPCHandler creates a new RPC handler
+// NewRPCHandler creates a new RPC handler. When enforceAuthz is true the
+// server's Authorizer is evaluated on every request; the anonymous principal
+// (no credential) is used since stdio carries no identity token.
 func NewRPCHandler(server *Server) *RPCHandler {
 	return &RPCHandler{
-		server: server,
+		server:       server,
+		enforceAuthz: server.config.EnforceStdioAuthz,
 	}
 }
 
 // Handle processes a JSON-RPC request
-func (h *RPCHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (any, error) {
+func (h *RPCHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) (result any, err error) {
+	// Every request carries a request ID for tracing; stdio has no header to
+	// receive one, so generate it here.
+	ctx, _ = middleware.EnsureRequestID(ctx)
+
+	start := time.Now()
+	defer func() {
+		if rec := recover(); rec != nil {
+			slog.ErrorContext(ctx, "[MCP] Panic recovered",
+				slog.Any("panic", rec),
+				slog.String("method", req.Method),
+			)
+			err = &jsonrpc2.Error{
+				Code:    ErrCodeInternalError,
+				Message: "internal server error",
+			}
+		}
+		if h.server.config.EnableAudit && h.server.config.AuditLogger != nil {
+			audit.LogRPC(ctx, h.server.config.AuditLogger, "mcp-stdio", req.Method, anonymousMCPPrincipal(), start, err)
+		}
+	}()
+
+	// Rate limit the stdio pipe with a single shared bucket.
+	if h.server.rateLimiter != nil && !h.server.rateLimiter.AllowKey("stdio") {
+		return nil, &jsonrpc2.Error{
+			Code:    jsonrpc.CodeRateLimited,
+			Message: "rate limit exceeded",
+		}
+	}
+
+	// For stdio mode, enforce authorization when configured to do so.
+	// HTTP mode is always authorized by authenticationMiddleware before Handle is called.
+	if h.enforceAuthz {
+		action, resource := stdioActionResource(req)
+		principal := anonymousMCPPrincipal()
+		if err = h.server.config.Authorizer.Authorize(ctx, principal, action, resource); err != nil {
+			return nil, &jsonrpc2.Error{
+				Code:    ErrCodeForbidden,
+				Message: "forbidden",
+			}
+		}
+	}
+
 	switch req.Method {
 	case "initialize":
 		return h.handleInitialize(ctx, req.Params)
@@ -117,6 +168,29 @@ func (h *RPCHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonr
 			Message: fmt.Sprintf("method not found: %s", req.Method),
 		}
 	}
+}
+
+// anonymousMCPPrincipal returns the anonymous principal used for stdio authz.
+func anonymousMCPPrincipal() *adapters.Principal {
+	return &adapters.Principal{ID: "anonymous", Name: "Anonymous", Type: "anonymous"}
+}
+
+// stdioActionResource derives a (action, resource) pair from a JSON-RPC
+// request for use by the stdio authorizer.
+func stdioActionResource(req *jsonrpc2.Request) (action, resource string) {
+	if req.Method != methodToolsCall || req.Params == nil {
+		return adapters.ActionRead, ""
+	}
+	var p struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(*req.Params, &p); err != nil || p.Name == "" {
+		return adapters.ActionAdmin, adapters.ResourcePolicy
+	}
+	if act, ok := mcpToolActions[p.Name]; ok {
+		return act, p.Name
+	}
+	return adapters.ActionAdmin, adapters.ResourcePolicy
 }
 
 // handleInitialize handles the initialize request
@@ -188,9 +262,12 @@ func (h *RPCHandler) handleToolsCall(ctx context.Context, params *json.RawMessag
 
 	result, err := h.server.CallTool(ctx, callParams.Name, callParams.Arguments)
 	if err != nil {
+		// Map backend errors through the shared taxonomy so not-found and
+		// permission errors surface with their proper JSON-RPC codes.
+		code, message := servererrors.JSONRPCError(err)
 		return nil, &jsonrpc2.Error{
-			Code:    ErrCodeInternalError,
-			Message: err.Error(),
+			Code:    int64(code),
+			Message: message,
 		}
 	}
 
@@ -221,9 +298,12 @@ func (h *RPCHandler) handleResourcesList(ctx context.Context, params *json.RawMe
 
 	resources, err := h.server.ListResources(ctx, listParams.Cursor)
 	if err != nil {
+		// Map through the shared taxonomy: classifies the error and sanitizes
+		// the message (no internal paths/details leak to clients).
+		code, message := servererrors.JSONRPCError(err)
 		return nil, &jsonrpc2.Error{
-			Code:    ErrCodeInternalError,
-			Message: err.Error(),
+			Code:    int64(code),
+			Message: message,
 		}
 	}
 
@@ -254,20 +334,30 @@ func (h *RPCHandler) handleResourcesRead(ctx context.Context, params *json.RawMe
 
 	content, mimeType, err := h.server.ReadResource(ctx, readParams.URI)
 	if err != nil {
+		// Map through the shared taxonomy: classifies the error and sanitizes
+		// the message (no internal paths/details leak to clients).
+		code, message := servererrors.JSONRPCError(err)
 		return nil, &jsonrpc2.Error{
-			Code:    ErrCodeInternalError,
-			Message: err.Error(),
+			Code:    int64(code),
+			Message: message,
 		}
 	}
 
+	// Per the MCP spec, text resources use "text" and binary resources use
+	// "blob" (base64). Returning binary bytes through "text" would corrupt
+	// them in JSON encoding.
+	entry := map[string]any{
+		"uri":      readParams.URI,
+		"mimeType": mimeType,
+	}
+	if utf8.ValidString(content) {
+		entry["text"] = content
+	} else {
+		entry["blob"] = base64.StdEncoding.EncodeToString([]byte(content))
+	}
+
 	return map[string]any{
-		"contents": []map[string]any{
-			{
-				"uri":      readParams.URI,
-				"mimeType": mimeType,
-				"text":     content,
-			},
-		},
+		"contents": []map[string]any{entry},
 	}, nil
 }
 
@@ -285,6 +375,16 @@ func NewHTTPHandler(server *Server) *HTTPHandler {
 
 // ServeHTTP implements http.Handler
 func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	outcome := "error"
+	defer func() {
+		if rec := recover(); rec != nil {
+			slog.ErrorContext(r.Context(), "[MCP HTTP] Panic recovered", slog.Any("panic", rec))
+			h.writeError(w, ErrCodeInternalError, "internal server error")
+		}
+		metrics.Default.RecordRequest(metrics.TransportMCP, outcome, time.Since(start))
+	}()
+
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -297,14 +397,10 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = r.Body.Close() }()
 
-	var req JSONRPCRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		h.writeError(w, ErrCodeParseError, "invalid JSON")
-		return
-	}
-
-	if req.JSONRPC != jsonRPCVersion {
-		h.writeErrorWithID(w, req.ID, ErrCodeInvalidRequest, "invalid JSON-RPC version")
+	// Shared parse + version validation with the unix transport.
+	req, parseErr := jsonrpc.ParseRequest(body)
+	if parseErr != nil {
+		h.writeErrorWithID(w, parseErr.ID, parseErr.Error.Code, parseErr.Error.Message)
 		return
 	}
 
@@ -331,11 +427,12 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		} else {
 			resp.Error = &JSONRPCError{
 				Code:    ErrCodeInternalError,
-				Message: err.Error(),
+				Message: common.SanitizeErrorMessage(err),
 			}
 		}
 	} else {
 		resp.Result = result
+		outcome = "ok"
 	}
 
 	w.Header().Set("Content-Type", "application/json")

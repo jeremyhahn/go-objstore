@@ -418,7 +418,7 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
         {
             Id = policyId,
             Prefix = $"comprehensive/{protocol}/remove-lifecycle/",
-            RetentionSeconds = 3600,
+            RetentionSeconds = 86400,
             Action = "delete"
         };
 

@@ -28,6 +28,8 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	"github.com/jeremyhahn/go-objstore/pkg/replication"
+	servererrors "github.com/jeremyhahn/go-objstore/pkg/server/errors"
+	"github.com/jeremyhahn/go-objstore/pkg/server/jsonrpc"
 	"github.com/jeremyhahn/go-objstore/pkg/version"
 )
 
@@ -37,8 +39,9 @@ const (
 	fieldError  = "error"
 )
 
-// ErrCodeForbidden is the JSON-RPC error code returned when authorization is denied.
-const ErrCodeForbidden = -32001
+// ErrCodeForbidden is the JSON-RPC error code returned when authorization is
+// denied. Shared with the MCP transport via pkg/server/jsonrpc.
+const ErrCodeForbidden = jsonrpc.CodeForbidden
 
 // Handler handles JSON-RPC requests
 type Handler struct {
@@ -221,11 +224,11 @@ func (h *Handler) handlePut(ctx context.Context, req *Request) *Response {
 			Custom:          params.Metadata.Custom,
 		}
 		if err := objstore.PutWithMetadata(ctx, h.keyRef(params.Key), bytes.NewReader(data), metadata); err != nil {
-			return h.errorResponse(req.ID, ErrCodeInternalError, common.SanitizeErrorMessage(err))
+			return h.backendErrorResponse(req.ID, err)
 		}
 	} else {
 		if err := objstore.PutWithContext(ctx, h.keyRef(params.Key), bytes.NewReader(data)); err != nil {
-			return h.errorResponse(req.ID, ErrCodeInternalError, common.SanitizeErrorMessage(err))
+			return h.backendErrorResponse(req.ID, err)
 		}
 	}
 
@@ -246,14 +249,14 @@ func (h *Handler) handleGet(ctx context.Context, req *Request) *Response {
 	// Get object using facade
 	reader, err := objstore.GetWithContext(ctx, h.keyRef(params.Key))
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, common.SanitizeErrorMessage(err))
+		return h.backendErrorResponse(req.ID, err)
 	}
 	defer reader.Close()
 
 	// Read all data
 	data, err := io.ReadAll(reader)
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, common.SanitizeErrorMessage(err))
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	result := &GetResult{
@@ -285,7 +288,7 @@ func (h *Handler) handleDelete(ctx context.Context, req *Request) *Response {
 	}
 
 	if err := objstore.DeleteWithContext(ctx, h.keyRef(params.Key)); err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, common.SanitizeErrorMessage(err))
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	return h.successResponse(req.ID, map[string]string{fieldStatus: "ok"})
@@ -304,7 +307,7 @@ func (h *Handler) handleExists(ctx context.Context, req *Request) *Response {
 
 	exists, err := objstore.Exists(ctx, h.keyRef(params.Key))
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, common.SanitizeErrorMessage(err))
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	return h.successResponse(req.ID, &ExistsResult{Exists: exists})
@@ -328,7 +331,7 @@ func (h *Handler) handleList(ctx context.Context, req *Request) *Response {
 
 	result, err := objstore.ListWithOptions(ctx, h.backend, opts)
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, common.SanitizeErrorMessage(err))
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	objects := make([]ObjectInfo, 0, len(result.Objects))
@@ -364,7 +367,7 @@ func (h *Handler) handleGetMetadata(ctx context.Context, req *Request) *Response
 
 	metadata, err := objstore.GetMetadata(ctx, h.keyRef(params.Key))
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, common.SanitizeErrorMessage(err))
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	result := &MetadataParams{
@@ -395,7 +398,7 @@ func (h *Handler) handleUpdateMetadata(ctx context.Context, req *Request) *Respo
 	}
 
 	if err := objstore.UpdateMetadata(ctx, h.keyRef(params.Key), metadata); err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, common.SanitizeErrorMessage(err))
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	return h.successResponse(req.ID, map[string]string{fieldStatus: "ok"})
@@ -419,11 +422,11 @@ func (h *Handler) handleArchive(ctx context.Context, req *Request) *Response {
 	// Create archiver from factory
 	archiver, err := factory.NewArchiver(params.DestinationType, params.DestinationSettings)
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, common.SanitizeErrorMessage(err))
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	if err := objstore.Archive(h.keyRef(params.Key), archiver); err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, common.SanitizeErrorMessage(err))
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	return h.successResponse(req.ID, map[string]string{fieldStatus: "ok"})
@@ -436,15 +439,22 @@ func (h *Handler) handleAddPolicy(ctx context.Context, req *Request) *Response {
 		return h.errorResponse(req.ID, ErrCodeInvalidParams, "invalid parameters")
 	}
 
+	// retention_seconds takes precedence over after_days when positive,
+	// allowing sub-day retention over the unix transport.
+	retention := time.Duration(params.AfterDays) * 24 * time.Hour
+	if params.RetentionSeconds > 0 {
+		retention = time.Duration(params.RetentionSeconds) * time.Second
+	}
+
 	policy := common.LifecyclePolicy{
 		ID:        params.ID,
 		Prefix:    params.Prefix,
 		Action:    params.Action,
-		Retention: time.Duration(params.AfterDays) * 24 * time.Hour,
+		Retention: retention,
 	}
 
 	if err := objstore.AddPolicy(h.backend, policy); err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, common.SanitizeErrorMessage(err))
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	return h.successResponse(req.ID, map[string]string{fieldStatus: "ok"})
@@ -462,7 +472,7 @@ func (h *Handler) handleRemovePolicy(ctx context.Context, req *Request) *Respons
 	}
 
 	if err := objstore.RemovePolicy(h.backend, params.ID); err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, common.SanitizeErrorMessage(err))
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	return h.successResponse(req.ID, map[string]string{fieldStatus: "ok"})
@@ -472,16 +482,19 @@ func (h *Handler) handleRemovePolicy(ctx context.Context, req *Request) *Respons
 func (h *Handler) handleGetPolicies(ctx context.Context, req *Request) *Response {
 	policies, err := objstore.GetPolicies(h.backend)
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, common.SanitizeErrorMessage(err))
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	result := make([]PolicyParams, 0, len(policies))
 	for _, p := range policies {
 		result = append(result, PolicyParams{
-			ID:        p.ID,
-			Prefix:    p.Prefix,
-			Action:    p.Action,
-			AfterDays: int(p.Retention.Hours() / 24),
+			ID:     p.ID,
+			Prefix: p.Prefix,
+			Action: p.Action,
+			// after_days is rounded for backward compatibility;
+			// retention_seconds carries the exact retention.
+			AfterDays:        int(p.Retention.Hours() / 24),
+			RetentionSeconds: int64(p.Retention / time.Second),
 		})
 	}
 
@@ -493,7 +506,7 @@ func (h *Handler) handleApplyPolicies(ctx context.Context, req *Request) *Respon
 	// Get policies
 	policies, err := objstore.GetPolicies(h.backend)
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, common.SanitizeErrorMessage(err))
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	if len(policies) == 0 {
@@ -511,7 +524,7 @@ func (h *Handler) handleApplyPolicies(ctx context.Context, req *Request) *Respon
 
 	listResult, err := objstore.ListWithOptions(ctx, h.backend, opts)
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, common.SanitizeErrorMessage(err))
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	for _, policy := range policies {
@@ -566,7 +579,7 @@ func (h *Handler) handleAddReplicationPolicy(ctx context.Context, req *Request) 
 	// Get replication manager from facade
 	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, common.SanitizeErrorMessage(err))
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	policy := common.ReplicationPolicy{
@@ -586,7 +599,7 @@ func (h *Handler) handleAddReplicationPolicy(ctx context.Context, req *Request) 
 	}
 
 	if err := repMgr.AddPolicy(policy); err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, common.SanitizeErrorMessage(err))
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	return h.successResponse(req.ID, map[string]string{fieldStatus: "ok"})
@@ -606,11 +619,11 @@ func (h *Handler) handleRemoveReplicationPolicy(ctx context.Context, req *Reques
 	// Get replication manager from facade
 	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, common.SanitizeErrorMessage(err))
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	if err := repMgr.RemovePolicy(params.ID); err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, common.SanitizeErrorMessage(err))
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	return h.successResponse(req.ID, map[string]string{fieldStatus: "ok"})
@@ -630,12 +643,12 @@ func (h *Handler) handleGetReplicationPolicy(ctx context.Context, req *Request) 
 	// Get replication manager from facade
 	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, common.SanitizeErrorMessage(err))
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	policy, err := repMgr.GetPolicy(params.ID)
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, common.SanitizeErrorMessage(err))
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	result := &ReplicationPolicyParams{
@@ -655,12 +668,12 @@ func (h *Handler) handleGetReplicationPolicies(ctx context.Context, req *Request
 	// Get replication manager from facade
 	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, common.SanitizeErrorMessage(err))
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	policies, err := repMgr.GetPolicies()
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, common.SanitizeErrorMessage(err))
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	result := make([]ReplicationPolicyParams, 0, len(policies))
@@ -690,7 +703,7 @@ func (h *Handler) handleTriggerReplication(ctx context.Context, req *Request) *R
 	// Get replication manager from facade
 	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, common.SanitizeErrorMessage(err))
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	var syncResult *common.SyncResult
@@ -704,7 +717,7 @@ func (h *Handler) handleTriggerReplication(ctx context.Context, req *Request) *R
 	}
 
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, common.SanitizeErrorMessage(err))
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	result := &TriggerReplicationResult{
@@ -731,7 +744,7 @@ func (h *Handler) handleGetReplicationStatus(ctx context.Context, req *Request) 
 	// Get replication manager from facade
 	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, common.SanitizeErrorMessage(err))
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	// Get replication status using type assertion
@@ -744,7 +757,7 @@ func (h *Handler) handleGetReplicationStatus(ctx context.Context, req *Request) 
 
 	status, err := statusGetter.GetReplicationStatus(params.ID)
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, common.SanitizeErrorMessage(err))
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	var lastSyncTime string
@@ -783,12 +796,13 @@ func (h *Handler) successResponse(id any, result any) *Response {
 
 // errorResponse creates an error response
 func (h *Handler) errorResponse(id any, code int, message string) *Response {
-	return &Response{
-		JSONRPC: jsonRPCVersion,
-		Error: &RPCError{
-			Code:    code,
-			Message: message,
-		},
-		ID: id,
-	}
+	return jsonrpc.NewError(id, code, message)
+}
+
+// backendErrorResponse maps a backend error through the shared taxonomy so
+// not-found, permission, and rate-limit errors surface with their proper
+// JSON-RPC codes instead of a blanket internal error.
+func (h *Handler) backendErrorResponse(id any, err error) *Response {
+	code, message := servererrors.JSONRPCError(err)
+	return jsonrpc.NewError(id, code, message)
 }

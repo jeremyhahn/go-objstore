@@ -23,6 +23,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
 var (
@@ -32,10 +34,6 @@ var (
 
 	// backendPattern matches safe backend names (lowercase alphanumeric + hyphens)
 	backendPattern = regexp.MustCompile(`^[a-z0-9\-]+$`)
-
-	// keyReferencePattern matches key references with optional backend prefix
-	// Format: "backend:key" or just "key"
-	keyReferencePattern = regexp.MustCompile(`^([a-z0-9\-]+:)?[a-zA-Z0-9_\-\./]+$`)
 )
 
 // ValidateKey validates an object key.
@@ -48,22 +46,22 @@ var (
 // - Enforcing length limits
 func ValidateKey(key string) error {
 	if key == "" {
-		return fmt.Errorf("key cannot be empty")
+		return fmt.Errorf("%w: key cannot be empty", common.ErrInvalidArgument)
 	}
 
 	// Check for null bytes (can bypass some path checks)
 	if strings.Contains(key, "\x00") {
-		return fmt.Errorf("key contains null byte")
+		return fmt.Errorf("%w: key contains null byte", common.ErrInvalidArgument)
 	}
 
 	// Check length before other validations (prevent ReDoS)
 	if len(key) > 1024 {
-		return fmt.Errorf("key too long (max 1024 characters)")
+		return fmt.Errorf("%w: key too long (max 1024 characters)", common.ErrInvalidArgument)
 	}
 
 	// Check for absolute paths
 	if filepath.IsAbs(key) {
-		return fmt.Errorf("key cannot be an absolute path")
+		return fmt.Errorf("%w: key cannot be an absolute path", common.ErrInvalidArgument)
 	}
 
 	// Check for path traversal attempts
@@ -74,19 +72,19 @@ func ValidateKey(key string) error {
 		strings.HasPrefix(key, "../") ||
 		strings.HasSuffix(key, "/..") ||
 		strings.Contains(key, "/../") {
-		return fmt.Errorf("key contains path traversal attempt")
+		return fmt.Errorf("%w: key contains path traversal attempt", common.ErrInvalidArgument)
 	}
 
 	// Check for control characters
 	for _, r := range key {
 		if r < 32 || r == 127 {
-			return fmt.Errorf("key contains control characters")
+			return fmt.Errorf("%w: key contains control characters", common.ErrInvalidArgument)
 		}
 	}
 
 	// Only allow safe characters
 	if !keyPattern.MatchString(key) {
-		return fmt.Errorf("key contains invalid characters (allowed: a-z, A-Z, 0-9, -, _, ., /)")
+		return fmt.Errorf("%w: key contains invalid characters (allowed: a-z, A-Z, 0-9, -, _, ., /)", common.ErrInvalidArgument)
 	}
 
 	return nil
@@ -96,23 +94,23 @@ func ValidateKey(key string) error {
 // Format: "backend:key" or "key"
 func ValidateKeyReference(keyRef string) error {
 	if keyRef == "" {
-		return fmt.Errorf("key reference cannot be empty")
+		return fmt.Errorf("%w: key reference cannot be empty", common.ErrInvalidArgument)
 	}
 
 	// Check for null bytes
 	if strings.Contains(keyRef, "\x00") {
-		return fmt.Errorf("key reference contains null byte")
+		return fmt.Errorf("%w: key reference contains null byte", common.ErrInvalidArgument)
 	}
 
 	// Check length (64 for backend + 1 for colon + 1024 for key)
 	if len(keyRef) > 1089 {
-		return fmt.Errorf("key reference too long (max 1089 characters)")
+		return fmt.Errorf("%w: key reference too long (max 1089 characters)", common.ErrInvalidArgument)
 	}
 
 	// Check for control characters
 	for _, r := range keyRef {
 		if r < 32 || r == 127 {
-			return fmt.Errorf("key reference contains control characters")
+			return fmt.Errorf("%w: key reference contains control characters", common.ErrInvalidArgument)
 		}
 	}
 
@@ -140,29 +138,29 @@ func ValidateKeyReference(keyRef string) error {
 // Backend names must be simple lowercase identifiers.
 func ValidateBackendName(backend string) error {
 	if backend == "" {
-		return fmt.Errorf("backend name cannot be empty")
+		return fmt.Errorf("%w: backend name cannot be empty", common.ErrInvalidArgument)
 	}
 
 	// Check for null bytes
 	if strings.Contains(backend, "\x00") {
-		return fmt.Errorf("backend name contains null byte")
+		return fmt.Errorf("%w: backend name contains null byte", common.ErrInvalidArgument)
 	}
 
 	// Check length
 	if len(backend) > 64 {
-		return fmt.Errorf("backend name too long (max 64 characters)")
+		return fmt.Errorf("%w: backend name too long (max 64 characters)", common.ErrInvalidArgument)
 	}
 
 	// Check for control characters
 	for _, r := range backend {
 		if r < 32 || r == 127 {
-			return fmt.Errorf("backend name contains control characters")
+			return fmt.Errorf("%w: backend name contains control characters", common.ErrInvalidArgument)
 		}
 	}
 
 	// Only allow lowercase alphanumeric and hyphens
 	if !backendPattern.MatchString(backend) {
-		return fmt.Errorf("backend name contains invalid characters (allowed: a-z, 0-9, -)")
+		return fmt.Errorf("%w: backend name contains invalid characters (allowed: a-z, 0-9, -)", common.ErrInvalidArgument)
 	}
 
 	return nil

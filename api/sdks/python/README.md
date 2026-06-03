@@ -1,16 +1,29 @@
 # Go-ObjStore Python SDK
 
-A comprehensive Python SDK for [go-objstore](https://github.com/jeremyhahn/go-objstore) with support for REST, gRPC, and QUIC/HTTP3 protocols.
+A comprehensive Python SDK for [go-objstore](https://github.com/jeremyhahn/go-objstore) with support for REST, gRPC, QUIC/HTTP3, MCP (Model Context Protocol), and Unix domain socket protocols.
+
+## Transport Summary
+
+| Protocol | Class | Default address | Auth headers |
+|----------|-------|----------------|-------------|
+| REST | `RestClient` | `http://localhost:8080` | `Authorization: Bearer`, `X-Tenant-ID`, custom |
+| gRPC | `GrpcClient` | `localhost:50051` | gRPC call metadata: `authorization`, `x-tenant-id`, custom |
+| QUIC/HTTP3 | `QuicClient` | `https://localhost:4433` | `Authorization: Bearer`, `X-Tenant-ID`, custom |
+| MCP HTTP | `McpClient` | `http://localhost:8081` | `Authorization: Bearer`, `X-Tenant-ID`, custom |
+| Unix socket | `UnixClient` | `/tmp/objstore.sock` | OS peer credentials (server-side only) |
+
+All transports share the same `ObjectStoreClient` facade.
 
 ## Features
 
-- **Multi-Protocol Support**: REST, gRPC, and QUIC/HTTP3
+- **Multi-Protocol Support**: REST, gRPC, QUIC/HTTP3, MCP, and Unix domain sockets
 - **Unified API**: Consistent interface across all protocols
 - **Type Safety**: Full type hints and Pydantic models
 - **Async Support**: Async operations for QUIC/HTTP3
-- **Streaming**: Efficient streaming for large objects
+- **Streaming**: `get_stream` and `put_stream` for efficient large-object I/O
+- **App-Layer Auth**: Pass `token`, `tenant_id`, and `headers` to any client
 - **Retry Logic**: Automatic retry with exponential backoff
-- **Comprehensive Testing**: 90%+ code coverage
+- **Comprehensive Testing**: 92%+ code coverage
 - **Well Documented**: Detailed docstrings and examples
 
 ## Installation
@@ -133,6 +146,76 @@ with client:
     client.delete("my-key")
 ```
 
+### MCP (Model Context Protocol) Client
+
+The MCP client talks to a go-objstore MCP server via HTTP POST JSON-RPC 2.0,
+calling `tools/call` with `objstore_<op>` tool names.
+
+```python
+from objstore import ObjectStoreClient
+from objstore.client import Protocol
+
+client = ObjectStoreClient(
+    protocol=Protocol.MCP,
+    base_url="http://localhost:8081",
+)
+
+with client:
+    client.put("my-key", b"my-data")
+    data, _ = client.get("my-key")
+    client.delete("my-key")
+```
+
+### Unix Domain Socket Client
+
+The Unix client maintains a single persistent connection to a local Unix
+socket and sends newline-delimited JSON-RPC 2.0 requests over it. The server
+closes idle connections after about 30 seconds; the client transparently
+reconnects on the next call. Authentication is handled server-side via OS
+peer credentials; no token is required.
+
+```python
+from objstore import ObjectStoreClient
+from objstore.client import Protocol
+
+client = ObjectStoreClient(
+    protocol=Protocol.UNIX,
+    socket_path="/tmp/objstore.sock",
+)
+
+with client:
+    client.put("my-key", b"my-data")
+    data, meta = client.get("my-key")
+    client.delete("my-key")
+```
+
+### Application-Layer Auth
+
+Pass `token`, `tenant_id`, and/or `headers` to any HTTP/gRPC client:
+
+```python
+from objstore import ObjectStoreClient
+from objstore.client import Protocol
+
+# Bearer token + tenant ID + custom header — works for REST, QUIC, MCP
+client = ObjectStoreClient(
+    protocol=Protocol.REST,
+    base_url="http://localhost:8080",
+    token="my-api-token",
+    tenant_id="tenant-acme",
+    headers={"X-Correlation-ID": "req-abc-123"},
+)
+
+# gRPC: same params become gRPC call metadata
+grpc_client = ObjectStoreClient(
+    protocol=Protocol.GRPC,
+    host="localhost",
+    port=50051,
+    token="my-api-token",
+    tenant_id="tenant-acme",
+)
+```
+
 ### Advanced Usage
 
 #### Custom Retry Configuration
@@ -205,6 +288,9 @@ from objstore.exceptions import (
     ObjectNotFoundError,
     ConnectionError,
     AuthenticationError,
+    AuthorizationError,
+    AlreadyExistsError,
+    RateLimitError,
     ValidationError,
     ServerError,
     TimeoutError
@@ -220,6 +306,12 @@ except ConnectionError:
     print("Failed to connect to server")
 except AuthenticationError:
     print("Authentication failed")
+except AuthorizationError:
+    print("Access denied")
+except AlreadyExistsError:
+    print("Object already exists")
+except RateLimitError:
+    print("Rate limit exceeded")
 except ValidationError:
     print("Invalid request")
 except ServerError:
@@ -570,6 +662,9 @@ Main client class with unified API across protocols.
 - `ObjectNotFoundError` - Object not found (404)
 - `ConnectionError` - Connection failed
 - `AuthenticationError` - Authentication failed (401)
+- `AuthorizationError` - Access denied (403)
+- `AlreadyExistsError` - Already exists (409)
+- `RateLimitError` - Rate limit exceeded (429)
 - `ValidationError` - Validation error (400)
 - `ServerError` - Server error (5xx)
 - `TimeoutError` - Request timeout
@@ -608,7 +703,7 @@ AGPL-3.0 - See LICENSE file for details
 
 ### 0.2.0
 
-- Go toolchain updated to 1.26.3
+- Go toolchain updated to 1.26.4
 - API parity across all SDKs
 
 ### 0.1.0 (2025-11-23)

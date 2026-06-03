@@ -37,54 +37,40 @@ func TestMapError_Various(t *testing.T) {
 		wantCode codes.Code
 	}{
 		{
-			name:     "not found",
-			err:      errors.New("not found"),
+			name:     "key not found sentinel",
+			err:      common.ErrKeyNotFound,
 			wantCode: codes.NotFound,
 		},
 		{
-			name:     "key not found",
-			err:      errors.New("key not found"),
-			wantCode: codes.NotFound,
-		},
-		{
-			name:     "already exists",
-			err:      errors.New("already exists"),
+			name:     "already exists sentinel",
+			err:      common.ErrAlreadyExists,
 			wantCode: codes.AlreadyExists,
 		},
 		{
-			name:     "permission denied",
-			err:      errors.New("permission denied"),
+			name:     "permission denied sentinel",
+			err:      common.ErrPermissionDenied,
 			wantCode: codes.PermissionDenied,
 		},
 		{
-			name:     "invalid argument",
-			err:      errors.New("invalid argument"),
+			name:     "invalid argument sentinel",
+			err:      common.ErrInvalidArgument,
 			wantCode: codes.InvalidArgument,
-		},
-		{
-			name:     "invalid key",
-			err:      errors.New("invalid key"),
-			wantCode: codes.InvalidArgument,
-		},
-		{
-			name:     "deadline exceeded",
-			err:      errors.New("deadline exceeded"),
-			wantCode: codes.DeadlineExceeded,
 		},
 		{
 			name:     "context deadline exceeded",
-			err:      errors.New("context deadline exceeded"),
+			err:      context.DeadlineExceeded,
 			wantCode: codes.DeadlineExceeded,
 		},
 		{
-			name:     "canceled",
-			err:      errors.New("canceled"),
+			name:     "context canceled",
+			err:      context.Canceled,
 			wantCode: codes.Canceled,
 		},
+		// Bare strings no longer classify: producers must wrap sentinels.
 		{
-			name:     "context canceled",
-			err:      errors.New("context canceled"),
-			wantCode: codes.Canceled,
+			name:     "string only not found",
+			err:      errors.New("not found"),
+			wantCode: codes.Internal,
 		},
 		{
 			name:     "unknown error",

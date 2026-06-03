@@ -20,16 +20,21 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"testing"
+	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
+
+	"github.com/Azure/azure-storage-blob-go/azblob"
 )
 
 // Test error variables
 var (
-	errTestPutError     = errors.New("put error")
-	errTestListError    = errors.New("list error")
-	errTestBlobNotFound = errors.New("blob not found")
+	errTestPutError      = errors.New("put error")
+	errTestListError     = errors.New("list error")
+	errTestBlobNotFound  = errors.New("blob not found")
+	errTestGetPropsError = errors.New("get properties error")
 )
 
 // mockContainerEnhanced for enhanced testing
@@ -54,10 +59,12 @@ func (m *mockContainerEnhanced) ListBlobsFlat(ctx context.Context, prefix string
 
 // mockBlob for enhanced testing
 type mockBlob struct {
-	uploadFn        func(ctx context.Context, r io.Reader) error
-	readFn          func(ctx context.Context) (io.ReadCloser, error)
-	deleteFn        func(ctx context.Context) error
-	getPropertiesFn func(ctx context.Context) error
+	uploadFn         func(ctx context.Context, r io.Reader) error
+	readFn           func(ctx context.Context) (io.ReadCloser, error)
+	deleteFn         func(ctx context.Context) error
+	getPropertiesFn  func(ctx context.Context) (*BlobProperties, error)
+	setMetadataFn    func(ctx context.Context, metadata map[string]string) error
+	setHTTPHeadersFn func(ctx context.Context, headers azblob.BlobHTTPHeaders) error
 }
 
 func (m *mockBlob) UploadFromReader(ctx context.Context, r io.Reader) error {
@@ -81,12 +88,39 @@ func (m *mockBlob) Delete(ctx context.Context) error {
 	return nil
 }
 
-func (m *mockBlob) GetProperties(ctx context.Context) error {
+func (m *mockBlob) GetProperties(ctx context.Context) (*BlobProperties, error) {
 	if m.getPropertiesFn != nil {
 		return m.getPropertiesFn(ctx)
 	}
+	return &BlobProperties{}, nil
+}
+
+func (m *mockBlob) SetMetadata(ctx context.Context, metadata map[string]string) error {
+	if m.setMetadataFn != nil {
+		return m.setMetadataFn(ctx, metadata)
+	}
 	return nil
 }
+
+func (m *mockBlob) SetHTTPHeaders(ctx context.Context, headers azblob.BlobHTTPHeaders) error {
+	if m.setHTTPHeadersFn != nil {
+		return m.setHTTPHeadersFn(ctx, headers)
+	}
+	return nil
+}
+
+// fakeStorageError implements azblob.StorageError for not-found testing.
+type fakeStorageError struct {
+	code azblob.ServiceCodeType
+}
+
+func (f *fakeStorageError) Error() string                       { return string(f.code) }
+func (f *fakeStorageError) Timeout() bool                       { return false }
+func (f *fakeStorageError) Temporary() bool                     { return false }
+func (f *fakeStorageError) Response() *http.Response            { return nil }
+func (f *fakeStorageError) ServiceCode() azblob.ServiceCodeType { return f.code }
+
+var _ azblob.StorageError = (*fakeStorageError)(nil)
 
 // TestAzure_PutWithContext tests context-aware put operation
 func TestAzure_PutWithContext(t *testing.T) {
@@ -168,9 +202,25 @@ func TestAzure_DeleteWithContext(t *testing.T) {
 	}
 }
 
-// TestAzure_GetMetadata tests metadata retrieval (stub implementation)
+// TestAzure_GetMetadata tests metadata retrieval from blob properties.
 func TestAzure_GetMetadata(t *testing.T) {
-	mockCont := &mockContainerEnhanced{}
+	lastModified := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	mockCont := &mockContainerEnhanced{
+		newBlockBlobFn: func(name string) BlobAPI {
+			return &mockBlob{
+				getPropertiesFn: func(ctx context.Context) (*BlobProperties, error) {
+					return &BlobProperties{
+						Size:            1024,
+						ContentType:     "application/json",
+						ContentEncoding: "gzip",
+						LastModified:    lastModified,
+						ETag:            `"abc123"`,
+						Metadata:        map[string]string{"author": "test"},
+					}, nil
+				},
+			}
+		},
+	}
 	a := &Azure{container: mockCont}
 	ctx := context.Background()
 
@@ -179,23 +229,196 @@ func TestAzure_GetMetadata(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	// Stub implementation returns nil
-	if metadata != nil {
-		t.Fatalf("expected nil metadata (stub), got %v", metadata)
+	// GetMetadata must return a non-nil struct so callers never dereference nil.
+	if metadata == nil {
+		t.Fatal("expected non-nil metadata, got nil")
+	}
+	if metadata.Size != 1024 {
+		t.Errorf("expected size 1024, got %d", metadata.Size)
+	}
+	if metadata.ContentType != "application/json" {
+		t.Errorf("expected content type 'application/json', got %q", metadata.ContentType)
+	}
+	if metadata.ContentEncoding != "gzip" {
+		t.Errorf("expected content encoding 'gzip', got %q", metadata.ContentEncoding)
+	}
+	if !metadata.LastModified.Equal(lastModified) {
+		t.Errorf("expected last modified %v, got %v", lastModified, metadata.LastModified)
+	}
+	if metadata.ETag != `"abc123"` {
+		t.Errorf("expected etag '\"abc123\"', got %q", metadata.ETag)
+	}
+	if metadata.Custom["author"] != "test" {
+		t.Errorf("expected custom metadata author=test, got %v", metadata.Custom)
 	}
 }
 
-// TestAzure_UpdateMetadata tests metadata update (stub implementation)
-func TestAzure_UpdateMetadata(t *testing.T) {
-	mockCont := &mockContainerEnhanced{}
+// TestAzure_GetMetadata_NotFound tests that a missing blob yields an error
+// wrapping common.ErrKeyNotFound.
+func TestAzure_GetMetadata_NotFound(t *testing.T) {
+	mockCont := &mockContainerEnhanced{
+		newBlockBlobFn: func(name string) BlobAPI {
+			return &mockBlob{
+				getPropertiesFn: func(ctx context.Context) (*BlobProperties, error) {
+					return nil, &fakeStorageError{code: azblob.ServiceCodeBlobNotFound}
+				},
+			}
+		},
+	}
 	a := &Azure{container: mockCont}
 	ctx := context.Background()
 
-	metadata := &common.Metadata{ContentType: "test"}
+	_, err := a.GetMetadata(ctx, "missing")
+	if !errors.Is(err, common.ErrKeyNotFound) {
+		t.Fatalf("expected ErrKeyNotFound, got %v", err)
+	}
+}
+
+// TestAzure_GetMetadata_Error tests that non-not-found errors propagate unchanged.
+func TestAzure_GetMetadata_Error(t *testing.T) {
+	mockCont := &mockContainerEnhanced{
+		newBlockBlobFn: func(name string) BlobAPI {
+			return &mockBlob{
+				getPropertiesFn: func(ctx context.Context) (*BlobProperties, error) {
+					return nil, errTestGetPropsError
+				},
+			}
+		},
+	}
+	a := &Azure{container: mockCont}
+	ctx := context.Background()
+
+	_, err := a.GetMetadata(ctx, "key")
+	if !errors.Is(err, errTestGetPropsError) {
+		t.Fatalf("expected the underlying error to propagate, got %v", err)
+	}
+	if errors.Is(err, common.ErrKeyNotFound) {
+		t.Fatalf("non-not-found errors must not map to ErrKeyNotFound, got %v", err)
+	}
+}
+
+// TestAzure_UpdateMetadata tests that metadata updates are applied via
+// SetMetadata and SetHTTPHeaders with replace semantics.
+func TestAzure_UpdateMetadata(t *testing.T) {
+	var gotMetadata map[string]string
+	var gotHeaders azblob.BlobHTTPHeaders
+	mockCont := &mockContainerEnhanced{
+		newBlockBlobFn: func(name string) BlobAPI {
+			return &mockBlob{
+				setMetadataFn: func(ctx context.Context, metadata map[string]string) error {
+					gotMetadata = metadata
+					return nil
+				},
+				setHTTPHeadersFn: func(ctx context.Context, headers azblob.BlobHTTPHeaders) error {
+					gotHeaders = headers
+					return nil
+				},
+			}
+		},
+	}
+	a := &Azure{container: mockCont}
+	ctx := context.Background()
+
+	metadata := &common.Metadata{
+		ContentType:     "text/plain",
+		ContentEncoding: "gzip",
+		Custom:          map[string]string{"updated": "true"},
+	}
 
 	err := a.UpdateMetadata(ctx, "key", metadata)
 	if err != nil {
-		t.Fatalf("expected nil (stub), got error: %v", err)
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if gotMetadata["updated"] != "true" {
+		t.Errorf("expected custom metadata to be applied, got %v", gotMetadata)
+	}
+	if gotHeaders.ContentType != "text/plain" {
+		t.Errorf("expected content type 'text/plain', got %q", gotHeaders.ContentType)
+	}
+	if gotHeaders.ContentEncoding != "gzip" {
+		t.Errorf("expected content encoding 'gzip', got %q", gotHeaders.ContentEncoding)
+	}
+}
+
+// TestAzure_UpdateMetadata_NotFound tests that a missing blob yields an error
+// wrapping common.ErrKeyNotFound.
+func TestAzure_UpdateMetadata_NotFound(t *testing.T) {
+	mockCont := &mockContainerEnhanced{
+		newBlockBlobFn: func(name string) BlobAPI {
+			return &mockBlob{
+				setMetadataFn: func(ctx context.Context, metadata map[string]string) error {
+					return &fakeStorageError{code: azblob.ServiceCodeBlobNotFound}
+				},
+			}
+		},
+	}
+	a := &Azure{container: mockCont}
+	ctx := context.Background()
+
+	err := a.UpdateMetadata(ctx, "missing", &common.Metadata{ContentType: "text/plain"})
+	if !errors.Is(err, common.ErrKeyNotFound) {
+		t.Fatalf("expected ErrKeyNotFound, got %v", err)
+	}
+}
+
+// TestAzure_UpdateMetadata_HeadersNotFound tests not-found mapping on the
+// SetHTTPHeaders call.
+func TestAzure_UpdateMetadata_HeadersNotFound(t *testing.T) {
+	mockCont := &mockContainerEnhanced{
+		newBlockBlobFn: func(name string) BlobAPI {
+			return &mockBlob{
+				setHTTPHeadersFn: func(ctx context.Context, headers azblob.BlobHTTPHeaders) error {
+					return &fakeStorageError{code: azblob.ServiceCodeBlobNotFound}
+				},
+			}
+		},
+	}
+	a := &Azure{container: mockCont}
+	ctx := context.Background()
+
+	err := a.UpdateMetadata(ctx, "missing", &common.Metadata{ContentType: "text/plain"})
+	if !errors.Is(err, common.ErrKeyNotFound) {
+		t.Fatalf("expected ErrKeyNotFound, got %v", err)
+	}
+}
+
+// TestAzure_UpdateMetadata_NilMetadata tests that nil metadata clears custom
+// metadata and headers (replace semantics).
+func TestAzure_UpdateMetadata_NilMetadata(t *testing.T) {
+	var gotMetadata map[string]string
+	var gotHeaders azblob.BlobHTTPHeaders
+	setMetadataCalled := false
+	mockCont := &mockContainerEnhanced{
+		newBlockBlobFn: func(name string) BlobAPI {
+			return &mockBlob{
+				setMetadataFn: func(ctx context.Context, metadata map[string]string) error {
+					setMetadataCalled = true
+					gotMetadata = metadata
+					return nil
+				},
+				setHTTPHeadersFn: func(ctx context.Context, headers azblob.BlobHTTPHeaders) error {
+					gotHeaders = headers
+					return nil
+				},
+			}
+		},
+	}
+	a := &Azure{container: mockCont}
+	ctx := context.Background()
+
+	err := a.UpdateMetadata(ctx, "key", nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !setMetadataCalled {
+		t.Fatal("expected SetMetadata to be called")
+	}
+	if len(gotMetadata) != 0 {
+		t.Errorf("expected empty custom metadata, got %v", gotMetadata)
+	}
+	if gotHeaders.ContentType != "" || gotHeaders.ContentEncoding != "" {
+		t.Errorf("expected cleared headers, got %+v", gotHeaders)
 	}
 }
 
@@ -205,13 +428,36 @@ func TestAzure_Exists(t *testing.T) {
 	a := &Azure{container: mockCont}
 	ctx := context.Background()
 
-	// Since GetMetadata returns nil (stub), Exists will return true
+	// The default mockBlob GetProperties succeeds, so the object exists.
 	exists, err := a.Exists(ctx, "key")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 	if !exists {
-		t.Fatal("expected object to exist (stub returns success)")
+		t.Fatal("expected object to exist")
+	}
+}
+
+// TestAzure_Exists_NotFound tests that a BlobNotFound error maps to false, nil.
+func TestAzure_Exists_NotFound(t *testing.T) {
+	mockCont := &mockContainerEnhanced{
+		newBlockBlobFn: func(name string) BlobAPI {
+			return &mockBlob{
+				getPropertiesFn: func(ctx context.Context) (*BlobProperties, error) {
+					return nil, &fakeStorageError{code: azblob.ServiceCodeBlobNotFound}
+				},
+			}
+		},
+	}
+	a := &Azure{container: mockCont}
+	ctx := context.Background()
+
+	exists, err := a.Exists(ctx, "missing")
+	if err != nil {
+		t.Fatalf("expected no error for missing blob, got %v", err)
+	}
+	if exists {
+		t.Fatal("expected exists=false for missing blob")
 	}
 }
 
@@ -447,12 +693,13 @@ func TestAzure_ListWithOptions_WithPrefix(t *testing.T) {
 	}
 }
 
-func TestAzure_Exists_ErrorPath(t *testing.T) {
+func TestAzure_Exists_NonStorageErrorPropagates(t *testing.T) {
+	// A plain (non-azblob.StorageError) error must be propagated to the caller.
 	mockCont := &mockContainerEnhanced{
 		newBlockBlobFn: func(name string) BlobAPI {
 			return &mockBlob{
-				getPropertiesFn: func(ctx context.Context) error {
-					return errTestBlobNotFound
+				getPropertiesFn: func(ctx context.Context) (*BlobProperties, error) {
+					return nil, errTestBlobNotFound
 				},
 			}
 		},
@@ -462,10 +709,10 @@ func TestAzure_Exists_ErrorPath(t *testing.T) {
 	ctx := context.Background()
 
 	exists, err := a.Exists(ctx, "missing.txt")
-	if err != nil {
-		t.Fatalf("Exists should not return error for missing blob, got: %v", err)
+	if err == nil {
+		t.Fatal("Exists should propagate non-StorageError errors")
 	}
 	if exists {
-		t.Error("expected exists=false for missing blob")
+		t.Error("expected exists=false on error")
 	}
 }

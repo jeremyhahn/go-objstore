@@ -18,6 +18,24 @@ import (
 	"io"
 )
 
+// readCloser combines an io.Reader with a list of Closers to be closed when Close is called.
+// This is used to ensure that both the decrypted stream and the underlying encrypted reader
+// are closed together when the caller is done reading.
+type readCloser struct {
+	io.Reader
+	closes []io.Closer
+}
+
+func (rc *readCloser) Close() error {
+	var first error
+	for _, c := range rc.closes {
+		if err := c.Close(); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
+}
+
 // encryptedStorage wraps any Storage implementation with transparent encryption.
 // All data written is encrypted, and all data read is decrypted.
 type encryptedStorage struct {
@@ -97,7 +115,9 @@ func (e *encryptedStorage) Get(key string) (io.ReadCloser, error) {
 	return e.GetWithContext(context.Background(), key)
 }
 
-// GetWithContext retrieves and decrypts data from the underlying storage with context support
+// GetWithContext retrieves and decrypts data from the underlying storage with context support.
+// The returned ReadCloser's Close method closes both the decrypted stream and the underlying
+// encrypted reader, so the caller must not close encryptedData independently.
 func (e *encryptedStorage) GetWithContext(ctx context.Context, key string) (io.ReadCloser, error) {
 	// Get metadata to determine which key was used for encryption
 	metadata, err := e.underlying.GetMetadata(ctx, key)
@@ -115,21 +135,26 @@ func (e *encryptedStorage) GetWithContext(ctx context.Context, key string) (io.R
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = encryptedData.Close() }()
 
-	// Get encrypter for decryption
+	// Get encrypter for decryption — close encryptedData on any error path.
 	encrypter, err := e.encrypterFactory.GetEncrypter(keyID)
 	if err != nil {
+		_ = encryptedData.Close()
 		return nil, err
 	}
 
-	// Decrypt the data
+	// Decrypt the data — close encryptedData on any error path.
 	decryptedData, err := encrypter.Decrypt(ctx, encryptedData)
 	if err != nil {
+		_ = encryptedData.Close()
 		return nil, err
 	}
 
-	return decryptedData, nil
+	// Return a composite ReadCloser that closes both streams when the caller is done.
+	return &readCloser{
+		Reader: decryptedData,
+		closes: []io.Closer{decryptedData, encryptedData},
+	}, nil
 }
 
 // GetMetadata retrieves metadata for an object (metadata is not encrypted)

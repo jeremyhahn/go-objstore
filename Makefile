@@ -254,13 +254,6 @@ integration-test-replication:
 	@cd test/integration/replication && $(DOCKER_COMPOSE) down -v
 	@echo "$(GREEN)✓ Replication integration tests complete$(RESET)"
 
-.PHONY: integration-test-encryption
-## integration-test-encryption: Run encryption integration tests
-integration-test-encryption:
-	@echo "$(CYAN)$(BOLD)→ Running encryption integration tests...$(RESET)"
-	@$(GO) test -tags=integration -v ./pkg/encryption
-	@echo "$(GREEN)✓ Encryption integration tests complete$(RESET)"
-
 .PHONY: integration-test-cli
 ## integration-test-cli: Run CLI integration tests in Docker
 integration-test-cli:
@@ -282,8 +275,7 @@ test-servers:
 	@cd test/integration/server && bash generate-certs.sh
 	@echo "$(CYAN)  Starting server test environment...$(RESET)"
 	@cd test/integration/server && $(DOCKER_COMPOSE) down -v >/dev/null 2>&1 || true
-	@cd test/integration/server && $(DOCKER_COMPOSE) up --abort-on-container-exit --exit-code-from test
-	@cd test/integration/server && $(DOCKER_COMPOSE) down -v
+	@cd test/integration/server && $(DOCKER_COMPOSE) up --build --abort-on-container-exit --exit-code-from test; status=$$?; $(DOCKER_COMPOSE) down -v; exit $$status
 	@echo "$(GREEN)✓ Server integration tests complete$(RESET)"
 
 .PHONY: integration-test-all
@@ -306,6 +298,36 @@ test-sdks:
 integration-test-sdks:
 	@echo "$(CYAN)$(BOLD)→ Running all SDK integration tests...$(RESET)"
 	@cd api/sdks && $(MAKE) integration-test
+
+.PHONY: conformance-test
+## conformance-test: Run the cross-protocol conformance suite (all 5 transports against one server)
+conformance-test:
+	@echo "$(CYAN)$(BOLD)→ Running cross-protocol conformance suite...$(RESET)"
+	@cd api/sdks/go && go test -tags conformance -run TestConformance -count=1 -timeout 300s -v .
+	@echo "$(GREEN)✓ Conformance suite complete$(RESET)"
+
+.PHONY: sdk-smoke
+## sdk-smoke: Run SDK e2e smoke tests against a locally launched server (MCP + Unix transports)
+sdk-smoke:
+	@echo "$(CYAN)$(BOLD)→ Running SDK e2e smoke tests...$(RESET)"
+	@bash -c 'set -e; \
+		eval "$$(./scripts/start-test-server.sh)"; \
+		trap "kill $$(cat /tmp/objstore-smoke.pid) 2>/dev/null || true" EXIT; \
+		echo "→ Go SDK smoke"; \
+		(cd api/sdks/go && go test -tags e2esmoke -run TestE2ESmoke -count=1 -v .); \
+		if command -v python3 >/dev/null && python3 -c "import pytest" 2>/dev/null; then \
+			echo "→ Python SDK smoke"; (cd api/sdks/python && python3 -m pytest tests/e2e -q); \
+		else echo "⊘ Python smoke skipped (pytest unavailable)"; fi; \
+		if command -v ruby >/dev/null && (cd api/sdks/ruby && bundle exec rspec --version >/dev/null 2>&1); then \
+			echo "→ Ruby SDK smoke"; (cd api/sdks/ruby && bundle exec rspec spec/e2e); \
+		else echo "⊘ Ruby smoke skipped (rspec unavailable)"; fi; \
+		if command -v npx >/dev/null && [ -d api/sdks/typescript/node_modules ]; then \
+			echo "→ TypeScript SDK smoke"; (cd api/sdks/typescript && npx jest tests/e2e); \
+		else printf "$(YELLOW)⊘ TypeScript smoke skipped (requires node/npx and node_modules)$(RESET)\n"; fi; \
+		if command -v dotnet >/dev/null && dotnet --list-sdks 2>/dev/null | grep -q "^9\."; then \
+			echo "→ C# SDK smoke"; (cd api/sdks/csharp && dotnet test Tests/Tests.csproj --filter "Category=E2E"); \
+		else printf "$(YELLOW)⊘ C# smoke skipped (requires .NET 9 SDK)$(RESET)\n"; fi'
+	@echo "$(GREEN)✓ SDK smoke tests complete$(RESET)"
 
 .PHONY: test-sdk-typescript
 ## test-sdk-typescript: Run TypeScript SDK unit tests
@@ -601,9 +623,9 @@ security:
 	@echo "$(CYAN)  Running govulncheck...$(RESET)"
 	@GOPATH=$$(go env GOPATH); \
 	if [ -x "$$GOPATH/bin/govulncheck" ]; then \
-		$$GOPATH/bin/govulncheck ./... && echo "$(GREEN)✓ govulncheck passed$(RESET)" || echo "$(YELLOW)⚠ govulncheck found vulnerabilities$(RESET)"; \
+		$$GOPATH/bin/govulncheck ./... && echo "$(GREEN)✓ govulncheck passed$(RESET)" || { echo "$(RED)✗ govulncheck found vulnerabilities (blocking, mirrors GitHub CI)$(RESET)"; exit 1; }; \
 	elif command -v govulncheck > /dev/null 2>&1; then \
-		govulncheck ./... && echo "$(GREEN)✓ govulncheck passed$(RESET)" || echo "$(YELLOW)⚠ govulncheck found vulnerabilities$(RESET)"; \
+		govulncheck ./... && echo "$(GREEN)✓ govulncheck passed$(RESET)" || { echo "$(RED)✗ govulncheck found vulnerabilities (blocking, mirrors GitHub CI)$(RESET)"; exit 1; }; \
 	else \
 		echo "$(YELLOW)⚠ govulncheck not found (skipping)$(RESET)"; \
 		echo "$(YELLOW)  Install: make install-security-tools$(RESET)"; \
@@ -613,16 +635,19 @@ security:
 	@echo "$(GREEN)✓ Security checks complete$(RESET)"
 
 .PHONY: ci
-## ci: Run the full CI pipeline locally (mirrors .github/workflows/ci.yml, Go-core only; SDKs via test-sdks-all)
+## ci: Run the full CI pipeline locally (mirrors .github/workflows/ci.yml, Go-core only; SDK suites run via test-sdks/test-sdks-all)
 ci:
 	@echo "$(CYAN)$(BOLD)========================================$(RESET)"
 	@echo "$(CYAN)$(BOLD)  Running CI Pipeline (mirrors GitHub CI)$(RESET)"
 	@echo "$(CYAN)$(BOLD)========================================$(RESET)"
 	@echo ""
-	@echo "$(CYAN)$(BOLD)[1/6] Verifying module dependencies...$(RESET)"
+	@echo "$(CYAN)$(BOLD)[1/8] Verifying module dependencies...$(RESET)"
 	@$(GO) mod verify || (echo "$(RED)✗ Module verification failed$(RESET)" && exit 1)
 	@echo ""
-	@echo "$(CYAN)$(BOLD)[2/6] Running unit tests with coverage...$(RESET)"
+	@echo "$(CYAN)$(BOLD)[2/8] Verifying version consistency...$(RESET)"
+	@$(MAKE) version-check || (echo "$(RED)✗ Version check failed$(RESET)" && exit 1)
+	@echo ""
+	@echo "$(CYAN)$(BOLD)[3/8] Running unit tests with coverage...$(RESET)"
 	@$(MAKE) test || (echo "$(RED)✗ Tests failed$(RESET)" && exit 1)
 	@COVERAGE=$$($(GO) tool cover -func=$(COVERAGE_DIR)/unit.out | grep total | awk '{print $$3}' | sed 's/%//'); \
 	echo "  Coverage: $${COVERAGE}% (threshold: $(COVERAGE_THRESHOLD)%)"; \
@@ -631,18 +656,21 @@ ci:
 		exit 1; \
 	fi
 	@echo ""
-	@echo "$(CYAN)$(BOLD)[3/6] Running linter...$(RESET)"
+	@echo "$(CYAN)$(BOLD)[4/8] Running cross-protocol conformance suite...$(RESET)"
+	@$(MAKE) conformance-test || (echo "$(RED)✗ Conformance tests failed$(RESET)" && exit 1)
+	@echo ""
+	@echo "$(CYAN)$(BOLD)[5/8] Running linter...$(RESET)"
 	@$(MAKE) lint || (echo "$(RED)✗ Linting failed$(RESET)" && exit 1)
 	@echo ""
-	@echo "$(CYAN)$(BOLD)[4/6] Running security checks...$(RESET)"
+	@echo "$(CYAN)$(BOLD)[6/8] Running security checks...$(RESET)"
 	@$(MAKE) security || (echo "$(RED)✗ Security checks failed$(RESET)" && exit 1)
 	@echo ""
-	@echo "$(CYAN)$(BOLD)[5/6] Building binaries...$(RESET)"
+	@echo "$(CYAN)$(BOLD)[7/8] Building binaries...$(RESET)"
 	@WITH_LOCAL=1 WITH_AWS=1 WITH_GCP=1 WITH_AZURE=1 $(MAKE) build-cli || (echo "$(RED)✗ CLI build failed$(RESET)" && exit 1)
 	@WITH_LOCAL=1 WITH_AWS=1 WITH_GCP=1 WITH_AZURE=1 $(MAKE) build-server || (echo "$(RED)✗ Server build failed$(RESET)" && exit 1)
 	@WITH_LOCAL=1 WITH_AWS=1 WITH_GCP=1 WITH_AZURE=1 $(MAKE) lib || (echo "$(RED)✗ Library build failed$(RESET)" && exit 1)
 	@echo ""
-	@echo "$(CYAN)$(BOLD)[6/6] Running integration tests...$(RESET)"
+	@echo "$(CYAN)$(BOLD)[8/8] Running integration tests...$(RESET)"
 	@$(MAKE) integration-test || (echo "$(RED)✗ Integration tests failed$(RESET)" && exit 1)
 	@echo ""
 	@echo "$(GREEN)$(BOLD)========================================$(RESET)"

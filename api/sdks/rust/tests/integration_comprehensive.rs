@@ -116,13 +116,15 @@ async fn try_create_client(
             Ok(Some(c))
         }
         Protocol::Grpc => {
-            let c = ObjectStoreClient::grpc(grpc_endpoint()).await.map_err(|e| {
-                format!(
-                    "[FAIL] gRPC client unavailable at {}: {}",
-                    grpc_endpoint(),
-                    e
-                )
-            })?;
+            let c = ObjectStoreClient::grpc(grpc_endpoint())
+                .await
+                .map_err(|e| {
+                    format!(
+                        "[FAIL] gRPC client unavailable at {}: {}",
+                        grpc_endpoint(),
+                        e
+                    )
+                })?;
             Ok(Some(c))
         }
         Protocol::Quic => {
@@ -169,15 +171,9 @@ fn is_quic_docker_skip(protocol: Protocol, err: &dyn std::fmt::Debug) -> bool {
 ///   not scheduling).  We use Transparent as the correct zero-value default.
 fn canonical_replication_policy(id: &str) -> ReplicationPolicy {
     let mut source_settings = HashMap::new();
-    source_settings.insert(
-        "path".to_string(),
-        format!("/tmp/repl-src-{}", id),
-    );
+    source_settings.insert("path".to_string(), format!("/tmp/repl-src-{}", id));
     let mut dest_settings = HashMap::new();
-    dest_settings.insert(
-        "path".to_string(),
-        format!("/tmp/repl-dst-{}", id),
-    );
+    dest_settings.insert("path".to_string(), format!("/tmp/repl-dst-{}", id));
     ReplicationPolicy {
         id: id.to_string(),
         source_backend: "local".to_string(),
@@ -341,7 +337,9 @@ async fn test_list(
 
     for i in 0..5 {
         let k = format!("{}file{}.txt", prefix, i);
-        client.put(&k, data(&format!("content {}", i)), None).await?;
+        client
+            .put(&k, data(&format!("content {}", i)), None)
+            .await?;
         keys.push(k);
     }
 
@@ -420,7 +418,11 @@ async fn test_update_metadata(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let k = key(protocol, "update-metadata.txt");
     client
-        .put(&k, data("update-metadata test"), Some(metadata_with(&[("version", "1.0")])))
+        .put(
+            &k,
+            data("update-metadata test"),
+            Some(metadata_with(&[("version", "1.0")])),
+        )
         .await?;
 
     let original = client.get_metadata(&k).await?;
@@ -578,7 +580,9 @@ async fn test_apply_policies(
         .await?;
 
     let obj_key = "integration/apply-policies/marker.txt";
-    client.put(obj_key, data("apply-policies marker"), None).await?;
+    client
+        .put(obj_key, data("apply-policies marker"), None)
+        .await?;
 
     let (processed, deleted) = client.apply_policies().await?;
     // processed and deleted are counts — they must be non-negative integers.
@@ -861,11 +865,10 @@ async fn test_remove_replication_policy(
 fn is_not_found_error(protocol: Protocol, err: &go_objstore::Error) -> bool {
     match err {
         go_objstore::Error::NotFound(_) => true,
-        go_objstore::Error::GrpcStatus(s) if matches!(protocol, Protocol::Grpc | Protocol::Quic) => {
-            matches!(
-                s.code(),
-                tonic::Code::NotFound | tonic::Code::Internal
-            )
+        go_objstore::Error::GrpcStatus(s)
+            if matches!(protocol, Protocol::Grpc | Protocol::Quic) =>
+        {
+            matches!(s.code(), tonic::Code::NotFound | tonic::Code::Internal)
         }
         _ => false,
     }
@@ -925,7 +928,10 @@ async fn test_update_metadata_nonexistent(
     client: ObjectStoreClient,
     protocol: Protocol,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let k = key(protocol, "error-update-metadata-nonexistent-zzz-no-such-key.txt");
+    let k = key(
+        protocol,
+        "error-update-metadata-nonexistent-zzz-no-such-key.txt",
+    );
     let _ = client.delete(&k).await; // prime state
 
     let meta = metadata_with(&[("test", "value")]);
@@ -970,7 +976,8 @@ async fn test_large_object(
         protocol.name()
     );
     assert_eq!(
-        retrieved, large_data,
+        retrieved,
+        large_data,
         "large_object on {}: retrieved bytes must equal original bytes",
         protocol.name()
     );
@@ -1064,49 +1071,49 @@ protocol_test!(Rest, test_replication_add, test_add_replication_policy);
 protocol_test!(Grpc, test_replication_add, test_add_replication_policy);
 protocol_test!(Quic, test_replication_add, test_add_replication_policy);
 
-protocol_test!(Rest, test_replication_get_all, test_get_replication_policies);
-protocol_test!(Grpc, test_replication_get_all, test_get_replication_policies);
-protocol_test!(Quic, test_replication_get_all, test_get_replication_policies);
-
 protocol_test!(
     Rest,
-    test_replication_get_one,
-    test_get_replication_policy
+    test_replication_get_all,
+    test_get_replication_policies
 );
 protocol_test!(
     Grpc,
-    test_replication_get_one,
-    test_get_replication_policy
+    test_replication_get_all,
+    test_get_replication_policies
 );
 protocol_test!(
     Quic,
-    test_replication_get_one,
-    test_get_replication_policy
+    test_replication_get_all,
+    test_get_replication_policies
 );
+
+protocol_test!(Rest, test_replication_get_one, test_get_replication_policy);
+protocol_test!(Grpc, test_replication_get_one, test_get_replication_policy);
+protocol_test!(Quic, test_replication_get_one, test_get_replication_policy);
 
 protocol_test!(Rest, test_replication_trigger, test_trigger_replication);
 protocol_test!(Grpc, test_replication_trigger, test_trigger_replication);
 protocol_test!(Quic, test_replication_trigger, test_trigger_replication);
 
+protocol_test!(Rest, test_replication_status, test_get_replication_status);
+protocol_test!(Grpc, test_replication_status, test_get_replication_status);
+protocol_test!(Quic, test_replication_status, test_get_replication_status);
+
 protocol_test!(
     Rest,
-    test_replication_status,
-    test_get_replication_status
+    test_replication_remove,
+    test_remove_replication_policy
 );
 protocol_test!(
     Grpc,
-    test_replication_status,
-    test_get_replication_status
+    test_replication_remove,
+    test_remove_replication_policy
 );
 protocol_test!(
     Quic,
-    test_replication_status,
-    test_get_replication_status
+    test_replication_remove,
+    test_remove_replication_policy
 );
-
-protocol_test!(Rest, test_replication_remove, test_remove_replication_policy);
-protocol_test!(Grpc, test_replication_remove, test_remove_replication_policy);
-protocol_test!(Quic, test_replication_remove, test_remove_replication_policy);
 
 // Close (1 op) — all protocols
 protocol_test!(Rest, test_close_op, test_close);
@@ -1181,11 +1188,7 @@ async fn test_cross_protocol_consistency() -> Result<(), Box<dyn std::error::Err
             let (proto_a, client_a) = &available[i];
             let (proto_b, client_b) = &available[j];
 
-            let k = format!(
-                "cross-proto-{}-to-{}.txt",
-                proto_a.name(),
-                proto_b.name()
-            );
+            let k = format!("cross-proto-{}-to-{}.txt", proto_a.name(), proto_b.name());
 
             // Step 1: put via A
             let put_meta = Metadata {
@@ -1193,7 +1196,10 @@ async fn test_cross_protocol_consistency() -> Result<(), Box<dyn std::error::Err
                 size: 0,
                 ..Default::default()
             };
-            match client_a.put(&k, content_bytes.clone(), Some(put_meta)).await {
+            match client_a
+                .put(&k, content_bytes.clone(), Some(put_meta))
+                .await
+            {
                 Ok(resp) => {
                     assert!(
                         resp.success,
@@ -1225,7 +1231,8 @@ async fn test_cross_protocol_consistency() -> Result<(), Box<dyn std::error::Err
             match client_b.get(&k).await {
                 Ok((got_bytes, _)) => {
                     assert_eq!(
-                        got_bytes, content_bytes,
+                        got_bytes,
+                        content_bytes,
                         "cross-proto {}->{}: bytes read via {} must equal bytes written via {}",
                         proto_a.name(),
                         proto_b.name(),
@@ -1418,6 +1425,12 @@ fn canonical_replication_policy_fields() {
     assert_eq!(p.source_backend, "local");
     assert_eq!(p.destination_backend, "local");
     assert_eq!(p.check_interval_seconds, 3600);
-    assert_eq!(p.source_settings.get("path").unwrap(), "/tmp/repl-src-smoke-test");
-    assert_eq!(p.destination_settings.get("path").unwrap(), "/tmp/repl-dst-smoke-test");
+    assert_eq!(
+        p.source_settings.get("path").unwrap(),
+        "/tmp/repl-src-smoke-test"
+    );
+    assert_eq!(
+        p.destination_settings.get("path").unwrap(),
+        "/tmp/repl-dst-smoke-test"
+    );
 }

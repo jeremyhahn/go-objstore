@@ -19,12 +19,28 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"regexp"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
+
+// requestIDMaxLen is the maximum accepted length for an inbound X-Request-ID value.
+const requestIDMaxLen = 128
+
+// requestIDPattern is the allowlist for inbound request ID characters.
+var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+
+// sanitizeRequestID returns the inbound id if it passes validation, or an
+// empty string if it is malformed, too long, or empty.
+func sanitizeRequestID(id string) string {
+	if id == "" || len(id) > requestIDMaxLen || !requestIDPattern.MatchString(id) {
+		return ""
+	}
+	return id
+}
 
 // contextKey is a custom type for context keys to avoid collisions
 type contextKey string
@@ -50,13 +66,14 @@ func generateRequestID() string {
 	return hex.EncodeToString(bytes)
 }
 
-// RequestIDMiddleware creates a Gin middleware that generates/extracts request IDs
+// RequestIDMiddleware creates a Gin middleware that generates/extracts request IDs.
+// Inbound X-Request-ID values are sanitized (allowlist [A-Za-z0-9._-], max 128
+// chars). An inbound value that fails validation is replaced with a fresh
+// server-generated ID, preventing unsanitized client data from propagating.
 func RequestIDMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Check if request ID already exists in header
-		requestID := c.GetHeader(RequestIDHeader)
-
-		// Generate new ID if not present
+		// Sanitize the inbound header; fall back to a fresh ID if invalid.
+		requestID := sanitizeRequestID(c.GetHeader(RequestIDHeader))
 		if requestID == "" {
 			requestID = generateRequestID()
 		}
@@ -155,7 +172,7 @@ func RequestIDStreamInterceptor() grpc.StreamServerInterceptor {
 	}
 }
 
-// extractRequestIDFromMetadata extracts request ID from gRPC metadata
+// extractRequestIDFromMetadata extracts and sanitizes the request ID from gRPC metadata.
 func extractRequestIDFromMetadata(ctx context.Context) string {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
@@ -163,7 +180,7 @@ func extractRequestIDFromMetadata(ctx context.Context) string {
 	}
 
 	if values := md.Get(GRPCRequestIDKey); len(values) > 0 {
-		return values[0]
+		return sanitizeRequestID(values[0])
 	}
 
 	return ""

@@ -11,18 +11,19 @@ A unified object storage and file system abstraction library for Go.
 
 ## Features
 
-- **Facade Pattern**: Centralized, secure API for all storage operations
-- **Multi-Backend Support**: Work with multiple storage backends simultaneously
-- **Input Validation**: Built-in protection against injection attacks
 - Unified API across all storage backends
-- Replication and sync between storage backends with encryption support
-- Pluggable adapters for custom logging and authentication
-- Full filesystem interface with directory operations
+- Facade pattern with a single, validated entry point for all storage operations
+- Work with multiple storage backends at once
+- Input validation against path traversal and injection
+- Replication and sync between backends, with optional encryption
+- Pluggable adapters for logging and authentication
+- Filesystem interface with directory operations
 - Lifecycle policies for automatic deletion and archival
-- Multiple server protocols: gRPC, REST, QUIC/HTTP3, Unix socket, and MCP
-- CLI tool with flexible configuration options
+- Encryption at rest with pluggable encrypters
+- Server protocols: gRPC, REST, QUIC/HTTP3, Unix socket, and MCP
+- CLI tool configurable via file, environment, or flags
 - C API for embedding in C/C++ applications
-- TLS/mTLS support for secure communication
+- TLS/mTLS support
 
 ## Quick Start
 
@@ -96,7 +97,7 @@ if err != nil {
 storage.Put("greeting.txt", bytes.NewReader(data))
 ```
 
-**Note:** The facade pattern is recommended for new code as it provides centralized validation, multi-backend support, and enhanced security.
+**Note:** Use the facade pattern for new code. It adds input validation, multi-backend support, and sanitized error messages.
 
 ## Supported Backends
 
@@ -107,6 +108,7 @@ storage.Put("greeting.txt", bytes.NewReader(data))
 | MinIO | Storage | Self-hosted S3-compatible object storage |
 | GCS | Storage | Google Cloud object storage |
 | Azure Blob | Storage | Microsoft Azure object storage |
+| Memory | Storage | Unit tests, ephemeral/in-memory |
 | Glacier | Archive-only | AWS long-term cold storage |
 | Azure Archive | Archive-only | Azure long-term cold storage |
 
@@ -118,6 +120,12 @@ storage.Put("greeting.txt", bytes.NewReader(data))
 storage, _ := factory.NewStorage("local", map[string]string{
     "path": "/var/data/storage",
 })
+```
+
+### Memory Storage
+
+```go
+storage, _ := factory.NewStorage("memory", map[string]string{})
 ```
 
 ### Amazon S3
@@ -169,15 +177,15 @@ storage, _ := factory.NewStorage("azure", map[string]string{
 
 ### Facade Pattern (Recommended)
 
-The facade pattern provides a centralized, secure API for working with multiple storage backends. It prevents leaky abstractions and ensures consistent validation across all entry points.
+The facade is a single API for working with multiple storage backends. It validates input consistently at every entry point.
 
 #### Benefits
 
-- **Multi-Backend Support**: Work with multiple storage backends simultaneously
-- **Backend Routing**: Use `backend:key` syntax to target specific backends
-- **Automatic Validation**: Built-in protection against path traversal, injection attacks, and malformed input
-- **Centralized API**: Single entry point for all storage operations
-- **Security**: Sanitized error messages prevent information disclosure
+- Work with multiple storage backends at once
+- Target a specific backend with the `backend:key` syntax
+- Validates input against path traversal, injection, and malformed keys
+- Single entry point for all storage operations
+- Sanitized error messages that don't disclose internal detail
 
 #### Multi-Backend Example
 
@@ -307,6 +315,166 @@ archivePolicy := common.LifecyclePolicy{
 storage.AddPolicy(archivePolicy)
 ```
 
+### Replication
+
+Replicate and sync data between storage backends with optional encryption:
+
+```go
+import (
+    "context"
+    "time"
+    "github.com/jeremyhahn/go-objstore/pkg/objstore"
+)
+
+// Enable replication on the default backend
+objstore.EnableReplication("", &objstore.ReplicationConfig{
+    PolicyFilePath:  "/data/replication-policies.json",
+    Interval:        10 * time.Minute,
+    RunInBackground: true,
+})
+
+// Get the replication manager
+mgr, _ := objstore.GetReplicationManager("")
+
+// Create a local-to-local replication policy
+policy := common.ReplicationPolicy{
+    ID:                  "backup-daily",
+    SourceBackend:       "local",
+    SourceSettings:      map[string]string{"path": "/data/source"},
+    SourcePrefix:        "documents/",
+    DestinationBackend:  "local",
+    DestinationSettings: map[string]string{"path": "/data/backup"},
+    CheckInterval:       1 * time.Hour,
+    Enabled:             true,
+    ReplicationMode:     common.ReplicationModeTransparent,
+}
+
+// Add the policy
+mgr.AddPolicy(policy)
+
+// Trigger sync for a specific policy
+result, _ := mgr.SyncPolicy(context.Background(), "backup-daily")
+fmt.Printf("Synced %d objects, %d bytes\n", result.Synced, result.BytesTotal)
+
+// Or sync all policies in parallel
+result, _ := mgr.SyncAllParallel(context.Background(), 4)
+```
+
+**Replication modes:**
+- `transparent`: Decrypts at source and re-encrypts at destination (use when source and destination have different DEKs)
+- `opaque`: Copies encrypted blobs as-is without DEK operations (use for backup scenarios or performance)
+
+**Three-layer encryption:**
+1. Backend at-rest encryption (EncryptionPolicy.Backend)
+2. Source DEK layer (EncryptionPolicy.Source)
+3. Destination DEK layer (EncryptionPolicy.Destination)
+
+### Encryption at Rest
+
+Add transparent encryption to any storage backend:
+
+```go
+import (
+    "github.com/jeremyhahn/go-objstore/pkg/common"
+)
+
+// Create an encrypter factory (example: using a KMS adapter)
+factory := yourKMSAdapter.GetEncrypterFactory()
+
+// Wrap the storage with encryption
+encrypted := common.NewEncryptedStorage(storage, factory)
+
+// Now all Put/Get operations are encrypted/decrypted transparently
+encrypted.Put("sensitive-data.txt", reader)
+encrypted.Get("sensitive-data.txt")
+```
+
+See the [encryption example](examples/encryption/) for a complete AES-256-GCM implementation with KMS adapter.
+
+### Authentication & Authorization
+
+Authentication and authorization are pluggable:
+
+```go
+import (
+    "github.com/jeremyhahn/go-objstore/pkg/adapters"
+)
+
+// Default: allow-all (library-first, no auth required)
+auth := adapters.NewNoOpAuthenticator()
+authz := adapters.NewNoOpAuthorizer()
+
+// Bearer token authentication
+auth := adapters.NewBearerTokenAuthenticator(
+    func(ctx context.Context, token string) (*adapters.Principal, error) {
+        // Validate token and return principal
+        return &adapters.Principal{
+            ID:    "user-123",
+            Name:  "Alice",
+            Type:  "user",
+            Roles: []string{"reader"},
+        }, nil
+    },
+)
+
+// Role-based authorization
+authz := adapters.NewRBACAuthorizer(map[string][]string{
+    "reader":  {adapters.ActionRead, adapters.ActionList},
+    "editor":  {adapters.ActionRead, adapters.ActionWrite, adapters.ActionList},
+    "admin":   {"*"}, // Wildcard grants all actions
+})
+
+// Composite authenticator (try multiple methods)
+auth := adapters.NewCompositeAuthenticator(
+    adapters.NewBearerTokenAuthenticator(validateJWT),
+    adapters.NewMTLSAuthenticator(extractFromCert, caRoots),
+)
+```
+
+**Action vocabulary:** `read`, `write`, `delete`, `list`, `admin`
+
+**Resource categories:** `object`, `policy`, `replication`
+
+**Unix socket authentication (Linux):** The Unix socket server derives principals from process credentials (UID/GID) via SO_PEERCRED; socket file permissions are the primary access gate.
+
+### Audit Logging
+
+Record storage operations to an audit log:
+
+```go
+import (
+    "github.com/jeremyhahn/go-objstore/pkg/audit"
+)
+
+// Create an audit logger
+auditLog := audit.NewDefaultAuditLogger()
+
+// Log authentication events
+auditLog.LogAuthFailure(ctx, "user-123", "alice", "192.168.1.1", "req-456", "invalid credentials")
+auditLog.LogAuthSuccess(ctx, "user-123", "alice", "192.168.1.1", "req-456")
+
+// Log object operations
+auditLog.LogObjectMutation(
+    ctx,
+    audit.EventObjectCreated,
+    "user-123", "alice", "bucket", "file.txt",
+    "192.168.1.1", "req-456",
+    1024, // bytes transferred
+    audit.ResultSuccess,
+    nil,  // error
+)
+
+// Log access
+auditLog.LogObjectAccess(ctx, "user-123", "alice", "bucket", "file.txt",
+    "192.168.1.1", "req-456", audit.ResultSuccess, nil)
+
+// Log policy changes
+auditLog.LogPolicyChange(ctx, "user-123", "alice", "bucket", "policy-1",
+    "192.168.1.1", "req-456", audit.ResultSuccess, nil)
+```
+
+**Event types:** AUTH_FAILURE, AUTH_SUCCESS, OBJECT_CREATED, OBJECT_DELETED, OBJECT_ACCESSED, OBJECT_METADATA_UPDATED, OBJECT_ARCHIVED, POLICY_CHANGED, LIST_OBJECTS
+
 ### Context Support
 
 All operations support context for cancellation and timeouts:
@@ -372,6 +540,29 @@ if result.Truncated {
 }
 ```
 
+## Client SDKs
+
+Official client SDKs are available for six languages. Each implements the same 19 canonical operations and auto-selects an available protocol (REST, gRPC, or QUIC).
+
+| Language | Package | Operations | Protocols |
+|----------|---------|-----------|-----------|
+| Python | `pip install go-objstore` | 19 | REST, gRPC, QUIC |
+| Ruby | `gem install go-objstore` | 19 | REST, gRPC, QUIC |
+| Go | `go get github.com/jeremyhahn/go-objstore/api/sdks/go` | 19 | REST, gRPC, QUIC |
+| Rust | `cargo add go-objstore` | 19 | REST, gRPC, QUIC |
+| TypeScript/JavaScript | `npm install @go-objstore/client` | 19 | REST, gRPC, QUIC |
+| C# | `dotnet add go-objstore` | 19 | REST, gRPC, QUIC |
+
+**Canonical operations (19):**
+- Objects: Put, Get, Delete, List, Exists
+- Metadata: GetMetadata, UpdateMetadata
+- Service: Health
+- Archival: Archive
+- Lifecycle: AddPolicy, RemovePolicy, GetPolicies, ApplyPolicies
+- Replication: AddReplicationPolicy, RemoveReplicationPolicy, GetReplicationPolicies, GetReplicationPolicy, TriggerReplication, GetReplicationStatus
+
+For per-language installation and usage, see [api/sdks/README.md](api/sdks/README.md).
+
 ## C API
 
 Embed go-objstore in C/C++ applications:
@@ -417,7 +608,7 @@ LD_LIBRARY_PATH=./bin ./myapp
 
 ## Documentation
 
-Complete documentation is available in the [docs/](docs/) directory.
+Documentation is in the [docs/](docs/) directory.
 
 ### Architecture
 
@@ -432,7 +623,7 @@ Complete documentation is available in the [docs/](docs/) directory.
 
 - [Configuration Guide](docs/configuration/README.md)
 - [Storage Backends](docs/configuration/storage-backends.md)
-- [Servers](docs/configuration/grpc-server.md) (gRPC, REST, QUIC, MCP)
+- [Servers](docs/configuration/grpc-server.md) (gRPC, REST, QUIC, Unix socket, MCP)
 - [Encryption](docs/configuration/encryption.md)
 - [Lifecycle Policies](docs/configuration/lifecycle.md)
 - [CLI Tool](docs/configuration/cli.md)
@@ -453,7 +644,12 @@ Complete documentation is available in the [docs/](docs/) directory.
 
 Example code is available in the [examples/](examples/) directory:
 
+- [Basic Usage](examples/basic-usage/) - Simple storage operations
 - [C Client](examples/c_client/) - Using from C applications
+- [Encryption](examples/encryption/) - Transparent encryption with KMS adapter
+- [Facade Usage](examples/facade-usage/) - Multi-backend facade pattern
+- [gRPC Client](examples/grpc-client/) - gRPC client usage
+- [Lifecycle Policies](examples/lifecycle-policies/) - Automated retention and archival
 - [StorageFS](examples/storagefs/) - Filesystem interface examples
 
 ## Project Structure
@@ -464,6 +660,7 @@ go-objstore/
 │   ├── factory/               # Backend factory
 │   ├── common/                # Shared interfaces and types
 │   ├── local/                 # Local filesystem backend
+│   ├── memory/                # In-memory storage backend
 │   ├── s3/                    # Amazon S3 backend
 │   ├── gcs/                   # Google Cloud Storage backend
 │   ├── azure/                 # Azure Blob Storage backend
@@ -474,9 +671,10 @@ go-objstore/
 │   ├── replication/           # Replication engine
 │   ├── audit/                 # Audit logging
 │   ├── adapters/              # Custom logging and TLS adapters
-│   ├── pool/                  # Connection pooling
+│   ├── pool/                  # Volume pool (backend placement)
 │   ├── cli/                   # CLI commands and config
 │   ├── version/               # Version information
+│   ├── objstore/              # Facade pattern implementation
 │   └── server/                # Server implementations
 │       ├── grpc/              # gRPC server
 │       ├── rest/              # REST API server
@@ -495,8 +693,9 @@ go-objstore/
 ├── api/                       # API definitions
 │   ├── proto/                 # Protocol buffers for gRPC
 │   ├── openapi/               # OpenAPI specs for REST
-│   └── mcp/                   # MCP server configuration
-├── examples/                   # Usage examples
+│   ├── mcp/                   # MCP server configuration
+│   └── sdks/                  # Official client SDKs (Python, Ruby, Go, Rust, TypeScript, C#)
+├── examples/                  # Usage examples
 ├── test/integration/          # Integration tests
 └── docs/                      # Documentation
 ```
@@ -505,7 +704,7 @@ go-objstore/
 
 ### Prerequisites
 
-- Go 1.26.3 or higher
+- Go 1.26.4 or higher
 - Docker (for integration tests)
 - Make
 
@@ -551,7 +750,7 @@ make integration-test-factory
 # Run CLI integration tests
 make integration-test-cli
 
-# Run server integration tests (gRPC, REST, QUIC, MCP)
+# Run server integration tests (gRPC, REST, QUIC, Unix socket, MCP)
 make test-servers
 
 # Generate coverage report
@@ -563,7 +762,7 @@ make coverage-check
 
 ### Test Coverage
 
-Unit tests run quickly with no external dependencies. Integration tests use Docker-based emulators for all servers and backends. CLI integration tests automatically build the CLI binary if not present. Security scanning is performed using gosec and govulncheck. For detailed coverage statistics, see the badge above or run `make coverage-report`.
+Unit tests run with no external dependencies. Integration tests use Docker-based emulators for the servers and backends. CLI integration tests build the CLI binary if it isn't present. Security scanning uses gosec and govulncheck. For coverage statistics, see the badge above or run `make coverage-report`.
 
 ## Architecture
 
@@ -604,18 +803,18 @@ type Storage interface {
 
 ### Factory Pattern
 
-The factory pattern provides a uniform way to create backends:
+The factory creates backends through a single function:
 
 ```go
 storage, err := factory.NewStorage(backendType, config)
 archiver, err := factory.NewArchiver(archiverType, config)
 ```
 
-This abstracts backend-specific initialization while ensuring a consistent interface.
+It hides backend-specific initialization behind one interface.
 
 ## Performance
 
-All backends support concurrent read/write operations. Use buffered I/O for better performance. The local backend is fastest for development and testing. Cloud backends have network I/O overhead. See [docs/testing.md](docs/testing.md) for benchmarks.
+All backends support concurrent reads and writes. Buffered I/O helps throughput. The local backend is the fastest; cloud backends add network overhead. See [docs/testing.md](docs/testing.md) for benchmarks.
 
 ## Best Practices
 
@@ -629,7 +828,7 @@ All backends support concurrent read/write operations. Use buffered I/O for bett
 
 ## Server Interfaces
 
-The project provides flexible server deployment options with both an all-in-one multi-protocol server and individual server binaries for each protocol.
+There are two ways to run servers: an all-in-one multi-protocol binary, or individual binaries per protocol.
 
 ### CLI Tool
 
@@ -658,16 +857,44 @@ cat data.txt | ./bin/objstore put - mykey
 # List objects
 ./bin/objstore list
 
+# Check if object exists
+./bin/objstore exists mykey
+
+# Retrieve only an object's metadata (a flag on get, not a separate command)
+./bin/objstore get mykey --metadata
+
+# Lifecycle policy management
+# Args: <id> <prefix> <retention-days> <action>  (action: delete or archive)
+./bin/objstore policy add cleanup logs/ 30 delete
+./bin/objstore policy list
+./bin/objstore policy remove cleanup
+./bin/objstore policy apply
+
+# Replication management
+# Args: <id> <source-backend> <destination-backend>; paths/options via flags
+./bin/objstore replication add backup-daily local local \
+  --source-path /data/source --dest-path /data/backup --interval 1h
+./bin/objstore replication list
+./bin/objstore replication trigger backup-daily
+./bin/objstore replication status backup-daily
+
+# Health check
+./bin/objstore health
+
+# Remote operation (against a running server)
+./bin/objstore get mykey --server http://localhost:8080 --server-protocol rest
+./bin/objstore get mykey --server localhost:50051 --server-protocol grpc
+
 # Configure via config file, env vars, or flags
 ./bin/objstore --config .objstore.yaml put mykey data.txt
 ```
 
 ### All-in-One Multi-Protocol Server
 
-Run all four server protocols simultaneously with a single binary:
+Run all five server protocols simultaneously with a single binary:
 
 ```bash
-# Start all services (gRPC, REST, QUIC, MCP)
+# Start all services (gRPC, REST, QUIC, Unix socket, MCP)
 ./bin/objstore-server --quic-self-signed
 
 # Customize ports and addresses
@@ -676,10 +903,11 @@ Run all four server protocols simultaneously with a single binary:
   --rest-port 8080 \
   --quic-addr :4433 \
   --mcp-addr :8081 \
+  --unix --unix-socket /var/run/objstore.sock \
   --quic-self-signed
 
 # Disable specific services
-./bin/objstore-server --quic=false --mcp=false
+./bin/objstore-server --grpc=false --quic=false
 
 # With production TLS for QUIC
 ./bin/objstore-server \
@@ -726,6 +954,8 @@ MCP Server:
 # HTTP mode
 ./bin/objstore-mcp-server -mode http -addr :8081
 ```
+
+**Note:** There is no standalone Unix socket server binary. The Unix socket server is available only via the all-in-one `objstore-server --unix` command.
 
 ### Deployment Patterns
 

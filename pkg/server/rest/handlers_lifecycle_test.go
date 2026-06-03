@@ -53,7 +53,7 @@ func (m *mockLifecycleStorage) Archive(key string, destination common.Archiver) 
 		return m.archiveError
 	}
 	if _, exists := m.objects[key]; !exists {
-		return errors.New("object not found")
+		return common.ErrKeyNotFound
 	}
 	return nil
 }
@@ -65,7 +65,7 @@ func (m *mockLifecycleStorage) AddPolicy(policy common.LifecyclePolicy) error {
 	// Check for duplicate ID
 	for _, p := range m.policies {
 		if p.ID == policy.ID {
-			return errors.New("policy already exists")
+			return common.ErrAlreadyExists
 		}
 	}
 	m.policies = append(m.policies, policy)
@@ -82,7 +82,7 @@ func (m *mockLifecycleStorage) RemovePolicy(id string) error {
 			return nil
 		}
 	}
-	return errors.New("policy not found")
+	return common.ErrPolicyNotFound
 }
 
 func (m *mockLifecycleStorage) GetPolicies() ([]common.LifecyclePolicy, error) {
@@ -159,7 +159,8 @@ func TestArchiveObject(t *testing.T) {
 				DestinationType:     "local",
 				DestinationSettings: map[string]string{"path": "/tmp/archive-test"},
 			},
-			wantStatusCode: http.StatusInternalServerError,
+			// The shared taxonomy classifies missing objects as 404.
+			wantStatusCode: http.StatusNotFound,
 		},
 	}
 
@@ -719,10 +720,12 @@ func TestHandler_ExistsObject(t *testing.T) {
 			wantExists:     true,
 		},
 		{
+			// Per the OpenAPI contract existence is signaled by status code
+			// alone: 200 present, 404 absent, no body (HEAD endpoint).
 			name:           "object does not exist",
 			key:            "missing-file.txt",
 			objectExists:   false,
-			wantStatusCode: http.StatusOK,
+			wantStatusCode: http.StatusNotFound,
 			wantExists:     false,
 		},
 		{
@@ -767,19 +770,15 @@ func TestHandler_ExistsObject(t *testing.T) {
 				t.Errorf("ExistsObject() status = %v, want %v, body: %s", w.Code, tt.wantStatusCode, w.Body.String())
 			}
 
-			if w.Code == http.StatusOK {
-				var response map[string]any
-				if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-					t.Fatalf("Failed to unmarshal response: %v", err)
+			// Existence is conveyed by the status code; the response carries
+			// no body (the endpoint is HEAD-only in routing).
+			if w.Code == http.StatusOK || w.Code == http.StatusNotFound {
+				if w.Body.Len() != 0 {
+					t.Errorf("ExistsObject() must not write a body, got %q", w.Body.String())
 				}
-
-				exists, ok := response["exists"].(bool)
-				if !ok {
-					t.Fatal("Response missing exists field")
-				}
-
-				if exists != tt.wantExists {
-					t.Errorf("ExistsObject() exists = %v, want %v", exists, tt.wantExists)
+				gotExists := w.Code == http.StatusOK
+				if gotExists != tt.wantExists {
+					t.Errorf("ExistsObject() exists = %v, want %v", gotExists, tt.wantExists)
 				}
 			}
 		})

@@ -35,10 +35,8 @@ config:
 
 ### Optional Parameters
 - `endpoint` - Custom endpoint URL (for S3-compatible services)
-- `disable_ssl` - Disable SSL/TLS (default: false)
-- `force_path_style` - Use path-style addressing (default: false)
-- `max_retries` - Maximum retry attempts (default: 3)
-- `timeout` - Request timeout in seconds (default: 30)
+- `forcePathStyle` - Use path-style addressing when `endpoint` is set (`"true"`/`"false"`)
+- `accessKey` / `secretKey` - Static credentials (otherwise the AWS credential chain is used)
 
 ### Credentials
 Uses AWS SDK credential chain in order:
@@ -66,7 +64,7 @@ config:
   region: us-east-1
   bucket: data
   endpoint: https://minio.example.com:9000
-  force_path_style: true
+  forcePathStyle: "true"
 ```
 
 ## Google Cloud Storage
@@ -164,7 +162,7 @@ Archive-only backend for long-term storage.
 
 ### Required Parameters
 - `region` - AWS region
-- `vault` - Glacier vault name
+- `vaultName` - Glacier vault name
 
 ### Optional Parameters
 - `timeout` - Request timeout in seconds (default: 300)
@@ -177,8 +175,7 @@ Uses AWS SDK credential chain (same as S3).
 backend: glacier
 config:
   region: us-east-1
-  vault: long-term-archives
-  timeout: 600
+  vaultName: long-term-archives
 ```
 
 ### Important Notes
@@ -189,7 +186,7 @@ config:
 
 ## Azure Archive
 
-**Backend Type**: `azure-archive`
+**Backend Type**: `azurearchive`
 
 Archive-only backend using Azure Archive tier.
 
@@ -203,7 +200,7 @@ Archive-only backend using Azure Archive tier.
 
 ### Example Configuration
 ```yaml
-backend: azure-archive
+backend: azurearchive
 config:
   accountName: archiveaccount
   accountKey: base64_encoded_key==
@@ -233,7 +230,7 @@ Use `s3`, `gcs`, or `azure` for:
 - Feature-rich APIs
 
 ### Production - Archival
-Use `glacier` or `azure-archive` for:
+Use `glacier` or `azurearchive` for:
 - Long-term retention
 - Infrequently accessed data
 - Cost optimization

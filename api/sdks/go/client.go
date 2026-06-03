@@ -16,7 +16,7 @@ import (
 )
 
 // Client is the unified interface for interacting with go-objstore.
-// It supports REST, gRPC, and QUIC/HTTP3 protocols.
+// It supports REST, gRPC, QUIC/HTTP3, MCP, and Unix socket protocols.
 type Client interface {
 	// Object operations
 	Put(ctx context.Context, key string, data []byte, metadata *Metadata) (*PutResult, error)
@@ -51,6 +51,19 @@ type Client interface {
 
 	// Close the client connection
 	Close() error
+}
+
+// Streamer is an optional interface implemented by clients that support
+// streaming object data without buffering the entire body in memory.
+// Check for this interface with a type assertion before using it.
+type Streamer interface {
+	// GetStream retrieves an object as a streaming io.ReadCloser.
+	// The caller must close the returned reader when done.
+	GetStream(ctx context.Context, key string) (io.ReadCloser, *Metadata, error)
+
+	// PutStream stores an object from an io.Reader.  size is the number of
+	// bytes to read; pass -1 when unknown (chunked transfer).
+	PutStream(ctx context.Context, key string, r io.Reader, size int64, metadata *Metadata) (*PutResult, error)
 }
 
 // Metadata represents object metadata.
@@ -147,17 +160,17 @@ const (
 
 // ReplicationPolicy defines a replication configuration between storage backends.
 type ReplicationPolicy struct {
-	ID                     string
-	SourceBackend          string
-	SourceSettings         map[string]string
-	SourcePrefix           string
-	DestinationBackend     string
-	DestinationSettings    map[string]string
-	CheckIntervalSeconds   int64
-	LastSyncTime           time.Time
-	Enabled                bool
-	Encryption             *EncryptionPolicy
-	ReplicationMode        ReplicationMode
+	ID                   string
+	SourceBackend        string
+	SourceSettings       map[string]string
+	SourcePrefix         string
+	DestinationBackend   string
+	DestinationSettings  map[string]string
+	CheckIntervalSeconds int64
+	LastSyncTime         time.Time
+	Enabled              bool
+	Encryption           *EncryptionPolicy
+	ReplicationMode      ReplicationMode
 }
 
 // TriggerReplicationOptions configures a replication trigger request.
@@ -200,6 +213,11 @@ const (
 	ProtocolREST Protocol = "rest"
 	ProtocolGRPC Protocol = "grpc"
 	ProtocolQUIC Protocol = "quic"
+	// ProtocolMCP selects the MCP JSON-RPC 2.0 over HTTP transport.
+	ProtocolMCP Protocol = "mcp"
+	// ProtocolUnix selects the Unix domain socket JSON-RPC 2.0 transport.
+	// Address must be the filesystem path to the socket file.
+	ProtocolUnix Protocol = "unix"
 )
 
 // RetryConfig defines retry behavior for transient failures.
@@ -246,6 +264,22 @@ type ClientConfig struct {
 
 	// Retry configuration
 	Retry *RetryConfig
+
+	// App-layer auth (SDK transmits only; no auth logic is performed here).
+	//
+	// Token is sent as "Authorization: Bearer <Token>" on REST/QUIC/MCP requests
+	// and as the "authorization" metadata value on gRPC calls.
+	// Unix socket clients ignore Token since auth is handled by OS peercred
+	// server-side.
+	Token string
+
+	// Headers are additional HTTP headers added to every REST/QUIC/MCP request.
+	// For gRPC they are injected as outgoing metadata.
+	Headers map[string]string
+
+	// TenantID, when non-empty, is sent as the "X-Tenant-ID" header on
+	// REST/QUIC/MCP requests and as "x-tenant-id" metadata on gRPC calls.
+	TenantID string
 }
 
 // NewClient creates a new client with the specified configuration.
@@ -257,6 +291,10 @@ func NewClient(config *ClientConfig) (Client, error) {
 		return newGRPCClient(config)
 	case ProtocolQUIC:
 		return newQUICClient(config)
+	case ProtocolMCP:
+		return newMCPClient(config)
+	case ProtocolUnix:
+		return newUnixClient(config)
 	default:
 		return nil, ErrInvalidProtocol
 	}

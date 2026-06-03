@@ -493,6 +493,11 @@ mod error_tests {
     fn test_error_display() {
         let errors = vec![
             Error::NotFound("key".to_string()),
+            Error::Forbidden("denied".to_string()),
+            Error::Unauthenticated("no token".to_string()),
+            Error::AlreadyExists("key".to_string()),
+            Error::RateLimited("throttled".to_string()),
+            Error::InvalidArgument("bad key".to_string()),
             Error::OperationFailed("msg".to_string()),
             Error::Configuration("config".to_string()),
             Error::InvalidResponse("response".to_string()),
@@ -502,6 +507,24 @@ mod error_tests {
             // Just verify Display trait works
             let _ = format!("{}", err);
         }
+    }
+
+    #[test]
+    fn test_canonical_error_variants() {
+        // The canonical error variants are part of the public API and carry
+        // their payloads through Display.
+        assert!(Error::Unauthenticated("no token".to_string())
+            .to_string()
+            .contains("no token"));
+        assert!(Error::AlreadyExists("k".to_string())
+            .to_string()
+            .contains("k"));
+        assert!(Error::RateLimited("throttled".to_string())
+            .to_string()
+            .contains("throttled"));
+        assert!(Error::InvalidArgument("bad key".to_string())
+            .to_string()
+            .contains("bad key"));
     }
 }
 

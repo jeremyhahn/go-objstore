@@ -87,7 +87,7 @@ func (m *MockStorage) Get(key string) (io.ReadCloser, error) {
 func (m *MockStorage) GetWithContext(ctx context.Context, key string) (io.ReadCloser, error) {
 	content, ok := m.objects[key]
 	if !ok {
-		return nil, fmt.Errorf("object not found")
+		return nil, fmt.Errorf("object not found: %w", common.ErrKeyNotFound)
 	}
 	return &mockReadCloser{strings.NewReader(string(content))}, nil
 }
@@ -95,7 +95,7 @@ func (m *MockStorage) GetWithContext(ctx context.Context, key string) (io.ReadCl
 func (m *MockStorage) GetMetadata(ctx context.Context, key string) (*common.Metadata, error) {
 	metadata, ok := m.metadata[key]
 	if !ok {
-		return nil, fmt.Errorf("object not found")
+		return nil, fmt.Errorf("object not found: %w", common.ErrKeyNotFound)
 	}
 	if metadata == nil {
 		metadata = &common.Metadata{}
@@ -105,7 +105,7 @@ func (m *MockStorage) GetMetadata(ctx context.Context, key string) (*common.Meta
 
 func (m *MockStorage) UpdateMetadata(ctx context.Context, key string, metadata *common.Metadata) error {
 	if _, ok := m.objects[key]; !ok {
-		return fmt.Errorf("object not found")
+		return fmt.Errorf("object not found: %w", common.ErrKeyNotFound)
 	}
 	m.metadata[key] = metadata
 	return nil

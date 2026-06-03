@@ -16,7 +16,7 @@ package main
 import (
 	"context"
 	"flag"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -44,10 +44,11 @@ func main() {
 		},
 		DefaultBackend: "default",
 	}); err != nil {
-		log.Fatalf("Failed to initialize objstore facade: %v", err)
+		slog.Error("Failed to initialize objstore facade", "error", err)
+		os.Exit(1)
 	}
 
-	log.Printf("Initialized %s storage backend", *backend)
+	slog.Info("Initialized storage backend", "backend", *backend)
 
 	// Enable replication on the default backend
 	policyPath := *storagePath + "/.replication-policies.json"
@@ -55,9 +56,9 @@ func main() {
 		PolicyFilePath:  policyPath,
 		RunInBackground: false,
 	}); err != nil {
-		log.Printf("Warning: Failed to enable replication: %v", err)
+		slog.Warn("Failed to enable replication", "error", err)
 	} else {
-		log.Printf("Replication enabled with policy file: %s", policyPath)
+		slog.Info("Replication enabled", "policy_file", policyPath)
 	}
 
 	// Configure MCP server
@@ -68,7 +69,8 @@ func main() {
 	case "http":
 		serverMode = mcpserver.ModeHTTP
 	default:
-		log.Fatalf("Invalid mode: %s (must be 'stdio' or 'http')", *mode)
+		slog.Error("Invalid mode (must be 'stdio' or 'http')", "mode", *mode)
+		os.Exit(1)
 	}
 
 	config := &mcpserver.ServerConfig{
@@ -79,7 +81,8 @@ func main() {
 
 	server, err := mcpserver.NewServer(config)
 	if err != nil {
-		log.Fatalf("Failed to create MCP server: %v", err)
+		slog.Error("Failed to create MCP server", "error", err)
+		os.Exit(1)
 	}
 
 	// Create context that cancels on SIGINT/SIGTERM
@@ -91,16 +94,17 @@ func main() {
 
 	go func() {
 		sig := <-sigChan
-		log.Printf("Received signal: %v", sig)
+		slog.Info("Received signal", "signal", sig.String())
 		cancel()
 	}()
 
-	// Start server
-	log.Printf("Starting MCP server in %s mode", *mode)
+	// Start server (slog writes to stderr, keeping stdout free for stdio JSON-RPC)
+	slog.Info("Starting MCP server", "mode", *mode)
 	if err := server.Start(ctx); err != nil {
 		cancel()
-		log.Fatalf("Server error: %v", err)
+		slog.Error("Server error", "error", err)
+		os.Exit(1)
 	}
 
-	log.Println("MCP server stopped")
+	slog.Info("MCP server stopped")
 }

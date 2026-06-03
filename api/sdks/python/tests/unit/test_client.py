@@ -349,7 +349,7 @@ def test_unified_grpc_uses_default_host_port() -> None:
     """gRPC construction with neither host nor port falls back to defaults."""
     captured = {}
 
-    def _factory(host: str, port: int, timeout: int, max_retries: int):
+    def _factory(host: str, port: int, timeout: int, max_retries: int, **kwargs):
         captured["host"] = host
         captured["port"] = port
         return MagicMock()
@@ -381,3 +381,152 @@ def test_unified_close_quic_closes_event_loop() -> None:
     with patch.object(client._client, "close", new_callable=AsyncMock):
         client.close()
     assert loop.is_closed()
+
+
+# =====================================================================
+# MCP protocol construction and delegation
+# =====================================================================
+
+
+def test_unified_init_mcp_selects_mcp_client() -> None:
+    from objstore.mcp_client import McpClient
+    client = ObjectStoreClient(protocol=Protocol.MCP, base_url="http://localhost:8081")
+    assert client.protocol == Protocol.MCP
+    assert isinstance(client._client, McpClient)
+
+
+def test_unified_mcp_uses_default_base_url() -> None:
+    from objstore.mcp_client import McpClient
+    client = ObjectStoreClient(protocol=Protocol.MCP)
+    assert client._client.base_url == "http://localhost:8081"
+
+
+@pytest.mark.parametrize("op", _OPS)
+def test_unified_mcp_delegates(op: str) -> None:
+    """Each MCP op forwards synchronously to the MCP backend."""
+    client = ObjectStoreClient(protocol=Protocol.MCP)
+    with patch.object(client._client, op, return_value="sentinel") as mock_op:
+        assert _call(client, op) == "sentinel"
+        mock_op.assert_called_once()
+
+
+# =====================================================================
+# Unix protocol construction and delegation
+# =====================================================================
+
+
+def test_unified_init_unix_selects_unix_client() -> None:
+    from objstore.unix_client import UnixClient
+    client = ObjectStoreClient(protocol=Protocol.UNIX, socket_path="/tmp/test.sock")
+    assert client.protocol == Protocol.UNIX
+    assert isinstance(client._client, UnixClient)
+
+
+def test_unified_unix_uses_default_socket_path() -> None:
+    from objstore.unix_client import UnixClient
+    client = ObjectStoreClient(protocol=Protocol.UNIX)
+    assert client._client.socket_path == "/tmp/objstore.sock"
+
+
+def test_unified_unix_custom_socket_path() -> None:
+    from objstore.unix_client import UnixClient
+    client = ObjectStoreClient(protocol=Protocol.UNIX, socket_path="/run/objstore.sock")
+    assert client._client.socket_path == "/run/objstore.sock"
+
+
+@pytest.mark.parametrize("op", _OPS)
+def test_unified_unix_delegates(op: str) -> None:
+    """Each UNIX op forwards synchronously to the Unix backend."""
+    client = ObjectStoreClient(protocol=Protocol.UNIX)
+    with patch.object(client._client, op, return_value="sentinel") as mock_op:
+        assert _call(client, op) == "sentinel"
+        mock_op.assert_called_once()
+
+
+# =====================================================================
+# put_stream delegation
+# =====================================================================
+
+
+@responses.activate
+def test_unified_put_stream_rest() -> None:
+    responses.add(responses.PUT, f"{API}/objects/k",
+                  json={"message": "ok", "data": {"etag": "e1"}}, status=201)
+    client = ObjectStoreClient(protocol=Protocol.REST)
+    result = client.put_stream("k", b"data")
+    assert isinstance(result, PutResponse)
+    assert result.success is True
+
+
+def test_unified_put_stream_quic() -> None:
+    client = ObjectStoreClient(protocol=Protocol.QUIC)
+    with patch.object(client._client, "put_stream", new_callable=AsyncMock) as mock_ps:
+        mock_ps.return_value = PutResponse(success=True, message="ok")
+        result = client.put_stream("k", b"data")
+    assert result.success is True
+    mock_ps.assert_awaited_once()
+
+
+def test_unified_put_stream_mcp() -> None:
+    client = ObjectStoreClient(protocol=Protocol.MCP)
+    with patch.object(client._client, "put_stream", return_value=PutResponse(success=True, message="ok")) as mock_ps:
+        result = client.put_stream("k", b"data")
+    assert result.success is True
+    mock_ps.assert_called_once()
+
+
+def test_unified_put_stream_unix() -> None:
+    client = ObjectStoreClient(protocol=Protocol.UNIX)
+    with patch.object(client._client, "put_stream", return_value=PutResponse(success=True, message="ok")) as mock_ps:
+        result = client.put_stream("k", b"data")
+    assert result.success is True
+    mock_ps.assert_called_once()
+
+
+# =====================================================================
+# auth params wired to underlying clients
+# =====================================================================
+
+
+def test_unified_rest_auth_token() -> None:
+    client = ObjectStoreClient(protocol=Protocol.REST, token="tok")
+    assert client._client.token == "tok"
+    assert client._client.session.headers.get("Authorization") == "Bearer tok"
+
+
+def test_unified_rest_tenant_id() -> None:
+    client = ObjectStoreClient(protocol=Protocol.REST, tenant_id="t1")
+    assert client._client.tenant_id == "t1"
+    assert client._client.session.headers.get("X-Tenant-ID") == "t1"
+
+
+def test_unified_rest_custom_headers() -> None:
+    client = ObjectStoreClient(protocol=Protocol.REST, headers={"X-Foo": "bar"})
+    assert client._client.extra_headers == {"X-Foo": "bar"}
+    assert client._client.session.headers.get("X-Foo") == "bar"
+
+
+def test_unified_quic_auth_token() -> None:
+    client = ObjectStoreClient(protocol=Protocol.QUIC, token="tok")
+    assert client._client.token == "tok"
+
+
+def test_unified_mcp_auth_token() -> None:
+    from objstore.mcp_client import McpClient
+    client = ObjectStoreClient(protocol=Protocol.MCP, token="tok")
+    assert isinstance(client._client, McpClient)
+    assert client._client.token == "tok"
+
+
+def test_unified_mcp_tenant_id() -> None:
+    from objstore.mcp_client import McpClient
+    client = ObjectStoreClient(protocol=Protocol.MCP, tenant_id="t1")
+    assert isinstance(client._client, McpClient)
+    assert client._client.tenant_id == "t1"
+
+
+def test_unified_is_async_property() -> None:
+    rest_client = ObjectStoreClient(protocol=Protocol.REST)
+    quic_client = ObjectStoreClient(protocol=Protocol.QUIC)
+    assert rest_client.is_async is False
+    assert quic_client.is_async is True

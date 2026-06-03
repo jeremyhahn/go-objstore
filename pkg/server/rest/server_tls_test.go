@@ -22,6 +22,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"net/http"
 	"os"
 	"testing"
 	"time"
@@ -94,6 +95,95 @@ func TestServerStartWithTLS(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		// Timeout waiting for Start to complete
 		t.Log("Server Start() did not complete within timeout")
+	}
+}
+
+// TestServerStartClampsTLSMinVersion verifies that the server never serves TLS
+// below 1.2 even when the adapter config requests a weaker minimum.
+func TestServerStartClampsTLSMinVersion(t *testing.T) {
+	certFile, keyFile, cleanup := createTestTLSFiles(t)
+	defer cleanup()
+
+	storage := NewMockStorage()
+	config := &ServerConfig{
+		Host: "127.0.0.1",
+		Port: 0,
+		Mode: gin.TestMode,
+		TLSConfig: &adapters.TLSConfig{
+			Mode:           adapters.TLSModeServer,
+			ServerCertFile: certFile,
+			ServerKeyFile:  keyFile,
+			MinVersion:     tls.VersionTLS10, // deliberately below the floor
+		},
+	}
+
+	initTLSTestFacade(t, storage)
+	server, err := NewServer(storage, config)
+	if err != nil {
+		t.Fatalf("NewServer() failed: %v", err)
+	}
+
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- server.Start()
+	}()
+	time.Sleep(50 * time.Millisecond)
+
+	if server.httpServer.TLSConfig == nil {
+		t.Fatal("httpServer.TLSConfig not set after Start()")
+	}
+	if got := server.httpServer.TLSConfig.MinVersion; got < tls.VersionTLS12 {
+		t.Errorf("TLS MinVersion = %#x, want >= %#x (TLS 1.2)", got, tls.VersionTLS12)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+	server.Shutdown(ctx)
+	select {
+	case <-errChan:
+	case <-time.After(2 * time.Second):
+	}
+}
+
+// TestServerStartWithDisabledTLS verifies that a zero-value (disabled) adapter
+// TLS config does not panic in Start() and the server falls back to plaintext,
+// matching the behavior when no TLS config is provided at all.
+func TestServerStartWithDisabledTLS(t *testing.T) {
+	storage := NewMockStorage()
+	config := &ServerConfig{
+		Host:      "127.0.0.1",
+		Port:      0,
+		Mode:      gin.TestMode,
+		TLSConfig: &adapters.TLSConfig{}, // zero value: TLSModeDisabled
+	}
+
+	initTLSTestFacade(t, storage)
+	server, err := NewServer(storage, config)
+	if err != nil {
+		t.Fatalf("NewServer() failed: %v", err)
+	}
+
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- server.Start()
+	}()
+
+	// Give the server time to start (a nil deref would panic here pre-fix).
+	time.Sleep(50 * time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+	server.Shutdown(ctx)
+
+	select {
+	case err := <-errChan:
+		// The plaintext ListenAndServe path returns ErrServerClosed on Shutdown;
+		// anything else means the disabled config was not treated as no-TLS.
+		if err != http.ErrServerClosed {
+			t.Errorf("Server Start() returned %v, want %v", err, http.ErrServerClosed)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("Server Start() did not return after Shutdown")
 	}
 }
 

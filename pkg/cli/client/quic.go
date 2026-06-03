@@ -16,6 +16,7 @@ package client
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,32 +26,46 @@ import (
 	"strings"
 	"time"
 
+	"github.com/quic-go/quic-go/http3"
+
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/replication"
 )
 
-// QUICClient implements the Client interface for QUIC (HTTP/3) servers
-// Note: For now, this uses standard HTTP client. Full HTTP/3 support requires
-// the server to advertise HTTP/3 via Alt-Svc headers or connection upgrade.
+// QUICClient implements the Client interface for QUIC (HTTP/3) servers.
 type QUICClient struct {
 	baseURL    string
 	httpClient *http.Client
+	transport  *http3.Transport
 }
 
-// NewQUICClient creates a new QUIC client
+// NewQUICClient creates a new QUIC client speaking genuine HTTP/3 over UDP.
+// Server certificates are verified against the system root pool, which honors
+// the standard SSL_CERT_FILE/SSL_CERT_DIR overrides for custom CAs. Set
+// Config.InsecureSkipVerify to skip verification (testing only).
 func NewQUICClient(config *Config) (*QUICClient, error) {
 	if config.ServerURL == "" {
 		return nil, ErrServerURLRequired
 	}
 
-	// Note: Using http.Client for compatibility; native HTTP/3 transport coming in future quic-go releases
+	tlsConfig := &tls.Config{
+		MinVersion:         tls.VersionTLS13,
+		InsecureSkipVerify: config.InsecureSkipVerify, // #nosec G402 -- testing-only opt-in, defaults to false
+	}
+
+	transport := &http3.Transport{
+		TLSClientConfig: tlsConfig,
+	}
+
 	httpClient := &http.Client{
-		Timeout: 30 * time.Second,
+		Transport: transport,
+		Timeout:   30 * time.Second,
 	}
 
 	return &QUICClient{
 		baseURL:    strings.TrimSuffix(config.ServerURL, "/"),
 		httpClient: httpClient,
+		transport:  transport,
 	}, nil
 }
 
@@ -545,8 +560,9 @@ func (c *QUICClient) Health(ctx context.Context) error {
 
 // Close closes the QUIC client
 func (c *QUICClient) Close() error {
-	// HTTP/3 client doesn't need explicit closing
-	// The transport will close connections automatically
+	if c.transport != nil {
+		return c.transport.Close()
+	}
 	return nil
 }
 

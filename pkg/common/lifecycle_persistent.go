@@ -45,6 +45,8 @@ type FileSystem interface {
 	OpenFile(name string, flag int, perm os.FileMode) (LifecycleFile, error)
 	// Remove removes a file or empty directory
 	Remove(name string) error
+	// Rename atomically replaces dst with src
+	Rename(src, dst string) error
 }
 
 // LifecycleFile represents a file in the storage filesystem.
@@ -108,11 +110,12 @@ func NewPersistentLifecycleManager(fs FileSystem, policyFile string) (*Persisten
 	return lm, nil
 }
 
-// fileSystemAdapter adapts any filesystem interface with standard OpenFile/Remove methods
-// to the FileSystem interface used by PersistentLifecycleManager.
+// fileSystemAdapter adapts any filesystem interface with standard OpenFile/Remove/Rename
+// methods to the FileSystem interface used by PersistentLifecycleManager.
 type fileSystemAdapter struct {
 	openFile func(name string, flag int, perm os.FileMode) (LifecycleFile, error)
 	remove   func(name string) error
+	rename   func(src, dst string) error
 }
 
 func (a *fileSystemAdapter) OpenFile(name string, flag int, perm os.FileMode) (LifecycleFile, error) {
@@ -123,12 +126,17 @@ func (a *fileSystemAdapter) Remove(name string) error {
 	return a.remove(name)
 }
 
+func (a *fileSystemAdapter) Rename(src, dst string) error {
+	return a.rename(src, dst)
+}
+
 // NewFileSystemAdapter creates a FileSystem adapter from any object that has
-// OpenFile and Remove methods. This is useful for adapting storagefs.StorageFS
+// OpenFile, Remove, and Rename methods. This is useful for adapting storagefs.StorageFS
 // or other filesystem implementations.
 func NewFileSystemAdapter(fs interface {
 	OpenFile(name string, flag int, perm os.FileMode) (any, error)
 	Remove(name string) error
+	Rename(src, dst string) error
 }) FileSystem {
 	return &fileSystemAdapter{
 		openFile: func(name string, flag int, perm os.FileMode) (LifecycleFile, error) {
@@ -144,6 +152,7 @@ func NewFileSystemAdapter(fs interface {
 			return &fileAdapter{file: file}, nil
 		},
 		remove: fs.Remove,
+		rename: fs.Rename,
 	}
 }
 
@@ -253,20 +262,36 @@ func (lm *PersistentLifecycleManager) save() error {
 		return err
 	}
 
-	// Open or create the file for writing
-	file, err := lm.fs.OpenFile(lm.policyFile, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+	// Write atomically: temp file → fsync → rename.
+	tmpName := lm.policyFile + ".tmp"
+	tmp, err := lm.fs.OpenFile(tmpName, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = file.Close() }()
+	committed := false
+	defer func() {
+		if !committed {
+			// Best-effort rollback cleanup; we are already on an error path and
+			// have no better recourse than to drop the partial temp file.
+			_ = tmp.Close()           //nolint:errcheck // best-effort cleanup on rollback
+			_ = lm.fs.Remove(tmpName) //nolint:errcheck // best-effort cleanup on rollback
+		}
+	}()
 
-	// Write the data
-	if _, err := file.Write(jsonData); err != nil {
+	if _, err := tmp.Write(jsonData); err != nil {
 		return err
 	}
-
-	// Sync to ensure it's written to storage
-	return file.Sync()
+	if err := tmp.Sync(); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := lm.fs.Rename(tmpName, lm.policyFile); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 // load reads policies from storage.

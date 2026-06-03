@@ -93,6 +93,44 @@ public class GrpcClientTests
         await Assert.ThrowsAsync<ObjectNotFoundException>(() => new GrpcClient(channel).GetAsync("missing"));
     }
 
+    // ---------------------------------------------------------------- status code mapping
+
+    [Theory]
+    [InlineData(StatusCode.InvalidArgument, typeof(ValidationException))]
+    [InlineData(StatusCode.Unauthenticated, typeof(AuthenticationException))]
+    [InlineData(StatusCode.PermissionDenied, typeof(AuthorizationException))]
+    [InlineData(StatusCode.AlreadyExists, typeof(AlreadyExistsException))]
+    [InlineData(StatusCode.ResourceExhausted, typeof(RateLimitException))]
+    public async Task Grpc_Get_StatusCode_MapsToCanonicalException(StatusCode status, System.Type expected)
+    {
+        var ex = await Record.ExceptionAsync(() => ErrorClient(status).GetAsync("k"));
+
+        ex.Should().BeOfType(expected);
+    }
+
+    [Theory]
+    [InlineData(StatusCode.InvalidArgument, typeof(ValidationException))]
+    [InlineData(StatusCode.Unauthenticated, typeof(AuthenticationException))]
+    [InlineData(StatusCode.PermissionDenied, typeof(AuthorizationException))]
+    [InlineData(StatusCode.AlreadyExists, typeof(AlreadyExistsException))]
+    [InlineData(StatusCode.ResourceExhausted, typeof(RateLimitException))]
+    public async Task Grpc_Put_StatusCode_MapsToCanonicalException(StatusCode status, System.Type expected)
+    {
+        var ex = await Record.ExceptionAsync(() => ErrorClient(status).PutAsync("k", new byte[] { 1 }));
+
+        ex.Should().BeOfType(expected);
+    }
+
+    [Fact]
+    public async Task Grpc_PermissionDenied_WithNotFoundMessage_IsNotObjectNotFound()
+    {
+        // Explicit status codes win over the detail-substring not-found heuristic:
+        // a "not found" substring in a PermissionDenied detail stays AuthorizationException.
+        var channel = GrpcTestChannel.Error(StatusCode.PermissionDenied, "tenant not found in allowlist");
+
+        await Assert.ThrowsAsync<AuthorizationException>(() => new GrpcClient(channel).GetAsync("k"));
+    }
+
     // ---------------------------------------------------------------- delete
 
     [Fact]

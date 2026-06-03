@@ -29,9 +29,14 @@ import pytest
 import objstore.grpc_client as grpc_module
 from objstore.grpc_client import GrpcClient
 from objstore.exceptions import (
+    AlreadyExistsError,
+    AuthenticationError,
+    AuthorizationError,
     ObjectNotFoundError,
     ObjectStoreError,
+    RateLimitError,
     ServerError,
+    ValidationError,
 )
 
 
@@ -619,7 +624,7 @@ def test_grpc_metadata_round_trip(grpc_client: GrpcClient) -> None:
 
     captured = {}
 
-    def _update(request, timeout=None):
+    def _update(request, timeout=None, metadata=None):
         captured["proto"] = request.metadata
         return Mock(success=True, message="ok")
 
@@ -652,11 +657,11 @@ def test_grpc_metadata_round_trip(grpc_client: GrpcClient) -> None:
 
 
 def test_grpc_validation_empty_key(grpc_client: GrpcClient) -> None:
-    """An empty key is rejected by the server as INVALID_ARGUMENT -> error."""
+    """An empty key is rejected by the server as INVALID_ARGUMENT -> ValidationError."""
     grpc_client.stub.Get.side_effect = _rpc_error(
         grpc.StatusCode.INVALID_ARGUMENT, "key must not be empty"
     )
-    with pytest.raises(ObjectStoreError):
+    with pytest.raises(ValidationError):
         grpc_client.get("")
 
 
@@ -702,9 +707,41 @@ def test_grpc_error_mapping_deadline(grpc_client: GrpcClient) -> None:
         grpc_client.get("k")
 
 
-def test_grpc_error_mapping_generic(grpc_client: GrpcClient) -> None:
+def test_grpc_error_mapping_unauthenticated(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.Get.side_effect = _rpc_error(
+        grpc.StatusCode.UNAUTHENTICATED, "missing credentials"
+    )
+    with pytest.raises(AuthenticationError):
+        grpc_client.get("k")
+
+
+def test_grpc_error_mapping_permission_denied(grpc_client: GrpcClient) -> None:
     grpc_client.stub.Get.side_effect = _rpc_error(
         grpc.StatusCode.PERMISSION_DENIED, "nope"
+    )
+    with pytest.raises(AuthorizationError):
+        grpc_client.get("k")
+
+
+def test_grpc_error_mapping_already_exists(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.Put.side_effect = _rpc_error(
+        grpc.StatusCode.ALREADY_EXISTS, "object exists"
+    )
+    with pytest.raises(AlreadyExistsError):
+        grpc_client.put("k", b"data")
+
+
+def test_grpc_error_mapping_resource_exhausted(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.Get.side_effect = _rpc_error(
+        grpc.StatusCode.RESOURCE_EXHAUSTED, "slow down"
+    )
+    with pytest.raises(RateLimitError):
+        grpc_client.get("k")
+
+
+def test_grpc_error_mapping_generic(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.Get.side_effect = _rpc_error(
+        grpc.StatusCode.UNIMPLEMENTED, "nope"
     )
     with pytest.raises(ObjectStoreError):
         grpc_client.get("k")

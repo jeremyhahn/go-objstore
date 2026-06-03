@@ -20,8 +20,11 @@ import (
 
 	objstorepb "github.com/jeremyhahn/go-objstore/api/proto"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -30,6 +33,7 @@ type GRPCClient struct {
 	conn      *grpc.ClientConn
 	client    objstorepb.ObjectStoreClient
 	config    *ClientConfig
+	md        metadata.MD // outgoing auth metadata, nil when none configured
 	closeOnce sync.Once
 }
 
@@ -71,7 +75,55 @@ func newGRPCClient(config *ClientConfig) (*GRPCClient, error) {
 		conn:   conn,
 		client: objstorepb.NewObjectStoreClient(conn),
 		config: config,
+		md:     buildOutgoingMD(config),
 	}, nil
+}
+
+// buildOutgoingMD builds the outgoing auth metadata once from the immutable
+// client config.  Returns nil when no auth fields are configured.
+func buildOutgoingMD(config *ClientConfig) metadata.MD {
+	if config.Token == "" && len(config.Headers) == 0 && config.TenantID == "" {
+		return nil
+	}
+	md := metadata.New(nil)
+	if config.Token != "" {
+		md.Set("authorization", "Bearer "+config.Token)
+	}
+	for k, v := range config.Headers {
+		md.Set(k, v)
+	}
+	if config.TenantID != "" {
+		md.Set("x-tenant-id", config.TenantID)
+	}
+	return md
+}
+
+// wrapGRPCError converts a gRPC transport error into the SDK error model:
+// canonical status codes are mapped to the matching SDK sentinel
+// (codes.InvalidArgument -> ErrInvalidArgument, codes.Unauthenticated ->
+// ErrUnauthenticated, codes.PermissionDenied -> ErrPermissionDenied,
+// codes.NotFound -> ErrObjectNotFound, codes.AlreadyExists ->
+// ErrAlreadyExists, codes.ResourceExhausted -> ErrRateLimited) while the
+// original status error stays in the chain for status.Code inspection.
+func wrapGRPCError(op string, err error) error {
+	var sentinel error
+	switch status.Code(err) {
+	case codes.InvalidArgument:
+		sentinel = ErrInvalidArgument
+	case codes.Unauthenticated:
+		sentinel = ErrUnauthenticated
+	case codes.PermissionDenied:
+		sentinel = ErrPermissionDenied
+	case codes.NotFound:
+		sentinel = ErrObjectNotFound
+	case codes.AlreadyExists:
+		sentinel = ErrAlreadyExists
+	case codes.ResourceExhausted:
+		sentinel = ErrRateLimited
+	default:
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	return fmt.Errorf("%s: %w: %w", op, err, sentinel)
 }
 
 // Put stores an object.
@@ -84,6 +136,8 @@ func (c *GRPCClient) Put(ctx context.Context, key string, data []byte, metadata 
 		return nil, err
 	}
 
+	ctx = c.outgoingCtx(ctx)
+
 	// Execute with retry logic
 	return retryWrapper(ctx, c.config.Retry, func() (*PutResult, error) {
 		req := &objstorepb.PutRequest{
@@ -94,7 +148,7 @@ func (c *GRPCClient) Put(ctx context.Context, key string, data []byte, metadata 
 
 		resp, err := c.client.Put(ctx, req)
 		if err != nil {
-			return nil, fmt.Errorf("put operation failed: %w", err)
+			return nil, wrapGRPCError("put operation failed", err)
 		}
 
 		return &PutResult{
@@ -112,6 +166,8 @@ func (c *GRPCClient) Get(ctx context.Context, key string) (*GetResult, error) {
 		return nil, err
 	}
 
+	ctx = c.outgoingCtx(ctx)
+
 	// Execute with retry logic
 	return retryWrapper(ctx, c.config.Retry, func() (*GetResult, error) {
 		req := &objstorepb.GetRequest{
@@ -120,7 +176,7 @@ func (c *GRPCClient) Get(ctx context.Context, key string) (*GetResult, error) {
 
 		stream, err := c.client.Get(ctx, req)
 		if err != nil {
-			return nil, fmt.Errorf("get operation failed: %w", err)
+			return nil, wrapGRPCError("get operation failed", err)
 		}
 
 		var data bytes.Buffer
@@ -132,7 +188,7 @@ func (c *GRPCClient) Get(ctx context.Context, key string) (*GetResult, error) {
 				break
 			}
 			if err != nil {
-				return nil, fmt.Errorf("stream receive failed: %w", err)
+				return nil, wrapGRPCError("stream receive failed", err)
 			}
 
 			if chunk.Metadata != nil && metadata == nil {
@@ -156,6 +212,8 @@ func (c *GRPCClient) Delete(ctx context.Context, key string) error {
 		return err
 	}
 
+	ctx = c.outgoingCtx(ctx)
+
 	// Execute with retry logic
 	_, err := retryWrapper(ctx, c.config.Retry, func() (struct{}, error) {
 		req := &objstorepb.DeleteRequest{
@@ -164,7 +222,7 @@ func (c *GRPCClient) Delete(ctx context.Context, key string) error {
 
 		resp, err := c.client.Delete(ctx, req)
 		if err != nil {
-			return struct{}{}, fmt.Errorf("delete operation failed: %w", err)
+			return struct{}{}, wrapGRPCError("delete operation failed", err)
 		}
 
 		if !resp.Success {
@@ -182,6 +240,8 @@ func (c *GRPCClient) List(ctx context.Context, opts *ListOptions) (*ListResult, 
 		opts = &ListOptions{}
 	}
 
+	ctx = c.outgoingCtx(ctx)
+
 	// Execute with retry logic
 	return retryWrapper(ctx, c.config.Retry, func() (*ListResult, error) {
 		req := &objstorepb.ListRequest{
@@ -193,7 +253,7 @@ func (c *GRPCClient) List(ctx context.Context, opts *ListOptions) (*ListResult, 
 
 		resp, err := c.client.List(ctx, req)
 		if err != nil {
-			return nil, fmt.Errorf("list operation failed: %w", err)
+			return nil, wrapGRPCError("list operation failed", err)
 		}
 
 		objects := make([]*ObjectInfo, len(resp.Objects))
@@ -220,6 +280,8 @@ func (c *GRPCClient) Exists(ctx context.Context, key string) (bool, error) {
 		return false, err
 	}
 
+	ctx = c.outgoingCtx(ctx)
+
 	// Execute with retry logic
 	return retryWrapper(ctx, c.config.Retry, func() (bool, error) {
 		req := &objstorepb.ExistsRequest{
@@ -228,7 +290,7 @@ func (c *GRPCClient) Exists(ctx context.Context, key string) (bool, error) {
 
 		resp, err := c.client.Exists(ctx, req)
 		if err != nil {
-			return false, fmt.Errorf("exists operation failed: %w", err)
+			return false, wrapGRPCError("exists operation failed", err)
 		}
 
 		return resp.Exists, nil
@@ -242,6 +304,8 @@ func (c *GRPCClient) GetMetadata(ctx context.Context, key string) (*Metadata, er
 		return nil, err
 	}
 
+	ctx = c.outgoingCtx(ctx)
+
 	// Execute with retry logic
 	return retryWrapper(ctx, c.config.Retry, func() (*Metadata, error) {
 		req := &objstorepb.GetMetadataRequest{
@@ -250,7 +314,7 @@ func (c *GRPCClient) GetMetadata(ctx context.Context, key string) (*Metadata, er
 
 		resp, err := c.client.GetMetadata(ctx, req)
 		if err != nil {
-			return nil, fmt.Errorf("get metadata operation failed: %w", err)
+			return nil, wrapGRPCError("get metadata operation failed", err)
 		}
 
 		if !resp.Success {
@@ -271,6 +335,8 @@ func (c *GRPCClient) UpdateMetadata(ctx context.Context, key string, metadata *M
 		return err
 	}
 
+	ctx = c.outgoingCtx(ctx)
+
 	// Execute with retry logic
 	_, err := retryWrapper(ctx, c.config.Retry, func() (struct{}, error) {
 		req := &objstorepb.UpdateMetadataRequest{
@@ -280,7 +346,7 @@ func (c *GRPCClient) UpdateMetadata(ctx context.Context, key string, metadata *M
 
 		resp, err := c.client.UpdateMetadata(ctx, req)
 		if err != nil {
-			return struct{}{}, fmt.Errorf("update metadata operation failed: %w", err)
+			return struct{}{}, wrapGRPCError("update metadata operation failed", err)
 		}
 
 		if !resp.Success {
@@ -294,11 +360,12 @@ func (c *GRPCClient) UpdateMetadata(ctx context.Context, key string, metadata *M
 
 // Health performs a health check.
 func (c *GRPCClient) Health(ctx context.Context) (*HealthStatus, error) {
+	ctx = c.outgoingCtx(ctx)
 	req := &objstorepb.HealthRequest{}
 
 	resp, err := c.client.Health(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, wrapGRPCError("health operation failed", err)
 	}
 
 	status := "UNKNOWN"
@@ -317,6 +384,7 @@ func (c *GRPCClient) Health(ctx context.Context) (*HealthStatus, error) {
 
 // Archive copies an object to archival storage.
 func (c *GRPCClient) Archive(ctx context.Context, key string, destinationType string, settings map[string]string) error {
+	ctx = c.outgoingCtx(ctx)
 	req := &objstorepb.ArchiveRequest{
 		Key:                 key,
 		DestinationType:     destinationType,
@@ -325,7 +393,7 @@ func (c *GRPCClient) Archive(ctx context.Context, key string, destinationType st
 
 	resp, err := c.client.Archive(ctx, req)
 	if err != nil {
-		return err
+		return wrapGRPCError("archive operation failed", err)
 	}
 
 	if !resp.Success {
@@ -342,6 +410,8 @@ func (c *GRPCClient) AddPolicy(ctx context.Context, policy *LifecyclePolicy) err
 		return err
 	}
 
+	ctx = c.outgoingCtx(ctx)
+
 	// Execute with retry logic
 	_, err := retryWrapper(ctx, c.config.Retry, func() (struct{}, error) {
 		req := &objstorepb.AddPolicyRequest{
@@ -350,7 +420,7 @@ func (c *GRPCClient) AddPolicy(ctx context.Context, policy *LifecyclePolicy) err
 
 		resp, err := c.client.AddPolicy(ctx, req)
 		if err != nil {
-			return struct{}{}, fmt.Errorf("add policy operation failed: %w", err)
+			return struct{}{}, wrapGRPCError("add policy operation failed", err)
 		}
 
 		if !resp.Success {
@@ -369,6 +439,8 @@ func (c *GRPCClient) RemovePolicy(ctx context.Context, policyID string) error {
 		return err
 	}
 
+	ctx = c.outgoingCtx(ctx)
+
 	// Execute with retry logic
 	_, err := retryWrapper(ctx, c.config.Retry, func() (struct{}, error) {
 		req := &objstorepb.RemovePolicyRequest{
@@ -377,7 +449,7 @@ func (c *GRPCClient) RemovePolicy(ctx context.Context, policyID string) error {
 
 		resp, err := c.client.RemovePolicy(ctx, req)
 		if err != nil {
-			return struct{}{}, fmt.Errorf("remove policy operation failed: %w", err)
+			return struct{}{}, wrapGRPCError("remove policy operation failed", err)
 		}
 
 		if !resp.Success {
@@ -391,13 +463,14 @@ func (c *GRPCClient) RemovePolicy(ctx context.Context, policyID string) error {
 
 // GetPolicies retrieves lifecycle policies.
 func (c *GRPCClient) GetPolicies(ctx context.Context, prefix string) ([]*LifecyclePolicy, error) {
+	ctx = c.outgoingCtx(ctx)
 	req := &objstorepb.GetPoliciesRequest{
 		Prefix: prefix,
 	}
 
 	resp, err := c.client.GetPolicies(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, wrapGRPCError("get policies operation failed", err)
 	}
 
 	if !resp.Success {
@@ -414,11 +487,12 @@ func (c *GRPCClient) GetPolicies(ctx context.Context, prefix string) ([]*Lifecyc
 
 // ApplyPolicies executes all lifecycle policies.
 func (c *GRPCClient) ApplyPolicies(ctx context.Context) (*ApplyPoliciesResult, error) {
+	ctx = c.outgoingCtx(ctx)
 	req := &objstorepb.ApplyPoliciesRequest{}
 
 	resp, err := c.client.ApplyPolicies(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, wrapGRPCError("apply policies operation failed", err)
 	}
 
 	return &ApplyPoliciesResult{
@@ -436,6 +510,8 @@ func (c *GRPCClient) AddReplicationPolicy(ctx context.Context, policy *Replicati
 		return err
 	}
 
+	ctx = c.outgoingCtx(ctx)
+
 	// Execute with retry logic
 	_, err := retryWrapper(ctx, c.config.Retry, func() (struct{}, error) {
 		req := &objstorepb.AddReplicationPolicyRequest{
@@ -444,7 +520,7 @@ func (c *GRPCClient) AddReplicationPolicy(ctx context.Context, policy *Replicati
 
 		resp, err := c.client.AddReplicationPolicy(ctx, req)
 		if err != nil {
-			return struct{}{}, fmt.Errorf("add replication policy operation failed: %w", err)
+			return struct{}{}, wrapGRPCError("add replication policy operation failed", err)
 		}
 
 		if !resp.Success {
@@ -463,6 +539,8 @@ func (c *GRPCClient) RemoveReplicationPolicy(ctx context.Context, policyID strin
 		return err
 	}
 
+	ctx = c.outgoingCtx(ctx)
+
 	// Execute with retry logic
 	_, err := retryWrapper(ctx, c.config.Retry, func() (struct{}, error) {
 		req := &objstorepb.RemoveReplicationPolicyRequest{
@@ -471,7 +549,7 @@ func (c *GRPCClient) RemoveReplicationPolicy(ctx context.Context, policyID strin
 
 		resp, err := c.client.RemoveReplicationPolicy(ctx, req)
 		if err != nil {
-			return struct{}{}, fmt.Errorf("remove replication policy operation failed: %w", err)
+			return struct{}{}, wrapGRPCError("remove replication policy operation failed", err)
 		}
 
 		if !resp.Success {
@@ -485,11 +563,12 @@ func (c *GRPCClient) RemoveReplicationPolicy(ctx context.Context, policyID strin
 
 // GetReplicationPolicies retrieves all replication policies.
 func (c *GRPCClient) GetReplicationPolicies(ctx context.Context) ([]*ReplicationPolicy, error) {
+	ctx = c.outgoingCtx(ctx)
 	req := &objstorepb.GetReplicationPoliciesRequest{}
 
 	resp, err := c.client.GetReplicationPolicies(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, wrapGRPCError("get replication policies operation failed", err)
 	}
 
 	policies := make([]*ReplicationPolicy, len(resp.Policies))
@@ -510,6 +589,8 @@ func (c *GRPCClient) GetReplicationPolicy(ctx context.Context, policyID string) 
 		return nil, err
 	}
 
+	ctx = c.outgoingCtx(ctx)
+
 	// Execute with retry logic
 	return retryWrapper(ctx, c.config.Retry, func() (*ReplicationPolicy, error) {
 		req := &objstorepb.GetReplicationPolicyRequest{
@@ -518,7 +599,7 @@ func (c *GRPCClient) GetReplicationPolicy(ctx context.Context, policyID string) 
 
 		resp, err := c.client.GetReplicationPolicy(ctx, req)
 		if err != nil {
-			return nil, fmt.Errorf("get replication policy operation failed: %w", err)
+			return nil, wrapGRPCError("get replication policy operation failed", err)
 		}
 
 		policy := replicationPolicyFromProto(resp.Policy)
@@ -536,6 +617,8 @@ func (c *GRPCClient) TriggerReplication(ctx context.Context, opts *TriggerReplic
 		opts = &TriggerReplicationOptions{}
 	}
 
+	ctx = c.outgoingCtx(ctx)
+
 	req := &objstorepb.TriggerReplicationRequest{
 		PolicyId:    opts.PolicyID,
 		Parallel:    opts.Parallel,
@@ -544,7 +627,7 @@ func (c *GRPCClient) TriggerReplication(ctx context.Context, opts *TriggerReplic
 
 	resp, err := c.client.TriggerReplication(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, wrapGRPCError("trigger replication operation failed", err)
 	}
 
 	if !resp.Success {
@@ -572,6 +655,8 @@ func (c *GRPCClient) GetReplicationStatus(ctx context.Context, policyID string) 
 		return nil, err
 	}
 
+	ctx = c.outgoingCtx(ctx)
+
 	// Execute with retry logic
 	return retryWrapper(ctx, c.config.Retry, func() (*ReplicationStatus, error) {
 		req := &objstorepb.GetReplicationStatusRequest{
@@ -580,7 +665,7 @@ func (c *GRPCClient) GetReplicationStatus(ctx context.Context, policyID string) 
 
 		resp, err := c.client.GetReplicationStatus(ctx, req)
 		if err != nil {
-			return nil, fmt.Errorf("get replication status operation failed: %w", err)
+			return nil, wrapGRPCError("get replication status operation failed", err)
 		}
 
 		if !resp.Success {
@@ -606,6 +691,70 @@ func (c *GRPCClient) GetReplicationStatus(ctx context.Context, policyID string) 
 
 		return status, nil
 	})
+}
+
+// outgoingCtx enriches ctx with the pre-built gRPC outgoing auth metadata
+// when the client is configured with Token, Headers, or TenantID.
+func (c *GRPCClient) outgoingCtx(ctx context.Context) context.Context {
+	if c.md == nil {
+		return ctx
+	}
+	return metadata.NewOutgoingContext(ctx, c.md)
+}
+
+// GetStream retrieves an object as a streaming io.ReadCloser by consuming the
+// server-side gRPC stream.  The caller must close the returned reader.
+func (c *GRPCClient) GetStream(ctx context.Context, key string) (io.ReadCloser, *Metadata, error) {
+	if err := validateKey(key); err != nil {
+		return nil, nil, err
+	}
+
+	ctx = c.outgoingCtx(ctx)
+
+	req := &objstorepb.GetRequest{Key: key}
+	stream, err := c.client.Get(ctx, req)
+	if err != nil {
+		return nil, nil, wrapGRPCError("get (stream) operation failed", err)
+	}
+
+	pr, pw := io.Pipe()
+	var streamMeta *Metadata
+
+	go func() {
+		defer pw.Close()
+		for {
+			chunk, err := stream.Recv()
+			if err == io.EOF {
+				return
+			}
+			if err != nil {
+				pw.CloseWithError(err)
+				return
+			}
+			if chunk.Metadata != nil && streamMeta == nil {
+				streamMeta = metadataFromProto(chunk.Metadata)
+			}
+			if _, werr := pw.Write(chunk.Data); werr != nil {
+				return
+			}
+		}
+	}()
+
+	return pr, streamMeta, nil
+}
+
+// PutStream stores an object from an io.Reader using buffered reads, then
+// delegates to the standard unary Put call.  gRPC client-streaming upload is
+// not exposed by the generated proto, so we buffer and call Put.
+func (c *GRPCClient) PutStream(ctx context.Context, key string, r io.Reader, size int64, meta *Metadata) (*PutResult, error) {
+	if err := validateKey(key); err != nil {
+		return nil, err
+	}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("read stream: %w", err)
+	}
+	return c.Put(ctx, key, data, meta)
 }
 
 // Close closes the gRPC connection.  Idempotent: subsequent calls return nil.

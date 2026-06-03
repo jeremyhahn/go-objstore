@@ -17,6 +17,9 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 )
 
 func TestNewServer(t *testing.T) {
@@ -67,6 +70,44 @@ func TestNewServer(t *testing.T) {
 	}
 }
 
+// TestServer_StartHTTP_DisabledTLS verifies that a zero-value (disabled)
+// adapter TLS config does not panic in Start() and the server falls back to
+// plaintext, matching the behavior when no TLS config is provided at all.
+func TestServer_StartHTTP_DisabledTLS(t *testing.T) {
+	storage := NewMockStorage()
+	initTestFacade(t, storage)
+
+	server, err := NewServer(&ServerConfig{
+		Mode:        ModeHTTP,
+		HTTPAddress: "127.0.0.1:0",
+		TLSConfig:   &adapters.TLSConfig{}, // zero value: TLSModeDisabled
+	})
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- server.Start(ctx)
+	}()
+
+	// Give the server time to start (a nil deref would panic here pre-fix).
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-errChan:
+		if err != nil {
+			t.Errorf("Start() returned unexpected error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("Start() did not return after context cancellation")
+	}
+}
+
 func TestServer_ListTools(t *testing.T) {
 	storage := NewMockStorage()
 	server := createTestServer(t, storage, ModeStdio)
@@ -104,7 +145,7 @@ func TestServer_CallTool(t *testing.T) {
 	// Test valid tool call
 	result, err := server.CallTool(context.Background(), "objstore_put", map[string]any{
 		"key":  "test.txt",
-		"data": "hello world",
+		"data": "aGVsbG8gd29ybGQ=", // base64("hello world")
 	})
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)

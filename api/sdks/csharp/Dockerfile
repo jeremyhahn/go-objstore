@@ -27,6 +27,7 @@ COPY sdks/csharp/Clients ./Clients/
 COPY sdks/csharp/Models ./Models/
 COPY sdks/csharp/Exceptions ./Exceptions/
 COPY sdks/csharp/Extensions ./Extensions/
+COPY sdks/csharp/Internal ./Internal/
 COPY sdks/csharp/*.cs ./
 
 # Copy test source code

@@ -408,16 +408,28 @@ export interface ProtoGetReplicationStatusResponse {
 }
 
 /**
- * gRPC service client interface
+ * gRPC service client interface.
+ * Each unary method accepts an optional grpc.Metadata argument between the
+ * request and the callback so that per-call auth metadata can be forwarded.
  */
 export interface GrpcServiceClient {
+  put(
+    request: ProtoPutRequest,
+    metadata: grpc.Metadata,
+    callback: (error: grpc.ServiceError | null, response: ProtoPutResponse) => void
+  ): void;
   put(
     request: ProtoPutRequest,
     callback: (error: grpc.ServiceError | null, response: ProtoPutResponse) => void
   ): void;
 
-  get(request: ProtoGetRequest): grpc.ClientReadableStream<ProtoGetResponse>;
+  get(request: ProtoGetRequest, metadata?: grpc.Metadata): grpc.ClientReadableStream<ProtoGetResponse>;
 
+  delete(
+    request: ProtoDeleteRequest,
+    metadata: grpc.Metadata,
+    callback: (error: grpc.ServiceError | null, response: ProtoDeleteResponse) => void
+  ): void;
   delete(
     request: ProtoDeleteRequest,
     callback: (error: grpc.ServiceError | null, response: ProtoDeleteResponse) => void
@@ -425,9 +437,19 @@ export interface GrpcServiceClient {
 
   list(
     request: ProtoListRequest,
+    metadata: grpc.Metadata,
+    callback: (error: grpc.ServiceError | null, response: ProtoListResponse) => void
+  ): void;
+  list(
+    request: ProtoListRequest,
     callback: (error: grpc.ServiceError | null, response: ProtoListResponse) => void
   ): void;
 
+  exists(
+    request: ProtoExistsRequest,
+    metadata: grpc.Metadata,
+    callback: (error: grpc.ServiceError | null, response: ProtoExistsResponse) => void
+  ): void;
   exists(
     request: ProtoExistsRequest,
     callback: (error: grpc.ServiceError | null, response: ProtoExistsResponse) => void
@@ -435,9 +457,19 @@ export interface GrpcServiceClient {
 
   getMetadata(
     request: ProtoGetMetadataRequest,
+    metadata: grpc.Metadata,
+    callback: (error: grpc.ServiceError | null, response: ProtoMetadataResponse) => void
+  ): void;
+  getMetadata(
+    request: ProtoGetMetadataRequest,
     callback: (error: grpc.ServiceError | null, response: ProtoMetadataResponse) => void
   ): void;
 
+  updateMetadata(
+    request: ProtoUpdateMetadataRequest,
+    metadata: grpc.Metadata,
+    callback: (error: grpc.ServiceError | null, response: ProtoUpdateMetadataResponse) => void
+  ): void;
   updateMetadata(
     request: ProtoUpdateMetadataRequest,
     callback: (error: grpc.ServiceError | null, response: ProtoUpdateMetadataResponse) => void
@@ -445,9 +477,19 @@ export interface GrpcServiceClient {
 
   health(
     request: ProtoHealthRequest,
+    metadata: grpc.Metadata,
+    callback: (error: grpc.ServiceError | null, response: ProtoHealthResponse) => void
+  ): void;
+  health(
+    request: ProtoHealthRequest,
     callback: (error: grpc.ServiceError | null, response: ProtoHealthResponse) => void
   ): void;
 
+  archive(
+    request: ProtoArchiveRequest,
+    metadata: grpc.Metadata,
+    callback: (error: grpc.ServiceError | null, response: ProtoArchiveResponse) => void
+  ): void;
   archive(
     request: ProtoArchiveRequest,
     callback: (error: grpc.ServiceError | null, response: ProtoArchiveResponse) => void
@@ -455,9 +497,19 @@ export interface GrpcServiceClient {
 
   addPolicy(
     request: ProtoAddPolicyRequest,
+    metadata: grpc.Metadata,
+    callback: (error: grpc.ServiceError | null, response: ProtoAddPolicyResponse) => void
+  ): void;
+  addPolicy(
+    request: ProtoAddPolicyRequest,
     callback: (error: grpc.ServiceError | null, response: ProtoAddPolicyResponse) => void
   ): void;
 
+  removePolicy(
+    request: ProtoRemovePolicyRequest,
+    metadata: grpc.Metadata,
+    callback: (error: grpc.ServiceError | null, response: ProtoRemovePolicyResponse) => void
+  ): void;
   removePolicy(
     request: ProtoRemovePolicyRequest,
     callback: (error: grpc.ServiceError | null, response: ProtoRemovePolicyResponse) => void
@@ -465,9 +517,19 @@ export interface GrpcServiceClient {
 
   getPolicies(
     request: ProtoGetPoliciesRequest,
+    metadata: grpc.Metadata,
+    callback: (error: grpc.ServiceError | null, response: ProtoGetPoliciesResponse) => void
+  ): void;
+  getPolicies(
+    request: ProtoGetPoliciesRequest,
     callback: (error: grpc.ServiceError | null, response: ProtoGetPoliciesResponse) => void
   ): void;
 
+  applyPolicies(
+    request: ProtoApplyPoliciesRequest,
+    metadata: grpc.Metadata,
+    callback: (error: grpc.ServiceError | null, response: ProtoApplyPoliciesResponse) => void
+  ): void;
   applyPolicies(
     request: ProtoApplyPoliciesRequest,
     callback: (error: grpc.ServiceError | null, response: ProtoApplyPoliciesResponse) => void
@@ -475,9 +537,19 @@ export interface GrpcServiceClient {
 
   addReplicationPolicy(
     request: ProtoAddReplicationPolicyRequest,
+    metadata: grpc.Metadata,
+    callback: (error: grpc.ServiceError | null, response: ProtoAddReplicationPolicyResponse) => void
+  ): void;
+  addReplicationPolicy(
+    request: ProtoAddReplicationPolicyRequest,
     callback: (error: grpc.ServiceError | null, response: ProtoAddReplicationPolicyResponse) => void
   ): void;
 
+  removeReplicationPolicy(
+    request: ProtoRemoveReplicationPolicyRequest,
+    metadata: grpc.Metadata,
+    callback: (error: grpc.ServiceError | null, response: ProtoRemoveReplicationPolicyResponse) => void
+  ): void;
   removeReplicationPolicy(
     request: ProtoRemoveReplicationPolicyRequest,
     callback: (error: grpc.ServiceError | null, response: ProtoRemoveReplicationPolicyResponse) => void
@@ -485,9 +557,19 @@ export interface GrpcServiceClient {
 
   getReplicationPolicies(
     request: ProtoGetReplicationPoliciesRequest,
+    metadata: grpc.Metadata,
+    callback: (error: grpc.ServiceError | null, response: ProtoGetReplicationPoliciesResponse) => void
+  ): void;
+  getReplicationPolicies(
+    request: ProtoGetReplicationPoliciesRequest,
     callback: (error: grpc.ServiceError | null, response: ProtoGetReplicationPoliciesResponse) => void
   ): void;
 
+  getReplicationPolicy(
+    request: ProtoGetReplicationPolicyRequest,
+    metadata: grpc.Metadata,
+    callback: (error: grpc.ServiceError | null, response: ProtoGetReplicationPolicyResponse) => void
+  ): void;
   getReplicationPolicy(
     request: ProtoGetReplicationPolicyRequest,
     callback: (error: grpc.ServiceError | null, response: ProtoGetReplicationPolicyResponse) => void
@@ -495,9 +577,19 @@ export interface GrpcServiceClient {
 
   triggerReplication(
     request: ProtoTriggerReplicationRequest,
+    metadata: grpc.Metadata,
+    callback: (error: grpc.ServiceError | null, response: ProtoTriggerReplicationResponse) => void
+  ): void;
+  triggerReplication(
+    request: ProtoTriggerReplicationRequest,
     callback: (error: grpc.ServiceError | null, response: ProtoTriggerReplicationResponse) => void
   ): void;
 
+  getReplicationStatus(
+    request: ProtoGetReplicationStatusRequest,
+    metadata: grpc.Metadata,
+    callback: (error: grpc.ServiceError | null, response: ProtoGetReplicationStatusResponse) => void
+  ): void;
   getReplicationStatus(
     request: ProtoGetReplicationStatusRequest,
     callback: (error: grpc.ServiceError | null, response: ProtoGetReplicationStatusResponse) => void

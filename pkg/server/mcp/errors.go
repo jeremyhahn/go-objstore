@@ -13,7 +13,12 @@
 
 package mcp
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+
+	"github.com/jeremyhahn/go-objstore/pkg/common"
+)
 
 var (
 	// Tool and parameter errors
@@ -26,6 +31,10 @@ var (
 
 	// ErrInvalidParameter is returned when a parameter has an invalid value or type.
 	ErrInvalidParameter = errors.New("invalid parameter")
+
+	// ErrInvalidBase64Data is returned when the data parameter is not valid
+	// base64. Object data is base64-encoded on the MCP transport.
+	ErrInvalidBase64Data = errors.New("data must be base64-encoded")
 
 	// ErrInvalidAction is returned when an invalid policy action is specified.
 	ErrInvalidAction = errors.New("action must be 'delete' or 'archive'")
@@ -48,8 +57,10 @@ var (
 
 	// Policy errors
 
-	// ErrPolicyAlreadyExists is returned when attempting to add a policy that already exists.
-	ErrPolicyAlreadyExists = errors.New("policy already exists")
+	// ErrPolicyAlreadyExists is returned when attempting to add a policy that
+	// already exists. It wraps common.ErrAlreadyExists so common.Classify maps
+	// it (and any error wrapping it) to CodeAlreadyExists.
+	ErrPolicyAlreadyExists = fmt.Errorf("policy already exists: %w", common.ErrAlreadyExists)
 
 	// ErrPolicyNotFound is returned when a policy is not found.
 	ErrPolicyNotFound = errors.New("policy not found")

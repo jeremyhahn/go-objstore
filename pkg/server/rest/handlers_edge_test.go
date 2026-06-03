@@ -252,24 +252,43 @@ func TestListObjectsLargeLimit(t *testing.T) {
 	}
 }
 
+// TestGetObjectMetadataHandler verifies that GetObjectMetadata routes backend
+// errors through the shared taxonomy: 404 is reserved for not-found, while
+// other failure classes map to their own status codes.
 func TestGetObjectMetadataHandler(t *testing.T) {
-	storage := &ErrorMockStorage{
-		MockStorage: NewMockStorage(),
-		metadataErr: errTestMetadataError,
+	tests := []struct {
+		name        string
+		metadataErr error
+		wantStatus  int
+	}{
+		{"not found", common.ErrMetadataNotFound, http.StatusNotFound},
+		{"unavailable", common.ErrUnavailable, http.StatusServiceUnavailable},
+		{"deadline exceeded", context.DeadlineExceeded, http.StatusGatewayTimeout},
+		{"permission denied", common.ErrPermissionDenied, http.StatusForbidden},
+		{"unclassified", errTestMetadataError, http.StatusInternalServerError},
 	}
 
-	handler := newTestHandler(t, storage)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			storage := &ErrorMockStorage{
+				MockStorage: NewMockStorage(),
+				metadataErr: tt.metadataErr,
+			}
 
-	router := gin.New()
-	router.GET("/metadata/:key", handler.GetObjectMetadata)
+			handler := newTestHandler(t, storage)
 
-	req := httptest.NewRequest("GET", "/metadata/test.txt", nil)
-	w := httptest.NewRecorder()
+			router := gin.New()
+			router.GET("/metadata/:key", handler.GetObjectMetadata)
 
-	router.ServeHTTP(w, req)
+			req := httptest.NewRequest("GET", "/metadata/test.txt", nil)
+			w := httptest.NewRecorder()
 
-	if w.Code != http.StatusNotFound {
-		t.Errorf("GetObjectMetadata() with error status = %v, want %v", w.Code, http.StatusNotFound)
+			router.ServeHTTP(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf("GetObjectMetadata() with %s error status = %v, want %v", tt.name, w.Code, tt.wantStatus)
+			}
+		})
 	}
 }
 

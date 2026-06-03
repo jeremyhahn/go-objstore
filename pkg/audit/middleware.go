@@ -15,16 +15,32 @@ package audit
 
 import (
 	"context"
+	"regexp"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
+	"github.com/jeremyhahn/go-objstore/pkg/server/middleware"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
+
+// requestIDMaxLen and requestIDPattern mirror the middleware package's
+// sanitization rules so both layers apply the same allowlist.
+const requestIDMaxLen = 128
+
+var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+
+// sanitizeRequestID returns the id unchanged if it is valid, or "" otherwise.
+func sanitizeRequestID(id string) string {
+	if id == "" || len(id) > requestIDMaxLen || !requestIDPattern.MatchString(id) {
+		return ""
+	}
+	return id
+}
 
 // Context keys for storing audit logger and request info
 type contextKey string
@@ -59,11 +75,20 @@ func GetRequestID(ctx context.Context) string {
 // AuditMiddleware creates a Gin middleware for audit logging
 func AuditMiddleware(auditLogger AuditLogger) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Generate or extract request ID
-		requestID := c.GetHeader("X-Request-ID")
+		// Use the request ID already set by RequestIDMiddleware when present so
+		// audit records correlate with the X-Request-ID response header. Fall
+		// back to the sanitized inbound header, or generate a fresh one if
+		// absent/invalid. The response header is only set when RequestIDMiddleware
+		// has not already done so.
+		requestID := middleware.GetRequestIDFromGinContext(c)
+		if requestID == "" {
+			requestID = sanitizeRequestID(c.GetHeader(middleware.RequestIDHeader))
+		}
 		if requestID == "" {
 			requestID = uuid.New().String()
-			c.Header("X-Request-ID", requestID)
+		}
+		if c.Writer.Header().Get(middleware.RequestIDHeader) == "" {
+			c.Header(middleware.RequestIDHeader, requestID)
 		}
 
 		// Record start time
@@ -84,11 +109,18 @@ func AuditMiddleware(auditLogger AuditLogger) gin.HandlerFunc {
 		path := c.Request.URL.Path
 		clientIP := c.ClientIP()
 
-		// Extract principal from context if available
+		// Extract principal from context if available.
+		// REST middleware stores *adapters.Principal; accept both pointer and value.
 		principal := ""
 		userID := ""
 		if principalValue, exists := c.Get("principal"); exists {
-			if p, ok := principalValue.(adapters.Principal); ok {
+			switch p := principalValue.(type) {
+			case *adapters.Principal:
+				if p != nil {
+					principal = p.Name
+					userID = p.ID
+				}
+			case adapters.Principal:
 				principal = p.Name
 				userID = p.ID
 			}
@@ -161,11 +193,19 @@ func AuditUnaryInterceptor(auditLogger AuditLogger) grpc.UnaryServerInterceptor 
 		// Extract client IP
 		clientIP := extractClientIP(ctx)
 
-		// Extract principal if available (would be set by auth interceptor)
+		// Extract principal if available (set by the authentication interceptor).
+		// The gRPC auth interceptor stores *adapters.Principal under
+		// adapters.PrincipalContextKey{}; accept both pointer and value forms.
 		principal := ""
 		userID := ""
-		if principalValue := ctx.Value("principal"); principalValue != nil {
-			if p, ok := principalValue.(adapters.Principal); ok {
+		if principalValue := ctx.Value(adapters.PrincipalContextKey{}); principalValue != nil {
+			switch p := principalValue.(type) {
+			case *adapters.Principal:
+				if p != nil {
+					principal = p.Name
+					userID = p.ID
+				}
+			case adapters.Principal:
 				principal = p.Name
 				userID = p.ID
 			}
@@ -246,11 +286,17 @@ func AuditStreamInterceptor(auditLogger AuditLogger) grpc.StreamServerIntercepto
 		// Extract client IP
 		clientIP := extractClientIP(ctx)
 
-		// Extract principal if available
+		// Extract principal if available (set by the authentication interceptor).
 		principal := ""
 		userID := ""
-		if principalValue := ctx.Value("principal"); principalValue != nil {
-			if p, ok := principalValue.(adapters.Principal); ok {
+		if principalValue := ctx.Value(adapters.PrincipalContextKey{}); principalValue != nil {
+			switch p := principalValue.(type) {
+			case *adapters.Principal:
+				if p != nil {
+					principal = p.Name
+					userID = p.ID
+				}
+			case adapters.Principal:
 				principal = p.Name
 				userID = p.ID
 			}

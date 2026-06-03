@@ -103,6 +103,7 @@ func (c *QUICClient) Put(ctx context.Context, key string, data []byte, metadata 
 			req.Header.Set("X-Meta-"+k, v)
 		}
 	}
+	c.applyAuthHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -111,7 +112,7 @@ func (c *QUICClient) Put(ctx context.Context, key string, data []byte, metadata 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("PUT failed with status %d", resp.StatusCode)
+		return nil, httpStatusError("PUT", resp.StatusCode)
 	}
 
 	var result struct {
@@ -139,6 +140,7 @@ func (c *QUICClient) Get(ctx context.Context, key string) (*GetResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	c.applyAuthHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -146,12 +148,8 @@ func (c *QUICClient) Get(ctx context.Context, key string) (*GetResult, error) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, ErrObjectNotFound
-	}
-
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET failed with status %d", resp.StatusCode)
+		return nil, httpStatusError("GET", resp.StatusCode)
 	}
 
 	data, err := io.ReadAll(resp.Body)
@@ -180,12 +178,8 @@ func (c *QUICClient) Delete(ctx context.Context, key string) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return ErrObjectNotFound
-	}
-
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("DELETE failed with status %d", resp.StatusCode)
+		return httpStatusError("DELETE", resp.StatusCode)
 	}
 
 	return nil
@@ -227,7 +221,7 @@ func (c *QUICClient) List(ctx context.Context, opts *ListOptions) (*ListResult, 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("LIST failed with status %d", resp.StatusCode)
+		return nil, httpStatusError("LIST", resp.StatusCode)
 	}
 
 	var result struct {
@@ -291,7 +285,7 @@ func (c *QUICClient) Exists(ctx context.Context, key string) (bool, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return false, fmt.Errorf("EXISTS failed with status %d", resp.StatusCode)
+		return false, httpStatusError("EXISTS", resp.StatusCode)
 	}
 
 	var result struct {
@@ -319,12 +313,8 @@ func (c *QUICClient) GetMetadata(ctx context.Context, key string) (*Metadata, er
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, ErrObjectNotFound
-	}
-
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET metadata failed with status %d", resp.StatusCode)
+		return nil, httpStatusError("GET metadata", resp.StatusCode)
 	}
 
 	return metadataFromHeaders(resp.Header), nil
@@ -351,12 +341,8 @@ func (c *QUICClient) UpdateMetadata(ctx context.Context, key string, metadata *M
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return ErrObjectNotFound
-	}
-
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("UPDATE metadata failed with status %d", resp.StatusCode)
+		return httpStatusError("UPDATE metadata", resp.StatusCode)
 	}
 
 	return nil
@@ -376,7 +362,7 @@ func (c *QUICClient) Health(ctx context.Context) (*HealthStatus, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HEALTH failed with status %d", resp.StatusCode)
+		return nil, httpStatusError("HEALTH", resp.StatusCode)
 	}
 
 	var result struct {
@@ -408,7 +394,7 @@ func (c *QUICClient) Archive(ctx context.Context, key string, destinationType st
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("ARCHIVE failed with status %d", resp.StatusCode)
+		return httpStatusError("ARCHIVE", resp.StatusCode)
 	}
 
 	return nil
@@ -440,7 +426,7 @@ func (c *QUICClient) AddPolicy(ctx context.Context, policy *LifecyclePolicy) err
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("ADD policy failed with status %d", resp.StatusCode)
+		return httpStatusError("ADD policy", resp.StatusCode)
 	}
 
 	return nil
@@ -456,12 +442,8 @@ func (c *QUICClient) RemovePolicy(ctx context.Context, policyID string) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return ErrObjectNotFound
-	}
-
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("REMOVE policy failed with status %d", resp.StatusCode)
+		return httpStatusError("REMOVE policy", resp.StatusCode)
 	}
 
 	return nil
@@ -483,7 +465,7 @@ func (c *QUICClient) GetPolicies(ctx context.Context, prefix string) ([]*Lifecyc
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET policies failed with status %d", resp.StatusCode)
+		return nil, httpStatusError("GET policies", resp.StatusCode)
 	}
 
 	var result struct {
@@ -522,7 +504,7 @@ func (c *QUICClient) ApplyPolicies(ctx context.Context) (*ApplyPoliciesResult, e
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("APPLY policies failed with status %d", resp.StatusCode)
+		return nil, httpStatusError("APPLY policies", resp.StatusCode)
 	}
 
 	var result struct {
@@ -579,7 +561,7 @@ func (c *QUICClient) AddReplicationPolicy(ctx context.Context, policy *Replicati
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("ADD replication policy failed with status %d", resp.StatusCode)
+		return httpStatusError("ADD replication policy", resp.StatusCode)
 	}
 
 	return nil
@@ -595,12 +577,8 @@ func (c *QUICClient) RemoveReplicationPolicy(ctx context.Context, policyID strin
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return ErrObjectNotFound
-	}
-
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("REMOVE replication policy failed with status %d", resp.StatusCode)
+		return httpStatusError("REMOVE replication policy", resp.StatusCode)
 	}
 
 	return nil
@@ -615,7 +593,7 @@ func (c *QUICClient) GetReplicationPolicies(ctx context.Context) ([]*Replication
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET replication policies failed with status %d", resp.StatusCode)
+		return nil, httpStatusError("GET replication policies", resp.StatusCode)
 	}
 
 	var result struct {
@@ -646,12 +624,8 @@ func (c *QUICClient) GetReplicationPolicy(ctx context.Context, policyID string) 
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, ErrObjectNotFound
-	}
-
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET replication policy failed with status %d", resp.StatusCode)
+		return nil, httpStatusError("GET replication policy", resp.StatusCode)
 	}
 
 	var policy quicReplicationPolicy
@@ -681,12 +655,8 @@ func (c *QUICClient) TriggerReplication(ctx context.Context, opts *TriggerReplic
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, ErrObjectNotFound
-	}
-
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("TRIGGER replication failed with status %d", resp.StatusCode)
+		return nil, httpStatusError("TRIGGER replication", resp.StatusCode)
 	}
 
 	var result struct {
@@ -733,12 +703,8 @@ func (c *QUICClient) GetReplicationStatus(ctx context.Context, policyID string) 
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, ErrObjectNotFound
-	}
-
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET replication status failed with status %d", resp.StatusCode)
+		return nil, httpStatusError("GET replication status", resp.StatusCode)
 	}
 
 	var result struct {
@@ -791,6 +757,12 @@ func (c *QUICClient) Close() error {
 	return nil
 }
 
+// applyAuthHeaders adds Authorization, custom headers, and X-Tenant-ID to req
+// when they are configured.
+func (c *QUICClient) applyAuthHeaders(req *http.Request) {
+	applyAuthHeaders(req, c.config)
+}
+
 // doJSON performs an HTTP/3 request with an optional JSON body and returns the response.
 // The caller is responsible for closing the response body.
 func (c *QUICClient) doJSON(ctx context.Context, method, reqURL string, body interface{}) (*http.Response, error) {
@@ -810,8 +782,26 @@ func (c *QUICClient) doJSON(ctx context.Context, method, reqURL string, body int
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	c.applyAuthHeaders(req)
 
 	return c.httpClient.Do(req)
+}
+
+// GetStream retrieves an object as a streaming io.ReadCloser.
+// The caller must close the returned reader when done.
+func (c *QUICClient) GetStream(ctx context.Context, key string) (io.ReadCloser, *Metadata, error) {
+	return httpGetStream(ctx, c.httpClient, c.baseURL, key, c.config, metadataFromHeaders)
+}
+
+// PutStream stores an object from an io.Reader.
+// size is the Content-Length hint; pass -1 when unknown.
+func (c *QUICClient) PutStream(ctx context.Context, key string, r io.Reader, size int64, metadata *Metadata) (*PutResult, error) {
+	// QUIC carries custom metadata as per-key X-Meta-<key> headers.
+	return httpPutStream(ctx, c.httpClient, c.baseURL, key, r, size, metadata, c.config, func(req *http.Request, custom map[string]string) {
+		for k, v := range custom {
+			req.Header.Set("X-Meta-"+k, v)
+		}
+	})
 }
 
 // metadataFromHeaders reconstructs object metadata from QUIC response headers.

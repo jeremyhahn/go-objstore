@@ -2,143 +2,73 @@
 
 Configuration reference for the Model Context Protocol server.
 
-## Basic Configuration
+The MCP server is configured with command-line flags. There is no configuration
+file. Two binaries serve MCP:
 
-```yaml
-mcp:
-  enabled: true
-  transport: stdio  # stdio, http
-  log_level: info
+- `objstore-mcp-server` - standalone MCP server
+- `objstore-server` - combined server (gRPC + REST + QUIC + MCP)
+
+## Standalone Server Flags (objstore-mcp-server)
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--mode` | `http` | Server mode: `stdio` or `http` |
+| `--addr` | `:8081` | HTTP server address (only for http mode) |
+| `--backend` | `local` | Storage backend (`local`, `s3`, `gcs`, `azure`) |
+| `--path` | `/tmp/objstore` | Storage path for the local backend |
+
+```bash
+# HTTP mode (default), listening on :8081
+objstore-mcp-server --backend local --path /var/lib/objstore
+
+# Stdio mode (for MCP clients that spawn the server as a subprocess)
+objstore-mcp-server --mode stdio --backend local --path /var/lib/objstore
 ```
 
-## Transport Options
+## Combined Server Flags (objstore-server)
 
-### Stdio Transport
-```yaml
-mcp:
-  transport: stdio
-  stdin: /dev/stdin
-  stdout: /dev/stdout
-  stderr: /dev/stderr
-```
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--mcp` | `true` | Enable the MCP server |
+| `--mcp-mode` | `http` | MCP mode: `stdio` or `http` |
+| `--mcp-addr` | `:8081` | MCP HTTP server address |
 
-### HTTP Transport
-```yaml
-mcp:
-  transport: http
-  address: "0.0.0.0:3000"
-  base_path: "/mcp"
-  read_timeout: 30s
-  write_timeout: 30s
-```
+## Transport Modes
 
-## Server Information
+### Stdio
+JSON-RPC 2.0 over stdin/stdout. Logs go to stderr so stdout stays clean for the
+protocol stream. Use this mode when an MCP client (such as Claude Desktop)
+launches the server as a subprocess.
 
-```yaml
-mcp:
-  server_info:
-    name: objstore-mcp
-    version: "1.0.0"
-    description: "Object storage server with MCP protocol"
-```
+### HTTP
+JSON-RPC 2.0 over HTTP POST. Endpoints:
 
-## Resources Configuration
+- `POST /` - JSON-RPC 2.0 requests
+- `GET /health` - Health check (returns `OK`)
 
-```yaml
-mcp:
-  resources:
-    enabled: true
-    list_prefix: ""  # Default prefix for listing
-    max_results: 1000
-```
+The default request body limit in HTTP mode is 100MB.
 
-## Tools Configuration
+## Tools
 
-```yaml
-mcp:
-  tools:
-    enabled: true
-    allowed_tools:
-      - get_object
-      - put_object
-      - delete_object
-      - list_objects
-```
+The server exposes these MCP tools:
 
-## Prompts Configuration
+- `objstore_put` - Store an object (data must be base64-encoded)
+- `objstore_get` - Retrieve an object (data returned base64-encoded)
+- `objstore_delete` - Delete an object
+- `objstore_list` - List objects
+- `objstore_exists` - Check object existence
+- `objstore_get_metadata` - Get object metadata
+- `objstore_update_metadata` - Update object metadata
+- `objstore_health` - Backend health check
+- `objstore_archive` - Archive an object
+- `objstore_add_policy` - Add lifecycle policy
+- `objstore_remove_policy` - Remove lifecycle policy
+- `objstore_get_policies` - List lifecycle policies
+- `objstore_apply_policies` - Apply lifecycle policies
 
-```yaml
-mcp:
-  prompts:
-    enabled: true
-    custom_prompts:
-      - name: "list-objects"
-        description: "List all objects in storage"
-      - name: "get-object-content"
-        description: "Get content of a specific object"
-```
-
-## Authentication
-
-```yaml
-mcp:
-  auth:
-    enabled: true
-    type: token
-    token: ${MCP_AUTH_TOKEN}
-```
-
-## Logging
-
-```yaml
-mcp:
-  logging:
-    enabled: true
-    format: json
-    level: info
-    log_requests: true
-    log_responses: false
-```
-
-## Complete Example
-
-```yaml
-mcp:
-  enabled: true
-  transport: http
-  address: "0.0.0.0:3000"
-  base_path: "/mcp"
-  
-  server_info:
-    name: objstore-mcp
-    version: "1.0.0"
-  
-  resources:
-    enabled: true
-    list_prefix: ""
-    max_results: 1000
-  
-  tools:
-    enabled: true
-    allowed_tools:
-      - get_object
-      - put_object
-      - delete_object
-      - list_objects
-  
-  prompts:
-    enabled: true
-  
-  auth:
-    enabled: true
-    type: token
-    token: ${MCP_AUTH_TOKEN}
-  
-  logging:
-    enabled: true
-    format: json
-    level: info
-```
+Object data always travels base64-encoded inside the JSON-RPC payload so the
+transport remains binary-safe. Raw (non-base64) data in `objstore_put` is
+rejected.
 
 ## Protocol Details
 
@@ -151,7 +81,7 @@ MCP uses JSON-RPC 2.0 over the configured transport.
   "id": 1,
   "method": "tools/call",
   "params": {
-    "name": "get_object",
+    "name": "objstore_get",
     "arguments": {
       "key": "path/to/object"
     }
@@ -168,15 +98,23 @@ MCP uses JSON-RPC 2.0 over the configured transport.
     "content": [
       {
         "type": "text",
-        "text": "object content"
+        "text": "{\"key\":\"path/to/object\",\"data\":\"aGVsbG8=\"}"
       }
     ]
   }
 }
 ```
 
-## Environment Variable Overrides
+## Authentication and Advanced Settings (Programmatic)
 
-- `MCP_TRANSPORT` - Transport type
-- `MCP_ADDRESS` - Listen address (HTTP transport)
-- `MCP_AUTH_TOKEN` - Authentication token
+The binaries do not expose authentication flags. When embedding the server,
+configure adapters through `mcpserver.ServerConfig` (see `pkg/server/mcp`):
+
+- `Authenticator` / `Authorizer` - pluggable auth adapters (HTTP mode; always
+  enforced for HTTP, opt-in for stdio via `EnforceStdioAuthz`)
+- `TLSConfig` - TLS/mTLS for HTTP mode
+- `MaxBodySize` - HTTP request body limit (default 100MB)
+- `EnableRateLimit` / `RateLimitConfig` - rate limiting
+- `EnableAudit` / `AuditLogger` - audit logging
+- `ResourcePrefix` - prefix for MCP resource listings
+- `Backend` - named backend to use (empty = default backend)

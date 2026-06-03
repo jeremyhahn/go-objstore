@@ -81,9 +81,10 @@ func (ctx *CommandContext) AddReplicationPolicyCommand(
 		return ctx.Client.AddReplicationPolicy(ctxBg, policy)
 	}
 
-	// Use local storage - this requires the storage to support replication
-	// For now, return an error indicating this needs to be implemented
-	return common.ErrReplicationNotSupported
+	// Documented limitation: local CLI mode has no replication manager, so
+	// replication policies cannot be managed here. Server mode (--server)
+	// supports them.
+	return ErrReplicationRequiresServer
 }
 
 // RemoveReplicationPolicyCommand removes a replication policy
@@ -95,8 +96,8 @@ func (ctx *CommandContext) RemoveReplicationPolicyCommand(id string) error {
 		return ctx.Client.RemoveReplicationPolicy(ctxBg, id)
 	}
 
-	// Use local storage
-	return common.ErrReplicationNotSupported
+	// Local CLI mode has no replication manager; use server mode (--server).
+	return ErrReplicationRequiresServer
 }
 
 // GetReplicationPolicyCommand retrieves a specific replication policy
@@ -108,8 +109,8 @@ func (ctx *CommandContext) GetReplicationPolicyCommand(id string) (*common.Repli
 		return ctx.Client.GetReplicationPolicy(ctxBg, id)
 	}
 
-	// Use local storage
-	return nil, common.ErrReplicationNotSupported
+	// Local CLI mode has no replication manager; use server mode (--server).
+	return nil, ErrReplicationRequiresServer
 }
 
 // ListReplicationPoliciesCommand lists all replication policies
@@ -121,8 +122,8 @@ func (ctx *CommandContext) ListReplicationPoliciesCommand() ([]common.Replicatio
 		return ctx.Client.GetReplicationPolicies(ctxBg)
 	}
 
-	// Use local storage
-	return nil, common.ErrReplicationNotSupported
+	// Local CLI mode has no replication manager; use server mode (--server).
+	return nil, ErrReplicationRequiresServer
 }
 
 // TriggerReplicationCommand triggers replication sync
@@ -134,8 +135,8 @@ func (ctx *CommandContext) TriggerReplicationCommand(policyID string) (*common.S
 		return ctx.Client.TriggerReplication(ctxBg, policyID)
 	}
 
-	// Use local storage
-	return nil, common.ErrReplicationNotSupported
+	// Local CLI mode has no replication manager; use server mode (--server).
+	return nil, ErrReplicationRequiresServer
 }
 
 // GetReplicationStatusCommand retrieves replication status for a specific policy
@@ -147,8 +148,8 @@ func (ctx *CommandContext) GetReplicationStatusCommand(policyID string) (*replic
 		return ctx.Client.GetReplicationStatus(ctxBg, policyID)
 	}
 
-	// Use local storage
-	return nil, common.ErrReplicationNotSupported
+	// Local CLI mode has no replication manager; use server mode (--server).
+	return nil, ErrReplicationRequiresServer
 }
 
 // parseSettings converts a slice of "key=value" strings to a map

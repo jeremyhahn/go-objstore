@@ -13,11 +13,19 @@
 
 package unix
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/jeremyhahn/go-objstore/pkg/server/jsonrpc"
+)
 
 var (
 	// ErrSocketPathRequired is returned when socket path is not provided
 	ErrSocketPathRequired = errors.New("socket path is required")
+
+	// ErrSocketPathNotSocket is returned when the configured socket path
+	// exists but is not a Unix domain socket.
+	ErrSocketPathNotSocket = errors.New("socket path exists and is not a socket")
 
 	// ErrNotInitialized is returned when facade is not initialized
 	ErrNotInitialized = errors.New("objstore facade not initialized")
@@ -31,21 +39,20 @@ var (
 	// ErrInvalidParams is returned for invalid parameters
 	ErrInvalidParams = errors.New("invalid parameters")
 
-	// ErrObjectNotFound is returned when object doesn't exist
-	ErrObjectNotFound = errors.New("object not found")
-
-	// ErrPolicyNotFound is returned when policy doesn't exist
-	ErrPolicyNotFound = errors.New("policy not found")
-
 	// ErrServerClosed is returned when server is closed
 	ErrServerClosed = errors.New("server closed")
+
+	// ErrRequestFailed wraps the JSON-RPC error message of a failed request
+	// for audit logging.
+	ErrRequestFailed = errors.New("request failed")
 )
 
-// JSON-RPC 2.0 error codes
+// JSON-RPC 2.0 error codes, shared with the MCP transport via
+// pkg/server/jsonrpc. Kept as local aliases for source compatibility.
 const (
-	ErrCodeParseError     = -32700
-	ErrCodeInvalidRequest = -32600
-	ErrCodeMethodNotFound = -32601
-	ErrCodeInvalidParams  = -32602
-	ErrCodeInternalError  = -32603
+	ErrCodeParseError     = jsonrpc.CodeParseError
+	ErrCodeInvalidRequest = jsonrpc.CodeInvalidRequest
+	ErrCodeMethodNotFound = jsonrpc.CodeMethodNotFound
+	ErrCodeInvalidParams  = jsonrpc.CodeInvalidParams
+	ErrCodeInternalError  = jsonrpc.CodeInternal
 )

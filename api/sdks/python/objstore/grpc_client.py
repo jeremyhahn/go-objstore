@@ -1,14 +1,19 @@
 """gRPC client implementation for go-objstore."""
 
 from datetime import datetime
-from typing import Iterator, List, Optional, Union
+from typing import BinaryIO, Dict, Iterator, List, Optional, Union
 
 from objstore.exceptions import (
+    AlreadyExistsError,
+    AuthenticationError,
+    AuthorizationError,
     ConnectionError,
     ObjectNotFoundError,
     ObjectStoreError,
+    RateLimitError,
     ServerError,
     TimeoutError,
+    ValidationError,
 )
 from objstore.models import (
     ArchiveResponse,
@@ -61,6 +66,9 @@ class GrpcClient:
         port: int = 50051,
         timeout: int = 30,
         max_retries: int = 3,
+        token: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+        tenant_id: Optional[str] = None,
     ) -> None:
         """Initialize gRPC client.
 
@@ -69,6 +77,9 @@ class GrpcClient:
             port: Server port
             timeout: Request timeout in seconds
             max_retries: Maximum number of retry attempts
+            token: Optional bearer token (sent as ``authorization`` metadata)
+            headers: Optional dict of additional gRPC call metadata
+            tenant_id: Optional tenant identifier (sent as ``x-tenant-id``)
 
         Raises:
             ImportError: If gRPC is not available
@@ -82,8 +93,29 @@ class GrpcClient:
         self.port = port
         self.timeout = timeout
         self.max_retries = max_retries
+        self.token = token
+        self.extra_headers = headers or {}
+        self.tenant_id = tenant_id
         self.channel = grpc.insecure_channel(f"{host}:{port}")
         self.stub = objstore_pb2_grpc.ObjectStoreStub(self.channel)
+
+    def _call_metadata(self) -> Optional[List[tuple]]:
+        """Build gRPC call metadata for auth and custom headers.
+
+        Returns:
+            List of (key, value) tuples or None when no metadata is needed
+        """
+        meta: List[tuple] = []
+        token = getattr(self, "token", None)
+        tenant_id = getattr(self, "tenant_id", None)
+        extra_headers: Dict[str, str] = getattr(self, "extra_headers", {})
+        if token:
+            meta.append(("authorization", f"Bearer {token}"))
+        if tenant_id:
+            meta.append(("x-tenant-id", tenant_id))
+        for k, v in extra_headers.items():
+            meta.append((k.lower(), v))
+        return meta if meta else None
 
     def _metadata_to_proto(self, metadata: Optional[Metadata]) -> object:
         """Convert Metadata model to protobuf message.
@@ -154,7 +186,7 @@ class GrpcClient:
                 key=key, data=data, metadata=self._metadata_to_proto(metadata)
             )
 
-            response = self.stub.Put(request, timeout=self.timeout)
+            response = self.stub.Put(request, timeout=self.timeout, metadata=self._call_metadata())
 
             return PutResponse(
                 success=response.success, message=response.message, etag=response.etag
@@ -178,7 +210,7 @@ class GrpcClient:
         """
         try:
             request = objstore_pb2.GetRequest(key=key)
-            responses = self.stub.Get(request, timeout=self.timeout)
+            responses = self.stub.Get(request, timeout=self.timeout, metadata=self._call_metadata())
 
             data = b""
             metadata = Metadata()
@@ -208,7 +240,7 @@ class GrpcClient:
         """
         try:
             request = objstore_pb2.GetRequest(key=key)
-            responses = self.stub.Get(request, timeout=self.timeout)
+            responses = self.stub.Get(request, timeout=self.timeout, metadata=self._call_metadata())
 
             for response in responses:
                 if response.data:
@@ -216,6 +248,40 @@ class GrpcClient:
 
         except grpc.RpcError as e:
             self._handle_grpc_error(e)
+
+    def put_stream(
+        self,
+        key: str,
+        data: Union[bytes, BinaryIO],
+        metadata: Optional[Metadata] = None,
+    ) -> PutResponse:
+        """Upload an object from a stream or iterator.
+
+        Reads the full stream into memory then delegates to ``put``, because
+        the gRPC client-streaming PutObject RPC is not yet exposed via the
+        stub and the server currently accepts the complete body in one Put call.
+
+        Args:
+            key: Object key/path
+            data: Byte stream or file-like object to upload
+            metadata: Optional metadata
+
+        Returns:
+            PutResponse with operation result
+
+        Raises:
+            ObjectStoreError: On failure
+        """
+        if hasattr(data, "read"):
+            body: bytes = data.read()
+        elif isinstance(data, bytes):
+            body = data
+        else:
+            chunks = []
+            for chunk in data:
+                chunks.append(chunk)
+            body = b"".join(chunks)
+        return self.put(key, body, metadata)
 
     def delete(self, key: str) -> DeleteResponse:
         """Delete an object.
@@ -231,7 +297,7 @@ class GrpcClient:
         """
         try:
             request = objstore_pb2.DeleteRequest(key=key)
-            response = self.stub.Delete(request, timeout=self.timeout)
+            response = self.stub.Delete(request, timeout=self.timeout, metadata=self._call_metadata())
 
             return DeleteResponse(success=response.success, message=response.message)
 
@@ -268,7 +334,7 @@ class GrpcClient:
                 continue_from=continue_from or "",
             )
 
-            response = self.stub.List(request, timeout=self.timeout)
+            response = self.stub.List(request, timeout=self.timeout, metadata=self._call_metadata())
 
             objects = [
                 ObjectInfo(key=obj.key, metadata=self._proto_to_metadata(obj.metadata))
@@ -300,7 +366,7 @@ class GrpcClient:
         """
         try:
             request = objstore_pb2.ExistsRequest(key=key)
-            response = self.stub.Exists(request, timeout=self.timeout)
+            response = self.stub.Exists(request, timeout=self.timeout, metadata=self._call_metadata())
 
             return ExistsResponse(exists=response.exists)
 
@@ -322,7 +388,7 @@ class GrpcClient:
         """
         try:
             request = objstore_pb2.GetMetadataRequest(key=key)
-            response = self.stub.GetMetadata(request, timeout=self.timeout)
+            response = self.stub.GetMetadata(request, timeout=self.timeout, metadata=self._call_metadata())
 
             if response.success and response.HasField("metadata"):
                 return self._proto_to_metadata(response.metadata)
@@ -351,7 +417,7 @@ class GrpcClient:
                 key=key, metadata=self._metadata_to_proto(metadata)
             )
 
-            response = self.stub.UpdateMetadata(request, timeout=self.timeout)
+            response = self.stub.UpdateMetadata(request, timeout=self.timeout, metadata=self._call_metadata())
 
             return PolicyResponse(success=response.success, message=response.message)
 
@@ -370,7 +436,7 @@ class GrpcClient:
         """
         try:
             request = objstore_pb2.HealthRequest()
-            response = self.stub.Health(request, timeout=self.timeout)
+            response = self.stub.Health(request, timeout=self.timeout, metadata=self._call_metadata())
 
             status_map = {
                 0: HealthStatus.UNKNOWN,
@@ -404,7 +470,7 @@ class GrpcClient:
             request = objstore_pb2.ArchiveRequest(
                 key=key, destination_type=destination_type, destination_settings=settings
             )
-            response = self.stub.Archive(request, timeout=self.timeout)
+            response = self.stub.Archive(request, timeout=self.timeout, metadata=self._call_metadata())
 
             return ArchiveResponse(success=response.success, message=response.message)
 
@@ -434,7 +500,7 @@ class GrpcClient:
                 destination_settings=policy.destination_settings,
             )
             request = objstore_pb2.AddPolicyRequest(policy=proto_policy)
-            response = self.stub.AddPolicy(request, timeout=self.timeout)
+            response = self.stub.AddPolicy(request, timeout=self.timeout, metadata=self._call_metadata())
 
             return PolicyResponse(success=response.success, message=response.message)
 
@@ -456,7 +522,7 @@ class GrpcClient:
         """
         try:
             request = objstore_pb2.RemovePolicyRequest(id=policy_id)
-            response = self.stub.RemovePolicy(request, timeout=self.timeout)
+            response = self.stub.RemovePolicy(request, timeout=self.timeout, metadata=self._call_metadata())
 
             return PolicyResponse(success=response.success, message=response.message)
 
@@ -478,7 +544,7 @@ class GrpcClient:
         """
         try:
             request = objstore_pb2.GetPoliciesRequest(prefix=prefix)
-            response = self.stub.GetPolicies(request, timeout=self.timeout)
+            response = self.stub.GetPolicies(request, timeout=self.timeout, metadata=self._call_metadata())
 
             policies = [
                 LifecyclePolicy(
@@ -511,7 +577,7 @@ class GrpcClient:
         """
         try:
             request = objstore_pb2.ApplyPoliciesRequest()
-            response = self.stub.ApplyPolicies(request, timeout=self.timeout)
+            response = self.stub.ApplyPolicies(request, timeout=self.timeout, metadata=self._call_metadata())
 
             return ApplyPoliciesResponse(
                 success=response.success,
@@ -550,7 +616,7 @@ class GrpcClient:
                 enabled=policy.enabled,
             )
             request = objstore_pb2.AddReplicationPolicyRequest(policy=proto_policy)
-            response = self.stub.AddReplicationPolicy(request, timeout=self.timeout)
+            response = self.stub.AddReplicationPolicy(request, timeout=self.timeout, metadata=self._call_metadata())
 
             return PolicyResponse(success=response.success, message=response.message)
 
@@ -572,7 +638,7 @@ class GrpcClient:
         """
         try:
             request = objstore_pb2.RemoveReplicationPolicyRequest(id=policy_id)
-            response = self.stub.RemoveReplicationPolicy(request, timeout=self.timeout)
+            response = self.stub.RemoveReplicationPolicy(request, timeout=self.timeout, metadata=self._call_metadata())
 
             return PolicyResponse(success=response.success, message=response.message)
 
@@ -591,7 +657,7 @@ class GrpcClient:
         """
         try:
             request = objstore_pb2.GetReplicationPoliciesRequest()
-            response = self.stub.GetReplicationPolicies(request, timeout=self.timeout)
+            response = self.stub.GetReplicationPolicies(request, timeout=self.timeout, metadata=self._call_metadata())
 
             policies = [
                 ReplicationPolicy(
@@ -627,7 +693,7 @@ class GrpcClient:
         """
         try:
             request = objstore_pb2.GetReplicationPolicyRequest(id=policy_id)
-            response = self.stub.GetReplicationPolicy(request, timeout=self.timeout)
+            response = self.stub.GetReplicationPolicy(request, timeout=self.timeout, metadata=self._call_metadata())
 
             # GetReplicationPolicyResponse has no success field in the proto;
             # check only whether the policy message is present.
@@ -670,7 +736,7 @@ class GrpcClient:
             request = objstore_pb2.TriggerReplicationRequest(
                 policy_id=opts.policy_id, parallel=opts.parallel, worker_count=opts.worker_count
             )
-            response = self.stub.TriggerReplication(request, timeout=self.timeout)
+            response = self.stub.TriggerReplication(request, timeout=self.timeout, metadata=self._call_metadata())
 
             sync_result = None
             if response.HasField("result"):
@@ -708,7 +774,7 @@ class GrpcClient:
         try:
             # The proto field name is "id", not "policy_id".
             request = objstore_pb2.GetReplicationStatusRequest(id=policy_id)
-            response = self.stub.GetReplicationStatus(request, timeout=self.timeout)
+            response = self.stub.GetReplicationStatus(request, timeout=self.timeout, metadata=self._call_metadata())
 
             status = None
             if response.success and response.HasField("status"):
@@ -761,6 +827,16 @@ class GrpcClient:
 
         if code == grpc.StatusCode.NOT_FOUND:
             raise ObjectNotFoundError(details)
+        elif code == grpc.StatusCode.UNAUTHENTICATED:
+            raise AuthenticationError(details)
+        elif code == grpc.StatusCode.PERMISSION_DENIED:
+            raise AuthorizationError(details)
+        elif code == grpc.StatusCode.ALREADY_EXISTS:
+            raise AlreadyExistsError(details)
+        elif code == grpc.StatusCode.RESOURCE_EXHAUSTED:
+            raise RateLimitError(details)
+        elif code == grpc.StatusCode.INVALID_ARGUMENT:
+            raise ValidationError(details)
         elif code == grpc.StatusCode.DEADLINE_EXCEEDED:
             raise TimeoutError(details)
         elif code == grpc.StatusCode.UNAVAILABLE:

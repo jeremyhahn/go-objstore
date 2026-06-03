@@ -159,8 +159,10 @@ func (f *StorageFile) Close() error {
 
 	f.closed.Store(true)
 
-	// If file was opened for writing, flush to storage
-	if f.flag&(os.O_WRONLY|os.O_RDWR|os.O_CREATE) != 0 && f.buf != nil && !f.isDir {
+	// If file was opened for writing, flush to storage.
+	// O_CREATE alone (without O_WRONLY or O_RDWR) does not imply a write intent,
+	// so only flush when an explicit write flag is set.
+	if f.flag&(os.O_WRONLY|os.O_RDWR) != 0 && f.buf != nil && !f.isDir {
 		data := f.buf.Bytes()
 		if err := f.fs.storage.Put(f.name, bytes.NewReader(data)); err != nil {
 			return err
@@ -419,8 +421,6 @@ func (f *StorageFile) Readdir(count int) ([]os.FileInfo, error) {
 		if f.fileInfo == nil {
 			f.fileInfo = NewFileInfo(path.Base(f.name), 0, os.ModeDir|0755, time.Now(), true)
 		}
-		// We need to store entries somewhere - let's add a dirEntries field
-		// For now, create a temporary variable
 		remaining := infos[f.dirIndex:]
 
 		if count <= 0 {
@@ -527,8 +527,9 @@ func (f *StorageFile) Sync() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	// If file was opened for writing, flush to storage
-	if f.flag&(os.O_WRONLY|os.O_RDWR|os.O_CREATE) != 0 && f.buf != nil && !f.isDir {
+	// If file was opened for writing, flush to storage.
+	// O_CREATE alone (without O_WRONLY or O_RDWR) does not imply a write intent.
+	if f.flag&(os.O_WRONLY|os.O_RDWR) != 0 && f.buf != nil && !f.isDir {
 		data := f.buf.Bytes()
 		if err := f.fs.storage.Put(f.name, bytes.NewReader(data)); err != nil {
 			return err

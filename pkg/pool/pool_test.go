@@ -441,22 +441,193 @@ func TestLocalOnly_ListAndRegisterDelegate(t *testing.T) {
 	}
 }
 
-// TestLeastUtilization_PickReturnsNotImplemented verifies the deferred
-// strategy fails loudly with the canonical sentinel.
-func TestLeastUtilization_PickReturnsNotImplemented(t *testing.T) {
+// TestLeastUtilization_NilStateStore verifies the strategy refuses to
+// operate without a StateStore — load tallies cannot be kept without one.
+func TestLeastUtilization_NilStateStore(t *testing.T) {
 	s := &pool.LeastUtilizationStrategy{}
 
 	_, err := s.Pick(context.Background(), []common.Storage{configuredLocal(t)}, pool.Hint{})
-	if !errors.Is(err, pool.ErrStrategyNotImplemented) {
-		t.Fatalf("expected ErrStrategyNotImplemented, got %v", err)
+	var missing *pool.MissingStateStoreError
+	if !errors.As(err, &missing) {
+		t.Fatalf("expected MissingStateStoreError, got %v", err)
+	}
+	if missing.Strategy != "least_utilization" {
+		t.Errorf("Strategy = %q, want least_utilization", missing.Strategy)
+	}
+}
+
+// TestLeastUtilization_EmptyCandidates verifies that Pick with a nil or
+// empty candidate slice returns a typed EmptyPoolError.
+func TestLeastUtilization_EmptyCandidates(t *testing.T) {
+	ctx := context.Background()
+	s := &pool.LeastUtilizationStrategy{State: newMemStateStore()}
+
+	var emptyErr *pool.EmptyPoolError
+	if _, err := s.Pick(ctx, nil, pool.Hint{}); !errors.As(err, &emptyErr) {
+		t.Fatalf("expected EmptyPoolError for nil candidates, got %v", err)
+	}
+	if _, err := s.Pick(ctx, []common.Storage{}, pool.Hint{}); !errors.As(err, &emptyErr) {
+		t.Fatalf("expected EmptyPoolError for empty slice, got %v", err)
+	}
+}
+
+// TestLeastUtilization_DeterministicTieBreak verifies that with all
+// tallies equal the lowest candidate index wins, and that without size
+// hints repeated picks distribute one assignment per candidate in index
+// order before wrapping around.
+func TestLeastUtilization_DeterministicTieBreak(t *testing.T) {
+	mgr := pool.NewManager()
+	c1 := configuredLocal(t)
+	c2 := configuredLocal(t)
+	c3 := configuredLocal(t)
+	s := &pool.LeastUtilizationStrategy{State: newMemStateStore()}
+
+	if err := mgr.Register("default", []common.Storage{c1, c2, c3}, s); err != nil {
+		t.Fatalf("Register failed: %v", err)
 	}
 
-	var sni *pool.StrategyNotImplementedError
-	if !errors.As(err, &sni) {
-		t.Fatalf("expected *StrategyNotImplementedError, got %T", err)
+	ctx := context.Background()
+	wantPaths := []string{
+		localPath(t, c1), localPath(t, c2), localPath(t, c3), // first round
+		localPath(t, c1), localPath(t, c2), localPath(t, c3), // wrap-around
 	}
-	if sni.Strategy != "least_utilization" {
-		t.Errorf("Strategy = %q, want least_utilization", sni.Strategy)
+	for i, want := range wantPaths {
+		got, err := mgr.Pick(ctx, "default", pool.Hint{})
+		if err != nil {
+			t.Fatalf("Pick #%d failed: %v", i, err)
+		}
+		if localPath(t, got) != want {
+			t.Errorf("Pick #%d returned path %q, want %q", i, localPath(t, got), want)
+		}
+	}
+}
+
+// TestLeastUtilization_SizeHintWeighting verifies that SizeHint weights
+// the load tallies: after a large placement on one candidate, subsequent
+// picks favor the other candidate until its cumulative load catches up.
+func TestLeastUtilization_SizeHintWeighting(t *testing.T) {
+	mgr := pool.NewManager()
+	c1 := configuredLocal(t)
+	c2 := configuredLocal(t)
+	s := &pool.LeastUtilizationStrategy{State: newMemStateStore()}
+
+	if err := mgr.Register("weighted", []common.Storage{c1, c2}, s); err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// First pick (tie) lands on c1 and assigns it 100 units.
+	got, err := mgr.Pick(ctx, "weighted", pool.Hint{SizeHint: 100})
+	if err != nil {
+		t.Fatalf("Pick failed: %v", err)
+	}
+	if localPath(t, got) != localPath(t, c1) {
+		t.Fatalf("first pick = %q, want %q", localPath(t, got), localPath(t, c1))
+	}
+
+	// The next four 25-unit picks must all land on c2 — its load stays
+	// below c1's 100 before each pick (0, 25, 50, 75).
+	for i := 0; i < 4; i++ {
+		got, err := mgr.Pick(ctx, "weighted", pool.Hint{SizeHint: 25})
+		if err != nil {
+			t.Fatalf("Pick #%d failed: %v", i, err)
+		}
+		if localPath(t, got) != localPath(t, c2) {
+			t.Errorf("Pick #%d = %q, want %q (c2 is less utilized)", i, localPath(t, got), localPath(t, c2))
+		}
+	}
+
+	// Loads are now tied at 100 — the tie breaks back to c1.
+	got, err = mgr.Pick(ctx, "weighted", pool.Hint{SizeHint: 1})
+	if err != nil {
+		t.Fatalf("tie-break Pick failed: %v", err)
+	}
+	if localPath(t, got) != localPath(t, c1) {
+		t.Errorf("tie-break pick = %q, want %q", localPath(t, got), localPath(t, c1))
+	}
+}
+
+// TestLeastUtilization_TalliesPersist verifies that a new strategy value
+// sharing the same StateStore continues from the persisted tallies
+// instead of resetting — the property that makes placement survive
+// daemon restarts.
+func TestLeastUtilization_TalliesPersist(t *testing.T) {
+	store := newMemStateStore()
+	c1 := configuredLocal(t)
+	c2 := configuredLocal(t)
+	candidates := []common.Storage{c1, c2}
+	ctx := context.Background()
+
+	mgr1 := pool.NewManager()
+	if err := mgr1.Register("p", candidates, &pool.LeastUtilizationStrategy{State: store}); err != nil {
+		t.Fatalf("Register on mgr1 failed: %v", err)
+	}
+	if _, err := mgr1.Pick(ctx, "p", pool.Hint{SizeHint: 50}); err != nil {
+		t.Fatalf("Pick on mgr1 failed: %v", err)
+	}
+
+	// A fresh Manager and strategy with the same StateStore must see
+	// c1's 50-unit load and pick c2.
+	mgr2 := pool.NewManager()
+	if err := mgr2.Register("p", candidates, &pool.LeastUtilizationStrategy{State: store}); err != nil {
+		t.Fatalf("Register on mgr2 failed: %v", err)
+	}
+	got, err := mgr2.Pick(ctx, "p", pool.Hint{})
+	if err != nil {
+		t.Fatalf("Pick on mgr2 failed: %v", err)
+	}
+	if localPath(t, got) != localPath(t, c2) {
+		t.Errorf("mgr2 pick = %q, want %q (tallies did not persist)", localPath(t, got), localPath(t, c2))
+	}
+}
+
+// TestLeastUtilization_PerPoolIsolation verifies two pools sharing the
+// same StateStore keep independent load tallies.
+func TestLeastUtilization_PerPoolIsolation(t *testing.T) {
+	store := newMemStateStore()
+	mgr := pool.NewManager()
+	ctx := context.Background()
+
+	aCandidates := []common.Storage{configuredLocal(t), configuredLocal(t)}
+	bCandidates := []common.Storage{configuredLocal(t), configuredLocal(t)}
+
+	if err := mgr.Register("a", aCandidates, &pool.LeastUtilizationStrategy{State: store}); err != nil {
+		t.Fatalf("Register a failed: %v", err)
+	}
+	if err := mgr.Register("b", bCandidates, &pool.LeastUtilizationStrategy{State: store}); err != nil {
+		t.Fatalf("Register b failed: %v", err)
+	}
+
+	// Load up pool a's first candidate. Pool b's tallies must be
+	// unaffected — its first pick still lands on index 0.
+	if _, err := mgr.Pick(ctx, "a", pool.Hint{SizeHint: 1000}); err != nil {
+		t.Fatalf("Pick a failed: %v", err)
+	}
+	pickB, err := mgr.Pick(ctx, "b", pool.Hint{})
+	if err != nil {
+		t.Fatalf("Pick b failed: %v", err)
+	}
+	if localPath(t, pickB) != localPath(t, bCandidates[0]) {
+		t.Errorf("Pool b first pick = %q, want %q (tallies should be isolated per pool)",
+			localPath(t, pickB), localPath(t, bCandidates[0]))
+	}
+}
+
+// TestLeastUtilization_ContextCancelled verifies Pick propagates context
+// cancellation instead of producing a pick.
+func TestLeastUtilization_ContextCancelled(t *testing.T) {
+	mgr := pool.NewManager()
+	s := &pool.LeastUtilizationStrategy{State: newMemStateStore()}
+	if err := mgr.Register("p", []common.Storage{configuredLocal(t)}, s); err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := mgr.Pick(ctx, "p", pool.Hint{}); !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got %v", err)
 	}
 }
 

@@ -1,13 +1,14 @@
-version: '3.8'
-
 services:
   # gRPC server instance
   grpc-server:
     build:
       context: ../../..
       dockerfile: test/integration/server/Dockerfile.grpc
-    ports:
-      - "50051:50051"
+    # No host port publishing: the test runner connects in-network via the
+    # service name (grpc-server:50051), and publishing collides with other
+    # services on dev machines.
+    expose:
+      - "50051"
     volumes:
       - grpc-storage:/tmp/objstore
       - grpc-archive:/tmp/archive
@@ -29,8 +30,8 @@ services:
     build:
       context: ../../..
       dockerfile: test/integration/server/Dockerfile.rest
-    ports:
-      - "8080:8080"
+    expose:
+      - "8080"
     volumes:
       - rest-storage:/tmp/objstore
       - rest-archive:/tmp/archive
@@ -53,8 +54,8 @@ services:
     build:
       context: ../../..
       dockerfile: test/integration/server/Dockerfile.quic
-    ports:
-      - "4433:4433/udp"
+    expose:
+      - "4433/udp"
     volumes:
       - quic-storage:/tmp/objstore
       - quic-archive:/tmp/archive
@@ -74,8 +75,8 @@ services:
     build:
       context: ../../..
       dockerfile: test/integration/server/Dockerfile.mcp
-    ports:
-      - "8081:8081"
+    expose:
+      - "8081"
     volumes:
       - mcp-storage:/tmp/objstore
       - mcp-archive:/tmp/archive
@@ -118,10 +119,19 @@ services:
       - QUIC_SERVER_ADDR=https://quic-server:4433
       - MCP_SERVER_ADDR=http://mcp-server:8081
       - CERT_FILE=/certs/server.crt
+      # Trust the self-signed test certificate in Go's system root pool so the
+      # CLI's HTTP/3 client can verify the QUIC server.
+      - SSL_CERT_FILE=/certs/server.crt
       - GO_TEST_TIMEOUT=15m
     networks:
       - test-network
-    command: go test -v -tags "local awss3 minio gcpstorage azureblob glacier azurearchive" ./test/integration/server/... -timeout 15m
+    # Build the CLI from the bind-mounted source (so it is never stale), then
+    # run the server integration tests.
+    command: >
+      sh -c '
+        go build -buildvcs=false -tags "local awss3 minio gcpstorage azureblob glacier azurearchive" -o /usr/local/bin/objstore ./cmd/objstore &&
+        go test -v -tags "local awss3 minio gcpstorage azureblob glacier azurearchive" ./test/integration/server/... -timeout 15m
+      '
 
 volumes:
   grpc-storage:

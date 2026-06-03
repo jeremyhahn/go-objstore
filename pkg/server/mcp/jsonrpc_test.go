@@ -122,7 +122,7 @@ func TestRPCHandler_HandleToolsCall(t *testing.T) {
 				"name": "objstore_put",
 				"arguments": map[string]any{
 					"key":  "test.txt",
-					"data": "hello",
+					"data": "aGVsbG8=", // base64("hello")
 				},
 			},
 			wantError: false,

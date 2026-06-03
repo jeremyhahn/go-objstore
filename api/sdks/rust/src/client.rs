@@ -1,8 +1,11 @@
+use crate::auth::AuthConfig;
 use crate::error::Result;
 use crate::grpc_client::GrpcClient;
+use crate::mcp_client::McpClient;
 use crate::quic_client::QuicClient;
 use crate::rest_client::RestClient;
 use crate::types::*;
+use crate::unix_client::UnixClient;
 use async_trait::async_trait;
 use bytes::Bytes;
 use std::collections::HashMap;
@@ -40,6 +43,8 @@ pub enum ObjectStoreClient {
     Rest(RestClient),
     Grpc(GrpcClient),
     Quic(QuicClient),
+    Mcp(McpClient),
+    Unix(UnixClient),
 }
 
 impl ObjectStoreClient {
@@ -62,6 +67,23 @@ impl ObjectStoreClient {
             QuicClient::new(server_addr, server_name).await?,
         ))
     }
+
+    /// Create a new MCP (HTTP JSON-RPC 2.0) client
+    pub fn mcp(base_url: impl Into<String>) -> Result<Self> {
+        Ok(ObjectStoreClient::Mcp(McpClient::new(base_url)?))
+    }
+
+    /// Create a new MCP client with authentication configuration
+    pub fn mcp_with_auth(base_url: impl Into<String>, auth: AuthConfig) -> Result<Self> {
+        Ok(ObjectStoreClient::Mcp(McpClient::new_with_auth(
+            base_url, auth,
+        )?))
+    }
+
+    /// Create a new Unix-socket (JSON-RPC 2.0) client
+    pub fn unix(socket_path: impl AsRef<std::path::Path>) -> Result<Self> {
+        Ok(ObjectStoreClient::Unix(UnixClient::new(socket_path)?))
+    }
 }
 
 #[async_trait]
@@ -71,6 +93,8 @@ impl ObjectStore for ObjectStoreClient {
             ObjectStoreClient::Rest(client) => client.put(key, data, metadata).await,
             ObjectStoreClient::Grpc(client) => client.put(key.to_string(), data, metadata).await,
             ObjectStoreClient::Quic(client) => client.put(key, data, metadata).await,
+            ObjectStoreClient::Mcp(client) => client.put(key, data, metadata).await,
+            ObjectStoreClient::Unix(client) => client.put(key, data, metadata).await,
         }
     }
 
@@ -79,6 +103,8 @@ impl ObjectStore for ObjectStoreClient {
             ObjectStoreClient::Rest(client) => client.get(key).await,
             ObjectStoreClient::Grpc(client) => client.get(key.to_string()).await,
             ObjectStoreClient::Quic(client) => client.get(key).await,
+            ObjectStoreClient::Mcp(client) => client.get(key).await,
+            ObjectStoreClient::Unix(client) => client.get(key).await,
         }
     }
 
@@ -87,6 +113,8 @@ impl ObjectStore for ObjectStoreClient {
             ObjectStoreClient::Rest(client) => client.delete(key).await,
             ObjectStoreClient::Grpc(client) => client.delete(key.to_string()).await,
             ObjectStoreClient::Quic(client) => client.delete(key).await,
+            ObjectStoreClient::Mcp(client) => client.delete(key).await,
+            ObjectStoreClient::Unix(client) => client.delete(key).await,
         }
     }
 
@@ -95,6 +123,8 @@ impl ObjectStore for ObjectStoreClient {
             ObjectStoreClient::Rest(client) => client.list(list_req).await,
             ObjectStoreClient::Grpc(client) => client.list(list_req).await,
             ObjectStoreClient::Quic(client) => client.list(list_req).await,
+            ObjectStoreClient::Mcp(client) => client.list(list_req).await,
+            ObjectStoreClient::Unix(client) => client.list(list_req).await,
         }
     }
 
@@ -103,6 +133,8 @@ impl ObjectStore for ObjectStoreClient {
             ObjectStoreClient::Rest(client) => client.exists(key).await,
             ObjectStoreClient::Grpc(client) => client.exists(key.to_string()).await,
             ObjectStoreClient::Quic(client) => client.exists(key).await,
+            ObjectStoreClient::Mcp(client) => client.exists(key).await,
+            ObjectStoreClient::Unix(client) => client.exists(key).await,
         }
     }
 
@@ -111,6 +143,8 @@ impl ObjectStore for ObjectStoreClient {
             ObjectStoreClient::Rest(client) => client.get_metadata(key).await,
             ObjectStoreClient::Grpc(client) => client.get_metadata(key.to_string()).await,
             ObjectStoreClient::Quic(client) => client.get_metadata(key).await,
+            ObjectStoreClient::Mcp(client) => client.get_metadata(key).await,
+            ObjectStoreClient::Unix(client) => client.get_metadata(key).await,
         }
     }
 
@@ -121,6 +155,8 @@ impl ObjectStore for ObjectStoreClient {
                 client.update_metadata(key.to_string(), metadata).await
             }
             ObjectStoreClient::Quic(client) => client.update_metadata(key, metadata).await,
+            ObjectStoreClient::Mcp(client) => client.update_metadata(key, metadata).await,
+            ObjectStoreClient::Unix(client) => client.update_metadata(key, metadata).await,
         }
     }
 
@@ -129,6 +165,8 @@ impl ObjectStore for ObjectStoreClient {
             ObjectStoreClient::Rest(client) => client.health().await,
             ObjectStoreClient::Grpc(client) => client.health(None).await,
             ObjectStoreClient::Quic(client) => client.health().await,
+            ObjectStoreClient::Mcp(client) => client.health().await,
+            ObjectStoreClient::Unix(client) => client.health().await,
         }
     }
 }
@@ -158,6 +196,16 @@ impl ObjectStoreClient {
                     .archive(key, destination_type, destination_settings)
                     .await
             }
+            ObjectStoreClient::Mcp(client) => {
+                client
+                    .archive(key, destination_type, destination_settings)
+                    .await
+            }
+            ObjectStoreClient::Unix(client) => {
+                client
+                    .archive(key, destination_type, destination_settings)
+                    .await
+            }
         }
     }
 
@@ -167,6 +215,8 @@ impl ObjectStoreClient {
             ObjectStoreClient::Rest(client) => client.add_policy(policy).await,
             ObjectStoreClient::Grpc(client) => client.add_policy(policy).await,
             ObjectStoreClient::Quic(client) => client.add_policy(policy).await,
+            ObjectStoreClient::Mcp(client) => client.add_policy(policy).await,
+            ObjectStoreClient::Unix(client) => client.add_policy(policy).await,
         }
     }
 
@@ -176,6 +226,8 @@ impl ObjectStoreClient {
             ObjectStoreClient::Rest(client) => client.remove_policy(id).await,
             ObjectStoreClient::Grpc(client) => client.remove_policy(id.to_string()).await,
             ObjectStoreClient::Quic(client) => client.remove_policy(id).await,
+            ObjectStoreClient::Mcp(client) => client.remove_policy(id).await,
+            ObjectStoreClient::Unix(client) => client.remove_policy(id).await,
         }
     }
 
@@ -185,6 +237,8 @@ impl ObjectStoreClient {
             ObjectStoreClient::Rest(client) => client.get_policies(prefix).await,
             ObjectStoreClient::Grpc(client) => client.get_policies(prefix).await,
             ObjectStoreClient::Quic(client) => client.get_policies(prefix).await,
+            ObjectStoreClient::Mcp(client) => client.get_policies(prefix).await,
+            ObjectStoreClient::Unix(client) => client.get_policies(prefix).await,
         }
     }
 
@@ -194,6 +248,8 @@ impl ObjectStoreClient {
             ObjectStoreClient::Rest(client) => client.apply_policies().await,
             ObjectStoreClient::Grpc(client) => client.apply_policies().await,
             ObjectStoreClient::Quic(client) => client.apply_policies().await,
+            ObjectStoreClient::Mcp(client) => client.apply_policies().await,
+            ObjectStoreClient::Unix(client) => client.apply_policies().await,
         }
     }
 
@@ -203,6 +259,8 @@ impl ObjectStoreClient {
             ObjectStoreClient::Rest(client) => client.add_replication_policy(policy).await,
             ObjectStoreClient::Grpc(client) => client.add_replication_policy(policy).await,
             ObjectStoreClient::Quic(client) => client.add_replication_policy(policy).await,
+            ObjectStoreClient::Mcp(client) => client.add_replication_policy(policy).await,
+            ObjectStoreClient::Unix(client) => client.add_replication_policy(policy).await,
         }
     }
 
@@ -214,6 +272,8 @@ impl ObjectStoreClient {
                 client.remove_replication_policy(id.to_string()).await
             }
             ObjectStoreClient::Quic(client) => client.remove_replication_policy(id).await,
+            ObjectStoreClient::Mcp(client) => client.remove_replication_policy(id).await,
+            ObjectStoreClient::Unix(client) => client.remove_replication_policy(id).await,
         }
     }
 
@@ -223,6 +283,8 @@ impl ObjectStoreClient {
             ObjectStoreClient::Rest(client) => client.get_replication_policies().await,
             ObjectStoreClient::Grpc(client) => client.get_replication_policies().await,
             ObjectStoreClient::Quic(client) => client.get_replication_policies().await,
+            ObjectStoreClient::Mcp(client) => client.get_replication_policies().await,
+            ObjectStoreClient::Unix(client) => client.get_replication_policies().await,
         }
     }
 
@@ -232,6 +294,8 @@ impl ObjectStoreClient {
             ObjectStoreClient::Rest(client) => client.get_replication_policy(id).await,
             ObjectStoreClient::Grpc(client) => client.get_replication_policy(id.to_string()).await,
             ObjectStoreClient::Quic(client) => client.get_replication_policy(id).await,
+            ObjectStoreClient::Mcp(client) => client.get_replication_policy(id).await,
+            ObjectStoreClient::Unix(client) => client.get_replication_policy(id).await,
         }
     }
 
@@ -258,6 +322,16 @@ impl ObjectStoreClient {
                     .trigger_replication(policy_id, parallel, worker_count)
                     .await
             }
+            ObjectStoreClient::Mcp(client) => {
+                client
+                    .trigger_replication(policy_id, parallel, worker_count)
+                    .await
+            }
+            ObjectStoreClient::Unix(client) => {
+                client
+                    .trigger_replication(policy_id, parallel, worker_count)
+                    .await
+            }
         }
     }
 
@@ -267,6 +341,8 @@ impl ObjectStoreClient {
             ObjectStoreClient::Rest(client) => client.get_replication_status(id).await,
             ObjectStoreClient::Grpc(client) => client.get_replication_status(id.to_string()).await,
             ObjectStoreClient::Quic(client) => client.get_replication_status(id).await,
+            ObjectStoreClient::Mcp(client) => client.get_replication_status(id).await,
+            ObjectStoreClient::Unix(client) => client.get_replication_status(id).await,
         }
     }
 
@@ -276,6 +352,8 @@ impl ObjectStoreClient {
             ObjectStoreClient::Rest(client) => client.close().await,
             ObjectStoreClient::Grpc(client) => client.close().await,
             ObjectStoreClient::Quic(client) => client.close().await,
+            ObjectStoreClient::Mcp(client) => client.close().await,
+            ObjectStoreClient::Unix(client) => client.close().await,
         }
     }
 }

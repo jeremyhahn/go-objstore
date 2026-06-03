@@ -15,7 +15,6 @@ package grpc
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -26,6 +25,7 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
+	servererrors "github.com/jeremyhahn/go-objstore/pkg/server/errors"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -577,50 +577,11 @@ func protoToMetadata(m *objstorepb.Metadata) *common.Metadata {
 	return metadata
 }
 
-// mapError maps common errors to gRPC status codes.
-//
-// Sentinel matching uses errors.Is so that wrapped errors (e.g. fmt.Errorf("%w: %s",
-// common.ErrKeyNotFound, key)) are correctly classified. String-based fallbacks handle
-// custom error types from third-party backends that carry the right message but do not
-// wrap the canonical sentinels.
+// mapError maps common errors to gRPC status codes via the shared taxonomy
+// (common.Classify + servererrors.GRPCStatus), so all transports classify the
+// same error identically.
 func mapError(err error) error {
-	if err == nil {
-		return nil
-	}
-
-	switch {
-	// Not-found sentinels — covers wrapped errors such as "key not found: <key>".
-	case errors.Is(err, common.ErrKeyNotFound),
-		errors.Is(err, common.ErrMetadataNotFound),
-		errors.Is(err, common.ErrPolicyNotFound):
-		return status.Error(codes.NotFound, "object not found")
-
-	// Cancellation / deadline — check real context errors before string fallbacks.
-	case errors.Is(err, context.Canceled):
-		return status.Error(codes.Canceled, "request canceled")
-	case errors.Is(err, context.DeadlineExceeded):
-		return status.Error(codes.DeadlineExceeded, "deadline exceeded")
-
-	// String-based fallbacks for custom error types that do not wrap the sentinels.
-	default:
-		errStr := err.Error()
-		switch errStr {
-		case "not found", "key not found":
-			return status.Error(codes.NotFound, "object not found")
-		case "already exists":
-			return status.Error(codes.AlreadyExists, errStr)
-		case "permission denied":
-			return status.Error(codes.PermissionDenied, errStr)
-		case "invalid argument", "invalid key":
-			return status.Error(codes.InvalidArgument, errStr)
-		case "deadline exceeded", "context deadline exceeded":
-			return status.Error(codes.DeadlineExceeded, errStr)
-		case "canceled", "context canceled":
-			return status.Error(codes.Canceled, errStr)
-		default:
-			return status.Error(codes.Internal, common.SanitizeErrorMessage(err))
-		}
-	}
+	return servererrors.GRPCStatus(err)
 }
 
 // extractGRPCPrincipal extracts the principal information from the gRPC context

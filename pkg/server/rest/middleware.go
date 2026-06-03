@@ -16,13 +16,30 @@ package rest
 import (
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/server/metrics"
 )
+
+// MetricsMiddleware records each request into the shared metrics registry,
+// labeled by the "rest" transport and the response status code. The /metrics
+// endpoint itself is not recorded so scrapes do not inflate the counters.
+func MetricsMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.URL.Path == "/metrics" {
+			c.Next()
+			return
+		}
+		start := time.Now()
+		c.Next()
+		metrics.Default.RecordRequest(metrics.TransportREST, strconv.Itoa(c.Writer.Status()), time.Since(start))
+	}
+}
 
 // principalContextKey is the gin context key under which the authenticated
 // principal is stored by AuthenticationMiddleware.
@@ -162,9 +179,19 @@ func RequestSizeLimitMiddleware(maxSize int64) gin.HandlerFunc {
 	}
 }
 
-// AuthenticationMiddleware authenticates HTTP requests using the provided authenticator
-func AuthenticationMiddleware(authenticator adapters.Authenticator, logger adapters.Logger, auditLogger audit.AuditLogger) gin.HandlerFunc {
+// AuthenticationMiddleware authenticates HTTP requests using the provided
+// authenticator. Public paths (/health, and /metrics when metricsPublic is
+// set) bypass authentication entirely so they remain reachable behind
+// restrictive authenticators (e.g. Prometheus scrapers and load-balancer
+// health checks carry no credentials). Swagger documentation is not public
+// and requires authentication.
+func AuthenticationMiddleware(authenticator adapters.Authenticator, logger adapters.Logger, auditLogger audit.AuditLogger, metricsPublic bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if isPublicPath(c.Request.URL.Path, metricsPublic) {
+			c.Next()
+			return
+		}
+
 		// Authenticate the request
 		principal, err := authenticator.AuthenticateHTTP(c.Request.Context(), c.Request)
 		requestID := audit.GetRequestID(c.Request.Context())
@@ -204,10 +231,11 @@ func AuthenticationMiddleware(authenticator adapters.Authenticator, logger adapt
 // from the HTTP method and route, then calls authorizer.Authorize. On denial it
 // responds with 403 Forbidden. The default authorizer (NoOpAuthorizer) allows
 // everything, preserving prior behavior.
-func AuthorizationMiddleware(authorizer adapters.Authorizer, logger adapters.Logger, auditLogger audit.AuditLogger) gin.HandlerFunc {
+func AuthorizationMiddleware(authorizer adapters.Authorizer, logger adapters.Logger, auditLogger audit.AuditLogger, metricsPublic bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Health and swagger endpoints are public (no authorization).
-		if isPublicPath(c.Request.URL.Path) {
+		// Public paths and swagger are exempt from authorization; swagger still
+		// requires authentication, enforced by AuthenticationMiddleware.
+		if isAuthzExemptPath(c.Request.URL.Path, metricsPublic) {
 			c.Next()
 			return
 		}
@@ -248,9 +276,22 @@ func AuthorizationMiddleware(authorizer adapters.Authorizer, logger adapters.Log
 	}
 }
 
-// isPublicPath reports whether the path is exempt from authorization.
-func isPublicPath(path string) bool {
-	return path == "/health" || strings.HasPrefix(path, "/swagger")
+// isPublicPath reports whether the path bypasses authentication entirely.
+// Only /health is always public; /metrics is public when the server is
+// configured with MetricsPublic. Swagger documentation requires
+// authentication and is therefore never public.
+func isPublicPath(path string, metricsPublic bool) bool {
+	if path == "/metrics" {
+		return metricsPublic
+	}
+	return path == "/health"
+}
+
+// isAuthzExemptPath reports whether the path is exempt from authorization.
+// All public (unauthenticated) paths are exempt, as is /swagger, which
+// requires authentication but no specific permission.
+func isAuthzExemptPath(path string, metricsPublic bool) bool {
+	return isPublicPath(path, metricsPublic) || strings.HasPrefix(path, "/swagger")
 }
 
 // deriveActionResource maps an HTTP request to a (action, resource) pair using
@@ -269,7 +310,9 @@ func deriveActionResource(c *gin.Context) (action, resource string) {
 		// Archive acts on an object key; key is supplied in the request body so
 		// the route param is unavailable here. Use the policy resource category.
 		return adapters.ActionAdmin, adapters.ResourcePolicy
-	case strings.Contains(path, "/list"):
+	case method == http.MethodGet && c.Param("key") == "" && strings.HasSuffix(path, "/objects"):
+		// GET on the bare objects collection (/objects, /api/v1/objects) is a
+		// list operation with no specific resource.
 		return adapters.ActionList, ""
 	}
 

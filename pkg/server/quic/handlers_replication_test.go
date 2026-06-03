@@ -746,7 +746,7 @@ func TestReplicationErrorHandling(t *testing.T) {
 	})
 
 	t.Run("add duplicate policy", func(t *testing.T) {
-		storage.repMgr.addError = errors.New("policy already exists")
+		storage.repMgr.addError = common.ErrAlreadyExists
 		defer func() { storage.repMgr.addError = nil }()
 
 		body, _ := json.Marshal(map[string]any{

@@ -73,6 +73,24 @@ export class AuthorizationError extends ObjectStoreError {
 }
 
 /**
+ * Error thrown when an object or resource already exists
+ */
+export class AlreadyExistsError extends ObjectStoreError {
+  constructor(message: string) {
+    super(message, 'ALREADY_EXISTS', 409);
+  }
+}
+
+/**
+ * Error thrown when the server rate limit is exceeded
+ */
+export class RateLimitError extends ObjectStoreError {
+  constructor(message: string) {
+    super(message, 'RATE_LIMITED', 429);
+  }
+}
+
+/**
  * Error thrown when a server error occurs
  */
 export class ServerError extends ObjectStoreError {

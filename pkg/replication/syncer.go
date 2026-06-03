@@ -32,6 +32,8 @@ var (
 	ErrUnsupportedReplicationMode = errors.New("unsupported replication mode")
 	// ErrChangeLogRenameReopen is returned when both rename and reopen fail during changelog rotation.
 	ErrChangeLogRenameReopen = errors.New("failed to rename and failed to reopen")
+	// ErrChangeLogClosed is returned when an operation is attempted on a closed changelog.
+	ErrChangeLogClosed = errors.New("change log is closed")
 	// ErrWorkerPoolShutdown is returned when work is submitted to a shutdown pool.
 	ErrWorkerPoolShutdown = errors.New("worker pool is shutting down")
 	// ErrWorkerPoolCancelled is returned when work is submitted but context is cancelled.
@@ -284,6 +286,10 @@ func (s *Syncer) SyncObject(ctx context.Context, key string) (int64, error) {
 	srcMetadata, err := s.source.GetMetadata(ctx, key)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get metadata: %w", err)
+	}
+	// Guard: backends may return nil on best-effort stub implementations.
+	if srcMetadata == nil {
+		srcMetadata = &common.Metadata{}
 	}
 
 	// Put to destination (automatically encrypted if enabled)

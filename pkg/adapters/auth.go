@@ -18,10 +18,17 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"google.golang.org/grpc/metadata"
 )
+
+// PrincipalContextKey is the typed context key under which an authenticated
+// *Principal is stored. All server transports (REST, gRPC, QUIC, MCP, Unix)
+// use this key so that shared middleware (e.g. audit) can retrieve the
+// principal without importing transport-specific packages.
+type PrincipalContextKey struct{}
 
 var (
 	// ErrUnauthorized is returned when authentication fails.
@@ -107,6 +114,14 @@ type Principal struct {
 
 	// Attributes contains additional custom attributes.
 	Attributes map[string]any
+
+	// TenantID is an optional tenant identifier. It is populated by injected
+	// authenticators that support multi-tenancy (e.g., by reading an
+	// X-Tenant-ID request header or a tenant claim in a JWT). The default
+	// NoOp, Bearer, and MTLS authenticators leave this field empty. Core
+	// server code does not read or enforce TenantID; that is the injected
+	// authenticator's responsibility.
+	TenantID string
 }
 
 // HasRole checks if the principal has the specified role.
@@ -230,7 +245,9 @@ type MTLSAuthenticator struct {
 	// ExtractPrincipal extracts principal information from a client certificate.
 	ExtractPrincipal func(ctx context.Context, cert *x509.Certificate) (*Principal, error)
 
-	// RequiredRoots is the CA certificate pool for validating client certificates.
+	// RequiredRoots is the CA certificate pool for validating client
+	// certificates. When nil, chain verification is delegated to the TLS
+	// layer and AuthenticateMTLS performs no verification of its own.
 	RequiredRoots *x509.CertPool
 }
 
@@ -259,9 +276,35 @@ func (a *MTLSAuthenticator) AuthenticateGRPC(ctx context.Context, md metadata.MD
 }
 
 // AuthenticateMTLS authenticates using TLS connection state.
+//
+// When RequiredRoots is set, the peer certificate must chain to one of those
+// roots before a principal is extracted: a non-empty state.VerifiedChains
+// (populated by the TLS handshake) is accepted as proof of verification;
+// otherwise the leaf certificate is verified against RequiredRoots using the
+// remaining peer certificates as intermediates and requiring the client-auth
+// extended key usage.
+//
+// When RequiredRoots is nil, the TLS layer is presumed to have verified the
+// chain (e.g. tls.RequireAndVerifyClientCert) and the principal is extracted
+// from the leaf certificate without further checks.
 func (a *MTLSAuthenticator) AuthenticateMTLS(ctx context.Context, state *tls.ConnectionState) (*Principal, error) {
 	if len(state.PeerCertificates) == 0 {
 		return nil, ErrMissingCredentials
+	}
+
+	if a.RequiredRoots != nil && len(state.VerifiedChains) == 0 {
+		intermediates := x509.NewCertPool()
+		for _, cert := range state.PeerCertificates[1:] {
+			intermediates.AddCert(cert)
+		}
+		opts := x509.VerifyOptions{
+			Roots:         a.RequiredRoots,
+			Intermediates: intermediates,
+			KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		}
+		if _, err := state.PeerCertificates[0].Verify(opts); err != nil {
+			return nil, fmt.Errorf("%w: client certificate verification failed: %v", ErrInvalidCredentials, err)
+		}
 	}
 
 	return a.ExtractPrincipal(ctx, state.PeerCertificates[0])

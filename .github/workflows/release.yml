@@ -6,7 +6,7 @@ on:
       - 'v*'
 
 env:
-  GO_VERSION: '1.26.3'
+  GO_VERSION: '1.26.4'
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
@@ -355,7 +355,7 @@ jobs:
       run: |
         cat > Dockerfile.cli << 'EOF'
         # Multi-stage build for go-objstore CLI
-        FROM golang:1.26.3-alpine AS builder
+        FROM golang:1.26.4-alpine AS builder
         RUN apk add --no-cache git ca-certificates make
         WORKDIR /build
         COPY go.mod go.sum ./
@@ -426,7 +426,7 @@ jobs:
       run: |
         cat > Dockerfile.server << 'EOF'
         # Multi-stage build for go-objstore server (all protocols)
-        FROM golang:1.26.3-alpine AS builder
+        FROM golang:1.26.4-alpine AS builder
         RUN apk add --no-cache git ca-certificates make
         WORKDIR /build
         COPY go.mod go.sum ./

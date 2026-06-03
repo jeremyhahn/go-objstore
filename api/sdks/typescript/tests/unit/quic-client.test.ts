@@ -128,7 +128,14 @@ describe('QuicClient', () => {
   // delete
   // --------------------------------------------------------------------------
   describe('delete', () => {
-    it('quic_delete_success', async () => {
+    it('quic_delete_success_204_no_content', async () => {
+      mockFetch.mockResolvedValue(mockResponse({ status: 204, headers: {} }));
+      const response = await client.delete({ key: 'test-key' });
+      expect(response.success).toBe(true);
+      expect(response.message).toBe('Object deleted successfully');
+    });
+
+    it('quic_delete_tolerates_legacy_200_body', async () => {
       resolveJson({ message: 'deleted' });
       const response = await client.delete({ key: 'test-key' });
       expect(response.success).toBe(true);
@@ -141,10 +148,9 @@ describe('QuicClient', () => {
     });
 
     it('quic_delete_not_found', async () => {
-      // makeRequest treats 404 as a non-error and parses the JSON body.
+      // Deleting a missing object surfaces the 404 instead of reporting success.
       resolveJson({ message: 'not found' }, 404);
-      const response = await client.delete({ key: 'missing' });
-      expect(response.success).toBe(true);
+      await expect(client.delete({ key: 'missing' })).rejects.toThrow('QUIC/HTTP3 error (404)');
     });
   });
 
@@ -249,11 +255,9 @@ describe('QuicClient', () => {
 
     it('quic_update_metadata_not_found', async () => {
       resolveJson({ message: 'not found' }, 404);
-      const response = await client.updateMetadata({
-        key: 'missing',
-        metadata: { contentType: 'text/plain' },
-      });
-      expect(response.success).toBe(true);
+      await expect(
+        client.updateMetadata({ key: 'missing', metadata: { contentType: 'text/plain' } })
+      ).rejects.toThrow('QUIC/HTTP3 error (404)');
     });
   });
 
@@ -333,9 +337,9 @@ describe('QuicClient', () => {
     });
 
     it('quic_remove_policy_not_found', async () => {
+      // Removing a missing policy surfaces the 404 instead of reporting success.
       resolveJson({ success: true, message: 'not found' }, 404);
-      const response = await client.removePolicy({ id: 'missing' });
-      expect(response.success).toBe(true);
+      await expect(client.removePolicy({ id: 'missing' })).rejects.toThrow('QUIC/HTTP3 error (404)');
     });
   });
 
@@ -435,8 +439,9 @@ describe('QuicClient', () => {
 
     it('quic_remove_replication_policy_not_found', async () => {
       resolveJson({ success: true, message: 'not found' }, 404);
-      const response = await client.removeReplicationPolicy({ id: 'missing' });
-      expect(response.success).toBe(true);
+      await expect(client.removeReplicationPolicy({ id: 'missing' })).rejects.toThrow(
+        'QUIC/HTTP3 error (404)'
+      );
     });
   });
 
@@ -500,10 +505,10 @@ describe('QuicClient', () => {
     });
 
     it('quic_get_replication_policy_not_found', async () => {
-      // 404 → makeRequest returns parsed body; client maps fields (mostly undefined).
       resolveJson({ id: '' }, 404);
-      const response = await client.getReplicationPolicy({ id: 'missing' });
-      expect(response.policy?.id).toBe('');
+      await expect(client.getReplicationPolicy({ id: 'missing' })).rejects.toThrow(
+        'QUIC/HTTP3 error (404)'
+      );
     });
   });
 
@@ -577,9 +582,9 @@ describe('QuicClient', () => {
 
     it('quic_get_replication_status_not_found', async () => {
       resolveJson({ success: true }, 404);
-      const response = await client.getReplicationStatus({ id: 'missing' });
-      expect(response.success).toBe(true);
-      expect(response.status).toBeUndefined();
+      await expect(client.getReplicationStatus({ id: 'missing' })).rejects.toThrow(
+        'QUIC/HTTP3 error (404)'
+      );
     });
   });
 
@@ -674,6 +679,90 @@ describe('QuicClient', () => {
       mockFetch.mockResolvedValue(mockResponse({ headers: jsonHeaders, json: { status: 'healthy' } }));
       await secureClient.health();
       expect(mockFetch.mock.calls[0][0]).toMatch(/^https:\/\//);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // auth: token + tenantId forwarded in requests
+  // --------------------------------------------------------------------------
+  describe('auth', () => {
+    it('quic_auth_token_and_tenant', async () => {
+      const authClient = new QuicClient({
+        address,
+        token: 'tok-123',
+        tenantId: 'tenant-99',
+      });
+      mockFetch.mockResolvedValue(
+        mockResponse({ headers: jsonHeaders, json: { status: 'healthy' } })
+      );
+      await authClient.health();
+      const fetchOpts = mockFetch.mock.calls[0][1] as RequestInit;
+      const headers = fetchOpts.headers as Record<string, string>;
+      expect(headers['Authorization']).toBe('Bearer tok-123');
+      expect(headers['X-Tenant-ID']).toBe('tenant-99');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // getStream
+  // --------------------------------------------------------------------------
+  describe('getStream', () => {
+    it('quic_getStream_success', async () => {
+      // Build a minimal WHATWG ReadableStream from a buffer.
+      const data = Buffer.from('streamed');
+      let called = false;
+      const body = {
+        getReader: () => ({
+          read: async () => {
+            if (!called) {
+              called = true;
+              return { done: false, value: new Uint8Array(data) };
+            }
+            return { done: true, value: undefined };
+          },
+          releaseLock: () => undefined,
+        }),
+      };
+      mockFetch.mockResolvedValue({ ok: true, status: 200, body });
+
+      const stream = await client.getStream('stream-key');
+      const chunks: Buffer[] = [];
+      for await (const chunk of stream) {
+        chunks.push(chunk as Buffer);
+      }
+      expect(Buffer.concat(chunks).toString()).toBe('streamed');
+    });
+
+    it('quic_getStream_no_body', async () => {
+      mockFetch.mockResolvedValue({ ok: true, status: 200, body: null });
+      const stream = await client.getStream('empty-key');
+      const chunks: Buffer[] = [];
+      for await (const chunk of stream) {
+        chunks.push(chunk as Buffer);
+      }
+      expect(chunks).toHaveLength(0);
+    });
+
+    it('quic_getStream_error', async () => {
+      mockFetch.mockResolvedValue(
+        mockResponse({ ok: false, status: 404, text: 'not found' })
+      );
+      await expect(client.getStream('missing')).rejects.toThrow('QUIC/HTTP3 error (404)');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // putStream
+  // --------------------------------------------------------------------------
+  describe('putStream', () => {
+    it('quic_putStream_success', async () => {
+      mockFetch.mockResolvedValue(
+        mockResponse({ headers: jsonHeaders, json: { message: 'stored' } })
+      );
+      const { Readable: NodeReadable } = require('stream');
+      const stream = NodeReadable.from([Buffer.from('hello'), Buffer.from(' world')]);
+      const resp = await client.putStream('stream-put', stream);
+      expect(resp.success).toBe(true);
     });
   });
 });

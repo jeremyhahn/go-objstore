@@ -5,14 +5,11 @@ from typing import AsyncIterator, BinaryIO, Dict, Optional, Union
 
 import httpx
 
+from objstore._http import build_auth_headers, handle_http_error
 from objstore.exceptions import (
-    AuthenticationError,
     ConnectionError,
-    ObjectNotFoundError,
     ObjectStoreError,
-    ServerError,
     TimeoutError,
-    ValidationError,
 )
 from objstore.models import (
     ArchiveResponse,
@@ -50,7 +47,10 @@ class QuicClient:
         base_url: str = "https://localhost:4433",
         api_version: str = "v1",
         timeout: int = 30,
-        verify_ssl: bool = False,
+        verify_ssl: bool = True,
+        token: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+        tenant_id: Optional[str] = None,
     ) -> None:
         """Initialize QUIC client.
 
@@ -58,12 +58,21 @@ class QuicClient:
             base_url: Base URL of the go-objstore server (must be https)
             api_version: API version to use
             timeout: Request timeout in seconds
-            verify_ssl: Whether to verify SSL certificates
+            verify_ssl: Whether to verify SSL certificates. Defaults to True;
+                disable only for testing against self-signed certificates.
+            token: Optional bearer token for Authorization header
+            headers: Optional dict of additional request headers
+            tenant_id: Optional tenant identifier (sent as X-Tenant-ID)
         """
         self.base_url = base_url.rstrip("/")
         self.api_version = api_version
         self.timeout = timeout
         self.verify_ssl = verify_ssl
+        self.token = token
+        self.extra_headers = headers or {}
+        self.tenant_id = tenant_id
+
+        default_headers = build_auth_headers(token, tenant_id, self.extra_headers)
 
         # Create HTTP/3 client
         try:
@@ -72,6 +81,7 @@ class QuicClient:
                 http2=True,  # Enable HTTP/2 as fallback
                 verify=verify_ssl,
                 timeout=timeout,
+                headers=default_headers,
             )
         except Exception:
             # If HTTP/3 not available, use HTTP/2
@@ -79,6 +89,7 @@ class QuicClient:
                 http2=True,
                 verify=verify_ssl,
                 timeout=timeout,
+                headers=default_headers,
             )
 
     def _url(self, path: str) -> str:
@@ -105,29 +116,7 @@ class QuicClient:
         Raises:
             ObjectStoreError: For various error conditions
         """
-        if response.status_code == 404:
-            raise ObjectNotFoundError("Object not found")
-        elif response.status_code == 401:
-            raise AuthenticationError("Authentication failed")
-        elif response.status_code == 400:
-            try:
-                error_data = response.json()
-                message = error_data.get("message", "Validation error")
-            except Exception:
-                message = response.text or "Validation error"
-            raise ValidationError(message)
-        elif response.status_code >= 500:
-            try:
-                error_data = response.json()
-                message = error_data.get("message", "Server error")
-            except Exception:
-                message = response.text or "Server error"
-            raise ServerError(message, status_code=response.status_code)
-        else:
-            raise ObjectStoreError(
-                f"HTTP {response.status_code}: {response.text}",
-                status_code=response.status_code,
-            )
+        handle_http_error(response)
 
     def _metadata_from_headers(self, headers: httpx.Headers) -> Metadata:
         """Build a Metadata object from QUIC response headers.
@@ -388,6 +377,65 @@ class QuicClient:
                             yield chunk
                 else:
                     self._handle_error(response)
+
+        except httpx.TimeoutException:
+            raise TimeoutError("Request timed out")
+        except httpx.ConnectError as e:
+            raise ConnectionError(f"Connection failed: {str(e)}")
+
+    async def put_stream(
+        self,
+        key: str,
+        data: Union[bytes, BinaryIO],
+        metadata: Optional[Metadata] = None,
+    ) -> "PutResponse":
+        """Upload an object from a stream or file-like object.
+
+        Streams the content directly via httpx without buffering the full
+        payload in memory.
+
+        Args:
+            key: Object key/path
+            data: Byte stream or file-like object to upload
+            metadata: Optional metadata
+
+        Returns:
+            PutResponse with operation result
+
+        Raises:
+            ObjectStoreError: On failure
+        """
+        url = self._url(f"objects/{key}")
+
+        try:
+            headers: Dict[str, str] = {}
+            if metadata:
+                if metadata.content_type:
+                    headers["Content-Type"] = metadata.content_type
+                if metadata.content_encoding:
+                    headers["Content-Encoding"] = metadata.content_encoding
+                for ck, cv in (metadata.custom or {}).items():
+                    headers[f"X-Meta-{ck}"] = cv
+
+            if isinstance(data, bytes):
+                content = data
+            else:
+                content = data.read()
+
+            response = await self.client.put(url, content=content, headers=headers)
+
+            if response.status_code == 201:
+                result = response.json()
+                from objstore.models import PutResponse
+                return PutResponse(
+                    success=True,
+                    message=result.get("message", "Object uploaded successfully"),
+                    etag=response.headers.get("ETag"),
+                )
+
+            self._handle_error(response)
+            from objstore.models import PutResponse
+            return PutResponse(success=False, message="Upload failed")
 
         except httpx.TimeoutException:
             raise TimeoutError("Request timed out")

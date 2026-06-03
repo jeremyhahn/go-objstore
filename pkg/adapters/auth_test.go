@@ -15,12 +15,18 @@ package adapters
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
+	"math/big"
 	"net/http"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc/metadata"
 )
@@ -574,3 +580,134 @@ var (
 	_ Authorizer = (*NoOpAuthorizer)(nil)
 	_ Authorizer = (*RBACAuthorizer)(nil)
 )
+
+// generateCAAndClientCert creates a self-signed CA and a client certificate
+// signed by it, for AuthenticateMTLS chain-verification tests. It reuses
+// generateTestCert (tls_test.go) for the CA.
+func generateCAAndClientCert(t *testing.T) (caCert, clientCert *x509.Certificate) {
+	t.Helper()
+
+	_, caKeyPEM, caCert, err := generateTestCert(true)
+	if err != nil {
+		t.Fatalf("Failed to generate CA cert: %v", err)
+	}
+
+	caKeyBlock, _ := pem.Decode(caKeyPEM)
+	caKey, err := x509.ParseECPrivateKey(caKeyBlock.Bytes)
+	if err != nil {
+		t.Fatalf("Failed to parse CA key: %v", err)
+	}
+
+	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("Failed to generate client key: %v", err)
+	}
+
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		t.Fatalf("Failed to generate serial number: %v", err)
+	}
+
+	clientTemplate := x509.Certificate{
+		SerialNumber:          serialNumber,
+		Subject:               pkix.Name{CommonName: "client-user"},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		BasicConstraintsValid: true,
+	}
+
+	clientCertDER, err := x509.CreateCertificate(rand.Reader, &clientTemplate, caCert, &clientKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("Failed to create client cert: %v", err)
+	}
+
+	clientCert, err = x509.ParseCertificate(clientCertDER)
+	if err != nil {
+		t.Fatalf("Failed to parse client cert: %v", err)
+	}
+
+	return caCert, clientCert
+}
+
+func TestMTLSAuthenticator_RequiredRoots(t *testing.T) {
+	extractFunc := func(ctx context.Context, cert *x509.Certificate) (*Principal, error) {
+		return &Principal{
+			ID:   cert.Subject.CommonName,
+			Name: cert.Subject.CommonName,
+			Type: "certificate",
+		}, nil
+	}
+
+	caCert, clientCert := generateCAAndClientCert(t)
+	roots := x509.NewCertPool()
+	roots.AddCert(caCert)
+
+	auth := NewMTLSAuthenticator(extractFunc, roots)
+	ctx := context.Background()
+
+	t.Run("accepts certificate chaining to required roots", func(t *testing.T) {
+		state := &tls.ConnectionState{
+			PeerCertificates: []*x509.Certificate{clientCert},
+		}
+
+		principal, err := auth.AuthenticateMTLS(ctx, state)
+		if err != nil {
+			t.Fatalf("AuthenticateMTLS() error = %v, want nil", err)
+		}
+		if principal.ID != "client-user" {
+			t.Errorf("principal.ID = %s, want client-user", principal.ID)
+		}
+	})
+
+	t.Run("rejects certificate not chaining to required roots", func(t *testing.T) {
+		// A self-signed certificate that does not chain to the CA pool.
+		_, _, selfSigned, err := generateTestCert(false)
+		if err != nil {
+			t.Fatalf("Failed to generate self-signed cert: %v", err)
+		}
+		state := &tls.ConnectionState{
+			PeerCertificates: []*x509.Certificate{selfSigned},
+		}
+
+		_, err = auth.AuthenticateMTLS(ctx, state)
+		if !errors.Is(err, ErrInvalidCredentials) {
+			t.Errorf("AuthenticateMTLS() error = %v, want ErrInvalidCredentials", err)
+		}
+	})
+
+	t.Run("trusts non-empty VerifiedChains from the TLS handshake", func(t *testing.T) {
+		state := &tls.ConnectionState{
+			PeerCertificates: []*x509.Certificate{clientCert},
+			VerifiedChains:   [][]*x509.Certificate{{clientCert, caCert}},
+		}
+
+		principal, err := auth.AuthenticateMTLS(ctx, state)
+		if err != nil {
+			t.Fatalf("AuthenticateMTLS() error = %v, want nil", err)
+		}
+		if principal.ID != "client-user" {
+			t.Errorf("principal.ID = %s, want client-user", principal.ID)
+		}
+	})
+
+	t.Run("nil RequiredRoots preserves no-verification behavior", func(t *testing.T) {
+		_, _, selfSigned, err := generateTestCert(false)
+		if err != nil {
+			t.Fatalf("Failed to generate self-signed cert: %v", err)
+		}
+		noRoots := NewMTLSAuthenticator(extractFunc, nil)
+		state := &tls.ConnectionState{
+			PeerCertificates: []*x509.Certificate{selfSigned},
+		}
+
+		principal, err := noRoots.AuthenticateMTLS(ctx, state)
+		if err != nil {
+			t.Fatalf("AuthenticateMTLS() error = %v, want nil", err)
+		}
+		if principal.ID != selfSigned.Subject.CommonName {
+			t.Errorf("principal.ID = %s, want %s", principal.ID, selfSigned.Subject.CommonName)
+		}
+	})
+}

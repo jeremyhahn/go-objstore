@@ -6,11 +6,301 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Breaking / wire-visible changes
+
+- MCP transport: object data is now base64-encoded in BOTH directions
+  (objstore_put decodes, objstore_get encodes). Out-of-tree MCP clients
+  sending raw text must base64-encode; non-base64 put data is rejected with
+  "data must be base64-encoded". This makes the MCP transport binary-safe and
+  consistent with the Unix transport. All six bundled SDKs were updated in
+  the same change.
+- REST/QUIC: DELETE /objects/{key} now returns 204 No Content (was 200 +
+  JSON body on REST), matching the OpenAPI contract. All bundled SDKs accept
+  both 204 and the legacy 200.
+- REST: /metrics now requires authorization by default. Set the new
+  MetricsPublic server config (or --metrics-public flag) to restore
+  unauthenticated Prometheus scraping.
+- JSON-RPC transports (MCP, Unix): authorization denials now return code
+  -32001 (forbidden) on both transports (MCP previously returned -32600);
+  not-found errors now return -32004 instead of the blanket -32603 internal
+  error. New implementation-defined codes: -32002 unauthenticated,
+  -32005 already exists, -32029 rate limited.
+- Go SDK: UnixClient.TriggerReplication now sends the policy id as "id"
+  (matching the server protocol). Previously the misnamed "policy_id" field
+  was silently ignored and EVERY policy was synced.
+- Unix transport: add_policy accepts an exact retention_seconds parameter
+  (taking precedence over after_days) and get_policies responses include
+  retention_seconds alongside after_days, so sub-day retention works over
+  Unix like every other transport. All six SDK unix clients send
+  retention_seconds and no longer reject sub-day values.
+- QUIC server: backend timeouts now return 504 via the shared error
+  taxonomy (was 408) and client cancellations 499, matching REST/gRPC for
+  the same failure class.
+- MCP default HTTP address: the library fallback is now :8081 (was :8080,
+  which collided with the REST default). SDK defaults and doc examples
+  (Python 8090, Ruby 8083, C# 8082, Rust 8080) are all aligned to 8081.
+- gRPC server: unary and stream rate-limit interceptors now share one
+  limiter (one bucket) instead of two independent ones, and per-IP rate
+  limiting keys gRPC requests by peer address instead of a global bucket.
+
+### Added
+
+- SDK error-type parity: every SDK now maps the full canonical table —
+  HTTP 400/401/403/404/409/429, JSON-RPC -32602/-32002/-32001/-32004/
+  -32005/-32029, and the equivalent gRPC codes — to typed errors on every
+  transport. New types: Go sentinels ErrInvalidArgument, ErrUnauthenticated,
+  ErrPermissionDenied, ErrAlreadyExists, ErrRateLimited (rate-limited errors
+  also satisfy errors.Is(err, ErrTemporaryFailure) so retry semantics are
+  preserved); TypeScript AlreadyExistsError and RateLimitError; Python
+  AuthorizationError, AlreadyExistsError, RateLimitError; Ruby
+  AuthenticationError, AlreadyExistsError, RateLimitError; Rust
+  Unauthenticated, AlreadyExists, RateLimited, InvalidArgument variants;
+  C# ValidationException, AuthenticationException, AuthorizationException,
+  AlreadyExistsException, RateLimitException. The C# REST/QUIC clients no
+  longer surface raw HttpRequestException for non-2xx responses, and the
+  Ruby REST/QUIC/MCP HTTP paths map 401/403/409/429 to typed errors.
+- Azure backend: GetMetadata now returns real blob properties (size,
+  content type, timestamps, custom metadata) and UpdateMetadata is
+  implemented via SetMetadata/SetHTTPHeaders — both previously faked
+  success with empty data. Missing blobs report not-found through the
+  shared taxonomy.
+- GCS backend: UpdateMetadata implemented via ObjectAttrsToUpdate
+  (previously a silent no-op) and RemovePolicy actually removes the
+  matching bucket lifecycle rule (previously returned success without
+  doing anything).
+- Glacier backend: Put streams archives with the Glacier multipart upload
+  API (16 MiB parts, SHA-256 tree hash) instead of buffering the entire
+  archive in memory; failed multipart uploads are aborted server-side.
+- Pool: LeastUtilizationStrategy is implemented (cumulative size-weighted
+  load tracking via the caller's StateStore, deterministic tie-breaking) —
+  it previously always returned ErrStrategyNotImplemented.
+- CLI: `policy add ... archive` validates archiver configuration up front
+  with actionable errors (ErrGlacierArchiverUnavailable,
+  ErrArchiveVaultRequired) and supports dedicated archive-vault-name /
+  archive-region config keys; local-mode replication commands return a
+  clear use-server-mode error.
+- Shared cross-transport error taxonomy (pkg/common.Classify +
+  pkg/server/errors): REST, gRPC, QUIC, MCP, and Unix now map the same error
+  to the same class (404/NotFound/-32004, 403/PermissionDenied/-32001, …).
+- Shared JSON-RPC 2.0 envelope/codes/parsing package (pkg/server/jsonrpc)
+  used by both the MCP and Unix transports.
+- Middleware parity: rate limiting, audit logging, and request-ID tracking
+  are now available on QUIC, MCP (HTTP + stdio), and Unix transports, wired
+  via new config fields and objstore-server flags (--rate-limit,
+  --rate-limit-rps, --rate-limit-burst, --rate-limit-per-client, --audit).
+- Cross-protocol conformance suite (make conformance-test): launches one
+  server with all five transports and asserts byte-for-byte round trips,
+  visibility, list, policy, and error-shape parity across every transport
+  pair. Runs in CI.
+- SDK unit tests now run in CI for all six languages (sdk-tests matrix job);
+  make version-check gates version consistency in CI.
+- E2E smoke tests for the Python, Ruby, TypeScript, and C# SDKs
+  (make sdk-smoke, scripts/start-test-server.sh).
+- C# SDK: MaxBufferSize option bounds in-memory buffering for MCP
+  PutStreamAsync (default 64 MiB); new options-aware McpClient DI
+  constructor wires Token/TenantID/headers.
+- Ruby SDK: ObjectStore::AuthorizationError for JSON-RPC -32001 denials.
+- Rust SDK: Error::Forbidden variant for JSON-RPC -32001 denials.
+
+### Security
+
+- Python SDK: the QUIC client's `verify_ssl` now defaults to `True`
+  (certificate verification on by default). Pass `verify_ssl=False` only for
+  testing against self-signed certificates. **Breaking** for callers relying
+  on the old insecure default.
+- Ruby SDK: the QUIC client no longer hard-codes `OpenSSL::SSL::VERIFY_NONE`;
+  certificates are verified by default. Pass `verify_ssl: false` for testing
+  against self-signed certificates. **Breaking** as above.
+- MCP server: `resources/list` and `resources/read` errors are now sanitized
+  through the shared error taxonomy instead of echoing raw error text
+  (prevented potential path/internal-detail disclosure).
+- REST: `/health` (always) and `/metrics` (when `MetricsPublic` is set)
+  bypass authentication as well as authorization, so health checks and
+  Prometheus scrapers work behind strict authenticators. The Swagger UI and
+  spec still require authentication (they are exempt only from fine-grained
+  authorization).
+- REST RBAC: GET /objects (list) is now authorized as the list action,
+  matching gRPC/QUIC/MCP/Unix. It was previously authorized as read, so a
+  read-only principal could list and a list-only principal was denied.
+- gRPC mTLS fallback now passes the full TLS connection state (preserving
+  VerifiedChains) to AuthenticateMTLS, and MTLSAuthenticator verifies the
+  peer chain against RequiredRoots when configured (the field was previously
+  stored but never used, so any presented certificate minted a principal
+  under permissive ClientAuth modes).
+- Unix socket server refuses to start (and never deletes the file) when
+  SocketPath points at an existing non-socket file; stale sockets from a
+  previous run are still cleaned up.
+- Unix socket server: `MaxConnections` now bounds accepted goroutines and
+  file descriptors (the semaphore is acquired before spawning the handler);
+  previously every connection got a goroutine and the limit only bounded
+  concurrent processing.
+
+### Fixed
+
+- TypeScript SDK QUIC client: `get`/`exists`/`getMetadata` now send the
+  configured auth headers (previously bypassed, causing 401s on token-secured
+  deployments while other operations succeeded); `exists` no longer reports
+  transport failures (DNS, refused) as "object missing"; HTTP 404 responses
+  now raise errors instead of being treated as success for delete,
+  updateMetadata, and policy operations.
+- Unix transport SDK policy listing: the server returns policies as a bare
+  JSON array, but the TypeScript and Python clients silently returned empty
+  lists and the Ruby client raised TypeError. All clients now parse the bare
+  array (and accept a wrapped {"policies": [...]} shape defensively).
+- SDK unix clients now hold one persistent connection with JSON-RPC
+  response-ID validation and automatic reconnect after errors or the
+  server's 30s idle close. Previously TypeScript/Python/Ruby/Rust/C# dialed
+  a fresh socket per request and the Go client never re-dialed (one idle
+  period bricked the client) and could consume a stale response from a
+  timed-out call as the next call's reply.
+- SDK JSON-RPC error mapping is now code-based (-32004 not found, -32002
+  unauthenticated, -32001 forbidden, -32602 invalid params, …) instead of
+  message-substring matching; the Go unix/MCP/gRPC clients now map not-found
+  to ErrObjectNotFound so errors.Is works on every transport, and the
+  TypeScript REST/MCP/Unix clients raise the typed errors from errors.ts
+  (404 → ObjectNotFoundError etc.) instead of generic Error/ConnectionError.
+- C# SDK unix client AddReplicationPolicyAsync now transmits destination
+  settings and the check-interval schedule (previously dropped, producing
+  non-functional replication policies); PutStreamAsync enforces the same
+  MaxBufferSize bound as the MCP client.
+- Audit middleware reuses the request ID set by RequestIDMiddleware (a
+  typed-vs-string context-key mismatch made the lookup always miss, so audit
+  logs carried a second generated ID and the X-Request-ID response header
+  was overwritten, breaking audit/access-log correlation).
+- objstore-server graceful shutdown no longer races transport startup:
+  servers are constructed before their goroutines launch and shutdown waits
+  for all transports to stop before removing the unix socket.
+- REST and MCP servers: Start() panicked with a nil-pointer dereference when
+  given a TLS-disabled adapters.TLSConfig (Build() returns nil); they now
+  serve plaintext, matching a nil TLSConfig.
+- QUIC GET/HEAD/metadata handlers no longer collapse every backend error to
+  404 "object not found"; errors route through the shared taxonomy
+  (503 unavailable, 504 deadline, 403 permission), and the REST metadata
+  handler does the same.
+- MCP objstore_put/objstore_get tool descriptions now state that data is
+  base64-encoded (the schema previously advertised "string or base64",
+  which silently corrupted raw strings that happened to be valid base64).
+- common.Classify no longer falls back to exact error-string matching;
+  producers wrap the canonical sentinels (errors.Is is the single
+  mechanism), and common.ValidationError unwraps to ErrInvalidArgument so
+  backend-level key validation classifies as 400 instead of 500.
+- Rust SDK REST put_stream streams the request body via chunked transfer
+  encoding instead of buffering the entire object in memory; the Ruby MCP
+  client reuses one Net::HTTP connection instead of a TCP+TLS handshake per
+  request; the Go gRPC client builds its auth metadata once per client
+  instead of per call.
+- Rust SDK unix client: `add_replication_policy` now transmits
+  `replication_mode` (previously omitted, so the server defaulted the mode).
+- Python SDK unix client: invalid base64 in a get response now raises
+  `ServerError` instead of silently returning empty bytes.
+- Ruby SDK unix client: malformed JSON from the server now raises
+  `ProtocolError` instead of `ConnectionError`.
+- JSON-RPC transports (MCP/unix): backend outages now map to a distinct
+  `-32003` (unavailable) code, and cancellation/timeout produce
+  distinguishable messages, matching REST (503/499/504) and gRPC
+  (Unavailable/Canceled/DeadlineExceeded) semantics.
+- Lifecycle/replication "policy already exists" errors now classify through
+  the shared taxonomy (409 on REST/QUIC regardless of error wrapping); the
+  per-handler string comparisons were removed.
+- The OpenAPI spec now documents the /metrics endpoint and its
+  MetricsPublic-gated authentication behavior.
+- REST HEAD /exists/{key} now conforms to the OpenAPI contract: 200 when the
+  object exists, 404 when absent, no body. It previously always returned
+  200 + a JSON body that HEAD clients cannot read, so the CLI reported every
+  object as existing.
+- QUIC server gained the HEAD /exists/{key} route for REST parity (the
+  legacy GET /objects/{key}?exists= variant is preserved).
+- CLI QUIC client now speaks genuine HTTP/3 over UDP via quic-go (it
+  previously used a TCP HTTP client and could never reach the QUIC server);
+  custom CAs are honored via SSL_CERT_FILE, and Close() releases the
+  transport.
+- CLI REST client GetPolicies now parses the server's wrapped
+  {"policies": [...], "count": n} response (it previously expected a bare
+  array and always failed).
+- Validation errors (empty key, path traversal, invalid characters) now wrap
+  common.ErrInvalidArgument so every transport reports them as
+  400/InvalidArgument/-32602 instead of internal errors.
+- Local backend UpdateMetadata wraps missing objects in ErrKeyNotFound, and
+  Classify recognizes raw fs.ErrNotExist, so metadata updates on missing
+  keys surface as NotFound on every transport instead of Internal.
+- Server integration suite: restored the missing Dockerfile.test (the suite
+  could not run at all), build the CLI from the bind-mounted source inside
+  the test container, and `make test-servers` now passes --build so server
+  images are never stale. The suite's CLI tests were aligned with the CLI's
+  documented exists exit-code contract, and stale expectations pinning the
+  old error codes (Internal for not-found, 200 for DELETE) were updated.
+- C# SDK test Dockerfile now copies the Internal/ directory; Ruby SDK rescue
+  chains no longer swallow the typed AuthorizationError/ProtocolError.
+- MCP/Python SDK: binary data was corrupted by UTF-8 replacement encoding on
+  put and never base64-decoded on get.
+- Go SDK: UnixClient.GetPolicies swallowed RPC errors and returned an empty
+  result; SetDeadline failures are now surfaced.
+- Go SDK MCP/C# SDK MCP/Ruby SDK MCP clients: removed the silent plain-text
+  fallback when get data is not valid base64 (protocol violations now error).
+- SDK error mapping: JSON-RPC -32001 was misinterpreted as "not found" by
+  the C#, Python, Ruby, and Rust clients; it is the server's forbidden code.
+- Rate limiter: the per-IP eviction goroutine could never be stopped (leak
+  per limiter); lastSeen is now updated lock-free on the hot path.
+- Replication changelog: a failed reopen after rotation/rewrite left a
+  closed file handle; subsequent writes now lazily recover.
+- Unix server: the first read on a connection was not covered by the read
+  deadline, letting connect-and-stall clients pin a goroutine.
+- QUIC server: panic recovery no longer attempts to write a 500 after
+  response headers were sent; the stream is aborted instead.
+- MCP resources/read now returns binary resources as base64 "blob" entries
+  per the MCP spec instead of corrupting them in a "text" field.
+- REST and MCP HTTP servers clamp TLS to a 1.2 minimum regardless of adapter
+  configuration.
+- C# SDK: HttpRequestMessage/HttpResponseMessage disposal leaks across the
+  REST, QUIC, and MCP clients; GetStreamAsync now returns a stream that owns
+  (and disposes) its response; PutStreamAsync no longer disposes the
+  caller's input stream.
+- Ruby SDK Unix client: replaced non-portable SO_RCVTIMEO timeval packing
+  with IO.select-based read/write timeouts.
+
+### Changed
+
+- Root VERSION synced to 0.2.0 to match all SDK manifests.
+- cmd/* server binaries log via log/slog (structured) instead of log.Printf.
+- Dead code removed: never-returned error sentinels in the QUIC/Unix server
+  packages, the unused CreateSelfSignedCert stub and its sentinel in
+  pkg/adapters, an unused validation regex, and orphaned test mocks across
+  eight packages; the lifecycle-policies example now actually runs its
+  glacier/multi-tier/lifecycle-manager examples.
+- Test infra hardening: the server integration compose no longer publishes
+  host ports (tests run in-network; host port collisions on dev machines
+  can no longer break the suite) and `make test-servers` cleans up
+  containers even on failure; `make sdk-smoke` skips legs whose language
+  toolchain is missing (e.g. .NET 9) instead of failing; local
+  `make security` govulncheck is blocking to match GitHub CI; `make ci`
+  gained version-check and conformance-test; GitHub CI gained the
+  replication and CLI integration suites; the CLI archive/policy
+  integration tests run for real against the local backend instead of
+  being unconditionally skipped; rate-limit middleware tests exercise the
+  modern API with one compact deprecated-shim compat test.
+- docs/configuration rewritten around the servers' real flags and defaults
+  (the old docs described a YAML config system no binary loads); QUIC port
+  examples corrected to 4433; six backend doc.go files now carry the
+  correct AGPL-3.0/Commercial header; the TypeScript QUIC client's
+  HTTP/1.1-only limitation is documented prominently.
+- Go SDK internals deduplicated (shared auth-header, JSON-RPC envelope, and
+  HTTP streaming helpers); TypeScript JSON-RPC envelope types unified in
+  src/clients/jsonrpc.ts; Rust stream buffering unified in collect_stream.
+- SDK internals deduplicated further: Python shares auth-header/HTTP-error
+  helpers (objstore/_http.py) and a JSON-RPC error mapper (_jsonrpc.py)
+  across the REST/QUIC/MCP/Unix clients; Ruby MCP/Unix clients share a
+  JsonRpcHelpers mixin; Rust MCP/Unix clients share a crate-private jsonrpc
+  module; C# shares AuthHeaders/ParseCustomMap/JsonRpcErrorMapper in
+  Internal/. The C# NuGet description now lists all five protocols.
+- Repo hygiene: integration-test certificates are no longer committed
+  (generated by make test-servers at run time and gitignored); root-built
+  server binaries are gitignored.
+
 ## [0.1.5-alpha] - 2026-05-31
 
 ### Changed
 
-- Go toolchain upgraded from 1.21 to 1.26.3
+- Go toolchain upgraded from 1.21 to 1.26.4
 - All SDK packages updated to version 0.2.0 for API parity across languages
 - TypeScript SDK: JavaScript SDK consolidated into TypeScript package (@go-objstore/client)
   - Ships compiled JavaScript (ESM + CJS) usable from plain JavaScript projects

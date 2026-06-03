@@ -15,6 +15,7 @@ package server_test
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -224,7 +225,7 @@ func TestMCPToolObjectstorePut(t *testing.T) {
 			"name": "objstore_put",
 			"arguments": map[string]any{
 				"key":  "test/mcp/simple.txt",
-				"data": "Hello, MCP!",
+				"data": "SGVsbG8sIE1DUCE=", // base64("Hello, MCP!")
 			},
 		}
 
@@ -248,7 +249,7 @@ func TestMCPToolObjectstorePut(t *testing.T) {
 			"name": "objstore_put",
 			"arguments": map[string]any{
 				"key":  "test/mcp/metadata.txt",
-				"data": "Data with metadata",
+				"data": "RGF0YSB3aXRoIG1ldGFkYXRh", // base64("Data with metadata")
 				"metadata": map[string]any{
 					"content_type": "text/plain",
 					"custom": map[string]any{
@@ -267,7 +268,7 @@ func TestMCPToolObjectstorePut(t *testing.T) {
 		params := map[string]any{
 			"name": "objstore_put",
 			"arguments": map[string]any{
-				"data": "test data",
+				"data": "dGVzdCBkYXRh", // base64("test data")
 			},
 		}
 
@@ -284,7 +285,7 @@ func TestMCPToolObjectstoreGet(t *testing.T) {
 		"name": "objstore_put",
 		"arguments": map[string]any{
 			"key":  "test/mcp/get.txt",
-			"data": "Content to retrieve",
+			"data": "Q29udGVudCB0byByZXRyaWV2ZQ==", // base64("Content to retrieve")
 		},
 	}
 	_, err := callJSONRPC("tools/call", putParams)
@@ -310,7 +311,8 @@ func TestMCPToolObjectstoreGet(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.Equal(t, true, getResult["success"])
-		assert.Equal(t, "Content to retrieve", getResult["data"])
+		// Object data is returned base64-encoded.
+		assert.Equal(t, "Q29udGVudCB0byByZXRyaWV2ZQ==", getResult["data"])
 	})
 
 	t.Run("get non-existent object", func(t *testing.T) {
@@ -334,7 +336,7 @@ func TestMCPToolObjectstoreDelete(t *testing.T) {
 		"name": "objstore_put",
 		"arguments": map[string]any{
 			"key":  "test/mcp/delete.txt",
-			"data": "To be deleted",
+			"data": "VG8gYmUgZGVsZXRlZA==", // base64("To be deleted")
 		},
 	}
 	_, err := callJSONRPC("tools/call", putParams)
@@ -378,7 +380,7 @@ func TestMCPToolObjectstoreList(t *testing.T) {
 			"name": "objstore_put",
 			"arguments": map[string]any{
 				"key":  key,
-				"data": fmt.Sprintf("content of %s", key),
+				"data": base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("content of %s", key))),
 			},
 		}
 		_, err := callJSONRPC("tools/call", params)
@@ -440,7 +442,7 @@ func TestMCPToolObjectstoreExists(t *testing.T) {
 		"name": "objstore_put",
 		"arguments": map[string]any{
 			"key":  "test/mcp/exists.txt",
-			"data": "exists test",
+			"data": "ZXhpc3RzIHRlc3Q=", // base64("exists test")
 		},
 	}
 	_, err := callJSONRPC("tools/call", putParams)
@@ -498,7 +500,7 @@ func TestMCPToolObjectstoreGetMetadata(t *testing.T) {
 		"name": "objstore_put",
 		"arguments": map[string]any{
 			"key":  "test/mcp/get-metadata.txt",
-			"data": "test content",
+			"data": "dGVzdCBjb250ZW50", // base64("test content")
 			"metadata": map[string]any{
 				"content_type": "text/plain",
 				"custom": map[string]any{
@@ -553,7 +555,7 @@ func TestMCPResourceManagement(t *testing.T) {
 			"name": "objstore_put",
 			"arguments": map[string]any{
 				"key":  "test/mcp/resource.txt",
-				"data": "resource content",
+				"data": "cmVzb3VyY2UgY29udGVudA==", // base64("resource content")
 			},
 		}
 		_, err := callJSONRPC("tools/call", putParams)
@@ -585,7 +587,7 @@ func TestMCPConcurrency(t *testing.T) {
 					"name": "objstore_put",
 					"arguments": map[string]any{
 						"key":  fmt.Sprintf("test/mcp/concurrent/%d.txt", index),
-						"data": fmt.Sprintf("content %d", index),
+						"data": base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("content %d", index))),
 					},
 				}
 

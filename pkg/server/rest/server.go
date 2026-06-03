@@ -15,6 +15,7 @@ package rest
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	"time"
@@ -28,16 +29,24 @@ import (
 
 // Server represents the REST API server
 type Server struct {
-	router     *gin.Engine
-	httpServer *http.Server
-	handler    *Handler
-	config     *ServerConfig
+	router      *gin.Engine
+	httpServer  *http.Server
+	handler     *Handler
+	config      *ServerConfig
+	rateLimiter *middleware.RateLimiter
 }
 
 // ServerConfig holds server configuration
 type ServerConfig struct {
 	// Host is the hostname to bind to (default: "0.0.0.0")
 	Host string
+
+	// TrustedProxies is the list of CIDR ranges or IP addresses that the
+	// server trusts as upstream proxies when reading X-Forwarded-For /
+	// X-Real-IP headers. Defaults to nil (no trusted proxies), meaning the
+	// client IP is always the direct peer address. Set this only when the
+	// server is known to sit behind a trusted load balancer.
+	TrustedProxies []string
 
 	// Port is the port to listen on (default: 8080)
 	Port int
@@ -101,6 +110,11 @@ type ServerConfig struct {
 
 	// EnableAudit enables audit logging (default: true)
 	EnableAudit bool
+
+	// MetricsPublic exempts the /metrics endpoint from authorization when true.
+	// The default (false) requires Prometheus scrapers to present credentials
+	// accepted by the configured authorizer.
+	MetricsPublic bool
 }
 
 // DefaultServerConfig returns a ServerConfig with sensible defaults
@@ -126,6 +140,7 @@ func DefaultServerConfig() *ServerConfig {
 		TLSConfig:             nil, // No TLS by default
 		AuditLogger:           audit.NewDefaultAuditLogger(),
 		EnableAudit:           true,
+		MetricsPublic:         false, // /metrics requires authorization by default
 	}
 }
 
@@ -159,11 +174,22 @@ func NewServer(storage common.Storage, config *ServerConfig) (*Server, error) {
 	// Create router
 	router := gin.New()
 
+	// Configure trusted proxies. Default to no trusted proxies so that
+	// X-Forwarded-For is not blindly trusted. This must be called before any
+	// middleware that reads ClientIP().
+	if err := router.SetTrustedProxies(config.TrustedProxies); err != nil {
+		return nil, fmt.Errorf("failed to configure trusted proxies: %w", err)
+	}
+
 	// Add recovery middleware (always enabled)
 	router.Use(gin.Recovery())
 
 	// Add error handling middleware
 	router.Use(ErrorHandlingMiddleware())
+
+	// Record request metrics for every request (before auth, so rejected
+	// requests are counted too). Exposed at GET /metrics.
+	router.Use(MetricsMiddleware())
 
 	// Middleware order: request ID → rate limit → security headers → CORS → auth → logging → size limit
 
@@ -172,9 +198,12 @@ func NewServer(storage common.Storage, config *ServerConfig) (*Server, error) {
 		router.Use(middleware.RequestIDMiddleware())
 	}
 
-	// Add rate limiting middleware if enabled
+	// Add rate limiting middleware if enabled. The limiter is stored on the
+	// server so its eviction goroutine is stopped during Shutdown.
+	var rateLimiter *middleware.RateLimiter
 	if config.EnableRateLimit {
-		router.Use(middleware.RateLimitMiddleware(config.RateLimitConfig, config.Logger))
+		rateLimiter = middleware.NewRateLimiter(config.RateLimitConfig, config.Logger)
+		router.Use(rateLimiter.GinMiddleware())
 	}
 
 	// Add security headers middleware if enabled
@@ -193,7 +222,7 @@ func NewServer(storage common.Storage, config *ServerConfig) (*Server, error) {
 	}
 
 	// Add authentication middleware (always enabled, uses NoOpAuthenticator by default)
-	router.Use(AuthenticationMiddleware(config.Authenticator, config.Logger, config.AuditLogger))
+	router.Use(AuthenticationMiddleware(config.Authenticator, config.Logger, config.AuditLogger, config.MetricsPublic))
 
 	// Add authorization middleware (always enabled, uses NoOpAuthorizer by default).
 	// Runs after authentication so the principal is available. Health and swagger
@@ -201,7 +230,7 @@ func NewServer(storage common.Storage, config *ServerConfig) (*Server, error) {
 	// since this is a global middleware, the health route still passes through the
 	// allow-all default. AuthorizationMiddleware only denies when a restrictive
 	// authorizer is configured.
-	router.Use(AuthorizationMiddleware(config.Authorizer, config.Logger, config.AuditLogger))
+	router.Use(AuthorizationMiddleware(config.Authorizer, config.Logger, config.AuditLogger, config.MetricsPublic))
 
 	// Add logging middleware if enabled
 	if config.EnableLogging {
@@ -225,18 +254,21 @@ func NewServer(storage common.Storage, config *ServerConfig) (*Server, error) {
 	// Create HTTP server
 	addr := fmt.Sprintf("%s:%d", config.Host, config.Port)
 	httpServer := &http.Server{
-		Addr:         addr,
-		Handler:      router,
-		ReadTimeout:  config.ReadTimeout,
-		WriteTimeout: config.WriteTimeout,
-		IdleTimeout:  config.IdleTimeout,
+		Addr:              addr,
+		Handler:           router,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       config.ReadTimeout,
+		WriteTimeout:      config.WriteTimeout,
+		IdleTimeout:       config.IdleTimeout,
+		MaxHeaderBytes:    1 << 20, // 1 MB
 	}
 
 	server := &Server{
-		router:     router,
-		httpServer: httpServer,
-		handler:    handler,
-		config:     config,
+		router:      router,
+		httpServer:  httpServer,
+		handler:     handler,
+		config:      config,
+		rateLimiter: rateLimiter,
 	}
 
 	return server, nil
@@ -244,24 +276,32 @@ func NewServer(storage common.Storage, config *ServerConfig) (*Server, error) {
 
 // Start starts the REST API server
 func (s *Server) Start() error {
-	// Build TLS config if provided
+	// Build TLS config if provided. Build returns a nil *tls.Config when the
+	// adapter config is disabled (the zero value); serve plaintext in that case.
 	if s.config.TLSConfig != nil {
 		tlsConfig, err := s.config.TLSConfig.Build()
 		if err != nil {
 			return err
 		}
-		s.httpServer.TLSConfig = tlsConfig
+		if tlsConfig != nil {
+			// Production floor: never serve TLS below 1.2 regardless of how the
+			// adapter config was constructed.
+			if tlsConfig.MinVersion < tls.VersionTLS12 {
+				tlsConfig.MinVersion = tls.VersionTLS12
+			}
+			s.httpServer.TLSConfig = tlsConfig
 
-		s.config.Logger.Info(context.TODO(), "Starting REST API server with TLS",
-			adapters.Field{Key: "address", Value: s.httpServer.Addr},
-			adapters.Field{Key: "tls_mode", Value: s.config.TLSConfig.Mode},
-		)
+			s.config.Logger.Info(context.Background(), "Starting REST API server with TLS",
+				adapters.Field{Key: "address", Value: s.httpServer.Addr},
+				adapters.Field{Key: "tls_mode", Value: s.config.TLSConfig.Mode},
+			)
 
-		// ListenAndServeTLS requires empty cert/key params when using TLSConfig
-		return s.httpServer.ListenAndServeTLS("", "")
+			// ListenAndServeTLS requires empty cert/key params when using TLSConfig
+			return s.httpServer.ListenAndServeTLS("", "")
+		}
 	}
 
-	s.config.Logger.Info(context.TODO(), "Starting REST API server",
+	s.config.Logger.Info(context.Background(), "Starting REST API server",
 		adapters.Field{Key: "address", Value: s.httpServer.Addr},
 	)
 	return s.httpServer.ListenAndServe()
@@ -270,6 +310,9 @@ func (s *Server) Start() error {
 // Shutdown gracefully shuts down the server
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.config.Logger.Info(ctx, "Shutting down REST API server")
+	if s.rateLimiter != nil {
+		s.rateLimiter.Stop()
+	}
 	return s.httpServer.Shutdown(ctx)
 }
 

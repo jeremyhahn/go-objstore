@@ -12,7 +12,7 @@ categories = ["api-bindings", "network-programming"]
 [dependencies]
 # Async runtime
 tokio = { version = "1.35", features = ["full"] }
-futures = "0.3"
+futures = { version = "0.3", features = ["alloc"] }
 async-trait = "0.1"
 
 # gRPC
@@ -51,6 +51,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 urlencoding = "2.1"
 http = "1.0"
+base64 = "0.22"
 
 [build-dependencies]
 tonic-build = "0.11"
@@ -83,3 +84,7 @@ path = "examples/quic_client.rs"
 [[example]]
 name = "unified_client"
 path = "examples/unified_client.rs"
+
+[[example]]
+name = "mcp_unix_client"
+path = "examples/mcp_unix_client.rs"

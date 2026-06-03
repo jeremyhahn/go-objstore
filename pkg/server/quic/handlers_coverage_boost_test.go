@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -209,45 +208,6 @@ func TestHandleReplicationPolicies_DELETE(t *testing.T) {
 		t.Errorf("Expected status %d, got %d", http.StatusMethodNotAllowed, w.Code)
 	}
 }
-
-// mockSimpleStorage is a storage without lifecycle support
-type mockSimpleStorage struct {
-	data     map[string][]byte
-	metadata map[string]*common.Metadata
-}
-
-func (m *mockSimpleStorage) Configure(settings map[string]string) error { return nil }
-func (m *mockSimpleStorage) Put(key string, data io.Reader) error       { return nil }
-func (m *mockSimpleStorage) PutWithContext(ctx context.Context, key string, data io.Reader) error {
-	return nil
-}
-func (m *mockSimpleStorage) PutWithMetadata(ctx context.Context, key string, data io.Reader, metadata *common.Metadata) error {
-	return nil
-}
-func (m *mockSimpleStorage) Get(key string) (io.ReadCloser, error) { return nil, nil }
-func (m *mockSimpleStorage) GetWithContext(ctx context.Context, key string) (io.ReadCloser, error) {
-	return nil, nil
-}
-func (m *mockSimpleStorage) GetMetadata(ctx context.Context, key string) (*common.Metadata, error) {
-	return nil, nil
-}
-func (m *mockSimpleStorage) UpdateMetadata(ctx context.Context, key string, metadata *common.Metadata) error {
-	return nil
-}
-func (m *mockSimpleStorage) Delete(key string) error                                 { return nil }
-func (m *mockSimpleStorage) DeleteWithContext(ctx context.Context, key string) error { return nil }
-func (m *mockSimpleStorage) Exists(ctx context.Context, key string) (bool, error)    { return false, nil }
-func (m *mockSimpleStorage) List(prefix string) ([]string, error)                    { return nil, nil }
-func (m *mockSimpleStorage) ListWithContext(ctx context.Context, prefix string) ([]string, error) {
-	return nil, nil
-}
-func (m *mockSimpleStorage) ListWithOptions(ctx context.Context, opts *common.ListOptions) (*common.ListResult, error) {
-	return nil, nil
-}
-func (m *mockSimpleStorage) AddPolicy(policy common.LifecyclePolicy) error         { return nil }
-func (m *mockSimpleStorage) RemovePolicy(id string) error                          { return nil }
-func (m *mockSimpleStorage) GetPolicies() ([]common.LifecyclePolicy, error)        { return nil, nil }
-func (m *mockSimpleStorage) Archive(key string, destination common.Archiver) error { return nil }
 
 // TestHandleApplyPolicies_NoPolicies tests when there are no policies to apply
 func TestHandleApplyPolicies_NoPolicies(t *testing.T) {
