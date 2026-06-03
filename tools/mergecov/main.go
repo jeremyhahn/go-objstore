@@ -27,8 +27,10 @@ func main() {
 	lines := make(map[string]struct{})
 	mode := ""
 	for _, p := range os.Args[1:] {
-		f, err := os.Open(p) // #nosec G304 -- CLI tool intentionally opens user-specified coverage files
+		// #nosec G304 G703 -- CLI tool intentionally opens user-specified coverage profile paths
+		f, err := os.Open(p)
 		if err != nil {
+			// #nosec G706 -- p is a local CLI argument written only to this tool's own stderr
 			log.Fatalf("open %s: %v", p, err)
 		}
 		s := bufio.NewScanner(f)
@@ -47,6 +49,7 @@ func main() {
 		}
 		_ = f.Close() // #nosec G104 -- Errors in deferred cleanup are non-critical for this CLI tool
 		if err := s.Err(); err != nil {
+			// #nosec G706 -- p is a local CLI argument written only to this tool's own stderr
 			log.Fatalf("scan %s: %v", p, err)
 		}
 	}

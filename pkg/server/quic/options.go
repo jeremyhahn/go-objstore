@@ -66,12 +66,21 @@ type Options struct {
 	// Authenticator is the pluggable authentication adapter (default: NoOpAuthenticator)
 	Authenticator adapters.Authenticator
 
+	// Authorizer is the pluggable authorization adapter (default: NoOpAuthorizer = allow-all)
+	Authorizer adapters.Authorizer
+
 	// AdapterTLSConfig is the TLS/mTLS configuration using the adapter (preferred over TLSConfig)
 	AdapterTLSConfig *adapters.TLSConfig
 
 	// Backend is the name of the backend to use when using the facade.
 	// If empty, the default backend is used.
 	Backend string
+
+	// AllowedOrigins is the list of origins permitted by the CORS handling in
+	// ServeHTTP. When empty/nil (or set to ["*"]), all origins are allowed
+	// without credentials. When set to a specific allowlist, only those origins
+	// are echoed back and credentials are permitted.
+	AllowedOrigins []string
 }
 
 // DefaultOptions returns a new Options instance with sensible defaults.
@@ -87,6 +96,7 @@ func DefaultOptions() *Options {
 		EnableDatagrams:    false,
 		Logger:             adapters.NewDefaultLogger(),
 		Authenticator:      adapters.NewNoOpAuthenticator(),
+		Authorizer:         adapters.NewNoOpAuthorizer(),
 		AdapterTLSConfig:   nil, // Must be set by user
 		QUICConfig: &quic.Config{
 			MaxIdleTimeout:                 60 * time.Second,
@@ -141,6 +151,10 @@ func (o *Options) Validate() error {
 
 	if o.QUICConfig == nil {
 		o.QUICConfig = DefaultOptions().QUICConfig
+	}
+
+	if o.Authorizer == nil {
+		o.Authorizer = adapters.NewNoOpAuthorizer()
 	}
 
 	// Sync QUIC config with options
@@ -209,6 +223,12 @@ func (o *Options) WithAuthenticator(auth adapters.Authenticator) *Options {
 	return o
 }
 
+// WithAuthorizer sets the authorization adapter.
+func (o *Options) WithAuthorizer(authz adapters.Authorizer) *Options {
+	o.Authorizer = authz
+	return o
+}
+
 // WithAdapterTLS sets the TLS configuration using the adapter.
 func (o *Options) WithAdapterTLS(config *adapters.TLSConfig) *Options {
 	o.AdapterTLSConfig = config
@@ -218,5 +238,12 @@ func (o *Options) WithAdapterTLS(config *adapters.TLSConfig) *Options {
 // WithBackend sets the backend name for facade-based operation.
 func (o *Options) WithBackend(backend string) *Options {
 	o.Backend = backend
+	return o
+}
+
+// WithAllowedOrigins sets the list of origins permitted by the CORS handling.
+// When empty (or set to ["*"]), all origins are allowed without credentials.
+func (o *Options) WithAllowedOrigins(origins ...string) *Options {
+	o.AllowedOrigins = origins
 	return o
 }

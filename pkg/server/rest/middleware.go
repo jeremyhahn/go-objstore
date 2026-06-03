@@ -16,6 +16,7 @@ package rest
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -23,14 +24,46 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/audit"
 )
 
-// CORSMiddleware handles Cross-Origin Resource Sharing
-func CORSMiddleware() gin.HandlerFunc {
+// principalContextKey is the gin context key under which the authenticated
+// principal is stored by AuthenticationMiddleware.
+const principalContextKey = "principal"
+
+// CORSMiddleware handles Cross-Origin Resource Sharing.
+//
+// The allowedOrigins parameter controls which origins may access the API:
+//
+//   - When empty/nil (or equal to ["*"]), the middleware allows all origins by
+//     sending "Access-Control-Allow-Origin: *". In this permissive mode the
+//     "Access-Control-Allow-Credentials" header is NOT sent, since the wildcard
+//     origin combined with credentials is invalid per the Fetch standard.
+//   - When set to a specific allowlist, the middleware echoes the request's
+//     Origin header only if it is present in the allowlist (along with
+//     "Vary: Origin"), and in that case it is safe to also send
+//     "Access-Control-Allow-Credentials: true". Requests whose Origin is not
+//     allowlisted receive no "Access-Control-Allow-Origin" header, so the
+//     browser blocks the cross-origin response.
+func CORSMiddleware(allowedOrigins []string) gin.HandlerFunc {
+	allowAll := len(allowedOrigins) == 0 || (len(allowedOrigins) == 1 && allowedOrigins[0] == "*")
+
 	return func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE, HEAD")
-		c.Writer.Header().Set("Access-Control-Expose-Headers", "Content-Length, ETag, Last-Modified")
+		header := c.Writer.Header()
+
+		if allowAll {
+			// Permissive default: wildcard origin, no credentials (the wildcard
+			// plus credentials combination is invalid and unsafe).
+			header.Set("Access-Control-Allow-Origin", "*")
+		} else {
+			origin := c.Request.Header.Get("Origin")
+			if originAllowed(origin, allowedOrigins) {
+				header.Set("Access-Control-Allow-Origin", origin)
+				header.Add("Vary", "Origin")
+				header.Set("Access-Control-Allow-Credentials", "true")
+			}
+		}
+
+		header.Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
+		header.Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE, HEAD")
+		header.Set("Access-Control-Expose-Headers", "Content-Length, ETag, Last-Modified")
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
@@ -39,6 +72,20 @@ func CORSMiddleware() gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+// originAllowed reports whether the given request origin is present in the
+// allowlist. An empty origin never matches.
+func originAllowed(origin string, allowedOrigins []string) bool {
+	if origin == "" {
+		return false
+	}
+	for _, allowed := range allowedOrigins {
+		if allowed == origin {
+			return true
+		}
+	}
+	return false
 }
 
 // LoggingMiddleware logs incoming requests and their response times
@@ -140,19 +187,113 @@ func AuthenticationMiddleware(authenticator adapters.Authenticator, logger adapt
 		}
 
 		// Store principal in context for use by handlers
-		c.Set("principal", principal)
+		c.Set(principalContextKey, principal)
 
 		// Audit log successful authentication
 		if auditLogger != nil {
 			_ = auditLogger.LogAuthSuccess(c.Request.Context(), principal.ID, principal.Name, c.ClientIP(), requestID) // #nosec G104 -- Audit logging errors are logged internally, should not block operations
 		}
 
-		// Add principal info to logger context
-		logger = logger.WithFields(
-			adapters.Field{Key: "principal_id", Value: principal.ID},
-			adapters.Field{Key: "principal_name", Value: principal.Name},
-		)
+		c.Next()
+	}
+}
+
+// AuthorizationMiddleware enforces authorization on authenticated requests using
+// the provided authorizer. It must run AFTER AuthenticationMiddleware so that the
+// principal is present in the gin context. It derives the (action, resource) pair
+// from the HTTP method and route, then calls authorizer.Authorize. On denial it
+// responds with 403 Forbidden. The default authorizer (NoOpAuthorizer) allows
+// everything, preserving prior behavior.
+func AuthorizationMiddleware(authorizer adapters.Authorizer, logger adapters.Logger, auditLogger audit.AuditLogger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Health and swagger endpoints are public (no authorization).
+		if isPublicPath(c.Request.URL.Path) {
+			c.Next()
+			return
+		}
+
+		value, exists := c.Get(principalContextKey)
+		principal, _ := value.(*adapters.Principal)
+		if !exists || principal == nil {
+			// No principal means authentication did not run or failed; deny.
+			RespondWithError(c, http.StatusForbidden, "Forbidden")
+			c.Abort()
+			return
+		}
+
+		action, resource := deriveActionResource(c)
+
+		if err := authorizer.Authorize(c.Request.Context(), principal, action, resource); err != nil {
+			logger.Warn(c.Request.Context(), "Authorization denied",
+				adapters.Field{Key: "error", Value: err.Error()},
+				adapters.Field{Key: "path", Value: c.Request.URL.Path},
+				adapters.Field{Key: "method", Value: c.Request.Method},
+				adapters.Field{Key: "action", Value: action},
+				adapters.Field{Key: "resource", Value: resource},
+				adapters.Field{Key: "principal_id", Value: principal.ID},
+			)
+
+			// Reuse the auth-failure audit hook to record the denial.
+			if auditLogger != nil {
+				requestID := audit.GetRequestID(c.Request.Context())
+				_ = auditLogger.LogAuthFailure(c.Request.Context(), principal.ID, principal.Name, c.ClientIP(), requestID, "authorization denied: "+err.Error()) // #nosec G104 -- Audit logging errors are logged internally, should not block operations
+			}
+
+			RespondWithError(c, http.StatusForbidden, "Forbidden")
+			c.Abort()
+			return
+		}
 
 		c.Next()
+	}
+}
+
+// isPublicPath reports whether the path is exempt from authorization.
+func isPublicPath(path string) bool {
+	return path == "/health" || strings.HasPrefix(path, "/swagger")
+}
+
+// deriveActionResource maps an HTTP request to a (action, resource) pair using
+// the route taxonomy. Object and metadata operations use the object key as the
+// resource; management operations use the resource category constants.
+func deriveActionResource(c *gin.Context) (action, resource string) {
+	path := c.Request.URL.Path
+	method := c.Request.Method
+
+	switch {
+	case strings.Contains(path, "/replication"):
+		return adapters.ActionAdmin, adapters.ResourceReplication
+	case strings.Contains(path, "/policies"):
+		return adapters.ActionAdmin, adapters.ResourcePolicy
+	case strings.Contains(path, "/archive"):
+		// Archive acts on an object key; key is supplied in the request body so
+		// the route param is unavailable here. Use the policy resource category.
+		return adapters.ActionAdmin, adapters.ResourcePolicy
+	case strings.Contains(path, "/list"):
+		return adapters.ActionList, ""
+	}
+
+	// Object key is carried in the "key" route param for /objects, /exists,
+	// and /metadata routes.
+	key := strings.TrimPrefix(c.Param("key"), "/")
+
+	switch {
+	case strings.Contains(path, "/exists"):
+		return adapters.ActionRead, key
+	case strings.Contains(path, "/metadata"):
+		if method == http.MethodPut {
+			return adapters.ActionWrite, key
+		}
+		return adapters.ActionRead, key
+	default:
+		// /objects/*key
+		switch method {
+		case http.MethodPut:
+			return adapters.ActionWrite, key
+		case http.MethodDelete:
+			return adapters.ActionDelete, key
+		default:
+			return adapters.ActionRead, key
+		}
 	}
 }

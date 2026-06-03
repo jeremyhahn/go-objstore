@@ -119,6 +119,20 @@ func (m *mockReplicationManager) SyncPolicy(ctx context.Context, policyID string
 	return m.syncPolicyResult, nil
 }
 
+func (m *mockReplicationManager) SyncAllParallel(ctx context.Context, workerCount int) (*common.SyncResult, error) {
+	if m.syncAllError != nil {
+		return nil, m.syncAllError
+	}
+	return m.syncAllResult, nil
+}
+
+func (m *mockReplicationManager) SyncPolicyParallel(ctx context.Context, policyID string, workerCount int) (*common.SyncResult, error) {
+	if m.syncPolicyError != nil {
+		return nil, m.syncPolicyError
+	}
+	return m.syncPolicyResult, nil
+}
+
 func (m *mockReplicationManager) SetBackendEncrypterFactory(policyID string, factory common.EncrypterFactory) error {
 	return nil
 }
@@ -320,7 +334,7 @@ func TestRemoveReplicationPolicy(t *testing.T) {
 				Id: "nonexistent",
 			},
 			wantError:      true,
-			wantStatusCode: codes.Internal,
+			wantStatusCode: codes.NotFound,
 		},
 	}
 
@@ -496,7 +510,7 @@ func TestGetReplicationPolicy(t *testing.T) {
 				Id: "nonexistent",
 			},
 			wantError:      true,
-			wantStatusCode: codes.Internal,
+			wantStatusCode: codes.NotFound,
 		},
 	}
 

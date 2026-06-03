@@ -608,7 +608,7 @@ make coverage
 make integration-test
 
 # Run all tests
-make test-all
+make test && make integration-test
 
 # Run linter
 make lint
@@ -698,7 +698,7 @@ Run `make coverage` to generate a detailed coverage report.
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/amazing-feature`)
 3. Write tests for your changes
-4. Ensure tests pass (`make test-all`)
+4. Ensure tests pass (`make test && make integration-test`)
 5. Ensure linting passes (`make lint`)
 6. Commit your changes (`git commit -am 'Add amazing feature'`)
 7. Push to the branch (`git push origin feature/amazing-feature`)
@@ -715,6 +715,11 @@ For issues and questions:
 - Documentation: https://github.com/jeremyhahn/go-objstore
 
 ## Changelog
+
+### 0.2.0
+
+- Go toolchain updated to 1.26.3
+- API parity across all SDKs
 
 ### 0.1.0 (2025-11-23)
 

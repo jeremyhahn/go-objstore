@@ -224,5 +224,5 @@ class TestEnums:
 
     def test_replication_mode(self) -> None:
         """Test ReplicationMode enum."""
-        assert ReplicationMode.TRANSPARENT == "TRANSPARENT"
-        assert ReplicationMode.OPAQUE == "OPAQUE"
+        assert ReplicationMode.TRANSPARENT == "transparent"
+        assert ReplicationMode.OPAQUE == "opaque"

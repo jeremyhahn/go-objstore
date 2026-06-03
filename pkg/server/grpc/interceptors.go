@@ -16,6 +16,7 @@ package grpc
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -78,19 +79,19 @@ func LoggingUnaryInterceptor(logger adapters.Logger) grpc.UnaryServerInterceptor
 		start := time.Now()
 
 		logger.Debug(ctx, "gRPC request started",
-			adapters.Field{Key: "method", Value: info.FullMethod},
+			adapters.Field{Key: fieldMethod, Value: info.FullMethod},
 		)
 
 		resp, err := handler(ctx, req)
 
 		duration := time.Since(start)
 		fields := []adapters.Field{
-			{Key: "method", Value: info.FullMethod},
+			{Key: fieldMethod, Value: info.FullMethod},
 			{Key: "duration", Value: duration.String()},
 		}
 
 		if err != nil {
-			fields = append(fields, adapters.Field{Key: "error", Value: err.Error()})
+			fields = append(fields, adapters.Field{Key: fieldError, Value: err.Error()})
 			logger.Error(ctx, "gRPC request failed", fields...)
 		} else {
 			logger.Info(ctx, "gRPC request completed", fields...)
@@ -111,19 +112,19 @@ func LoggingStreamInterceptor(logger adapters.Logger) grpc.StreamServerIntercept
 		start := time.Now()
 
 		logger.Debug(ss.Context(), "gRPC stream started",
-			adapters.Field{Key: "method", Value: info.FullMethod},
+			adapters.Field{Key: fieldMethod, Value: info.FullMethod},
 		)
 
 		err := handler(srv, ss)
 
 		duration := time.Since(start)
 		fields := []adapters.Field{
-			{Key: "method", Value: info.FullMethod},
+			{Key: fieldMethod, Value: info.FullMethod},
 			{Key: "duration", Value: duration.String()},
 		}
 
 		if err != nil {
-			fields = append(fields, adapters.Field{Key: "error", Value: err.Error()})
+			fields = append(fields, adapters.Field{Key: fieldError, Value: err.Error()})
 			logger.Error(ss.Context(), "gRPC stream failed", fields...)
 		} else {
 			logger.Info(ss.Context(), "gRPC stream completed", fields...)
@@ -307,7 +308,7 @@ func AuthenticationUnaryInterceptor(authenticator adapters.Authenticator, logger
 				if _, ok := p.AuthInfo.(interface{ State() any }); ok {
 					// This is a simplified approach - in production, you'd need proper type assertion
 					logger.Debug(ctx, "Attempting mTLS authentication",
-						adapters.Field{Key: "method", Value: info.FullMethod},
+						adapters.Field{Key: fieldMethod, Value: info.FullMethod},
 					)
 				}
 			}
@@ -315,17 +316,11 @@ func AuthenticationUnaryInterceptor(authenticator adapters.Authenticator, logger
 
 		if err != nil {
 			logger.Warn(ctx, "Authentication failed",
-				adapters.Field{Key: "method", Value: info.FullMethod},
-				adapters.Field{Key: "error", Value: err.Error()},
+				adapters.Field{Key: fieldMethod, Value: info.FullMethod},
+				adapters.Field{Key: fieldError, Value: err.Error()},
 			)
 			return nil, status.Error(codes.Unauthenticated, "authentication failed")
 		}
-
-		// Add principal info to logger
-		logger = logger.WithFields(
-			adapters.Field{Key: "principal_id", Value: principal.ID},
-			adapters.Field{Key: "principal_name", Value: principal.Name},
-		)
 
 		// Add principal to context for downstream handlers
 		ctx = context.WithValue(ctx, principalContextKey, *principal)
@@ -357,24 +352,18 @@ func AuthenticationStreamInterceptor(authenticator adapters.Authenticator, logge
 		if err != nil {
 			if p, ok := peer.FromContext(ctx); ok && p.AuthInfo != nil {
 				logger.Debug(ctx, "Attempting mTLS authentication for stream",
-					adapters.Field{Key: "method", Value: info.FullMethod},
+					adapters.Field{Key: fieldMethod, Value: info.FullMethod},
 				)
 			}
 		}
 
 		if err != nil {
 			logger.Warn(ctx, "Stream authentication failed",
-				adapters.Field{Key: "method", Value: info.FullMethod},
-				adapters.Field{Key: "error", Value: err.Error()},
+				adapters.Field{Key: fieldMethod, Value: info.FullMethod},
+				adapters.Field{Key: fieldError, Value: err.Error()},
 			)
 			return status.Error(codes.Unauthenticated, "authentication failed")
 		}
-
-		// Add principal info to logger
-		logger = logger.WithFields(
-			adapters.Field{Key: "principal_id", Value: principal.ID},
-			adapters.Field{Key: "principal_name", Value: principal.Name},
-		)
 
 		// Add principal to context for downstream handlers
 		ctx = context.WithValue(ctx, principalContextKey, *principal)
@@ -385,6 +374,133 @@ func AuthenticationStreamInterceptor(authenticator adapters.Authenticator, logge
 			ctx:          ctx,
 		}
 		return handler(srv, wrappedStream)
+	}
+}
+
+// resourceObject is the resource category used for object-level gRPC operations
+// where the object key is carried inside the request body and is not readily
+// available in the interceptor.
+const resourceObject = "object"
+
+// methodActions maps a gRPC method short name (the trailing segment of
+// FullMethod) to its required action and resource category per the standard
+// taxonomy. Methods not present here are treated as admin by default (deny-safe).
+var methodActions = map[string]struct {
+	action   string
+	resource string
+}{
+	"Get":                     {adapters.ActionRead, resourceObject},
+	"GetMetadata":             {adapters.ActionRead, resourceObject},
+	"Exists":                  {adapters.ActionRead, resourceObject},
+	"Put":                     {adapters.ActionWrite, resourceObject},
+	"UpdateMetadata":          {adapters.ActionWrite, resourceObject},
+	"Delete":                  {adapters.ActionDelete, resourceObject},
+	"List":                    {adapters.ActionList, resourceObject},
+	"Archive":                 {adapters.ActionAdmin, resourceObject},
+	"AddPolicy":               {adapters.ActionAdmin, adapters.ResourcePolicy},
+	"RemovePolicy":            {adapters.ActionAdmin, adapters.ResourcePolicy},
+	"GetPolicies":             {adapters.ActionAdmin, adapters.ResourcePolicy},
+	"ApplyPolicies":           {adapters.ActionAdmin, adapters.ResourcePolicy},
+	"AddReplicationPolicy":    {adapters.ActionAdmin, adapters.ResourceReplication},
+	"RemoveReplicationPolicy": {adapters.ActionAdmin, adapters.ResourceReplication},
+	"GetReplicationPolicies":  {adapters.ActionAdmin, adapters.ResourceReplication},
+	"GetReplicationPolicy":    {adapters.ActionAdmin, adapters.ResourceReplication},
+	"TriggerReplication":      {adapters.ActionAdmin, adapters.ResourceReplication},
+	"GetReplicationStatus":    {adapters.ActionAdmin, adapters.ResourceReplication},
+}
+
+// isPublicAuthzMethod reports whether the gRPC method is exempt from
+// authorization (health checks and server reflection).
+func isPublicAuthzMethod(fullMethod string) bool {
+	return strings.Contains(fullMethod, "grpc.health.v1.Health") ||
+		strings.Contains(fullMethod, "grpc.reflection.")
+}
+
+// actionForMethod derives the (action, resource) pair for a gRPC FullMethod.
+func actionForMethod(fullMethod string) (action, resource string) {
+	short := fullMethod
+	if idx := strings.LastIndex(fullMethod, "/"); idx >= 0 {
+		short = fullMethod[idx+1:]
+	}
+	if m, ok := methodActions[short]; ok {
+		return m.action, m.resource
+	}
+	// Unknown methods require admin (deny-safe under restrictive authorizers).
+	return adapters.ActionAdmin, resourceObject
+}
+
+// principalFromContext extracts the authenticated principal stored by the
+// authentication interceptor.
+func principalFromContext(ctx context.Context) *adapters.Principal {
+	if p, ok := ctx.Value(principalContextKey).(adapters.Principal); ok {
+		return &p
+	}
+	return nil
+}
+
+// AuthorizationUnaryInterceptor enforces authorization on unary RPC calls. It
+// must run after AuthenticationUnaryInterceptor so the principal is in context.
+// Health and reflection methods are skipped. On denial it returns
+// codes.PermissionDenied. The default authorizer (NoOpAuthorizer) allows all.
+func AuthorizationUnaryInterceptor(authorizer adapters.Authorizer, logger adapters.Logger) grpc.UnaryServerInterceptor {
+	return func(
+		ctx context.Context,
+		req any,
+		info *grpc.UnaryServerInfo,
+		handler grpc.UnaryHandler,
+	) (any, error) {
+		if isPublicAuthzMethod(info.FullMethod) {
+			return handler(ctx, req)
+		}
+
+		principal := principalFromContext(ctx)
+		if principal == nil {
+			return nil, status.Error(codes.PermissionDenied, "authorization denied")
+		}
+
+		action, resource := actionForMethod(info.FullMethod)
+		if err := authorizer.Authorize(ctx, principal, action, resource); err != nil {
+			logger.Warn(ctx, "Authorization denied",
+				adapters.Field{Key: fieldMethod, Value: info.FullMethod},
+				adapters.Field{Key: fieldError, Value: err.Error()},
+			)
+			return nil, status.Error(codes.PermissionDenied, "authorization denied")
+		}
+
+		return handler(ctx, req)
+	}
+}
+
+// AuthorizationStreamInterceptor enforces authorization on stream RPC calls. It
+// must run after AuthenticationStreamInterceptor. Behavior matches the unary
+// variant.
+func AuthorizationStreamInterceptor(authorizer adapters.Authorizer, logger adapters.Logger) grpc.StreamServerInterceptor {
+	return func(
+		srv any,
+		ss grpc.ServerStream,
+		info *grpc.StreamServerInfo,
+		handler grpc.StreamHandler,
+	) error {
+		if isPublicAuthzMethod(info.FullMethod) {
+			return handler(srv, ss)
+		}
+
+		ctx := ss.Context()
+		principal := principalFromContext(ctx)
+		if principal == nil {
+			return status.Error(codes.PermissionDenied, "authorization denied")
+		}
+
+		action, resource := actionForMethod(info.FullMethod)
+		if err := authorizer.Authorize(ctx, principal, action, resource); err != nil {
+			logger.Warn(ctx, "Authorization denied",
+				adapters.Field{Key: fieldMethod, Value: info.FullMethod},
+				adapters.Field{Key: fieldError, Value: err.Error()},
+			)
+			return status.Error(codes.PermissionDenied, "authorization denied")
+		}
+
+		return handler(srv, ss)
 	}
 }
 

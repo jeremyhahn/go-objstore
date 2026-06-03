@@ -45,6 +45,12 @@ type ServerConfig struct {
 	// EnableCORS enables CORS middleware
 	EnableCORS bool
 
+	// AllowedOrigins is the list of origins permitted by the CORS middleware.
+	// When empty/nil (or set to ["*"]), all origins are allowed without
+	// credentials. When set to a specific allowlist, only those origins are
+	// echoed back and credentials are permitted. See CORSMiddleware.
+	AllowedOrigins []string
+
 	// EnableLogging enables request logging middleware
 	EnableLogging bool
 
@@ -84,6 +90,9 @@ type ServerConfig struct {
 	// Authenticator is the pluggable authentication adapter (default: NoOpAuthenticator)
 	Authenticator adapters.Authenticator
 
+	// Authorizer is the pluggable authorization adapter (default: NoOpAuthorizer = allow-all)
+	Authorizer adapters.Authorizer
+
 	// TLSConfig is the TLS/mTLS configuration (default: nil = no TLS)
 	TLSConfig *adapters.TLSConfig
 
@@ -113,6 +122,7 @@ func DefaultServerConfig() *ServerConfig {
 		Mode:                  gin.ReleaseMode,
 		Logger:                adapters.NewDefaultLogger(),
 		Authenticator:         adapters.NewNoOpAuthenticator(),
+		Authorizer:            adapters.NewNoOpAuthorizer(),
 		TLSConfig:             nil, // No TLS by default
 		AuditLogger:           audit.NewDefaultAuditLogger(),
 		EnableAudit:           true,
@@ -131,6 +141,9 @@ func NewServer(storage common.Storage, config *ServerConfig) (*Server, error) {
 	}
 	if config.Authenticator == nil {
 		config.Authenticator = adapters.NewNoOpAuthenticator()
+	}
+	if config.Authorizer == nil {
+		config.Authorizer = adapters.NewNoOpAuthorizer()
 	}
 	if config.AuditLogger == nil {
 		if config.EnableAudit {
@@ -171,7 +184,7 @@ func NewServer(storage common.Storage, config *ServerConfig) (*Server, error) {
 
 	// Add CORS middleware if enabled
 	if config.EnableCORS {
-		router.Use(CORSMiddleware())
+		router.Use(CORSMiddleware(config.AllowedOrigins))
 	}
 
 	// Add audit middleware if enabled (should be before auth to catch all requests)
@@ -181,6 +194,14 @@ func NewServer(storage common.Storage, config *ServerConfig) (*Server, error) {
 
 	// Add authentication middleware (always enabled, uses NoOpAuthenticator by default)
 	router.Use(AuthenticationMiddleware(config.Authenticator, config.Logger, config.AuditLogger))
+
+	// Add authorization middleware (always enabled, uses NoOpAuthorizer by default).
+	// Runs after authentication so the principal is available. Health and swagger
+	// routes are registered without these middlewares applied selectively below;
+	// since this is a global middleware, the health route still passes through the
+	// allow-all default. AuthorizationMiddleware only denies when a restrictive
+	// authorizer is configured.
+	router.Use(AuthorizationMiddleware(config.Authorizer, config.Logger, config.AuditLogger))
 
 	// Add logging middleware if enabled
 	if config.EnableLogging {

@@ -177,7 +177,7 @@ func (wp *WorkerPool) Shutdown() {
 	wp.logger.Info(wp.ctx, "Worker pool shutdown complete",
 		adapters.Field{Key: "processed", Value: wp.objectsProcessed.Load()},
 		adapters.Field{Key: "succeeded", Value: wp.objectsSucceeded.Load()},
-		adapters.Field{Key: "failed", Value: wp.objectsFailed.Load()},
+		adapters.Field{Key: fieldFailed, Value: wp.objectsFailed.Load()},
 		adapters.Field{Key: "bytes", Value: wp.bytesProcessed.Load()})
 }
 

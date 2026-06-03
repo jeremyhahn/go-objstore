@@ -210,14 +210,12 @@ func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 		dataToWrite = encryptedData
 	}
 
-	f, err := os.Create(path) // #nosec G304 -- Path validated by validateKey() to prevent directory traversal
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-
-	size, err := io.Copy(f, dataToWrite)
-	if err != nil {
+	var size int64
+	if err := writeFileAtomic(path, 0644, func(w io.Writer) error {
+		n, werr := io.Copy(w, dataToWrite)
+		size = n
+		return werr
+	}); err != nil {
 		log.Printf("[LOCAL] ✗ Failed to write object '%s': %v", key, err)
 		return err
 	}
@@ -739,7 +737,17 @@ func (l *Local) saveMetadata(key string, metadata *common.Metadata) error {
 		return err
 	}
 
-	return os.WriteFile(metadataPath, data, 0600) // Restrict file permissions for security
+	// Ensure the parent directory exists before writing the sidecar.
+	if err := os.MkdirAll(filepath.Dir(metadataPath), 0750); err != nil {
+		return err
+	}
+
+	// Write the sidecar atomically so a crash mid-write cannot leave a
+	// truncated or partial metadata file alongside the object.
+	return writeFileAtomic(metadataPath, 0600, func(w io.Writer) error {
+		_, werr := w.Write(data)
+		return werr
+	})
 }
 
 // loadMetadata loads metadata from a sidecar file.
@@ -766,6 +774,61 @@ func (l *Local) loadMetadata(key string) (*common.Metadata, error) {
 	}
 
 	return &metadata, nil
+}
+
+// writeFileAtomic writes a file durably and atomically. It streams the payload
+// into a temporary file created in filepath.Dir(path) — the same directory as
+// path, so the final rename stays on a single filesystem and the temp location
+// can never diverge from the rename target — fsyncs it, then renames it over
+// path. A crash or concurrent reader therefore never observes a truncated or
+// partial file: the target either contains the previous contents or the fully
+// written new ones. On any error the temporary file is removed and path is left
+// untouched.
+//
+// write is invoked with the open temporary file. The final file is given the
+// supplied mode.
+func writeFileAtomic(path string, mode os.FileMode, write func(io.Writer) error) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".tmp-*") // #nosec G304 -- dir derived from a key validated by validateKey() to prevent directory traversal
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+
+	// Ensure the temp file is cleaned up unless it was successfully renamed.
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tmp.Close()
+			_ = os.Remove(tmpName)
+		}
+	}()
+
+	if err := write(tmp); err != nil {
+		return err
+	}
+
+	// Match the requested final permissions before publishing the file.
+	if err := tmp.Chmod(mode); err != nil {
+		return err
+	}
+
+	// Flush file contents to stable storage before the rename so the data is
+	// durable, not just the directory entry.
+	if err := tmp.Sync(); err != nil {
+		return err
+	}
+
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	committed = true
+
+	return nil
 }
 
 // formatBytes formats a byte count as a human-readable string

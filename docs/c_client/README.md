@@ -15,8 +15,8 @@ make lib
 ```
 
 This creates:
-- `bin/objstore.so` - Shared library
-- `examples/c_client/objstore.h` - C header file
+- `bin/libobjstore.so` - Shared library
+- `examples/c_client/libobjstore.h` - C header file
 
 ## Quick Start
 
@@ -56,7 +56,7 @@ int ObjstoreNewStorage(const char* backend, char** keys, char** values, int num_
 Creates a new storage backend and returns a handle.
 
 **Parameters:**
-- `backend` - Backend type: "local", "s3", "gcs", "azure"
+- `backend` - Backend type: "local", "s3", "gcs", "azure", "minio", "glacier", "azurearchive"
 - `keys` - Array of configuration key strings
 - `values` - Array of configuration value strings
 - `num_pairs` - Number of key-value pairs

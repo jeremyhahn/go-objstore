@@ -1,6 +1,5 @@
 using System.Net;
 using System.Net.Http.Json;
-using System.Text;
 using System.Text.Json;
 using ObjStore.SDK.Exceptions;
 using ObjStore.SDK.Models;
@@ -86,13 +85,17 @@ public class QuicClient : IObjectStoreClient
 
         try
         {
-            using var content = new MultipartFormDataContent();
-            content.Add(new ByteArrayContent(data), "file", "file");
+            // The QUIC server expects a RAW request body with metadata supplied via headers
+            // (Content-Type, Content-Encoding, and per custom-key X-Meta-<key>).
+            var content = new ByteArrayContent(data);
 
-            if (metadata != null)
+            if (metadata?.ContentType != null)
             {
-                var metadataJson = JsonSerializer.Serialize(metadata, _jsonOptions);
-                content.Add(new StringContent(metadataJson, Encoding.UTF8, "application/json"), "metadata");
+                content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(metadata.ContentType);
+            }
+            if (!string.IsNullOrEmpty(metadata?.ContentEncoding))
+            {
+                content.Headers.ContentEncoding.Add(metadata.ContentEncoding);
             }
 
             var request = new HttpRequestMessage(HttpMethod.Put, $"/objects/{Uri.EscapeDataString(key)}")
@@ -102,13 +105,30 @@ public class QuicClient : IObjectStoreClient
                 VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
             };
 
+            if (metadata?.Custom != null)
+            {
+                foreach (var kvp in metadata.Custom)
+                {
+                    request.Headers.TryAddWithoutValidation($"X-Meta-{kvp.Key}", kvp.Value);
+                }
+            }
+
             var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
 
             _logger?.LogDebug("PUT request used HTTP version: {Version}", response.Version);
 
-            var result = await response.Content.ReadFromJsonAsync<Dictionary<string, JsonElement>>(_jsonOptions, cancellationToken).ConfigureAwait(false);
-            return result?.GetValueOrDefault("data").GetProperty("etag").GetString();
+            // The QUIC server returns {key, message} with no etag in the body.
+            // The ETag is returned in the response header instead.
+            if (response.Headers.ETag != null)
+            {
+                return response.Headers.ETag.Tag;
+            }
+            if (response.Headers.TryGetValues("ETag", out var etagValues))
+            {
+                return etagValues.FirstOrDefault();
+            }
+            return null;
         }
         catch (HttpRequestException ex)
         {
@@ -135,6 +155,12 @@ public class QuicClient : IObjectStoreClient
         };
 
         var response = await _httpClient.SendAsync(request, cancellationToken);
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            throw new ObjectNotFoundException(key);
+        }
+
         response.EnsureSuccessStatusCode();
 
         _logger?.LogDebug("GET request used HTTP version: {Version}", response.Version);
@@ -151,6 +177,20 @@ public class QuicClient : IObjectStoreClient
         if (response.Content.Headers.LastModified.HasValue)
         {
             metadata.LastModified = response.Content.Headers.LastModified.Value.DateTime;
+        }
+
+        // Custom metadata is returned as X-Meta-<key> response headers.
+        var custom = new Dictionary<string, string>();
+        foreach (var header in response.Headers)
+        {
+            if (header.Key.StartsWith("X-Meta-", StringComparison.OrdinalIgnoreCase))
+            {
+                custom[header.Key.Substring("X-Meta-".Length)] = string.Join(",", header.Value);
+            }
+        }
+        if (custom.Count > 0)
+        {
+            metadata.Custom = custom;
         }
 
         return (data, metadata);
@@ -184,9 +224,9 @@ public class QuicClient : IObjectStoreClient
         if (!string.IsNullOrEmpty(delimiter))
             queryParams.Add($"delimiter={Uri.EscapeDataString(delimiter)}");
         if (maxResults.HasValue)
-            queryParams.Add($"limit={maxResults.Value}");
+            queryParams.Add($"max={maxResults.Value}");
         if (!string.IsNullOrEmpty(continueFrom))
-            queryParams.Add($"token={Uri.EscapeDataString(continueFrom)}");
+            queryParams.Add($"continue={Uri.EscapeDataString(continueFrom)}");
 
         var query = queryParams.Count > 0 ? "?" + string.Join("&", queryParams) : "";
 
@@ -220,7 +260,20 @@ public class QuicClient : IObjectStoreClient
         var response = await _httpClient.SendAsync(request, cancellationToken);
         _logger?.LogDebug("HEAD request used HTTP version: {Version}", response.Version);
 
-        return response.IsSuccessStatusCode;
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return false;
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new OperationFailedException(
+                "Exists",
+                $"Failed to check existence of object with key '{key}' via HTTP/3",
+                (int)response.StatusCode);
+        }
+
+        return true;
     }
 
     public async Task<ObjectMetadata?> GetMetadataAsync(string key, CancellationToken cancellationToken = default)
@@ -229,7 +282,9 @@ public class QuicClient : IObjectStoreClient
 
         _logger?.LogDebug("Getting metadata for object with key: {Key} via HTTP/3", key);
 
-        var request = new HttpRequestMessage(HttpMethod.Get, $"/objects/{Uri.EscapeDataString(key)}/metadata")
+        // The QUIC server exposes metadata via HEAD /objects/{key}; there is no
+        // dedicated /metadata route. Metadata is carried in the response headers.
+        var request = new HttpRequestMessage(HttpMethod.Head, $"/objects/{Uri.EscapeDataString(key)}")
         {
             Version = HttpVersion.Version30,
             VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
@@ -239,20 +294,34 @@ public class QuicClient : IObjectStoreClient
         if (!response.IsSuccessStatusCode)
             return null;
 
-        var objectResponse = await response.Content.ReadFromJsonAsync<Dictionary<string, JsonElement>>(_jsonOptions, cancellationToken);
-        if (objectResponse == null)
-            return null;
-
-        return new ObjectMetadata
+        var metadata = new ObjectMetadata
         {
-            ContentType = objectResponse.GetValueOrDefault("metadata")
-                .GetProperty("content_type").GetString(),
-            Size = objectResponse.GetValueOrDefault("size").GetInt64(),
-            ETag = objectResponse.GetValueOrDefault("etag").GetString(),
-            LastModified = DateTime.TryParse(
-                objectResponse.GetValueOrDefault("modified").GetString(),
-                out var modified) ? modified : null
+            ContentType = response.Content.Headers.ContentType?.MediaType,
+            ContentEncoding = response.Content.Headers.ContentEncoding.FirstOrDefault(),
+            Size = response.Content.Headers.ContentLength ?? 0,
+            ETag = response.Headers.ETag?.Tag
         };
+
+        if (response.Content.Headers.LastModified.HasValue)
+        {
+            metadata.LastModified = response.Content.Headers.LastModified.Value.DateTime;
+        }
+
+        // Custom metadata is returned as X-Meta-<key> response headers.
+        var custom = new Dictionary<string, string>();
+        foreach (var header in response.Headers)
+        {
+            if (header.Key.StartsWith("X-Meta-", StringComparison.OrdinalIgnoreCase))
+            {
+                custom[header.Key.Substring("X-Meta-".Length)] = string.Join(",", header.Value);
+            }
+        }
+        if (custom.Count > 0)
+        {
+            metadata.Custom = custom;
+        }
+
+        return metadata;
     }
 
     public async Task<bool> UpdateMetadataAsync(string key, ObjectMetadata metadata, CancellationToken cancellationToken = default)
@@ -262,14 +331,30 @@ public class QuicClient : IObjectStoreClient
 
         _logger?.LogDebug("Updating metadata for object with key: {Key} via HTTP/3", key);
 
-        var request = new HttpRequestMessage(HttpMethod.Put, $"/objects/{Uri.EscapeDataString(key)}/metadata")
+        // The QUIC server updates metadata via PATCH /objects/{key} with a JSON body
+        // of {content_type, content_encoding, custom}. A PUT to /objects/{key}/metadata
+        // would instead store a NEW object at key "{key}/metadata".
+        var requestData = new
         {
-            Content = JsonContent.Create(metadata, options: _jsonOptions),
+            content_type = metadata.ContentType,
+            content_encoding = metadata.ContentEncoding,
+            custom = metadata.Custom
+        };
+
+        var request = new HttpRequestMessage(HttpMethod.Patch, $"/objects/{Uri.EscapeDataString(key)}")
+        {
+            Content = JsonContent.Create(requestData, options: _jsonOptions),
             Version = HttpVersion.Version30,
             VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
         };
 
         var response = await _httpClient.SendAsync(request, cancellationToken);
+
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            throw new ObjectNotFoundException(key);
+        }
+
         return response.IsSuccessStatusCode;
     }
 
@@ -416,9 +501,25 @@ public class QuicClient : IObjectStoreClient
 
         _logger?.LogDebug("Adding replication policy: {PolicyId} via HTTP/3", policy.Id);
 
+        // The QUIC server expects the interval field as "check_interval" (seconds),
+        // whereas the shared model serializes it as "check_interval_seconds" (REST).
+        var requestData = new
+        {
+            id = policy.Id,
+            source_backend = policy.SourceBackend,
+            source_settings = policy.SourceSettings,
+            source_prefix = policy.SourcePrefix,
+            destination_backend = policy.DestinationBackend,
+            destination_settings = policy.DestinationSettings,
+            check_interval = policy.CheckIntervalSeconds,
+            enabled = policy.Enabled,
+            replication_mode = policy.ReplicationMode == ReplicationMode.Opaque ? "opaque" : "transparent",
+            encryption = policy.Encryption
+        };
+
         var request = new HttpRequestMessage(HttpMethod.Post, "/replication/policies")
         {
-            Content = JsonContent.Create(policy, options: _jsonOptions),
+            Content = JsonContent.Create(requestData, options: _jsonOptions),
             Version = HttpVersion.Version30,
             VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
         };
@@ -477,30 +578,103 @@ public class QuicClient : IObjectStoreClient
         if (!response.IsSuccessStatusCode)
             return null;
 
-        var result = await response.Content.ReadFromJsonAsync<Dictionary<string, ReplicationPolicy>>(_jsonOptions, cancellationToken);
-        return result?.GetValueOrDefault("policy");
+        // The QUIC server returns the policy fields flat at the top level
+        // (alongside "success"), not wrapped under a "policy" key.
+        return await response.Content.ReadFromJsonAsync<ReplicationPolicy>(_jsonOptions, cancellationToken);
     }
 
-    public async Task<bool> TriggerReplicationAsync(string? policyId = null, bool parallel = false, int workerCount = 4, CancellationToken cancellationToken = default)
+    public async Task<TriggerReplicationResult> TriggerReplicationAsync(string? policyId = null, bool parallel = false, int workerCount = 4, CancellationToken cancellationToken = default)
     {
         _logger?.LogDebug("Triggering replication for policy: {PolicyId} via HTTP/3", policyId ?? "all");
 
-        var requestData = new
-        {
-            policy_id = policyId,
-            parallel,
-            worker_count = workerCount
-        };
+        // The QUIC server takes policy_id as a QUERY param (empty = sync all), not a JSON body.
+        var query = !string.IsNullOrEmpty(policyId) ? $"?policy_id={Uri.EscapeDataString(policyId)}" : "";
 
-        var request = new HttpRequestMessage(HttpMethod.Post, "/replication/trigger")
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/replication/trigger{query}")
         {
-            Content = JsonContent.Create(requestData, options: _jsonOptions),
             Version = HttpVersion.Version30,
             VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
         };
 
         var response = await _httpClient.SendAsync(request, cancellationToken);
-        return response.IsSuccessStatusCode;
+
+        if (!response.IsSuccessStatusCode)
+            return new TriggerReplicationResult { Success = false };
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(_jsonOptions, cancellationToken).ConfigureAwait(false);
+
+        var success = body.TryGetProperty("success", out var successEl) && successEl.GetBoolean();
+        var message = body.TryGetProperty("message", out var msgEl) ? msgEl.GetString() : null;
+
+        SyncResult? syncResult = null;
+        if (body.TryGetProperty("result", out var resultEl) && resultEl.ValueKind == JsonValueKind.Object)
+        {
+            syncResult = new SyncResult
+            {
+                PolicyId = resultEl.TryGetProperty("policy_id", out var pidEl) ? pidEl.GetString() ?? string.Empty : string.Empty,
+                Synced = resultEl.TryGetProperty("synced", out var syncedEl) ? syncedEl.GetInt32() : 0,
+                Deleted = resultEl.TryGetProperty("deleted", out var deletedEl) ? deletedEl.GetInt32() : 0,
+                Failed = resultEl.TryGetProperty("failed", out var failedEl) ? failedEl.GetInt32() : 0,
+                BytesTotal = resultEl.TryGetProperty("bytes_total", out var bytesEl) ? bytesEl.GetInt64() : 0,
+                DurationMs = ParseGoDurationToMs(resultEl.TryGetProperty("duration", out var durEl) ? durEl.GetString() : null)
+            };
+        }
+
+        return new TriggerReplicationResult
+        {
+            Success = success,
+            SyncResult = syncResult,
+            Message = message
+        };
+    }
+
+    /// <summary>
+    /// Parses a Go duration string (e.g. "5.2s", "300ms", "1m30s") into milliseconds.
+    /// Returns 0 if the input is null or cannot be parsed.
+    /// </summary>
+    private static long ParseGoDurationToMs(string? duration)
+    {
+        if (string.IsNullOrEmpty(duration))
+            return 0;
+
+        double totalNs = 0;
+        var s = duration.AsSpan();
+
+        while (!s.IsEmpty)
+        {
+            int numEnd = 0;
+            while (numEnd < s.Length && (char.IsDigit(s[numEnd]) || s[numEnd] == '.'))
+                numEnd++;
+
+            if (numEnd == 0)
+                return 0;
+
+            if (!double.TryParse(s[..numEnd], System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var value))
+                return 0;
+
+            s = s[numEnd..];
+
+            int unitEnd = 0;
+            while (unitEnd < s.Length && !char.IsDigit(s[unitEnd]) && s[unitEnd] != '.')
+                unitEnd++;
+
+            var unit = s[..unitEnd].ToString();
+            s = s[unitEnd..];
+
+            totalNs += unit switch
+            {
+                "ns" => value,
+                "us" or "µs" => value * 1_000,
+                "ms" => value * 1_000_000,
+                "s" => value * 1_000_000_000,
+                "m" => value * 60_000_000_000,
+                "h" => value * 3_600_000_000_000,
+                _ => 0
+            };
+        }
+
+        return (long)(totalNs / 1_000_000);
     }
 
     public async Task<ReplicationStatus?> GetReplicationStatusAsync(string id, CancellationToken cancellationToken = default)
@@ -519,8 +693,9 @@ public class QuicClient : IObjectStoreClient
         if (!response.IsSuccessStatusCode)
             return null;
 
-        var result = await response.Content.ReadFromJsonAsync<Dictionary<string, ReplicationStatus>>(_jsonOptions, cancellationToken);
-        return result?.GetValueOrDefault("status");
+        // The QUIC server returns the status fields flat at the top level
+        // (alongside "success"), not wrapped under a "status" key.
+        return await response.Content.ReadFromJsonAsync<ReplicationStatus>(_jsonOptions, cancellationToken);
     }
 
     public void Dispose()

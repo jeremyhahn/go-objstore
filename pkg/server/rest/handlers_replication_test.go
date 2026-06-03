@@ -41,6 +41,10 @@ type MockReplicationManager struct {
 	syncPolicyErr    error
 	syncAllResult    *common.SyncResult
 	syncPolicyResult *common.SyncResult
+	// Parallel-path tracking
+	syncAllParallelCalled    bool
+	syncPolicyParallelCalled bool
+	lastWorkerCount          int
 	// For GetReplicationStatus tests
 	replicationStatuses map[string]*replication.ReplicationStatus
 	getStatusErr        error
@@ -142,6 +146,33 @@ func (m *MockReplicationManager) SyncPolicy(ctx context.Context, policyID string
 		BytesTotal: 512,
 		Duration:   500 * time.Millisecond,
 	}, nil
+}
+
+func (m *MockReplicationManager) SyncAllParallel(ctx context.Context, workerCount int) (*common.SyncResult, error) {
+	m.syncAllParallelCalled = true
+	m.lastWorkerCount = workerCount
+	if m.syncAllErr != nil {
+		return nil, m.syncAllErr
+	}
+	if m.syncAllResult != nil {
+		return m.syncAllResult, nil
+	}
+	return &common.SyncResult{PolicyID: "all", Synced: 10, BytesTotal: 1024, Duration: time.Second}, nil
+}
+
+func (m *MockReplicationManager) SyncPolicyParallel(ctx context.Context, policyID string, workerCount int) (*common.SyncResult, error) {
+	m.syncPolicyParallelCalled = true
+	m.lastWorkerCount = workerCount
+	if m.syncPolicyErr != nil {
+		return nil, m.syncPolicyErr
+	}
+	if _, exists := m.policies[policyID]; !exists {
+		return nil, common.ErrPolicyNotFound
+	}
+	if m.syncPolicyResult != nil {
+		return m.syncPolicyResult, nil
+	}
+	return &common.SyncResult{PolicyID: policyID, Synced: 5, BytesTotal: 512, Duration: 500 * time.Millisecond}, nil
 }
 
 func (m *MockReplicationManager) SetBackendEncrypterFactory(policyID string, factory common.EncrypterFactory) error {

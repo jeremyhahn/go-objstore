@@ -17,7 +17,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Health check
     match client.health().await {
         Ok(health) => println!("✓ Health check: {:?}", health.status),
-        Err(e) => println!("! Health check failed: {} (server may not have HTTP3 enabled)", e),
+        Err(e) => println!(
+            "! Health check failed: {} (server may not have HTTP3 enabled)",
+            e
+        ),
     }
 
     // Put an object

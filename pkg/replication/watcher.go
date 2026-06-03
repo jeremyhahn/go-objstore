@@ -130,7 +130,7 @@ func (w *FSNotifyWatcher) Watch(path string) error {
 	// Check if already watching
 	if w.watching[path] {
 		w.logger.Debug(w.ctx, "Path already being watched",
-			adapters.Field{Key: "path", Value: path})
+			adapters.Field{Key: fieldPath, Value: path})
 		return nil
 	}
 
@@ -141,14 +141,14 @@ func (w *FSNotifyWatcher) Watch(path string) error {
 
 	w.watching[path] = true
 	w.logger.Info(w.ctx, "Started watching path",
-		adapters.Field{Key: "path", Value: path})
+		adapters.Field{Key: fieldPath, Value: path})
 
 	// Walk the directory tree and add all subdirectories
 	err := filepath.Walk(path, func(walkPath string, info os.FileInfo, err error) error {
 		if err != nil {
 			w.logger.Warn(w.ctx, "Error walking path",
-				adapters.Field{Key: "path", Value: walkPath},
-				adapters.Field{Key: "error", Value: err.Error()})
+				adapters.Field{Key: fieldPath, Value: walkPath},
+				adapters.Field{Key: fieldError, Value: err.Error()})
 			return nil // Continue walking
 		}
 
@@ -156,13 +156,13 @@ func (w *FSNotifyWatcher) Watch(path string) error {
 		if info.IsDir() && walkPath != path {
 			if err := w.watcher.Add(walkPath); err != nil {
 				w.logger.Warn(w.ctx, "Failed to watch subdirectory",
-					adapters.Field{Key: "path", Value: walkPath},
-					adapters.Field{Key: "error", Value: err.Error()})
+					adapters.Field{Key: fieldPath, Value: walkPath},
+					adapters.Field{Key: fieldError, Value: err.Error()})
 				return nil // Continue walking
 			}
 			w.watching[walkPath] = true
 			w.logger.Debug(w.ctx, "Started watching subdirectory",
-				adapters.Field{Key: "path", Value: walkPath})
+				adapters.Field{Key: fieldPath, Value: walkPath})
 		}
 
 		return nil
@@ -196,7 +196,7 @@ func (w *FSNotifyWatcher) Stop() error {
 	// Close the underlying watcher
 	if err := w.watcher.Close(); err != nil {
 		w.logger.Error(w.ctx, "Error closing fsnotify watcher",
-			adapters.Field{Key: "error", Value: err.Error()})
+			adapters.Field{Key: fieldError, Value: err.Error()})
 	}
 
 	// Wait for goroutines to finish
@@ -235,7 +235,7 @@ func (w *FSNotifyWatcher) processEvents() {
 			}
 
 			w.logger.Error(w.ctx, "Filesystem watcher error",
-				adapters.Field{Key: "error", Value: err.Error()})
+				adapters.Field{Key: fieldError, Value: err.Error()})
 
 		case <-w.stopChan:
 			w.logger.Debug(w.ctx, "Watcher stop signal received")
@@ -275,11 +275,11 @@ func (w *FSNotifyWatcher) handleEvent(event fsnotify.Event) {
 	select {
 	case w.events <- *fsEvent:
 		w.logger.Debug(w.ctx, "Filesystem event emitted",
-			adapters.Field{Key: "path", Value: fsEvent.Path},
+			adapters.Field{Key: fieldPath, Value: fsEvent.Path},
 			adapters.Field{Key: "operation", Value: fsEvent.Operation})
 	default:
 		w.logger.Warn(w.ctx, "Event channel full, dropping event",
-			adapters.Field{Key: "path", Value: event.Name})
+			adapters.Field{Key: fieldPath, Value: event.Name})
 	}
 }
 
@@ -301,7 +301,7 @@ func (w *FSNotifyWatcher) convertEvent(event fsnotify.Event) *FileSystemEvent {
 		return nil
 	default:
 		w.logger.Debug(w.ctx, "Ignoring unknown event type",
-			adapters.Field{Key: "path", Value: event.Name},
+			adapters.Field{Key: fieldPath, Value: event.Name},
 			adapters.Field{Key: "op", Value: event.Op.String()})
 		return nil
 	}
@@ -330,14 +330,14 @@ func (w *FSNotifyWatcher) handleCreate(path string) {
 		if !w.watching[path] {
 			if err := w.watcher.Add(path); err != nil {
 				w.logger.Warn(w.ctx, "Failed to watch new directory",
-					adapters.Field{Key: "path", Value: path},
-					adapters.Field{Key: "error", Value: err.Error()})
+					adapters.Field{Key: fieldPath, Value: path},
+					adapters.Field{Key: fieldError, Value: err.Error()})
 				return
 			}
 
 			w.watching[path] = true
 			w.logger.Info(w.ctx, "Started watching new directory",
-				adapters.Field{Key: "path", Value: path})
+				adapters.Field{Key: fieldPath, Value: path})
 		}
 
 		// Recursively add watches to any subdirectories that were created
@@ -349,12 +349,12 @@ func (w *FSNotifyWatcher) handleCreate(path string) {
 			if d.IsDir() && !w.watching[subpath] {
 				if err := w.watcher.Add(subpath); err != nil {
 					w.logger.Warn(w.ctx, "Failed to watch subdirectory",
-						adapters.Field{Key: "path", Value: subpath},
-						adapters.Field{Key: "error", Value: err.Error()})
+						adapters.Field{Key: fieldPath, Value: subpath},
+						adapters.Field{Key: fieldError, Value: err.Error()})
 				} else {
 					w.watching[subpath] = true
 					w.logger.Debug(w.ctx, "Started watching subdirectory",
-						adapters.Field{Key: "path", Value: subpath})
+						adapters.Field{Key: fieldPath, Value: subpath})
 				}
 			}
 			return nil

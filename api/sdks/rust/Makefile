@@ -11,14 +11,12 @@ build:
 # Run unit tests in Docker
 test:
 	@echo "Running unit tests in Docker..."
-	docker compose up --build --abort-on-container-exit rust-unit-tests
-	docker compose down -v
+	docker compose up --build --abort-on-container-exit rust-unit-tests; rc=$$?; docker compose down -v; exit $$rc
 
 # Run integration tests in Docker
 integration-test:
 	@echo "Running integration tests in Docker..."
-	docker compose up --build --abort-on-container-exit objstore-server rust-integration-tests
-	docker compose down -v
+	docker compose up --build --abort-on-container-exit objstore-server rust-integration-tests; rc=$$?; docker compose down -v; exit $$rc
 
 # Build Docker test image
 docker-build:
@@ -28,14 +26,12 @@ docker-build:
 # Run unit tests in Docker
 docker-test-unit:
 	@echo "Running unit tests in Docker..."
-	docker compose up --build --abort-on-container-exit rust-unit-tests
-	docker compose down -v
+	docker compose up --build --abort-on-container-exit rust-unit-tests; rc=$$?; docker compose down -v; exit $$rc
 
 # Run integration tests in Docker
 docker-test-integration:
 	@echo "Running integration tests in Docker..."
-	docker compose up --build --abort-on-container-exit objstore-server rust-integration-tests
-	docker compose down -v
+	docker compose up --build --abort-on-container-exit objstore-server rust-integration-tests; rc=$$?; docker compose down -v; exit $$rc
 
 # Run all tests in Docker
 docker-test: docker-test-unit docker-test-integration
@@ -52,8 +48,7 @@ coverage:
 # Run coverage in Docker (recommended)
 docker-coverage:
 	@echo "Running coverage tests in Docker..."
-	docker compose up --build --abort-on-container-exit rust-coverage
-	docker compose down -v
+	docker compose up --build --abort-on-container-exit rust-coverage; rc=$$?; docker compose down -v; exit $$rc
 
 # Alternative coverage with tarpaulin (local)
 coverage-tarpaulin:

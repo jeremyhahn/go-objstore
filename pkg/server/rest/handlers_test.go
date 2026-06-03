@@ -280,17 +280,14 @@ func TestPutObjectWithMetadataHeader(t *testing.T) {
 	router := gin.New()
 	router.PUT("/objects/*key", handler.PutObject)
 
-	metadata := map[string]any{
-		"content_type": "text/plain",
-		"custom": map[string]string{
-			"author": "test",
-		},
+	custom := map[string]string{
+		"author": "test",
 	}
-	metadataJSON, _ := json.Marshal(metadata)
+	metadataJSON, _ := json.Marshal(custom)
 
 	req := httptest.NewRequest("PUT", "/objects/test.txt", strings.NewReader("test content"))
 	req.Header.Set("Content-Type", "text/plain")
-	req.Header.Set("X-Metadata", string(metadataJSON))
+	req.Header.Set("X-Object-Metadata", string(metadataJSON))
 	w := httptest.NewRecorder()
 
 	router.ServeHTTP(w, req)
@@ -309,7 +306,7 @@ func TestPutObjectInvalidMetadataJSON(t *testing.T) {
 
 	req := httptest.NewRequest("PUT", "/objects/test.txt", strings.NewReader("test content"))
 	req.Header.Set("Content-Type", "text/plain")
-	req.Header.Set("X-Metadata", "invalid json")
+	req.Header.Set("X-Object-Metadata", "invalid json")
 	w := httptest.NewRecorder()
 
 	router.ServeHTTP(w, req)
@@ -720,5 +717,85 @@ func TestPutObjectWithLeadingSlash(t *testing.T) {
 	exists2, _ := storage.Exists(context.Background(), "/test.txt")
 	if !exists1 && !exists2 {
 		t.Error("PutObject() should store object")
+	}
+}
+
+// TestObjectMetadataRoundTrip verifies that custom metadata sent on PUT via the
+// X-Object-Metadata header (a JSON string->string map) is persisted and echoed
+// back on both GET and HEAD via the same header, and that Content-Type /
+// Content-Encoding travel through the standard HTTP headers.
+func TestObjectMetadataRoundTrip(t *testing.T) {
+	storage := NewMockStorage()
+	handler := newTestHandler(t, storage)
+
+	router := gin.New()
+	router.PUT("/objects/*key", handler.PutObject)
+	router.GET("/objects/*key", handler.GetObject)
+	router.HEAD("/objects/*key", handler.HeadObject)
+
+	custom := map[string]string{"author": "alice", "env": "prod"}
+	customJSON, _ := json.Marshal(custom)
+
+	// PUT with custom metadata in the X-Object-Metadata header.
+	putReq := httptest.NewRequest("PUT", "/objects/doc.txt", strings.NewReader("hello world"))
+	putReq.Header.Set("Content-Type", "text/plain")
+	putReq.Header.Set("Content-Encoding", "gzip")
+	putReq.Header.Set("X-Object-Metadata", string(customJSON))
+	putW := httptest.NewRecorder()
+	router.ServeHTTP(putW, putReq)
+	if putW.Code != http.StatusCreated {
+		t.Fatalf("PUT status = %d, want %d, body: %s", putW.Code, http.StatusCreated, putW.Body.String())
+	}
+
+	// Verify the stored metadata captured headers + custom map.
+	stored, err := storage.GetMetadata(context.Background(), "doc.txt")
+	if err != nil {
+		t.Fatalf("GetMetadata after PUT: %v", err)
+	}
+	if stored.ContentType != "text/plain" {
+		t.Errorf("stored ContentType = %q, want text/plain", stored.ContentType)
+	}
+	if stored.ContentEncoding != "gzip" {
+		t.Errorf("stored ContentEncoding = %q, want gzip", stored.ContentEncoding)
+	}
+	if stored.Custom["author"] != "alice" || stored.Custom["env"] != "prod" {
+		t.Errorf("stored Custom = %v, want author=alice env=prod", stored.Custom)
+	}
+
+	// GET must echo the custom metadata back via X-Object-Metadata.
+	getReq := httptest.NewRequest("GET", "/objects/doc.txt", nil)
+	getW := httptest.NewRecorder()
+	router.ServeHTTP(getW, getReq)
+	if getW.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, want 200", getW.Code)
+	}
+	if getW.Body.String() != "hello world" {
+		t.Errorf("GET body = %q, want %q", getW.Body.String(), "hello world")
+	}
+	gotCustom := map[string]string{}
+	if hdr := getW.Header().Get("X-Object-Metadata"); hdr != "" {
+		if err := json.Unmarshal([]byte(hdr), &gotCustom); err != nil {
+			t.Fatalf("GET X-Object-Metadata not valid JSON: %v", err)
+		}
+	}
+	if gotCustom["author"] != "alice" || gotCustom["env"] != "prod" {
+		t.Errorf("GET X-Object-Metadata = %v, want author=alice env=prod", gotCustom)
+	}
+
+	// HEAD must also echo the custom metadata back via X-Object-Metadata.
+	headReq := httptest.NewRequest("HEAD", "/objects/doc.txt", nil)
+	headW := httptest.NewRecorder()
+	router.ServeHTTP(headW, headReq)
+	if headW.Code != http.StatusOK {
+		t.Fatalf("HEAD status = %d, want 200", headW.Code)
+	}
+	headCustom := map[string]string{}
+	if hdr := headW.Header().Get("X-Object-Metadata"); hdr != "" {
+		if err := json.Unmarshal([]byte(hdr), &headCustom); err != nil {
+			t.Fatalf("HEAD X-Object-Metadata not valid JSON: %v", err)
+		}
+	}
+	if headCustom["author"] != "alice" || headCustom["env"] != "prod" {
+		t.Errorf("HEAD X-Object-Metadata = %v, want author=alice env=prod", headCustom)
 	}
 }

@@ -71,6 +71,19 @@ func (m *mockReplicationManager) SyncPolicy(ctx context.Context, policyID string
 	}, nil
 }
 
+func (m *mockReplicationManager) SyncAllParallel(ctx context.Context, workerCount int) (*common.SyncResult, error) {
+	return &common.SyncResult{}, nil
+}
+
+func (m *mockReplicationManager) SyncPolicyParallel(ctx context.Context, policyID string, workerCount int) (*common.SyncResult, error) {
+	return &common.SyncResult{
+		PolicyID: policyID,
+		Synced:   0,
+		Deleted:  0,
+		Failed:   0,
+	}, nil
+}
+
 func (m *mockReplicationManager) SetBackendEncrypterFactory(policyID string, factory common.EncrypterFactory) error {
 	return nil
 }

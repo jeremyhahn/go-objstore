@@ -2,232 +2,213 @@ import { ObjectStoreClient } from '../../src/client';
 import { RestClient } from '../../src/clients/rest-client';
 import { GrpcClient } from '../../src/clients/grpc-client';
 import { QuicClient } from '../../src/clients/quic-client';
+import { HealthStatus } from '../../src/types';
 
 jest.mock('../../src/clients/rest-client');
 jest.mock('../../src/clients/grpc-client');
 jest.mock('../../src/clients/quic-client');
 
+const MockRestClient = RestClient as jest.MockedClass<typeof RestClient>;
+const MockGrpcClient = GrpcClient as jest.MockedClass<typeof GrpcClient>;
+const MockQuicClient = QuicClient as jest.MockedClass<typeof QuicClient>;
+
+/**
+ * Unified client tests: construction per protocol, delegation of a
+ * representative call to the right protocol client, and close().
+ */
 describe('ObjectStoreClient', () => {
-  beforeEach(() => {
+  afterEach(() => {
     jest.clearAllMocks();
   });
 
   describe('constructor', () => {
-    it('should create REST client when protocol is rest', () => {
-      const config = {
-        protocol: 'rest' as const,
-        rest: { baseUrl: 'http://localhost:8080' },
-      };
-
-      const client = new ObjectStoreClient(config);
-
-      expect(RestClient).toHaveBeenCalledWith(config.rest);
-      expect(client).toBeInstanceOf(ObjectStoreClient);
+    it('unified_constructs_rest', () => {
+      new ObjectStoreClient({ protocol: 'rest', rest: { baseUrl: 'http://localhost:8080' } });
+      expect(MockRestClient).toHaveBeenCalledWith({ baseUrl: 'http://localhost:8080' });
     });
 
-    it('should create gRPC client when protocol is grpc', () => {
-      const config = {
-        protocol: 'grpc' as const,
-        grpc: { address: 'localhost:50051' },
-      };
-
-      const client = new ObjectStoreClient(config);
-
-      expect(GrpcClient).toHaveBeenCalledWith(config.grpc);
-      expect(client).toBeInstanceOf(ObjectStoreClient);
+    it('unified_constructs_grpc', () => {
+      new ObjectStoreClient({ protocol: 'grpc', grpc: { address: 'localhost:50051' } });
+      expect(MockGrpcClient).toHaveBeenCalledWith({ address: 'localhost:50051' });
     });
 
-    it('should create QUIC client when protocol is quic', () => {
-      const config = {
-        protocol: 'quic' as const,
-        quic: { address: 'localhost:8443' },
-      };
-
-      const client = new ObjectStoreClient(config);
-
-      expect(QuicClient).toHaveBeenCalledWith(config.quic);
-      expect(client).toBeInstanceOf(ObjectStoreClient);
+    it('unified_constructs_quic', () => {
+      new ObjectStoreClient({ protocol: 'quic', quic: { address: 'localhost:8443' } });
+      expect(MockQuicClient).toHaveBeenCalledWith({ address: 'localhost:8443' });
     });
 
-    it('should throw error when REST config is missing', () => {
-      const config = {
-        protocol: 'rest' as const,
-      };
-
-      expect(() => new ObjectStoreClient(config)).toThrow(
-        'REST configuration is required when using REST protocol'
+    it('unified_rest_requires_config', () => {
+      expect(() => new ObjectStoreClient({ protocol: 'rest' })).toThrow(
+        'REST configuration is required'
       );
     });
 
-    it('should throw error when gRPC config is missing', () => {
-      const config = {
-        protocol: 'grpc' as const,
-      };
-
-      expect(() => new ObjectStoreClient(config)).toThrow(
-        'gRPC configuration is required when using gRPC protocol'
+    it('unified_grpc_requires_config', () => {
+      expect(() => new ObjectStoreClient({ protocol: 'grpc' })).toThrow(
+        'gRPC configuration is required'
       );
     });
 
-    it('should throw error when QUIC config is missing', () => {
-      const config = {
-        protocol: 'quic' as const,
-      };
-
-      expect(() => new ObjectStoreClient(config)).toThrow(
-        'QUIC configuration is required when using QUIC protocol'
+    it('unified_quic_requires_config', () => {
+      expect(() => new ObjectStoreClient({ protocol: 'quic' })).toThrow(
+        'QUIC configuration is required'
       );
     });
 
-    it('should throw error for unsupported protocol', () => {
-      const config = {
-        protocol: 'invalid' as any,
-      };
-
-      expect(() => new ObjectStoreClient(config)).toThrow('Unsupported protocol: invalid');
+    it('unified_unsupported_protocol', () => {
+      expect(() => new ObjectStoreClient({ protocol: 'invalid' as any })).toThrow(
+        'Unsupported protocol'
+      );
     });
   });
 
-  describe('method delegation', () => {
-    let client: ObjectStoreClient;
-    let mockClient: any;
+  describe('delegation', () => {
+    it('unified_delegates_rest', async () => {
+      const health = jest.fn().mockResolvedValue({ status: HealthStatus.SERVING });
+      MockRestClient.prototype.health = health as any;
 
-    beforeEach(() => {
-      mockClient = {
-        put: jest.fn().mockResolvedValue({ success: true }),
-        get: jest.fn().mockResolvedValue({ data: Buffer.from('test') }),
-        delete: jest.fn().mockResolvedValue({ success: true }),
-        list: jest.fn().mockResolvedValue({ objects: [], truncated: false }),
-        exists: jest.fn().mockResolvedValue({ exists: true }),
-        getMetadata: jest.fn().mockResolvedValue({ success: true }),
-        updateMetadata: jest.fn().mockResolvedValue({ success: true }),
-        health: jest.fn().mockResolvedValue({ status: 1 }),
-        archive: jest.fn().mockResolvedValue({ success: true }),
-        addPolicy: jest.fn().mockResolvedValue({ success: true }),
-        removePolicy: jest.fn().mockResolvedValue({ success: true }),
-        getPolicies: jest.fn().mockResolvedValue({ policies: [], success: true }),
-        applyPolicies: jest.fn().mockResolvedValue({ success: true, policiesCount: 0, objectsProcessed: 0 }),
-        addReplicationPolicy: jest.fn().mockResolvedValue({ success: true }),
-        removeReplicationPolicy: jest.fn().mockResolvedValue({ success: true }),
-        getReplicationPolicies: jest.fn().mockResolvedValue({ policies: [] }),
-        getReplicationPolicy: jest.fn().mockResolvedValue({ policy: undefined }),
-        triggerReplication: jest.fn().mockResolvedValue({ success: true }),
-        getReplicationStatus: jest.fn().mockResolvedValue({ success: true }),
-        close: jest.fn().mockResolvedValue(undefined),
-      };
-
-      (RestClient as jest.Mock).mockImplementation(() => mockClient);
-
-      client = new ObjectStoreClient({
+      const client = new ObjectStoreClient({
         protocol: 'rest',
         rest: { baseUrl: 'http://localhost:8080' },
       });
+      const resp = await client.health();
+
+      expect(health).toHaveBeenCalled();
+      expect(resp.status).toBe(HealthStatus.SERVING);
     });
 
-    it('should delegate put calls', async () => {
-      const request = { key: 'test', data: Buffer.from('data') };
-      await client.put(request);
-      expect(mockClient.put).toHaveBeenCalledWith(request);
+    it('unified_delegates_grpc', async () => {
+      const put = jest.fn().mockResolvedValue({ success: true });
+      MockGrpcClient.prototype.put = put as any;
+
+      const client = new ObjectStoreClient({
+        protocol: 'grpc',
+        grpc: { address: 'localhost:50051' },
+      });
+      const req = { key: 'k', data: Buffer.from('d') };
+      const resp = await client.put(req);
+
+      expect(put).toHaveBeenCalledWith(req);
+      expect(resp.success).toBe(true);
     });
 
-    it('should delegate get calls', async () => {
-      const request = { key: 'test' };
-      await client.get(request);
-      expect(mockClient.get).toHaveBeenCalledWith(request);
+    it('unified_delegates_quic', async () => {
+      const health = jest.fn().mockResolvedValue({ status: HealthStatus.SERVING });
+      MockQuicClient.prototype.health = health as any;
+
+      const client = new ObjectStoreClient({
+        protocol: 'quic',
+        quic: { address: 'localhost:8443' },
+      });
+      const resp = await client.health();
+
+      expect(health).toHaveBeenCalled();
+      expect(resp.status).toBe(HealthStatus.SERVING);
     });
 
-    it('should delegate delete calls', async () => {
-      const request = { key: 'test' };
-      await client.delete(request);
-      expect(mockClient.delete).toHaveBeenCalledWith(request);
+    it('unified_delegates_all_ops', async () => {
+      // Each unified method forwards to the underlying protocol client.
+      const stub: any = {};
+      const methods = [
+        'put',
+        'get',
+        'delete',
+        'list',
+        'exists',
+        'getMetadata',
+        'updateMetadata',
+        'health',
+        'archive',
+        'addPolicy',
+        'removePolicy',
+        'getPolicies',
+        'applyPolicies',
+        'addReplicationPolicy',
+        'removeReplicationPolicy',
+        'getReplicationPolicies',
+        'getReplicationPolicy',
+        'triggerReplication',
+        'getReplicationStatus',
+        'close',
+      ];
+      for (const m of methods) {
+        stub[m] = jest.fn().mockResolvedValue({ ok: true });
+        (MockRestClient.prototype as any)[m] = stub[m];
+      }
+
+      const client = new ObjectStoreClient({
+        protocol: 'rest',
+        rest: { baseUrl: 'http://localhost:8080' },
+      });
+
+      const arg: any = { key: 'k', id: 'i', policyId: 'p', data: Buffer.from('d'), metadata: {}, policy: { id: 'p' } };
+      await (client as any).put(arg);
+      await (client as any).get(arg);
+      await (client as any).delete(arg);
+      await (client as any).list(arg);
+      await (client as any).exists(arg);
+      await (client as any).getMetadata(arg);
+      await (client as any).updateMetadata(arg);
+      await (client as any).health(arg);
+      await (client as any).archive(arg);
+      await (client as any).addPolicy(arg);
+      await (client as any).removePolicy(arg);
+      await (client as any).getPolicies(arg);
+      await (client as any).applyPolicies(arg);
+      await (client as any).addReplicationPolicy(arg);
+      await (client as any).removeReplicationPolicy(arg);
+      await (client as any).getReplicationPolicies(arg);
+      await (client as any).getReplicationPolicy(arg);
+      await (client as any).triggerReplication(arg);
+      await (client as any).getReplicationStatus(arg);
+
+      for (const m of methods.filter((x) => x !== 'close')) {
+        expect(stub[m]).toHaveBeenCalledWith(arg);
+      }
     });
 
-    it('should delegate list calls', async () => {
-      const request = { prefix: 'test/' };
-      await client.list(request);
-      expect(mockClient.list).toHaveBeenCalledWith(request);
-    });
+    it('unified_delegates_optional_arg_defaults', async () => {
+      // The methods with an optional request argument default it to {} and
+      // forward that. Calling them with no argument exercises those defaults.
+      const stub: any = {};
+      for (const m of ['list', 'getPolicies', 'applyPolicies', 'getReplicationPolicies', 'health']) {
+        stub[m] = jest.fn().mockResolvedValue({ ok: true });
+        (MockRestClient.prototype as any)[m] = stub[m];
+      }
 
-    it('should delegate exists calls', async () => {
-      const request = { key: 'test' };
-      await client.exists(request);
-      expect(mockClient.exists).toHaveBeenCalledWith(request);
-    });
+      const client = new ObjectStoreClient({
+        protocol: 'rest',
+        rest: { baseUrl: 'http://localhost:8080' },
+      });
 
-    it('should delegate getMetadata calls', async () => {
-      const request = { key: 'test' };
-      await client.getMetadata(request);
-      expect(mockClient.getMetadata).toHaveBeenCalledWith(request);
-    });
-
-    it('should delegate updateMetadata calls', async () => {
-      const request = { key: 'test', metadata: { contentType: 'text/plain' } };
-      await client.updateMetadata(request);
-      expect(mockClient.updateMetadata).toHaveBeenCalledWith(request);
-    });
-
-    it('should delegate health calls', async () => {
-      await client.health();
-      expect(mockClient.health).toHaveBeenCalledWith({});
-    });
-
-    it('should delegate archive calls', async () => {
-      const request = { key: 'test', destinationType: 'glacier' };
-      await client.archive(request);
-      expect(mockClient.archive).toHaveBeenCalledWith(request);
-    });
-
-    it('should delegate lifecycle policy calls', async () => {
-      const policy = { id: 'p1', prefix: 'logs/', retentionSeconds: 86400, action: 'delete' };
-
-      await client.addPolicy({ policy });
-      expect(mockClient.addPolicy).toHaveBeenCalledWith({ policy });
-
-      await client.removePolicy({ id: 'p1' });
-      expect(mockClient.removePolicy).toHaveBeenCalledWith({ id: 'p1' });
-
+      await client.list();
       await client.getPolicies();
-      expect(mockClient.getPolicies).toHaveBeenCalledWith({});
-
       await client.applyPolicies();
-      expect(mockClient.applyPolicies).toHaveBeenCalledWith({});
-    });
-
-    it('should delegate replication policy calls', async () => {
-      const policy = {
-        id: 'r1',
-        sourceBackend: 's3',
-        sourceSettings: {},
-        sourcePrefix: '',
-        destinationBackend: 'gcs',
-        destinationSettings: {},
-        checkIntervalSeconds: 3600,
-        enabled: true,
-        replicationMode: 0,
-      };
-
-      await client.addReplicationPolicy({ policy });
-      expect(mockClient.addReplicationPolicy).toHaveBeenCalledWith({ policy });
-
-      await client.removeReplicationPolicy({ id: 'r1' });
-      expect(mockClient.removeReplicationPolicy).toHaveBeenCalledWith({ id: 'r1' });
-
       await client.getReplicationPolicies();
-      expect(mockClient.getReplicationPolicies).toHaveBeenCalledWith({});
+      await client.health();
 
-      await client.getReplicationPolicy({ id: 'r1' });
-      expect(mockClient.getReplicationPolicy).toHaveBeenCalledWith({ id: 'r1' });
-
-      await client.triggerReplication({ policyId: 'r1' });
-      expect(mockClient.triggerReplication).toHaveBeenCalledWith({ policyId: 'r1' });
-
-      await client.getReplicationStatus({ id: 'r1' });
-      expect(mockClient.getReplicationStatus).toHaveBeenCalledWith({ id: 'r1' });
+      expect(stub.list).toHaveBeenCalledWith({});
+      expect(stub.getPolicies).toHaveBeenCalledWith({});
+      expect(stub.applyPolicies).toHaveBeenCalledWith({});
+      expect(stub.getReplicationPolicies).toHaveBeenCalledWith({});
+      expect(stub.health).toHaveBeenCalledWith({});
     });
+  });
 
-    it('should delegate close calls', async () => {
-      await client.close();
-      expect(mockClient.close).toHaveBeenCalled();
+  describe('close', () => {
+    it('unified_close', async () => {
+      const close = jest.fn().mockResolvedValue(undefined);
+      MockRestClient.prototype.close = close as any;
+
+      const client = new ObjectStoreClient({
+        protocol: 'rest',
+        rest: { baseUrl: 'http://localhost:8080' },
+      });
+
+      await expect(client.close()).resolves.toBeUndefined();
+      expect(close).toHaveBeenCalled();
+      // Safe to call again.
+      await expect(client.close()).resolves.toBeUndefined();
     });
   });
 });

@@ -11,7 +11,7 @@ Understand the design and components of go-objstore.
 
 - [Overview](architecture/README.md) - High-level architecture
 - [Storage Layer](architecture/storage-layer.md) - Unified storage interface and backends
-- [Servers](architecture/servers.md) - gRPC, REST, QUIC, and MCP servers
+- [Servers](architecture/servers.md) - gRPC, REST, QUIC, Unix socket, and MCP servers
 - [StorageFS](architecture/storagefs.md) - Filesystem abstraction layer
 - [Encryption](architecture/encryption.md) - At-rest encryption system
 - [Lifecycle Management](architecture/lifecycle.md) - Automatic retention and archival
@@ -125,15 +125,12 @@ make build
 
 ### CLI Tool
 ```bash
-make cli
+make build-cli
 ```
 
 ### Servers
 ```bash
-make server-grpc
-make server-rest
-make server-quic
-make server-mcp
+make build-server
 ```
 
 ### C Library
@@ -153,9 +150,17 @@ go-objstore/
 │   ├── s3/           # S3 backend
 │   ├── gcs/          # GCS backend
 │   ├── azure/        # Azure backend
+│   ├── minio/        # MinIO backend
 │   ├── storagefs/    # Filesystem abstraction
-│   ├── encryption/   # Encryption support
+│   ├── replication/  # Replication engine
+│   ├── audit/        # Audit logging
+│   ├── adapters/     # Custom adapters
 │   └── server/       # Server implementations
+│       ├── grpc/     # gRPC
+│       ├── rest/     # REST API
+│       ├── quic/     # QUIC/HTTP3
+│       ├── unix/     # Unix socket
+│       └── mcp/      # MCP
 ├── cmd/              # Command-line tools
 ├── api/              # API definitions
 ├── examples/         # Usage examples
@@ -184,5 +189,5 @@ go-objstore/
 - MCP: Model Context Protocol specification
 
 ### Related Projects
-- go-xkms: Key management library
+- Any KMS: Bring your own key management (HashiCorp Vault, AWS KMS, GCP KMS, Azure Key Vault, or custom)
 - Storage SDKs: AWS SDK, Google Cloud SDK, Azure SDK

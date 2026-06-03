@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [0.1.5-alpha] - 2026-05-31
+
+### Changed
+
+- Go toolchain upgraded from 1.21 to 1.26.3
+- All SDK packages updated to version 0.2.0 for API parity across languages
+- TypeScript SDK: JavaScript SDK consolidated into TypeScript package (@go-objstore/client)
+  - Ships compiled JavaScript (ESM + CJS) usable from plain JavaScript projects
+- Encryption example: go-xkms dependency removed, now uses stdlib AES-256-GCM implementation
+
 ## [0.1.4-alpha] - 2025-12-06
 
 ### Added
@@ -52,7 +62,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
-- Multi-Language SDK Support: Added official client SDKs for 7 programming languages
+- Multi-Language SDK Support: Added official client SDKs for 6 programming languages
   - TypeScript SDK with full type safety and async/await support
   - Go SDK with idiomatic Go patterns and context support
   - Python SDK with async support and type hints

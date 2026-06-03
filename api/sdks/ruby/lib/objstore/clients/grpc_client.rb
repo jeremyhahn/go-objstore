@@ -491,6 +491,23 @@ module ObjectStore
         handle_grpc_error(e)
       end
 
+      # Close the underlying gRPC channel/stub
+      #
+      # Releases the long-lived connection held by the stub. Safe to call
+      # multiple times; a new stub is created lazily on the next request.
+      #
+      # @return [void]
+      def close
+        return unless @stub
+
+        # The stub holds the channel; close it to release the connection.
+        if @stub.respond_to?(:instance_variable_get)
+          channel = @stub.instance_variable_get(:@ch)
+          channel.close if channel.respond_to?(:close)
+        end
+        @stub = nil
+      end
+
       private
 
       def ensure_stub

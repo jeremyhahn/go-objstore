@@ -26,6 +26,15 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
+// Structured log field keys used across the replication package.
+const (
+	fieldKey      = "key"
+	fieldError    = "error"
+	fieldPath     = "path"
+	fieldPolicyID = "policy_id"
+	fieldFailed   = "failed"
+)
+
 // FileSystem interface for testability (matches lifecycle_persistent.go pattern).
 type FileSystem interface {
 	OpenFile(name string, flag int, perm os.FileMode) (ReplicationFile, error)
@@ -157,7 +166,7 @@ func (prm *PersistentReplicationManager) AddPolicy(policy common.ReplicationPoli
 	}
 
 	prm.logger.Info(context.Background(), "Replication policy added",
-		adapters.Field{Key: "policy_id", Value: policy.ID})
+		adapters.Field{Key: fieldPolicyID, Value: policy.ID})
 
 	return nil
 }
@@ -182,7 +191,7 @@ func (prm *PersistentReplicationManager) RemovePolicy(id string) error {
 	}
 
 	prm.logger.Info(context.Background(), "Replication policy removed",
-		adapters.Field{Key: "policy_id", Value: id})
+		adapters.Field{Key: fieldPolicyID, Value: id})
 
 	return nil
 }
@@ -259,7 +268,7 @@ func (prm *PersistentReplicationManager) SetBackendEncrypterFactory(policyID str
 	prm.backendFactories[policyID] = factory
 
 	prm.logger.Debug(context.Background(), "Backend encrypter factory set",
-		adapters.Field{Key: "policy_id", Value: policyID})
+		adapters.Field{Key: fieldPolicyID, Value: policyID})
 
 	return nil
 }
@@ -276,7 +285,7 @@ func (prm *PersistentReplicationManager) SetSourceEncrypterFactory(policyID stri
 	prm.sourceFactories[policyID] = factory
 
 	prm.logger.Debug(context.Background(), "Source encrypter factory set",
-		adapters.Field{Key: "policy_id", Value: policyID})
+		adapters.Field{Key: fieldPolicyID, Value: policyID})
 
 	return nil
 }
@@ -293,7 +302,7 @@ func (prm *PersistentReplicationManager) SetDestinationEncrypterFactory(policyID
 	prm.destFactories[policyID] = factory
 
 	prm.logger.Debug(context.Background(), "Destination encrypter factory set",
-		adapters.Field{Key: "policy_id", Value: policyID})
+		adapters.Field{Key: fieldPolicyID, Value: policyID})
 
 	return nil
 }
@@ -349,15 +358,15 @@ func (prm *PersistentReplicationManager) SyncAll(ctx context.Context) (*common.S
 	for _, policy := range policies {
 		if !policy.Enabled {
 			prm.logger.Debug(ctx, "Skipping disabled policy",
-				adapters.Field{Key: "policy_id", Value: policy.ID})
+				adapters.Field{Key: fieldPolicyID, Value: policy.ID})
 			continue
 		}
 
 		result, err := prm.SyncPolicy(ctx, policy.ID)
 		if err != nil {
 			prm.logger.Error(ctx, "Policy sync failed",
-				adapters.Field{Key: "policy_id", Value: policy.ID},
-				adapters.Field{Key: "error", Value: err.Error()})
+				adapters.Field{Key: fieldPolicyID, Value: policy.ID},
+				adapters.Field{Key: fieldError, Value: err.Error()})
 			totalResult.Failed++
 			if totalResult.Errors == nil {
 				totalResult.Errors = make([]string, 0)
@@ -420,6 +429,51 @@ func (prm *PersistentReplicationManager) SyncPolicy(ctx context.Context, policyI
 	return result, err
 }
 
+// SyncAllParallel synchronizes all enabled policies, running each policy's
+// object sync with the given number of worker goroutines. A workerCount <= 0
+// selects a sensible default inside the per-policy parallel syncer.
+func (prm *PersistentReplicationManager) SyncAllParallel(ctx context.Context, workerCount int) (*common.SyncResult, error) {
+	policies, err := prm.GetPolicies()
+	if err != nil {
+		return nil, err
+	}
+
+	totalResult := &common.SyncResult{
+		PolicyID: "all",
+	}
+
+	for _, policy := range policies {
+		if !policy.Enabled {
+			prm.logger.Debug(ctx, "Skipping disabled policy",
+				adapters.Field{Key: fieldPolicyID, Value: policy.ID})
+			continue
+		}
+
+		result, err := prm.SyncPolicyParallel(ctx, policy.ID, workerCount)
+		if err != nil {
+			prm.logger.Error(ctx, "Policy sync failed",
+				adapters.Field{Key: fieldPolicyID, Value: policy.ID},
+				adapters.Field{Key: fieldError, Value: err.Error()})
+			totalResult.Failed++
+			if totalResult.Errors == nil {
+				totalResult.Errors = make([]string, 0)
+			}
+			totalResult.Errors = append(totalResult.Errors, policy.ID+": "+err.Error())
+			continue
+		}
+
+		totalResult.Synced += result.Synced
+		totalResult.Deleted += result.Deleted
+		totalResult.Failed += result.Failed
+		totalResult.BytesTotal += result.BytesTotal
+		if len(result.Errors) > 0 {
+			totalResult.Errors = append(totalResult.Errors, result.Errors...)
+		}
+	}
+
+	return totalResult, nil
+}
+
 // SyncPolicyParallel synchronizes a specific policy using parallel workers.
 func (prm *PersistentReplicationManager) SyncPolicyParallel(ctx context.Context, policyID string, workerCount int) (*common.SyncResult, error) {
 	policy, err := prm.GetPolicy(policyID)
@@ -475,11 +529,11 @@ func (prm *PersistentReplicationManager) Run(ctx context.Context) {
 			result, err := prm.SyncAll(ctx)
 			if err != nil {
 				prm.logger.Error(ctx, "Scheduled sync failed",
-					adapters.Field{Key: "error", Value: err.Error()})
+					adapters.Field{Key: fieldError, Value: err.Error()})
 			} else {
 				prm.logger.Info(ctx, "Scheduled sync completed",
 					adapters.Field{Key: "synced", Value: result.Synced},
-					adapters.Field{Key: "failed", Value: result.Failed},
+					adapters.Field{Key: fieldFailed, Value: result.Failed},
 					adapters.Field{Key: "bytes", Value: result.BytesTotal})
 			}
 

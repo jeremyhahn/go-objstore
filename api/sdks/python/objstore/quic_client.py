@@ -1,8 +1,7 @@
 """QUIC/HTTP3 client implementation for go-objstore."""
 
-import json
-from io import BytesIO
-from typing import AsyncIterator, BinaryIO, Dict, Iterator, Optional, Union
+from email.utils import parsedate_to_datetime
+from typing import AsyncIterator, BinaryIO, Dict, Optional, Union
 
 import httpx
 
@@ -85,6 +84,9 @@ class QuicClient:
     def _url(self, path: str) -> str:
         """Construct full URL from path.
 
+        The QUIC server serves RESTful bare paths with no ``/api/v1`` prefix,
+        so the path is appended directly to the base URL.
+
         Args:
             path: API path
 
@@ -92,8 +94,6 @@ class QuicClient:
             Full URL
         """
         path = path.lstrip("/")
-        if self.api_version and not path.startswith(self.api_version):
-            return f"{self.base_url}/api/{self.api_version}/{path}"
         return f"{self.base_url}/{path}"
 
     def _handle_error(self, response: httpx.Response) -> None:
@@ -129,6 +129,160 @@ class QuicClient:
                 status_code=response.status_code,
             )
 
+    def _metadata_from_headers(self, headers: httpx.Headers) -> Metadata:
+        """Build a Metadata object from QUIC response headers.
+
+        Args:
+            headers: HTTP response headers
+
+        Returns:
+            Parsed metadata, with custom entries from ``X-Meta-*`` headers
+        """
+        custom: Dict[str, str] = {}
+        for name, value in headers.items():
+            if name.lower().startswith("x-meta-"):
+                custom[name[len("x-meta-"):]] = value
+
+        size: Optional[int] = None
+        content_length = headers.get("Content-Length")
+        if content_length is not None:
+            try:
+                size = int(content_length)
+            except ValueError:
+                size = None
+
+        last_modified = None
+        lm_header = headers.get("Last-Modified")
+        if lm_header:
+            try:
+                last_modified = parsedate_to_datetime(lm_header)
+            except (TypeError, ValueError):
+                last_modified = None
+
+        return Metadata(
+            content_type=headers.get("Content-Type"),
+            content_encoding=headers.get("Content-Encoding"),
+            size=size,
+            last_modified=last_modified,
+            etag=headers.get("ETag"),
+            custom=custom,
+        )
+
+    @staticmethod
+    def _go_duration_to_ms(value: object) -> int:
+        """Convert a Go duration string (e.g. "1.5s", "250ms") to milliseconds.
+
+        Accepts ints/floats (treated as milliseconds) for forward compatibility.
+
+        Args:
+            value: Duration as a Go-formatted string or a number
+
+        Returns:
+            Duration in milliseconds (0 if it cannot be parsed)
+        """
+        if value is None:
+            return 0
+        if isinstance(value, (int, float)):
+            return int(value)
+        if not isinstance(value, str):
+            return 0
+
+        text = value.strip()
+        if not text:
+            return 0
+
+        units = (
+            ("ns", 1e-6),
+            ("us", 1e-3),
+            ("µs", 1e-3),
+            ("ms", 1.0),
+            ("s", 1000.0),
+            ("m", 60_000.0),
+            ("h", 3_600_000.0),
+        )
+
+        total_ms = 0.0
+        i = 0
+        matched = False
+        while i < len(text):
+            j = i
+            while j < len(text) and (text[j].isdigit() or text[j] in ".+-"):
+                j += 1
+            number = text[i:j]
+            k = j
+            while k < len(text) and not (text[k].isdigit() or text[k] in ".+-"):
+                k += 1
+            unit = text[j:k]
+            try:
+                magnitude = float(number)
+            except ValueError:
+                return 0
+            factor = next((f for u, f in units if u == unit), None)
+            if factor is None:
+                return 0
+            total_ms += magnitude * factor
+            matched = True
+            i = k
+
+        return int(round(total_ms)) if matched else 0
+
+    def _sync_result_from_dict(self, raw: Dict[str, object]) -> SyncResult:
+        """Build a SyncResult from a QUIC trigger response result dict.
+
+        The QUIC server returns ``duration`` as a Go duration string; the model
+        field is ``duration_ms``.
+
+        Args:
+            raw: Result fields as returned by the QUIC server
+
+        Returns:
+            Parsed sync result
+        """
+        data = dict(raw)
+        if "duration_ms" not in data:
+            data["duration_ms"] = self._go_duration_to_ms(data.pop("duration", None))
+        else:
+            data.pop("duration", None)
+        return SyncResult(**data)
+
+    def _replication_status_from_dict(self, raw: Dict[str, object]) -> ReplicationStatus:
+        """Build a ReplicationStatus from a QUIC status dict.
+
+        The QUIC server returns ``average_sync_duration`` as a Go duration
+        string; the model field is ``average_sync_duration_ms``.
+
+        Args:
+            raw: Status fields as returned by the QUIC server
+
+        Returns:
+            Parsed replication status
+        """
+        data = dict(raw)
+        if "average_sync_duration_ms" not in data:
+            data["average_sync_duration_ms"] = self._go_duration_to_ms(
+                data.pop("average_sync_duration", None)
+            )
+        else:
+            data.pop("average_sync_duration", None)
+        return ReplicationStatus(**data)
+
+    def _replication_policy_from_dict(self, raw: Dict[str, object]) -> ReplicationPolicy:
+        """Build a ReplicationPolicy from a QUIC policy dict.
+
+        The QUIC server uses ``check_interval`` (seconds) where the model field
+        is ``check_interval_seconds``.
+
+        Args:
+            raw: Policy fields as returned by the QUIC server
+
+        Returns:
+            Parsed replication policy
+        """
+        data = dict(raw)
+        if "check_interval" in data and "check_interval_seconds" not in data:
+            data["check_interval_seconds"] = data.pop("check_interval")
+        return ReplicationPolicy(**data)
+
     async def put(
         self,
         key: str,
@@ -152,22 +306,27 @@ class QuicClient:
 
         try:
             if isinstance(data, bytes):
-                files = {"file": (key, BytesIO(data))}
+                body_data = data
             else:
-                files = {"file": (key, data)}
+                body_data = data.read()
 
-            data_dict = {}
+            headers: Dict[str, str] = {}
             if metadata:
-                data_dict["metadata"] = json.dumps(metadata.model_dump(exclude_none=True))
+                if metadata.content_type:
+                    headers["Content-Type"] = metadata.content_type
+                if metadata.content_encoding:
+                    headers["Content-Encoding"] = metadata.content_encoding
+                for ck, cv in (metadata.custom or {}).items():
+                    headers[f"X-Meta-{ck}"] = cv
 
-            response = await self.client.put(url, files=files, data=data_dict)
+            response = await self.client.put(url, content=body_data, headers=headers)
 
             if response.status_code == 201:
                 result = response.json()
                 return PutResponse(
                     success=True,
                     message=result.get("message", "Object uploaded successfully"),
-                    etag=result.get("data", {}).get("etag"),
+                    etag=response.headers.get("ETag"),
                 )
 
             self._handle_error(response)
@@ -196,11 +355,7 @@ class QuicClient:
             response = await self.client.get(url)
 
             if response.status_code == 200:
-                metadata = Metadata(
-                    content_type=response.headers.get("Content-Type"),
-                    size=int(response.headers.get("Content-Length", 0)),
-                    etag=response.headers.get("ETag"),
-                )
+                metadata = self._metadata_from_headers(response.headers)
                 return response.content, metadata
 
             self._handle_error(response)
@@ -256,10 +411,9 @@ class QuicClient:
         try:
             response = await self.client.delete(url)
 
-            if response.status_code == 200:
-                result = response.json()
+            if response.status_code in (200, 204):
                 return DeleteResponse(
-                    success=True, message=result.get("message", "Object deleted successfully")
+                    success=True, message="Object deleted successfully"
                 )
 
             self._handle_error(response)
@@ -292,14 +446,14 @@ class QuicClient:
             ObjectStoreError: On failure
         """
         url = self._url("objects")
-        params: Dict[str, Union[str, int]] = {"limit": max_results}
+        params: Dict[str, Union[str, int]] = {"max": max_results}
 
         if prefix:
             params["prefix"] = prefix
         if delimiter:
             params["delimiter"] = delimiter
         if continue_from:
-            params["token"] = continue_from
+            params["continue"] = continue_from
 
         try:
             response = await self.client.get(url, params=params)
@@ -347,8 +501,20 @@ class QuicClient:
         url = self._url(f"objects/{key}")
 
         try:
-            response = await self.client.head(url)
-            return ExistsResponse(exists=response.status_code == 200)
+            response = await self.client.get(url, params={"exists": "1"})
+
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    return ExistsResponse(exists=bool(data.get("exists", True)))
+                except Exception:
+                    return ExistsResponse(exists=True)
+
+            if response.status_code == 404:
+                return ExistsResponse(exists=False)
+
+            self._handle_error(response)
+            return ExistsResponse(exists=False)
 
         except httpx.TimeoutException:
             raise TimeoutError("Request timed out")
@@ -367,20 +533,13 @@ class QuicClient:
         Raises:
             ObjectStoreError: On failure
         """
-        url = self._url(f"objects/{key}/metadata")
+        url = self._url(f"objects/{key}")
 
         try:
-            response = await self.client.get(url)
+            response = await self.client.head(url)
 
             if response.status_code == 200:
-                data = response.json()
-                return Metadata(
-                    content_type=data.get("metadata", {}).get("content_type"),
-                    content_encoding=data.get("metadata", {}).get("content_encoding"),
-                    size=data.get("size"),
-                    etag=data.get("etag"),
-                    custom=data.get("metadata", {}),
-                )
+                return self._metadata_from_headers(response.headers)
 
             self._handle_error(response)
             return Metadata()
@@ -403,12 +562,20 @@ class QuicClient:
         Raises:
             ObjectStoreError: On failure
         """
-        url = self._url(f"objects/{key}/metadata")
+        url = self._url(f"objects/{key}")
+
+        payload: Dict[str, object] = {}
+        if metadata.content_type is not None:
+            payload["content_type"] = metadata.content_type
+        if metadata.content_encoding is not None:
+            payload["content_encoding"] = metadata.content_encoding
+        if metadata.custom:
+            payload["custom"] = metadata.custom
 
         try:
-            response = await self.client.put(
+            response = await self.client.patch(
                 url,
-                json=metadata.model_dump(exclude_none=True),
+                json=payload,
                 headers={"Content-Type": "application/json"},
             )
 
@@ -457,6 +624,10 @@ class QuicClient:
             raise TimeoutError("Request timed out")
         except httpx.ConnectError as e:
             raise ConnectionError(f"Connection failed: All connection attempts failed. {str(e)}")
+        except ObjectStoreError:
+            # Errors raised by _handle_error (e.g. ServerError) must propagate
+            # unchanged rather than being masked as a connection failure.
+            raise
         except Exception as e:
             raise ConnectionError(f"Connection failed: {str(e)}")
 
@@ -650,7 +821,12 @@ class QuicClient:
         url = self._url("replication/policies")
 
         try:
-            response = await self.client.post(url, json=policy.model_dump(exclude_none=True))
+            payload = policy.model_dump(exclude_none=True)
+            # QUIC server expects `check_interval` (seconds), not `check_interval_seconds`.
+            if "check_interval_seconds" in payload:
+                payload["check_interval"] = payload.pop("check_interval_seconds")
+
+            response = await self.client.post(url, json=payload)
 
             if response.status_code in (200, 201):
                 data = response.json()
@@ -716,7 +892,8 @@ class QuicClient:
             if response.status_code == 200:
                 data = response.json()
                 policies = [
-                    ReplicationPolicy(**policy_data) for policy_data in data.get("policies", [])
+                    self._replication_policy_from_dict(policy_data)
+                    for policy_data in data.get("policies", [])
                 ]
                 return GetReplicationPoliciesResponse(policies=policies)
 
@@ -747,7 +924,10 @@ class QuicClient:
 
             if response.status_code == 200:
                 data = response.json()
-                return ReplicationPolicy(**data.get("policy", {}))
+                # QUIC returns the policy fields flat at the top level (with a
+                # `success` wrapper key), not nested under `policy`.
+                policy_data = {k: v for k, v in data.items() if k != "success"}
+                return self._replication_policy_from_dict(policy_data)
 
             self._handle_error(response)
             return ReplicationPolicy(
@@ -774,14 +954,17 @@ class QuicClient:
             ObjectStoreError: On failure
         """
         url = self._url("replication/trigger")
+        params: Dict[str, str] = {}
+        if opts.policy_id:
+            params["policy_id"] = opts.policy_id
 
         try:
-            response = await self.client.post(url, json=opts.model_dump(exclude_none=True))
+            response = await self.client.post(url, params=params)
 
             if response.status_code == 200:
                 data = response.json()
                 result_data = data.get("result")
-                sync_result = SyncResult(**result_data) if result_data else None
+                sync_result = self._sync_result_from_dict(result_data) if result_data else None
                 return TriggerReplicationResponse(
                     success=True,
                     result=sync_result,
@@ -817,8 +1000,14 @@ class QuicClient:
 
             if response.status_code == 200:
                 data = response.json()
-                status_data = data.get("status")
-                status = ReplicationStatus(**status_data) if status_data else None
+                # QUIC returns the status fields flat at the top level (with a
+                # `success` wrapper key), not nested under `status`.
+                status_data = {
+                    k: v for k, v in data.items() if k not in ("success", "message")
+                }
+                status = (
+                    self._replication_status_from_dict(status_data) if status_data else None
+                )
                 return GetReplicationStatusResponse(
                     success=True,
                     status=status,
