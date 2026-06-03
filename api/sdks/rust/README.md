@@ -464,7 +464,7 @@ async fn example() -> Result<()> {
 ### Prerequisites
 
 - Rust 1.70 or later
-- Go 1.26.3 or later (for running the server)
+- Go 1.26.4 or later (for running the server)
 - protoc (Protocol Buffers compiler)
 
 ### Setup
@@ -537,7 +537,7 @@ Contributions are welcome! Please:
 
 ### v0.2.0
 
-- Go toolchain updated to 1.26.3
+- Go toolchain updated to 1.26.4
 - API parity across all SDKs
 
 ### v0.1.2 (2025-11-23)

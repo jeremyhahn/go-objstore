@@ -109,6 +109,7 @@ go.work.sum
 gosec-results.json
 storage/
 
-# Tooling
+# AI assistant / local tooling — never commit
 .serena/
+.claude/
 CLAUDE.md

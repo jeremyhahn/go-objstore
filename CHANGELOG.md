@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
-- Go toolchain upgraded from 1.21 to 1.26.3
+- Go toolchain upgraded from 1.21 to 1.26.4
 - All SDK packages updated to version 0.2.0 for API parity across languages
 - TypeScript SDK: JavaScript SDK consolidated into TypeScript package (@go-objstore/client)
   - Ships compiled JavaScript (ESM + CJS) usable from plain JavaScript projects
