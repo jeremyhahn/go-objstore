@@ -71,7 +71,7 @@ jobs:
         cache: true
 
     - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      uses: docker/setup-buildx-action@v4
 
     - name: Run local storage integration tests
       run: make integration-test-local
@@ -182,13 +182,13 @@ jobs:
       uses: actions/checkout@v6
 
     - name: Set up QEMU
-      uses: docker/setup-qemu-action@v3
+      uses: docker/setup-qemu-action@v4
 
     - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      uses: docker/setup-buildx-action@v4
 
     - name: Build Docker image for scanning
-      uses: docker/build-push-action@v5
+      uses: docker/build-push-action@v7
       with:
         context: .
         platforms: linux/amd64
@@ -207,7 +207,7 @@ jobs:
         severity: 'CRITICAL,HIGH'
 
     - name: Upload Trivy results to GitHub Security tab
-      uses: github/codeql-action/upload-sarif@v3
+      uses: github/codeql-action/upload-sarif@v4
       if: always()
       with:
         sarif_file: 'trivy-results.sarif'
@@ -231,14 +231,14 @@ jobs:
         output: 'trivy-secret-results.sarif'
 
     - name: Upload secret scan results
-      uses: github/codeql-action/upload-sarif@v3
+      uses: github/codeql-action/upload-sarif@v4
       if: always()
       with:
         sarif_file: 'trivy-secret-results.sarif'
         category: 'trivy-secrets'
 
     - name: Run Grype vulnerability scanner
-      uses: anchore/scan-action@v6
+      uses: anchore/scan-action@v7
       id: grype
       with:
         image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ci-scan
@@ -247,7 +247,7 @@ jobs:
         output-format: sarif
 
     - name: Upload Grype results to GitHub Security tab
-      uses: github/codeql-action/upload-sarif@v3
+      uses: github/codeql-action/upload-sarif@v4
       # SARIF upload to the Security tab is best-effort: a transient empty/truncated
       # SARIF from the scanner must not fail an otherwise-green build (the scan itself
       # already ran above). Guard on a non-empty output and never block on upload.
