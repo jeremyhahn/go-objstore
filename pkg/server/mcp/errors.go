@@ -33,8 +33,8 @@ var (
 	// ErrDestinationTypeRequired is returned when destination_type is required for archive action.
 	ErrDestinationTypeRequired = errors.New("destination_type required for archive action")
 
-	// ErrRetentionMustBePositive is returned when retention_seconds is not positive.
-	ErrRetentionMustBePositive = errors.New("retention_seconds must be positive")
+	// ErrRetentionMustNotBeNegative is returned when retention_seconds is negative.
+	ErrRetentionMustNotBeNegative = errors.New("retention_seconds must not be negative")
 
 	// Server errors
 

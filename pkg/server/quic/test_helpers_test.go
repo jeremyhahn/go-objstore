@@ -41,7 +41,7 @@ func initTestFacade(t *testing.T, storage common.Storage) {
 func createHandlerWithStorage(t *testing.T, storage common.Storage, maxRequestBodySize int64, readTimeout, writeTimeout time.Duration, logger adapters.Logger, authenticator adapters.Authenticator) *Handler {
 	t.Helper()
 	initTestFacade(t, storage)
-	handler, err := NewHandler("", maxRequestBodySize, readTimeout, writeTimeout, logger, authenticator)
+	handler, err := NewHandler("", maxRequestBodySize, readTimeout, writeTimeout, logger, authenticator, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to create handler: %v", err)
 	}

@@ -1,5 +1,4 @@
 using System.Net.Http.Json;
-using System.Text;
 using System.Text.Json;
 using ObjStore.SDK.Exceptions;
 using ObjStore.SDK.Models;
@@ -61,16 +60,34 @@ public class RestClient : IObjectStoreClient
 
         try
         {
-            using var content = new MultipartFormDataContent();
-            content.Add(new ByteArrayContent(data), "file", "file");
+            using var content = new ByteArrayContent(data);
 
-            if (metadata != null)
+            // Content-Type header carries the object's MIME type; default to octet-stream.
+            var contentType = !string.IsNullOrEmpty(metadata?.ContentType)
+                ? metadata!.ContentType!
+                : "application/octet-stream";
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
+
+            using var request = new HttpRequestMessage(HttpMethod.Put, $"/objects/{Uri.EscapeDataString(key)}")
             {
-                var metadataJson = JsonSerializer.Serialize(metadata, _jsonOptions);
-                content.Add(new StringContent(metadataJson, Encoding.UTF8, "application/json"), "metadata");
+                Content = content
+            };
+
+            // Content-Encoding header only when present.
+            if (!string.IsNullOrEmpty(metadata?.ContentEncoding))
+            {
+                content.Headers.ContentEncoding.Add(metadata!.ContentEncoding!);
             }
 
-            var response = await _httpClient.PutAsync($"/objects/{Uri.EscapeDataString(key)}", content, cancellationToken).ConfigureAwait(false);
+            // Custom metadata (string->string map only) travels as JSON in the
+            // X-Object-Metadata request header. Omit the header when empty.
+            if (metadata?.Custom is { Count: > 0 })
+            {
+                var customJson = JsonSerializer.Serialize(metadata.Custom, _jsonOptions);
+                request.Headers.TryAddWithoutValidation("X-Object-Metadata", customJson);
+            }
+
+            var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
 
             // ETag is returned in the response header, not the body
@@ -118,6 +135,7 @@ public class RestClient : IObjectStoreClient
             var metadata = new ObjectMetadata
             {
                 ContentType = response.Content.Headers.ContentType?.MediaType,
+                ContentEncoding = response.Content.Headers.ContentEncoding.FirstOrDefault(),
                 Size = response.Content.Headers.ContentLength ?? data.Length,
                 ETag = response.Headers.ETag?.Tag
             };
@@ -125,6 +143,16 @@ public class RestClient : IObjectStoreClient
             if (response.Content.Headers.LastModified.HasValue)
             {
                 metadata.LastModified = response.Content.Headers.LastModified.Value.DateTime;
+            }
+
+            // Custom metadata is returned as a JSON object in the X-Object-Metadata header.
+            if (response.Headers.TryGetValues("X-Object-Metadata", out var customValues))
+            {
+                var customJson = customValues.FirstOrDefault();
+                if (!string.IsNullOrEmpty(customJson))
+                {
+                    metadata.Custom = JsonSerializer.Deserialize<Dictionary<string, string>>(customJson, _jsonOptions);
+                }
             }
 
             return (data, metadata);
@@ -195,7 +223,21 @@ public class RestClient : IObjectStoreClient
         {
             var request = new HttpRequestMessage(HttpMethod.Head, $"/objects/{Uri.EscapeDataString(key)}");
             var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
-            return response.IsSuccessStatusCode;
+
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                return false;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                throw new OperationFailedException(
+                    "Exists",
+                    $"Failed to check existence of object with key '{key}'",
+                    (int)response.StatusCode);
+            }
+
+            return true;
         }
         catch (HttpRequestException ex)
         {
@@ -260,7 +302,17 @@ public class RestClient : IObjectStoreClient
         try
         {
             var response = await _httpClient.PutAsJsonAsync($"/metadata/{Uri.EscapeDataString(key)}", metadata, _jsonOptions, cancellationToken).ConfigureAwait(false);
+
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                throw new ObjectNotFoundException(key);
+            }
+
             return response.IsSuccessStatusCode;
+        }
+        catch (ObjectNotFoundException)
+        {
+            throw;
         }
         catch (HttpRequestException ex)
         {
@@ -529,7 +581,7 @@ public class RestClient : IObjectStoreClient
         }
     }
 
-    public async Task<bool> TriggerReplicationAsync(string? policyId = null, bool parallel = false, int workerCount = 4, CancellationToken cancellationToken = default)
+    public async Task<TriggerReplicationResult> TriggerReplicationAsync(string? policyId = null, bool parallel = false, int workerCount = 4, CancellationToken cancellationToken = default)
     {
         _logger?.LogDebug("Triggering replication for policy: {PolicyId}", policyId ?? "all");
 
@@ -543,12 +595,94 @@ public class RestClient : IObjectStoreClient
             };
 
             var response = await _httpClient.PostAsJsonAsync("/replication/trigger", request, _jsonOptions, cancellationToken).ConfigureAwait(false);
-            return response.IsSuccessStatusCode;
+
+            if (!response.IsSuccessStatusCode)
+                return new TriggerReplicationResult { Success = false };
+
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>(_jsonOptions, cancellationToken).ConfigureAwait(false);
+
+            var success = body.TryGetProperty("success", out var successEl) && successEl.GetBoolean();
+            var message = body.TryGetProperty("message", out var msgEl) ? msgEl.GetString() : null;
+
+            SyncResult? syncResult = null;
+            if (body.TryGetProperty("result", out var resultEl) && resultEl.ValueKind == JsonValueKind.Object)
+            {
+                syncResult = new SyncResult
+                {
+                    PolicyId = resultEl.TryGetProperty("policy_id", out var pidEl) ? pidEl.GetString() ?? string.Empty : string.Empty,
+                    Synced = resultEl.TryGetProperty("synced", out var syncedEl) ? syncedEl.GetInt32() : 0,
+                    Deleted = resultEl.TryGetProperty("deleted", out var deletedEl) ? deletedEl.GetInt32() : 0,
+                    Failed = resultEl.TryGetProperty("failed", out var failedEl) ? failedEl.GetInt32() : 0,
+                    BytesTotal = resultEl.TryGetProperty("bytes_total", out var bytesEl) ? bytesEl.GetInt64() : 0,
+                    DurationMs = ParseGoDurationToMs(resultEl.TryGetProperty("duration", out var durEl) ? durEl.GetString() : null)
+                };
+            }
+
+            return new TriggerReplicationResult
+            {
+                Success = success,
+                SyncResult = syncResult,
+                Message = message
+            };
         }
         catch (HttpRequestException ex)
         {
             throw new OperationFailedException("TriggerReplication", $"Failed to trigger replication for policy '{policyId ?? "all"}'", ex);
         }
+    }
+
+    /// <summary>
+    /// Parses a Go duration string (e.g. "5.2s", "300ms", "1m30s") into milliseconds.
+    /// Returns 0 if the input is null or cannot be parsed.
+    /// </summary>
+    private static long ParseGoDurationToMs(string? duration)
+    {
+        if (string.IsNullOrEmpty(duration))
+            return 0;
+
+        // Go duration strings are composed of decimal numbers with a unit suffix.
+        // Supported units: ns, us (or µs), ms, s, m, h.
+        // Strategy: accumulate total nanoseconds, then convert to ms.
+        double totalNs = 0;
+        var s = duration.AsSpan();
+
+        while (!s.IsEmpty)
+        {
+            // Read the numeric part (digits and optional decimal point)
+            int numEnd = 0;
+            while (numEnd < s.Length && (char.IsDigit(s[numEnd]) || s[numEnd] == '.'))
+                numEnd++;
+
+            if (numEnd == 0)
+                return 0;
+
+            if (!double.TryParse(s[..numEnd], System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var value))
+                return 0;
+
+            s = s[numEnd..];
+
+            // Read the unit suffix
+            int unitEnd = 0;
+            while (unitEnd < s.Length && !char.IsDigit(s[unitEnd]) && s[unitEnd] != '.')
+                unitEnd++;
+
+            var unit = s[..unitEnd].ToString();
+            s = s[unitEnd..];
+
+            totalNs += unit switch
+            {
+                "ns" => value,
+                "us" or "µs" => value * 1_000,
+                "ms" => value * 1_000_000,
+                "s" => value * 1_000_000_000,
+                "m" => value * 60_000_000_000,
+                "h" => value * 3_600_000_000_000,
+                _ => 0
+            };
+        }
+
+        return (long)(totalNs / 1_000_000);
     }
 
     public async Task<ReplicationStatus?> GetReplicationStatusAsync(string id, CancellationToken cancellationToken = default)

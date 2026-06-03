@@ -29,80 +29,80 @@ func (r *ToolRegistry) RegisterReplicationTools() {
 		Name:        "objstore_add_replication_policy",
 		Description: "Add a replication policy for automatic object replication between storage backends. Supports transparent and opaque replication modes with three-layer encryption.",
 		InputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
+			schemaType: schemaObject,
+			schemaProperties: map[string]any{
 				"id": map[string]any{
-					"type":        "string",
-					"description": "Unique identifier for the replication policy",
+					schemaType:        schemaString,
+					schemaDescription: "Unique identifier for the replication policy",
 				},
-				"source_backend": map[string]any{
-					"type":        "string",
-					"description": "Type of source storage backend (e.g., 'local', 's3', 'gcs', 'azure')",
+				fieldSourceBackend: map[string]any{
+					schemaType:        schemaString,
+					schemaDescription: "Type of source storage backend (e.g., 'local', 's3', 'gcs', 'azure')",
 				},
 				"source_settings": map[string]any{
-					"type":        "object",
-					"description": "Configuration settings for the source backend (e.g., bucket, path, region)",
+					schemaType:        schemaObject,
+					schemaDescription: "Configuration settings for the source backend (e.g., bucket, path, region)",
 				},
 				"source_prefix": map[string]any{
-					"type":        "string",
-					"description": "Optional key prefix to filter objects for replication",
+					schemaType:        schemaString,
+					schemaDescription: "Optional key prefix to filter objects for replication",
 				},
-				"destination_backend": map[string]any{
-					"type":        "string",
-					"description": "Type of destination storage backend (e.g., 'local', 's3', 'gcs', 'azure')",
+				fieldDestinationBackend: map[string]any{
+					schemaType:        schemaString,
+					schemaDescription: "Type of destination storage backend (e.g., 'local', 's3', 'gcs', 'azure')",
 				},
-				"destination_settings": map[string]any{
-					"type":        "object",
-					"description": "Configuration settings for the destination backend",
+				fieldDestinationSettings: map[string]any{
+					schemaType:        schemaObject,
+					schemaDescription: "Configuration settings for the destination backend",
 				},
 				"check_interval": map[string]any{
-					"type":        "integer",
-					"description": "Check interval in seconds for periodic synchronization",
+					schemaType:        "integer",
+					schemaDescription: "Check interval in seconds for periodic synchronization",
 				},
-				"enabled": map[string]any{
-					"type":        "boolean",
-					"description": "Whether the policy is enabled",
+				fieldEnabled: map[string]any{
+					schemaType:        "boolean",
+					schemaDescription: "Whether the policy is enabled",
 				},
 				"replication_mode": map[string]any{
-					"type":        "string",
-					"description": "Replication mode: 'transparent' (decrypt/re-encrypt) or 'opaque' (copy as-is)",
-					"enum":        []string{"transparent", "opaque"},
+					schemaType:        schemaString,
+					schemaDescription: "Replication mode: 'transparent' (decrypt/re-encrypt) or 'opaque' (copy as-is)",
+					"enum":            []string{"transparent", "opaque"},
 				},
 				"encryption": map[string]any{
-					"type":        "object",
-					"description": "Three-layer encryption policy configuration",
-					"properties": map[string]any{
+					schemaType:        schemaObject,
+					schemaDescription: "Three-layer encryption policy configuration",
+					schemaProperties: map[string]any{
 						"backend": map[string]any{
-							"type":        "object",
-							"description": "Layer 1: Backend at-rest encryption config",
-							"properties": map[string]any{
-								"enabled":     map[string]any{"type": "boolean"},
-								"provider":    map[string]any{"type": "string"},
-								"default_key": map[string]any{"type": "string"},
+							schemaType:        schemaObject,
+							schemaDescription: "Layer 1: Backend at-rest encryption config",
+							schemaProperties: map[string]any{
+								fieldEnabled:  map[string]any{schemaType: "boolean"},
+								"provider":    map[string]any{schemaType: schemaString},
+								"default_key": map[string]any{schemaType: schemaString},
 							},
 						},
 						"source": map[string]any{
-							"type":        "object",
-							"description": "Layer 2: Client-side source DEK config",
-							"properties": map[string]any{
-								"enabled":     map[string]any{"type": "boolean"},
-								"provider":    map[string]any{"type": "string"},
-								"default_key": map[string]any{"type": "string"},
+							schemaType:        schemaObject,
+							schemaDescription: "Layer 2: Client-side source DEK config",
+							schemaProperties: map[string]any{
+								fieldEnabled:  map[string]any{schemaType: "boolean"},
+								"provider":    map[string]any{schemaType: schemaString},
+								"default_key": map[string]any{schemaType: schemaString},
 							},
 						},
 						"destination": map[string]any{
-							"type":        "object",
-							"description": "Layer 3: Client-side destination DEK config",
-							"properties": map[string]any{
-								"enabled":     map[string]any{"type": "boolean"},
-								"provider":    map[string]any{"type": "string"},
-								"default_key": map[string]any{"type": "string"},
+							schemaType:        schemaObject,
+							schemaDescription: "Layer 3: Client-side destination DEK config",
+							schemaProperties: map[string]any{
+								fieldEnabled:  map[string]any{schemaType: "boolean"},
+								"provider":    map[string]any{schemaType: schemaString},
+								"default_key": map[string]any{schemaType: schemaString},
 							},
 						},
 					},
 				},
 			},
-			"required": []string{"id", "source_backend", "destination_backend", "check_interval"},
+			schemaRequired: []string{"id", fieldSourceBackend, fieldDestinationBackend, "check_interval"},
 		},
 	}
 
@@ -110,14 +110,14 @@ func (r *ToolRegistry) RegisterReplicationTools() {
 		Name:        "objstore_remove_replication_policy",
 		Description: "Remove an existing replication policy by its ID. This stops automatic replication for this policy.",
 		InputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
+			schemaType: schemaObject,
+			schemaProperties: map[string]any{
 				"id": map[string]any{
-					"type":        "string",
-					"description": "The ID of the replication policy to remove",
+					schemaType:        schemaString,
+					schemaDescription: "The ID of the replication policy to remove",
 				},
 			},
-			"required": []string{"id"},
+			schemaRequired: []string{"id"},
 		},
 	}
 
@@ -125,8 +125,8 @@ func (r *ToolRegistry) RegisterReplicationTools() {
 		Name:        "objstore_list_replication_policies",
 		Description: "List all replication policies. Returns policy configurations, sync status, and statistics.",
 		InputSchema: map[string]any{
-			"type":       "object",
-			"properties": map[string]any{},
+			schemaType:       schemaObject,
+			schemaProperties: map[string]any{},
 		},
 	}
 
@@ -134,14 +134,14 @@ func (r *ToolRegistry) RegisterReplicationTools() {
 		Name:        "objstore_get_replication_policy",
 		Description: "Get details of a specific replication policy by ID. Returns full configuration and sync status.",
 		InputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
+			schemaType: schemaObject,
+			schemaProperties: map[string]any{
 				"id": map[string]any{
-					"type":        "string",
-					"description": "The ID of the replication policy to retrieve",
+					schemaType:        schemaString,
+					schemaDescription: "The ID of the replication policy to retrieve",
 				},
 			},
-			"required": []string{"id"},
+			schemaRequired: []string{"id"},
 		},
 	}
 
@@ -149,11 +149,11 @@ func (r *ToolRegistry) RegisterReplicationTools() {
 		Name:        "objstore_trigger_replication",
 		Description: "Manually trigger replication for all policies or a specific policy. Returns sync results including objects synced, failed, and bytes transferred.",
 		InputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"policy_id": map[string]any{
-					"type":        "string",
-					"description": "Optional policy ID to sync. If empty, syncs all enabled policies.",
+			schemaType: schemaObject,
+			schemaProperties: map[string]any{
+				fieldPolicyID: map[string]any{
+					schemaType:        schemaString,
+					schemaDescription: "Optional policy ID to sync. If empty, syncs all enabled policies.",
 				},
 			},
 		},
@@ -163,14 +163,14 @@ func (r *ToolRegistry) RegisterReplicationTools() {
 		Name:        "objstore_get_replication_status",
 		Description: "Get status and metrics for a specific replication policy. Returns comprehensive statistics including sync counts, errors, and performance metrics.",
 		InputSchema: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"policy_id": map[string]any{
-					"type":        "string",
-					"description": "The ID of the replication policy to get status for",
+			schemaType: schemaObject,
+			schemaProperties: map[string]any{
+				fieldPolicyID: map[string]any{
+					schemaType:        schemaString,
+					schemaDescription: "The ID of the replication policy to get status for",
 				},
 			},
-			"required": []string{"policy_id"},
+			schemaRequired: []string{fieldPolicyID},
 		},
 	}
 }
@@ -182,12 +182,12 @@ func (e *ToolExecutor) executeAddReplicationPolicy(ctx context.Context, args map
 		return "", ErrMissingParameter
 	}
 
-	sourceBackend, ok := args["source_backend"].(string)
+	sourceBackend, ok := args[fieldSourceBackend].(string)
 	if !ok || sourceBackend == "" {
 		return "", ErrMissingParameter
 	}
 
-	destinationBackend, ok := args["destination_backend"].(string)
+	destinationBackend, ok := args[fieldDestinationBackend].(string)
 	if !ok || destinationBackend == "" {
 		return "", ErrMissingParameter
 	}
@@ -228,7 +228,7 @@ func (e *ToolExecutor) executeAddReplicationPolicy(ctx context.Context, args map
 	}
 
 	var destinationSettings map[string]string
-	if settingsRaw, ok := args["destination_settings"]; ok {
+	if settingsRaw, ok := args[fieldDestinationSettings]; ok {
 		if settingsMap, ok := settingsRaw.(map[string]any); ok {
 			destinationSettings = make(map[string]string)
 			for k, v := range settingsMap {
@@ -240,7 +240,7 @@ func (e *ToolExecutor) executeAddReplicationPolicy(ctx context.Context, args map
 	}
 
 	sourcePrefix, _ := args["source_prefix"].(string)
-	enabled, _ := args["enabled"].(bool)
+	enabled, _ := args[fieldEnabled].(bool)
 
 	replicationModeStr, _ := args["replication_mode"].(string)
 	replicationMode := common.ReplicationMode(replicationModeStr)
@@ -307,9 +307,9 @@ func (e *ToolExecutor) executeAddReplicationPolicy(ctx context.Context, args map
 	}
 
 	result := map[string]any{
-		"success": true,
-		"id":      id,
-		"message": "replication policy added successfully",
+		fieldSuccess: true,
+		"id":         id,
+		fieldMessage: "replication policy added successfully",
 	}
 
 	jsonResult, _ := json.MarshalIndent(result, "", "  ")
@@ -336,9 +336,9 @@ func (e *ToolExecutor) executeRemoveReplicationPolicy(ctx context.Context, args 
 	}
 
 	result := map[string]any{
-		"success": true,
-		"id":      id,
-		"message": "replication policy removed successfully",
+		fieldSuccess: true,
+		"id":         id,
+		fieldMessage: "replication policy removed successfully",
 	}
 
 	jsonResult, _ := json.MarshalIndent(result, "", "  ")
@@ -363,24 +363,24 @@ func (e *ToolExecutor) executeListReplicationPolicies(ctx context.Context, args 
 	policyResults := make([]map[string]any, len(policies))
 	for i, policy := range policies {
 		policyResults[i] = map[string]any{
-			"id":                   policy.ID,
-			"source_backend":       policy.SourceBackend,
-			"source_settings":      policy.SourceSettings,
-			"source_prefix":        policy.SourcePrefix,
-			"destination_backend":  policy.DestinationBackend,
-			"destination_settings": policy.DestinationSettings,
-			"check_interval":       int64(policy.CheckInterval.Seconds()),
-			"last_sync_time":       policy.LastSyncTime.Format(time.RFC3339),
-			"enabled":              policy.Enabled,
-			"replication_mode":     policy.ReplicationMode,
-			"encryption":           policy.Encryption,
+			"id":                     policy.ID,
+			fieldSourceBackend:       policy.SourceBackend,
+			"source_settings":        policy.SourceSettings,
+			"source_prefix":          policy.SourcePrefix,
+			fieldDestinationBackend:  policy.DestinationBackend,
+			fieldDestinationSettings: policy.DestinationSettings,
+			"check_interval":         int64(policy.CheckInterval.Seconds()),
+			"last_sync_time":         policy.LastSyncTime.Format(time.RFC3339),
+			fieldEnabled:             policy.Enabled,
+			"replication_mode":       policy.ReplicationMode,
+			"encryption":             policy.Encryption,
 		}
 	}
 
 	result := map[string]any{
-		"success":  true,
-		"policies": policyResults,
-		"count":    len(policyResults),
+		fieldSuccess: true,
+		"policies":   policyResults,
+		"count":      len(policyResults),
 	}
 
 	jsonResult, _ := json.MarshalIndent(result, "", "  ")
@@ -407,18 +407,18 @@ func (e *ToolExecutor) executeGetReplicationPolicy(ctx context.Context, args map
 	}
 
 	result := map[string]any{
-		"success":              true,
-		"id":                   policy.ID,
-		"source_backend":       policy.SourceBackend,
-		"source_settings":      policy.SourceSettings,
-		"source_prefix":        policy.SourcePrefix,
-		"destination_backend":  policy.DestinationBackend,
-		"destination_settings": policy.DestinationSettings,
-		"check_interval":       int64(policy.CheckInterval.Seconds()),
-		"last_sync_time":       policy.LastSyncTime.Format(time.RFC3339),
-		"enabled":              policy.Enabled,
-		"replication_mode":     policy.ReplicationMode,
-		"encryption":           policy.Encryption,
+		fieldSuccess:             true,
+		"id":                     policy.ID,
+		fieldSourceBackend:       policy.SourceBackend,
+		"source_settings":        policy.SourceSettings,
+		"source_prefix":          policy.SourcePrefix,
+		fieldDestinationBackend:  policy.DestinationBackend,
+		fieldDestinationSettings: policy.DestinationSettings,
+		"check_interval":         int64(policy.CheckInterval.Seconds()),
+		"last_sync_time":         policy.LastSyncTime.Format(time.RFC3339),
+		fieldEnabled:             policy.Enabled,
+		"replication_mode":       policy.ReplicationMode,
+		"encryption":             policy.Encryption,
 	}
 
 	jsonResult, _ := json.MarshalIndent(result, "", "  ")
@@ -427,7 +427,7 @@ func (e *ToolExecutor) executeGetReplicationPolicy(ctx context.Context, args map
 
 // executeTriggerReplication executes the objstore_trigger_replication tool
 func (e *ToolExecutor) executeTriggerReplication(ctx context.Context, args map[string]any) (string, error) {
-	policyID, _ := args["policy_id"].(string)
+	policyID, _ := args[fieldPolicyID].(string)
 
 	// Get replication manager from facade
 	repMgr, err := objstore.GetReplicationManager(e.backend)
@@ -451,9 +451,9 @@ func (e *ToolExecutor) executeTriggerReplication(ctx context.Context, args map[s
 	}
 
 	result := map[string]any{
-		"success": true,
+		fieldSuccess: true,
 		"result": map[string]any{
-			"policy_id":   syncResult.PolicyID,
+			fieldPolicyID: syncResult.PolicyID,
 			"synced":      syncResult.Synced,
 			"deleted":     syncResult.Deleted,
 			"failed":      syncResult.Failed,
@@ -461,7 +461,7 @@ func (e *ToolExecutor) executeTriggerReplication(ctx context.Context, args map[s
 			"duration":    syncResult.Duration.String(),
 			"errors":      syncResult.Errors,
 		},
-		"message": "replication triggered successfully",
+		fieldMessage: "replication triggered successfully",
 	}
 
 	jsonResult, _ := json.MarshalIndent(result, "", "  ")
@@ -470,7 +470,7 @@ func (e *ToolExecutor) executeTriggerReplication(ctx context.Context, args map[s
 
 // executeGetReplicationStatus executes the objstore_get_replication_status tool
 func (e *ToolExecutor) executeGetReplicationStatus(ctx context.Context, args map[string]any) (string, error) {
-	policyID, ok := args["policy_id"].(string)
+	policyID, ok := args[fieldPolicyID].(string)
 	if !ok || policyID == "" {
 		return "", ErrMissingParameter
 	}
@@ -490,11 +490,11 @@ func (e *ToolExecutor) executeGetReplicationStatus(ctx context.Context, args map
 	}
 
 	result := map[string]any{
-		"success":               true,
-		"policy_id":             replicationStatus.PolicyID,
-		"source_backend":        replicationStatus.SourceBackend,
-		"destination_backend":   replicationStatus.DestinationBackend,
-		"enabled":               replicationStatus.Enabled,
+		fieldSuccess:            true,
+		fieldPolicyID:           replicationStatus.PolicyID,
+		fieldSourceBackend:      replicationStatus.SourceBackend,
+		fieldDestinationBackend: replicationStatus.DestinationBackend,
+		fieldEnabled:            replicationStatus.Enabled,
 		"total_objects_synced":  replicationStatus.TotalObjectsSynced,
 		"total_objects_deleted": replicationStatus.TotalObjectsDeleted,
 		"total_bytes_synced":    replicationStatus.TotalBytesSynced,
@@ -512,7 +512,7 @@ func (e *ToolExecutor) executeGetReplicationStatus(ctx context.Context, args map
 func parseEncryptionConfig(m map[string]any) *common.EncryptionConfig {
 	config := &common.EncryptionConfig{}
 
-	if enabled, ok := m["enabled"].(bool); ok {
+	if enabled, ok := m[fieldEnabled].(bool); ok {
 		config.Enabled = enabled
 	}
 

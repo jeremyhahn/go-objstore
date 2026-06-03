@@ -2,7 +2,7 @@
 
 A unified object storage and file system abstraction library for Go.
 
-[![Go Version](https://img.shields.io/badge/go-1.23+-blue.svg)](https://golang.org)
+[![Go Version](https://img.shields.io/badge/go-1.26+-blue.svg)](https://golang.org)
 [![codecov](https://codecov.io/gh/jeremyhahn/go-objstore/branch/main/graph/badge.svg)](https://codecov.io/gh/jeremyhahn/go-objstore)
 [![Security](https://img.shields.io/badge/security-0%20issues-brightgreen.svg)](#test-coverage)
 [![AGPL-3.0 License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE-AGPL-3.txt)
@@ -19,7 +19,7 @@ A unified object storage and file system abstraction library for Go.
 - Pluggable adapters for custom logging and authentication
 - Full filesystem interface with directory operations
 - Lifecycle policies for automatic deletion and archival
-- Multiple server interfaces: gRPC, REST, QUIC/HTTP3, and MCP
+- Multiple server protocols: gRPC, REST, QUIC/HTTP3, Unix socket, and MCP
 - CLI tool with flexible configuration options
 - C API for embedding in C/C++ applications
 - TLS/mTLS support for secure communication
@@ -467,15 +467,23 @@ go-objstore/
 │   ├── s3/                    # Amazon S3 backend
 │   ├── gcs/                   # Google Cloud Storage backend
 │   ├── azure/                 # Azure Blob Storage backend
+│   ├── minio/                 # MinIO S3-compatible backend
 │   ├── glacier/               # AWS Glacier archiver
 │   ├── azurearchive/          # Azure Archive archiver
 │   ├── storagefs/             # Filesystem abstraction
+│   ├── replication/           # Replication engine
+│   ├── audit/                 # Audit logging
+│   ├── adapters/              # Custom logging and TLS adapters
+│   ├── pool/                  # Connection pooling
 │   ├── cli/                   # CLI commands and config
+│   ├── version/               # Version information
 │   └── server/                # Server implementations
 │       ├── grpc/              # gRPC server
 │       ├── rest/              # REST API server
 │       ├── quic/              # QUIC/HTTP3 server
-│       └── mcp/               # MCP server
+│       ├── unix/              # Unix socket server
+│       ├── mcp/               # MCP server
+│       └── middleware/        # Rate limiting and security middleware
 ├── cmd/
 │   ├── objstore/              # CLI binary
 │   ├── objstore-server/       # All-in-one multi-protocol server
@@ -497,7 +505,7 @@ go-objstore/
 
 ### Prerequisites
 
-- Go 1.23 or higher
+- Go 1.26.3 or higher
 - Docker (for integration tests)
 - Make
 
@@ -565,6 +573,11 @@ All backends implement a common Storage interface:
 
 ```go
 type Storage interface {
+    LifecycleManager  // Embedded: AddPolicy, RemovePolicy, GetPolicies
+
+    // Configuration
+    Configure(settings map[string]string) error
+
     // Basic operations
     Put(key string, data io.Reader) error
     Get(key string) (io.ReadCloser, error)
@@ -586,11 +599,6 @@ type Storage interface {
     Exists(ctx context.Context, key string) (bool, error)
     ListWithOptions(ctx context.Context, opts *ListOptions) (*ListResult, error)
     Archive(key string, destination Archiver) error
-
-    // Lifecycle management
-    AddPolicy(policy LifecyclePolicy) error
-    RemovePolicy(id string) error
-    GetPolicies() ([]LifecyclePolicy, error)
 }
 ```
 

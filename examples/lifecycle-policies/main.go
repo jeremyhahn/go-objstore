@@ -24,6 +24,12 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
 )
 
+const (
+	configKeyPath = "path"
+	actionDelete  = "delete"
+	actionArchive = "archive"
+)
+
 // Example demonstrating lifecycle policies for automatic deletion and archival
 
 func main() {
@@ -45,7 +51,7 @@ func main() {
 func deletePolicyExample() {
 	// Create storage backend
 	storage, err := factory.NewStorage("local", map[string]string{
-		"path": "/tmp/objstore-lifecycle",
+		configKeyPath: "/tmp/objstore-lifecycle",
 	})
 	if err != nil {
 		log.Fatalf("Failed to create storage: %v", err)
@@ -69,7 +75,7 @@ func deletePolicyExample() {
 	deletePolicy := common.LifecyclePolicy{
 		ID:        "delete-old-logs",
 		Prefix:    "logs/",
-		Action:    "delete",
+		Action:    actionDelete,
 		Retention: 30 * 24 * time.Hour,
 	}
 
@@ -97,7 +103,7 @@ func deletePolicyExample() {
 func archivePolicyExample() {
 	// Create primary storage
 	storage, err := factory.NewStorage("local", map[string]string{
-		"path": "/tmp/objstore-primary",
+		configKeyPath: "/tmp/objstore-primary",
 	})
 	if err != nil {
 		log.Fatalf("Failed to create storage: %v", err)
@@ -105,7 +111,7 @@ func archivePolicyExample() {
 
 	// Create archival storage (using local as example, could be Glacier)
 	archiveStorage, err := factory.NewArchiver("local", map[string]string{
-		"path": "/tmp/objstore-archive",
+		configKeyPath: "/tmp/objstore-archive",
 	})
 	if err != nil {
 		log.Fatalf("Failed to create archiver: %v", err)
@@ -129,7 +135,7 @@ func archivePolicyExample() {
 	archivePolicy := common.LifecyclePolicy{
 		ID:          "archive-old-reports",
 		Prefix:      "data/reports/",
-		Action:      "archive",
+		Action:      actionArchive,
 		Destination: archiveStorage,
 		Retention:   90 * 24 * time.Hour,
 	}
@@ -157,7 +163,7 @@ func archivePolicyExample() {
 
 func policyManagementExample() {
 	storage, _ := factory.NewStorage("local", map[string]string{
-		"path": "/tmp/objstore-policies",
+		configKeyPath: "/tmp/objstore-policies",
 	})
 
 	// Add multiple policies
@@ -165,19 +171,19 @@ func policyManagementExample() {
 		{
 			ID:        "delete-temp-files",
 			Prefix:    "temp/",
-			Action:    "delete",
+			Action:    actionDelete,
 			Retention: 24 * time.Hour,
 		},
 		{
 			ID:        "delete-cache",
 			Prefix:    "cache/",
-			Action:    "delete",
+			Action:    actionDelete,
 			Retention: 7 * 24 * time.Hour,
 		},
 		{
 			ID:        "delete-old-logs",
 			Prefix:    "logs/",
-			Action:    "delete",
+			Action:    actionDelete,
 			Retention: 30 * 24 * time.Hour,
 		},
 	}
@@ -247,7 +253,7 @@ func glacierArchiveExample() {
 	archivePolicy := common.LifecyclePolicy{
 		ID:          "s3-to-glacier",
 		Prefix:      "historical-data/",
-		Action:      "archive",
+		Action:      actionArchive,
 		Destination: glacier,
 		Retention:   365 * 24 * time.Hour,
 	}
@@ -261,7 +267,7 @@ func glacierArchiveExample() {
 	deletePolicy := common.LifecyclePolicy{
 		ID:        "cleanup-uploads",
 		Prefix:    "uploads/temp/",
-		Action:    "delete",
+		Action:    actionDelete,
 		Retention: 7 * 24 * time.Hour,
 	}
 
@@ -283,7 +289,7 @@ func multiTierArchivalExample() {
 
 	// Tier 2: Warm data in local storage
 	warmStorage, _ := factory.NewArchiver("local", map[string]string{
-		"path": "/mnt/warm-storage",
+		configKeyPath: "/mnt/warm-storage",
 	})
 
 	// Tier 3: Cold data in Glacier
@@ -296,7 +302,7 @@ func multiTierArchivalExample() {
 	warmPolicy := common.LifecyclePolicy{
 		ID:          "to-warm",
 		Prefix:      "data/",
-		Action:      "archive",
+		Action:      actionArchive,
 		Destination: warmStorage,
 		Retention:   30 * 24 * time.Hour,
 	}
@@ -305,7 +311,7 @@ func multiTierArchivalExample() {
 	coldPolicy := common.LifecyclePolicy{
 		ID:          "to-cold",
 		Prefix:      "data/",
-		Action:      "archive",
+		Action:      actionArchive,
 		Destination: coldStorage,
 		Retention:   365 * 24 * time.Hour,
 	}
@@ -361,13 +367,13 @@ func runLifecycleManager(storage common.Storage, interval time.Duration) {
 					age := time.Since(meta.LastModified)
 					if age > policy.Retention {
 						// Execute policy action
-						if policy.Action == "delete" {
+						if policy.Action == actionDelete {
 							if err := storage.Delete(key); err != nil {
 								log.Printf("Failed to delete %s: %v", key, err)
 							} else {
 								log.Printf("Deleted %s (age: %v)", key, age)
 							}
-						} else if policy.Action == "archive" && policy.Destination != nil {
+						} else if policy.Action == actionArchive && policy.Destination != nil {
 							if err := storage.Archive(key, policy.Destination); err != nil {
 								log.Printf("Failed to archive %s: %v", key, err)
 							} else {

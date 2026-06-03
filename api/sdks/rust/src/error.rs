@@ -71,8 +71,14 @@ pub enum Error {
     Generic(String),
 }
 
-impl From<h3::Error> for Error {
-    fn from(err: h3::Error) -> Self {
+impl From<h3::error::ConnectionError> for Error {
+    fn from(err: h3::error::ConnectionError) -> Self {
+        Error::H3(err.to_string())
+    }
+}
+
+impl From<h3::error::StreamError> for Error {
+    fn from(err: h3::error::StreamError) -> Self {
         Error::H3(err.to_string())
     }
 }

@@ -629,7 +629,9 @@ class GrpcClient:
             request = objstore_pb2.GetReplicationPolicyRequest(id=policy_id)
             response = self.stub.GetReplicationPolicy(request, timeout=self.timeout)
 
-            if response.success and response.HasField("policy"):
+            # GetReplicationPolicyResponse has no success field in the proto;
+            # check only whether the policy message is present.
+            if response.HasField("policy"):
                 p = response.policy
                 return ReplicationPolicy(
                     id=p.id,
@@ -643,7 +645,7 @@ class GrpcClient:
                 )
 
             return ReplicationPolicy(
-                id="", source_backend="", destination_backend="", check_interval_seconds=0
+                id="", source_backend="", destination_backend=""
             )
 
         except grpc.RpcError as e:
@@ -704,7 +706,8 @@ class GrpcClient:
             ObjectStoreError: On failure
         """
         try:
-            request = objstore_pb2.GetReplicationStatusRequest(policy_id=policy_id)
+            # The proto field name is "id", not "policy_id".
+            request = objstore_pb2.GetReplicationStatusRequest(id=policy_id)
             response = self.stub.GetReplicationStatus(request, timeout=self.timeout)
 
             status = None
@@ -712,7 +715,15 @@ class GrpcClient:
                 s = response.status
                 last_sync = None
                 if s.HasField("last_sync_time"):
-                    last_sync = datetime.fromtimestamp(s.last_sync_time.seconds)
+                    ts_secs = s.last_sync_time.seconds
+                    # The Go zero time.Time maps to -62135596800 (year 0001).
+                    # Python's datetime cannot represent pre-epoch or pre-1678
+                    # timestamps safely, so treat any seconds <= 0 as no sync.
+                    if ts_secs > 0:
+                        try:
+                            last_sync = datetime.fromtimestamp(ts_secs)
+                        except (ValueError, OSError, OverflowError):
+                            last_sync = None
 
                 status = ReplicationStatus(
                     policy_id=s.policy_id,

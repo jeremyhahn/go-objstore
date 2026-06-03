@@ -33,16 +33,19 @@ import (
 
 // MockReplicationManager implements common.ReplicationManager for testing
 type MockReplicationManager struct {
-	policies            map[string]common.ReplicationPolicy
-	replicationStatuses map[string]*replicationPkg.ReplicationStatus
-	syncCalled          bool
-	syncPolicyID        string
-	syncAllCalled       bool
-	addError            error
-	removeError         error
-	getError            error
-	syncError           error
-	getStatusError      error
+	policies                 map[string]common.ReplicationPolicy
+	replicationStatuses      map[string]*replicationPkg.ReplicationStatus
+	syncCalled               bool
+	syncPolicyID             string
+	syncAllCalled            bool
+	syncAllParallelCalled    bool
+	syncPolicyParallelCalled bool
+	lastWorkerCount          int
+	addError                 error
+	removeError              error
+	getError                 error
+	syncError                error
+	getStatusError           error
 }
 
 func NewMockReplicationManager() *MockReplicationManager {
@@ -129,6 +132,42 @@ func (m *MockReplicationManager) SyncPolicy(ctx context.Context, policyID string
 	}
 	m.syncCalled = true
 	m.syncPolicyID = policyID
+	return &common.SyncResult{
+		PolicyID:   policyID,
+		Synced:     5,
+		Deleted:    1,
+		Failed:     0,
+		BytesTotal: 512,
+		Duration:   2 * time.Second,
+	}, nil
+}
+
+func (m *MockReplicationManager) SyncAllParallel(ctx context.Context, workerCount int) (*common.SyncResult, error) {
+	if m.syncError != nil {
+		return nil, m.syncError
+	}
+	m.syncAllParallelCalled = true
+	m.lastWorkerCount = workerCount
+	return &common.SyncResult{
+		PolicyID:   "all",
+		Synced:     10,
+		Deleted:    2,
+		Failed:     1,
+		BytesTotal: 1024,
+		Duration:   5 * time.Second,
+	}, nil
+}
+
+func (m *MockReplicationManager) SyncPolicyParallel(ctx context.Context, policyID string, workerCount int) (*common.SyncResult, error) {
+	if m.syncError != nil {
+		return nil, m.syncError
+	}
+	if _, exists := m.policies[policyID]; !exists {
+		return nil, common.ErrPolicyNotFound
+	}
+	m.syncPolicyParallelCalled = true
+	m.syncPolicyID = policyID
+	m.lastWorkerCount = workerCount
 	return &common.SyncResult{
 		PolicyID:   policyID,
 		Synced:     5,

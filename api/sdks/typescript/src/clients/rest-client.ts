@@ -1,4 +1,4 @@
-import axios, { AxiosInstance, AxiosError } from 'axios';
+import axios, { AxiosHeaders, AxiosInstance, AxiosError } from 'axios';
 import {
   ClientConfig,
   IObjectStoreClient,
@@ -65,7 +65,21 @@ export class RestClient implements IObjectStoreClient {
       const headers: Record<string, string> = {};
 
       if (request.metadata) {
-        headers['X-Metadata'] = JSON.stringify(this.serializeMetadata(request.metadata));
+        const metadata = request.metadata;
+
+        // Content type and encoding are carried in the standard HTTP headers.
+        if (metadata.contentType) {
+          headers['Content-Type'] = metadata.contentType;
+        }
+        if (metadata.contentEncoding) {
+          headers['Content-Encoding'] = metadata.contentEncoding;
+        }
+
+        // Custom metadata is carried as a JSON object (string->string map) in
+        // the X-Object-Metadata header. Omit the header when there is no custom.
+        if (metadata.custom && Object.keys(metadata.custom).length > 0) {
+          headers['X-Object-Metadata'] = JSON.stringify(metadata.custom);
+        }
       }
 
       const response = await this.client.put(`/objects/${encodeURIComponent(request.key)}`, request.data, {
@@ -88,13 +102,16 @@ export class RestClient implements IObjectStoreClient {
         responseType: 'arraybuffer',
       });
 
+      const headers = response.headers as AxiosHeaders;
       const metadata: Metadata = {
-        contentType: response.headers['content-type'],
-        size: parseInt(response.headers['content-length'] || '0', 10),
-        etag: response.headers.etag,
-        lastModified: response.headers['last-modified']
-          ? new Date(response.headers['last-modified'])
+        contentType: this.headerString(headers.get('content-type')),
+        contentEncoding: this.headerString(headers.get('content-encoding')),
+        size: parseInt(this.headerString(headers.get('content-length')) ?? '0', 10),
+        etag: this.headerString(headers.get('etag')),
+        lastModified: headers.get('last-modified')
+          ? new Date(this.headerString(headers.get('last-modified')) as string)
           : undefined,
+        custom: this.parseCustomMetadataHeader(this.headerString(headers.get('x-object-metadata'))),
       };
 
       return {
@@ -160,8 +177,23 @@ export class RestClient implements IObjectStoreClient {
         `/metadata/${encodeURIComponent(request.key)}`
       );
 
+      const metadata = this.deserializeMetadata(response.data);
+
+      // Custom metadata is carried as a JSON object in the X-Object-Metadata
+      // response header; prefer it over the JSON body when present.
+      const metaHeaders = response.headers as AxiosHeaders;
+      const headerCustom = this.parseCustomMetadataHeader(
+        this.headerString(metaHeaders.get('x-object-metadata'))
+      );
+      if (headerCustom) {
+        metadata.custom = headerCustom;
+      }
+      if (metaHeaders.get('content-encoding')) {
+        metadata.contentEncoding = this.headerString(metaHeaders.get('content-encoding'));
+      }
+
       return {
-        metadata: this.deserializeMetadata(response.data),
+        metadata,
         success: true,
       };
     } catch (error) {
@@ -431,26 +463,27 @@ export class RestClient implements IObjectStoreClient {
         `/replication/status/${encodeURIComponent(request.id)}`
       );
 
+      // The server returns ReplicationStatusResponse fields at the top level of
+      // the response body (not wrapped in a "status" key).
+      const d = response.data;
       return {
-        success: response.data.success || true,
-        status: response.data.status
+        success: d.success !== undefined ? d.success : true,
+        status: d.policy_id !== undefined
           ? {
-              policyId: response.data.status.policy_id,
-              sourceBackend: response.data.status.source_backend,
-              destinationBackend: response.data.status.destination_backend,
-              enabled: response.data.status.enabled,
-              totalObjectsSynced: response.data.status.total_objects_synced,
-              totalObjectsDeleted: response.data.status.total_objects_deleted,
-              totalBytesSynced: response.data.status.total_bytes_synced,
-              totalErrors: response.data.status.total_errors,
-              lastSyncTime: response.data.status.last_sync_time
-                ? new Date(response.data.status.last_sync_time)
-                : undefined,
-              averageSyncDurationMs: response.data.status.average_sync_duration_ms,
-              syncCount: response.data.status.sync_count,
+              policyId: d.policy_id,
+              sourceBackend: d.source_backend,
+              destinationBackend: d.destination_backend,
+              enabled: d.enabled,
+              totalObjectsSynced: d.total_objects_synced,
+              totalObjectsDeleted: d.total_objects_deleted,
+              totalBytesSynced: d.total_bytes_synced,
+              totalErrors: d.total_errors,
+              lastSyncTime: d.last_sync_time ? new Date(d.last_sync_time) : undefined,
+              averageSyncDurationMs: this.parseDurationToMs(d.average_sync_duration),
+              syncCount: d.sync_count,
             }
           : undefined,
-        message: response.data.message,
+        message: d.message,
       };
     } catch (error) {
       return this.handleError(error);
@@ -473,6 +506,35 @@ export class RestClient implements IObjectStoreClient {
     };
   }
 
+  // headerString extracts a plain string from an AxiosHeaderValue, which may be
+  // a string, number, boolean, string[], AxiosHeaders, or null. Returns undefined
+  // for any non-string-representable or absent value.
+  private headerString(value: import('axios').AxiosHeaderValue): string | undefined {
+    if (value === null || value === undefined) return undefined;
+    if (typeof value === 'string') return value;
+    return undefined;
+  }
+
+  // parseCustomMetadataHeader parses the X-Object-Metadata response header,
+  // which carries the custom string->string map as a JSON object. Returns
+  // undefined when the header is absent or cannot be parsed.
+  private parseCustomMetadataHeader(
+    header: string | undefined
+  ): Record<string, string> | undefined {
+    if (!header) {
+      return undefined;
+    }
+    try {
+      const parsed = JSON.parse(header);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, string>;
+      }
+    } catch {
+      // Ignore malformed header and fall back to undefined.
+    }
+    return undefined;
+  }
+
   private deserializeMetadata(obj: any): Metadata {
     return {
       contentType: obj.content_type || obj.metadata?.content_type,
@@ -485,6 +547,28 @@ export class RestClient implements IObjectStoreClient {
       etag: obj.etag || obj.metadata?.etag,
       custom: obj.custom || obj.metadata?.custom || obj.metadata,
     };
+  }
+
+  // parseDurationToMs converts a Go time.Duration string (e.g. "1.5ms", "2s",
+  // "500µs", "300ns") to a millisecond number. Returns 0 for absent/unparseable
+  // values so callers always receive a valid number.
+  private parseDurationToMs(duration: string | undefined): number {
+    if (!duration) return 0;
+    // Go duration format: a decimal number with unit suffix.
+    // Units: ns, µs (or us), ms, s, m, h
+    const match = duration.match(/^(-?[0-9]*\.?[0-9]+)(ns|µs|us|ms|s|m|h)$/);
+    if (!match) return 0;
+    const value = parseFloat(match[1]);
+    switch (match[2]) {
+      case 'ns': return value / 1e6;
+      case 'µs':
+      case 'us': return value / 1e3;
+      case 'ms': return value;
+      case 's':  return value * 1e3;
+      case 'm':  return value * 60e3;
+      case 'h':  return value * 3600e3;
+      default:   return 0;
+    }
   }
 
   private handleError(error: unknown): never {

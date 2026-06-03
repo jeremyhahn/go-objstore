@@ -270,13 +270,21 @@ func (h *Handler) TriggerReplication(c *gin.Context) {
 
 	var result *common.SyncResult
 
-	// Trigger sync
-	if policyID == "" {
+	// Trigger sync, honoring the parallel/worker_count request fields.
+	ctx := c.Request.Context()
+	switch {
+	case req.Parallel && policyID == "":
+		// Sync all policies in parallel
+		result, err = repMgr.SyncAllParallel(ctx, req.WorkerCount)
+	case req.Parallel:
+		// Sync a specific policy in parallel
+		result, err = repMgr.SyncPolicyParallel(ctx, policyID, req.WorkerCount)
+	case policyID == "":
 		// Sync all policies
-		result, err = repMgr.SyncAll(c.Request.Context())
-	} else {
+		result, err = repMgr.SyncAll(ctx)
+	default:
 		// Sync specific policy
-		result, err = repMgr.SyncPolicy(c.Request.Context(), policyID)
+		result, err = repMgr.SyncPolicy(ctx, policyID)
 	}
 
 	// Audit logging

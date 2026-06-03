@@ -1,10 +1,18 @@
-import { RestClient } from '../../src/clients/rest-client';
 import nock from 'nock';
-import { HealthStatus } from '../../src/types';
+import { RestClient } from '../../src/clients/rest-client';
+import { HealthStatus, ReplicationMode } from '../../src/types';
 
+/**
+ * Canonical REST client unit-test matrix.
+ *
+ * For each of the 19 operations: success + error (HTTP 5xx). Nine operations
+ * additionally get a not_found (HTTP 404) case. Plus metadata_round_trip and
+ * validation_empty_key cross-cutting cases. The transport is mocked with nock;
+ * no live server is required.
+ */
 describe('RestClient', () => {
-  let client: RestClient;
   const baseUrl = 'http://localhost:8080';
+  let client: RestClient;
 
   beforeEach(() => {
     client = new RestClient({ baseUrl });
@@ -14,629 +22,650 @@ describe('RestClient', () => {
     nock.cleanAll();
   });
 
+  // --------------------------------------------------------------------------
+  // put
+  // --------------------------------------------------------------------------
   describe('put', () => {
-    it('should upload an object successfully', async () => {
-      nock(baseUrl)
+    it('rest_put_success', async () => {
+      const scope = nock(baseUrl)
         .put('/objects/test-key')
-        .reply(201, { message: 'success', success: true }, { etag: 'test-etag' });
+        .reply(200, { message: 'Object stored successfully' }, { etag: '"abc123"' });
 
-      const result = await client.put({
-        key: 'test-key',
-        data: Buffer.from('test data'),
-      });
+      const response = await client.put({ key: 'test-key', data: Buffer.from('test data') });
 
-      expect(result.success).toBe(true);
-      expect(result.etag).toBe('test-etag');
+      expect(response.success).toBe(true);
+      expect(response.message).toBe('Object stored successfully');
+      expect(response.etag).toBe('"abc123"');
+      scope.done();
     });
 
-    it('should upload an object with metadata', async () => {
-      nock(baseUrl).put('/objects/test-key').reply(201, { message: 'success' });
+    it('rest_put_error', async () => {
+      nock(baseUrl).put('/objects/test-key').reply(500, { message: 'Internal server error' });
 
-      const result = await client.put({
-        key: 'test-key',
-        data: Buffer.from('test data'),
-        metadata: {
-          contentType: 'text/plain',
-          custom: { author: 'test' },
-        },
-      });
-
-      expect(result.success).toBe(true);
+      await expect(
+        client.put({ key: 'test-key', data: Buffer.from('test data') })
+      ).rejects.toThrow('REST API error (500)');
     });
   });
 
+  // --------------------------------------------------------------------------
+  // get
+  // --------------------------------------------------------------------------
   describe('get', () => {
-    it('should retrieve an object successfully', async () => {
-      const data = 'test data';
-      nock(baseUrl)
+    it('rest_get_success', async () => {
+      const scope = nock(baseUrl)
         .get('/objects/test-key')
-        .reply(200, data, {
-          'content-type': 'text/plain',
-          'content-length': data.length.toString(),
-          etag: 'test-etag',
+        .reply(200, 'test data', { 'content-type': 'text/plain', etag: '"abc123"' });
+
+      const response = await client.get({ key: 'test-key' });
+
+      expect(response.data.toString()).toBe('test data');
+      expect(response.metadata?.contentType).toBe('text/plain');
+      scope.done();
+    });
+
+    it('rest_get_error', async () => {
+      nock(baseUrl).get('/objects/test-key').reply(500, 'boom');
+      await expect(client.get({ key: 'test-key' })).rejects.toThrow('REST API error (500)');
+    });
+
+    it('rest_get_not_found', async () => {
+      nock(baseUrl).get('/objects/missing').reply(404, 'not found');
+      await expect(client.get({ key: 'missing' })).rejects.toThrow('REST API error (404)');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // delete
+  // --------------------------------------------------------------------------
+  describe('delete', () => {
+    it('rest_delete_success', async () => {
+      const scope = nock(baseUrl).delete('/objects/test-key').reply(200, { message: 'deleted' });
+
+      const response = await client.delete({ key: 'test-key' });
+
+      expect(response.success).toBe(true);
+      expect(response.message).toBe('deleted');
+      scope.done();
+    });
+
+    it('rest_delete_error', async () => {
+      nock(baseUrl).delete('/objects/test-key').reply(500, { message: 'boom' });
+      await expect(client.delete({ key: 'test-key' })).rejects.toThrow('REST API error (500)');
+    });
+
+    it('rest_delete_not_found', async () => {
+      nock(baseUrl).delete('/objects/missing').reply(404, { message: 'not found' });
+      await expect(client.delete({ key: 'missing' })).rejects.toThrow('REST API error (404)');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // list
+  // --------------------------------------------------------------------------
+  describe('list', () => {
+    it('rest_list_success', async () => {
+      const scope = nock(baseUrl)
+        .get('/objects')
+        .query(true)
+        .reply(200, {
+          objects: [{ key: 'a', content_type: 'text/plain', size: 3 }],
+          common_prefixes: ['p/'],
+          next_token: 'tok',
+          truncated: true,
         });
 
-      const result = await client.get({ key: 'test-key' });
+      const response = await client.list({ prefix: 'a', maxResults: 10, continueFrom: 'x' });
 
-      expect(result.data.toString()).toBe(data);
-      expect(result.metadata?.contentType).toBe('text/plain');
-      expect(result.metadata?.etag).toBe('test-etag');
+      expect(response.objects).toHaveLength(1);
+      expect(response.objects[0].key).toBe('a');
+      expect(response.commonPrefixes).toEqual(['p/']);
+      expect(response.nextToken).toBe('tok');
+      expect(response.truncated).toBe(true);
+      scope.done();
     });
 
-    it('should throw error when object not found', async () => {
-      nock(baseUrl).get('/objects/missing-key').reply(404, { error: 'Not Found' });
-
-      await expect(client.get({ key: 'missing-key' })).rejects.toThrow();
-    });
-  });
-
-  describe('delete', () => {
-    it('should delete an object successfully', async () => {
-      nock(baseUrl).delete('/objects/test-key').reply(200, { message: 'deleted' });
-
-      const result = await client.delete({ key: 'test-key' });
-
-      expect(result.success).toBe(true);
+    it('rest_list_error', async () => {
+      nock(baseUrl).get('/objects').query(true).reply(500, { message: 'boom' });
+      await expect(client.list()).rejects.toThrow('REST API error (500)');
     });
   });
 
-  describe('list', () => {
-    it('should list objects without filters', async () => {
-      nock(baseUrl).get('/objects').reply(200, {
-        objects: [
-          { key: 'file1.txt', size: 100 },
-          { key: 'file2.txt', size: 200 },
-        ],
-        truncated: false,
-      });
-
-      const result = await client.list({});
-
-      expect(result.objects).toHaveLength(2);
-      expect(result.objects[0].key).toBe('file1.txt');
-      expect(result.truncated).toBe(false);
-    });
-
-    it('should list objects with prefix filter', async () => {
-      nock(baseUrl).get('/objects?prefix=docs%2F').reply(200, {
-        objects: [{ key: 'docs/file1.txt', size: 100 }],
-        truncated: false,
-      });
-
-      const result = await client.list({ prefix: 'docs/' });
-
-      expect(result.objects).toHaveLength(1);
-      expect(result.objects[0].key).toBe('docs/file1.txt');
-    });
-
-    it('should handle pagination', async () => {
-      nock(baseUrl).get('/objects?limit=10&token=next-token').reply(200, {
-        objects: [{ key: 'file1.txt', size: 100 }],
-        next_token: 'another-token',
-        truncated: true,
-      });
-
-      const result = await client.list({
-        maxResults: 10,
-        continueFrom: 'next-token',
-      });
-
-      expect(result.nextToken).toBe('another-token');
-      expect(result.truncated).toBe(true);
-    });
-  });
-
+  // --------------------------------------------------------------------------
+  // exists
+  // --------------------------------------------------------------------------
   describe('exists', () => {
-    it('should return true when object exists', async () => {
-      nock(baseUrl).head('/objects/test-key').reply(200);
-
-      const result = await client.exists({ key: 'test-key' });
-
-      expect(result.exists).toBe(true);
+    it('rest_exists_success', async () => {
+      const scope = nock(baseUrl).head('/objects/test-key').reply(200);
+      const response = await client.exists({ key: 'test-key' });
+      expect(response.exists).toBe(true);
+      scope.done();
     });
 
-    it('should return false when object does not exist', async () => {
-      nock(baseUrl).head('/objects/missing-key').reply(404);
+    it('rest_exists_error', async () => {
+      nock(baseUrl).head('/objects/test-key').reply(500);
+      await expect(client.exists({ key: 'test-key' })).rejects.toThrow('REST API error (500)');
+    });
 
-      const result = await client.exists({ key: 'missing-key' });
-
-      expect(result.exists).toBe(false);
+    it('rest_exists_not_found', async () => {
+      const scope = nock(baseUrl).head('/objects/missing').reply(404);
+      const response = await client.exists({ key: 'missing' });
+      expect(response.exists).toBe(false);
+      scope.done();
     });
   });
 
+  // --------------------------------------------------------------------------
+  // getMetadata
+  // --------------------------------------------------------------------------
   describe('getMetadata', () => {
-    it('should retrieve object metadata', async () => {
-      nock(baseUrl).get('/metadata/test-key').reply(200, {
-        content_type: 'text/plain',
-        size: 100,
-        etag: 'test-etag',
-      });
+    it('rest_get_metadata_success', async () => {
+      const scope = nock(baseUrl)
+        .get('/metadata/test-key')
+        .reply(
+          200,
+          { content_type: 'text/plain', size: 9, etag: '"e"' },
+          { 'x-object-metadata': JSON.stringify({ author: 'jane' }) }
+        );
 
-      const result = await client.getMetadata({ key: 'test-key' });
+      const response = await client.getMetadata({ key: 'test-key' });
 
-      expect(result.success).toBe(true);
-      expect(result.metadata?.contentType).toBe('text/plain');
-      expect(result.metadata?.size).toBe(100);
+      expect(response.success).toBe(true);
+      expect(response.metadata?.contentType).toBe('text/plain');
+      expect(response.metadata?.custom).toEqual({ author: 'jane' });
+      scope.done();
+    });
+
+    it('rest_get_metadata_error', async () => {
+      nock(baseUrl).get('/metadata/test-key').reply(500, { message: 'boom' });
+      await expect(client.getMetadata({ key: 'test-key' })).rejects.toThrow('REST API error (500)');
+    });
+
+    it('rest_get_metadata_not_found', async () => {
+      nock(baseUrl).get('/metadata/missing').reply(404, { message: 'not found' });
+      await expect(client.getMetadata({ key: 'missing' })).rejects.toThrow('REST API error (404)');
     });
   });
 
+  // --------------------------------------------------------------------------
+  // updateMetadata
+  // --------------------------------------------------------------------------
   describe('updateMetadata', () => {
-    it('should update object metadata', async () => {
-      nock(baseUrl).put('/metadata/test-key').reply(200, { message: 'updated' });
+    it('rest_update_metadata_success', async () => {
+      const scope = nock(baseUrl).put('/metadata/test-key').reply(200, { message: 'updated' });
 
-      const result = await client.updateMetadata({
+      const response = await client.updateMetadata({
         key: 'test-key',
-        metadata: {
-          contentType: 'application/json',
-          custom: { version: '2.0' },
-        },
+        metadata: { contentType: 'text/plain' },
       });
 
-      expect(result.success).toBe(true);
+      expect(response.success).toBe(true);
+      expect(response.message).toBe('updated');
+      scope.done();
+    });
+
+    it('rest_update_metadata_error', async () => {
+      nock(baseUrl).put('/metadata/test-key').reply(500, { message: 'boom' });
+      await expect(
+        client.updateMetadata({ key: 'test-key', metadata: { contentType: 'text/plain' } })
+      ).rejects.toThrow('REST API error (500)');
+    });
+
+    it('rest_update_metadata_not_found', async () => {
+      nock(baseUrl).put('/metadata/missing').reply(404, { message: 'not found' });
+      await expect(
+        client.updateMetadata({ key: 'missing', metadata: { contentType: 'text/plain' } })
+      ).rejects.toThrow('REST API error (404)');
     });
   });
 
+  // --------------------------------------------------------------------------
+  // health
+  // --------------------------------------------------------------------------
   describe('health', () => {
-    it('should check health successfully', async () => {
-      nock(baseUrl).get('/health').reply(200, { status: 'healthy' });
+    it('rest_health_success', async () => {
+      const scope = nock(baseUrl).get('/health').query(true).reply(200, { status: 'healthy', message: 'OK' });
 
-      const result = await client.health();
+      const response = await client.health();
 
-      expect(result.status).toBe(HealthStatus.SERVING);
+      expect(response.status).toBe(HealthStatus.SERVING);
+      expect(response.message).toBe('OK');
+      scope.done();
     });
 
-    it('should handle unhealthy status', async () => {
-      nock(baseUrl).get('/health').reply(200, { status: 'unhealthy', message: 'DB down' });
-
-      const result = await client.health();
-
-      expect(result.status).toBe(HealthStatus.NOT_SERVING);
-      expect(result.message).toBe('DB down');
+    it('rest_health_error', async () => {
+      nock(baseUrl).get('/health').query(true).reply(500, { message: 'boom' });
+      await expect(client.health()).rejects.toThrow('REST API error (500)');
     });
   });
 
+  // --------------------------------------------------------------------------
+  // archive
+  // --------------------------------------------------------------------------
   describe('archive', () => {
-    it('should archive an object', async () => {
-      nock(baseUrl).post('/archive').reply(200, { success: true });
+    it('rest_archive_success', async () => {
+      const scope = nock(baseUrl)
+        .post('/archive')
+        .reply(200, { success: true, message: 'archived' });
 
-      const result = await client.archive({
-        key: 'test-key',
-        destinationType: 'glacier',
-        destinationSettings: { tier: 'standard' },
-      });
+      const response = await client.archive({ key: 'test-key', destinationType: 'glacier' });
 
-      expect(result.success).toBe(true);
-    });
-  });
-
-  describe('lifecycle policies', () => {
-    it('should add a lifecycle policy', async () => {
-      nock(baseUrl).post('/policies').reply(200, { success: true });
-
-      const result = await client.addPolicy({
-        policy: {
-          id: 'policy-1',
-          prefix: 'logs/',
-          retentionSeconds: 86400,
-          action: 'delete',
-        },
-      });
-
-      expect(result.success).toBe(true);
+      expect(response.success).toBe(true);
+      expect(response.message).toBe('archived');
+      scope.done();
     });
 
-    it('should remove a lifecycle policy', async () => {
-      nock(baseUrl).delete('/policies/policy-1').reply(200, { success: true });
-
-      const result = await client.removePolicy({ id: 'policy-1' });
-
-      expect(result.success).toBe(true);
-    });
-
-    it('should get all policies', async () => {
-      nock(baseUrl).get('/policies').reply(200, {
-        policies: [
-          {
-            id: 'policy-1',
-            prefix: 'logs/',
-            retention_seconds: 86400,
-            action: 'delete',
-          },
-        ],
-        success: true,
-      });
-
-      const result = await client.getPolicies();
-
-      expect(result.policies).toHaveLength(1);
-      expect(result.policies[0].id).toBe('policy-1');
-    });
-
-    it('should apply policies', async () => {
-      nock(baseUrl).post('/policies/apply').reply(200, {
-        success: true,
-        policies_count: 5,
-        objects_processed: 100,
-      });
-
-      const result = await client.applyPolicies();
-
-      expect(result.success).toBe(true);
-      expect(result.policiesCount).toBe(5);
-      expect(result.objectsProcessed).toBe(100);
-    });
-  });
-
-  describe('replication policies', () => {
-    it('should add a replication policy', async () => {
-      nock(baseUrl).post('/replication/policies').reply(200, { success: true });
-
-      const result = await client.addReplicationPolicy({
-        policy: {
-          id: 'rep-1',
-          sourceBackend: 's3',
-          sourceSettings: { bucket: 'source' },
-          sourcePrefix: '',
-          destinationBackend: 'gcs',
-          destinationSettings: { bucket: 'dest' },
-          checkIntervalSeconds: 3600,
-          enabled: true,
-          replicationMode: 0,
-        },
-      });
-
-      expect(result.success).toBe(true);
-    });
-
-    it('should get replication policies', async () => {
-      nock(baseUrl).get('/replication/policies').reply(200, {
-        policies: [
-          {
-            id: 'rep-1',
-            source_backend: 's3',
-            source_settings: {},
-            source_prefix: '',
-            destination_backend: 'gcs',
-            destination_settings: {},
-            check_interval_seconds: 3600,
-            enabled: true,
-            replication_mode: 0,
-          },
-        ],
-      });
-
-      const result = await client.getReplicationPolicies();
-
-      expect(result.policies).toHaveLength(1);
-      expect(result.policies[0].id).toBe('rep-1');
-    });
-
-    it('should trigger replication', async () => {
-      nock(baseUrl).post('/replication/trigger').reply(200, {
-        success: true,
-        result: {
-          policy_id: 'rep-1',
-          synced: 10,
-          deleted: 2,
-          failed: 0,
-          bytes_total: 1024,
-          duration_ms: 500,
-          errors: [],
-        },
-      });
-
-      const result = await client.triggerReplication({
-        policyId: 'rep-1',
-        parallel: true,
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.result?.synced).toBe(10);
-    });
-
-    it('should get replication status', async () => {
-      nock(baseUrl).get('/replication/status/rep-1').reply(200, {
-        success: true,
-        status: {
-          policy_id: 'rep-1',
-          source_backend: 's3',
-          destination_backend: 'gcs',
-          enabled: true,
-          total_objects_synced: 100,
-          total_objects_deleted: 10,
-          total_bytes_synced: 1048576,
-          total_errors: 0,
-          average_sync_duration_ms: 500,
-          sync_count: 5,
-        },
-      });
-
-      const result = await client.getReplicationStatus({ id: 'rep-1' });
-
-      expect(result.success).toBe(true);
-      expect(result.status?.totalObjectsSynced).toBe(100);
-    });
-  });
-
-  describe('close', () => {
-    it('should close without errors', async () => {
-      await expect(client.close()).resolves.toBeUndefined();
-    });
-  });
-
-  describe('error handling', () => {
-    it('should handle network errors in put', async () => {
-      nock(baseUrl).put('/objects/test-key').replyWithError('Network error');
-
+    it('rest_archive_error', async () => {
+      nock(baseUrl).post('/archive').reply(500, { message: 'boom' });
       await expect(
-        client.put({ key: 'test-key', data: Buffer.from('data') })
-      ).rejects.toThrow();
+        client.archive({ key: 'test-key', destinationType: 'glacier' })
+      ).rejects.toThrow('REST API error (500)');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // addPolicy
+  // --------------------------------------------------------------------------
+  describe('addPolicy', () => {
+    it('rest_add_policy_success', async () => {
+      const scope = nock(baseUrl).post('/policies').reply(200, { success: true, message: 'added' });
+
+      const response = await client.addPolicy({
+        policy: { id: 'p1', prefix: 'logs/', retentionSeconds: 86400, action: 'delete' },
+      });
+
+      expect(response.success).toBe(true);
+      expect(response.message).toBe('added');
+      scope.done();
     });
 
-    it('should handle network errors in get', async () => {
-      nock(baseUrl).get('/objects/test-key').replyWithError('Network error');
-
-      await expect(client.get({ key: 'test-key' })).rejects.toThrow();
-    });
-
-    it('should handle network errors in delete', async () => {
-      nock(baseUrl).delete('/objects/test-key').replyWithError('Network error');
-
-      await expect(client.delete({ key: 'test-key' })).rejects.toThrow();
-    });
-
-    it('should handle network errors in list', async () => {
-      nock(baseUrl).get('/objects').replyWithError('Network error');
-
-      await expect(client.list()).rejects.toThrow();
-    });
-
-    it('should handle network errors in getMetadata', async () => {
-      nock(baseUrl).get('/objects/test-key/metadata').replyWithError('Network error');
-
-      await expect(client.getMetadata({ key: 'test-key' })).rejects.toThrow();
-    });
-
-    it('should handle network errors in updateMetadata', async () => {
-      nock(baseUrl).put('/objects/test-key/metadata').replyWithError('Network error');
-
-      await expect(
-        client.updateMetadata({ key: 'test-key', metadata: {} })
-      ).rejects.toThrow();
-    });
-
-    it('should handle network errors in health', async () => {
-      nock(baseUrl).get('/health').replyWithError('Network error');
-
-      await expect(client.health()).rejects.toThrow();
-    });
-
-    it('should handle network errors in archive', async () => {
-      nock(baseUrl).post('/archive').replyWithError('Network error');
-
-      await expect(
-        client.archive({ key: 'test', destinationType: 'glacier' })
-      ).rejects.toThrow();
-    });
-
-    it('should handle network errors in triggerReplication', async () => {
-      nock(baseUrl).post('/replication/trigger').replyWithError('Network error');
-
-      await expect(client.triggerReplication({ policyId: 'test' })).rejects.toThrow();
-    });
-
-    it('should handle network errors in getReplicationStatus', async () => {
-      nock(baseUrl).get('/replication/status/test').replyWithError('Network error');
-
-      await expect(client.getReplicationStatus({ id: 'test' })).rejects.toThrow();
-    });
-
-    it('should handle network errors in getReplicationPolicy', async () => {
-      nock(baseUrl).get('/replication/policies/test').replyWithError('Network error');
-
-      await expect(client.getReplicationPolicy({ id: 'test' })).rejects.toThrow();
-    });
-
-    it('should handle network errors in getReplicationPolicies', async () => {
-      nock(baseUrl).get('/replication/policies').replyWithError('Network error');
-
-      await expect(client.getReplicationPolicies()).rejects.toThrow();
-    });
-
-    it('should throw error when exists check fails (non-404)', async () => {
-      nock(baseUrl).head('/objects/test').reply(500);
-
-      await expect(client.exists({ key: 'test' })).rejects.toThrow();
-    });
-
-    it('should handle network errors in removePolicy', async () => {
-      nock(baseUrl).delete('/policies/p1').replyWithError('Network error');
-
-      await expect(client.removePolicy({ id: 'p1' })).rejects.toThrow();
-    });
-
-    it('should handle network errors in getPolicies', async () => {
-      nock(baseUrl).get('/policies').replyWithError('Network error');
-
-      await expect(client.getPolicies()).rejects.toThrow();
-    });
-
-    it('should handle network errors in applyPolicies', async () => {
-      nock(baseUrl).post('/policies/apply').replyWithError('Network error');
-
-      await expect(client.applyPolicies()).rejects.toThrow();
-    });
-
-    it('should handle network errors in addPolicy', async () => {
-      nock(baseUrl).post('/policies').replyWithError('Network error');
-
+    it('rest_add_policy_error', async () => {
+      nock(baseUrl).post('/policies').reply(500, { message: 'boom' });
       await expect(
         client.addPolicy({
-          policy: { id: 'p1', prefix: 'logs/', retentionSeconds: 86400, action: 'delete' },
+          policy: { id: 'p1', prefix: 'logs/', retentionSeconds: 1, action: 'delete' },
         })
-      ).rejects.toThrow();
-    });
-
-    it('should handle network errors in addReplicationPolicy', async () => {
-      nock(baseUrl).post('/replication/policies').replyWithError('Network error');
-
-      await expect(
-        client.addReplicationPolicy({
-          policy: {
-            id: 'r1',
-            sourceBackend: 's3',
-            sourceSettings: {},
-            sourcePrefix: '',
-            destinationBackend: 'gcs',
-            destinationSettings: {},
-            checkIntervalSeconds: 3600,
-            enabled: true,
-            replicationMode: 0,
-          },
-        })
-      ).rejects.toThrow();
-    });
-
-    it('should handle network errors in removeReplicationPolicy', async () => {
-      nock(baseUrl).delete('/replication/policies/r1').replyWithError('Network error');
-
-      await expect(client.removeReplicationPolicy({ id: 'r1' })).rejects.toThrow();
+      ).rejects.toThrow('REST API error (500)');
     });
   });
 
-  describe('additional edge cases', () => {
-    it('should handle health check with service parameter', async () => {
-      nock(baseUrl).get('/health?service=storage').reply(200, { status: 'healthy' });
+  // --------------------------------------------------------------------------
+  // removePolicy
+  // --------------------------------------------------------------------------
+  describe('removePolicy', () => {
+    it('rest_remove_policy_success', async () => {
+      const scope = nock(baseUrl).delete('/policies/p1').reply(200, { success: true, message: 'removed' });
 
-      const result = await client.health({ service: 'storage' });
+      const response = await client.removePolicy({ id: 'p1' });
 
-      expect(result.status).toBe(HealthStatus.SERVING);
+      expect(response.success).toBe(true);
+      expect(response.message).toBe('removed');
+      scope.done();
     });
 
-    it('should handle unknown health status', async () => {
-      nock(baseUrl).get('/health').reply(200, { status: 'unknown' });
-
-      const result = await client.health();
-
-      expect(result.status).toBe(HealthStatus.UNKNOWN);
+    it('rest_remove_policy_error', async () => {
+      nock(baseUrl).delete('/policies/p1').reply(500, { message: 'boom' });
+      await expect(client.removePolicy({ id: 'p1' })).rejects.toThrow('REST API error (500)');
     });
 
-    it('should handle getPolicies with prefix parameter', async () => {
-      nock(baseUrl).get('/policies?prefix=logs%2F').reply(200, {
-        policies: [],
-        success: true,
-      });
-
-      const result = await client.getPolicies({ prefix: 'logs/' });
-
-      expect(result.success).toBe(true);
+    it('rest_remove_policy_not_found', async () => {
+      nock(baseUrl).delete('/policies/missing').reply(404, { message: 'not found' });
+      await expect(client.removePolicy({ id: 'missing' })).rejects.toThrow('REST API error (404)');
     });
+  });
 
-    it('should handle removeReplicationPolicy error', async () => {
-      nock(baseUrl).delete('/replication/policies/r1').reply(404, { error: 'Not found' });
-
-      await expect(client.removeReplicationPolicy({ id: 'r1' })).rejects.toThrow();
-    });
-
-    it('should handle getReplicationPolicy error', async () => {
-      nock(baseUrl).get('/replication/policies/r1').reply(404, { error: 'Not found' });
-
-      await expect(client.getReplicationPolicy({ id: 'r1' })).rejects.toThrow();
-    });
-
-    it('should handle triggerReplication without result', async () => {
-      nock(baseUrl).post('/replication/trigger').reply(200, { success: true });
-
-      const result = await client.triggerReplication({ policyId: 'r1' });
-
-      expect(result.success).toBe(true);
-      expect(result.result).toBeUndefined();
-    });
-
-    it('should handle getReplicationStatus without status', async () => {
-      nock(baseUrl).get('/replication/status/r1').reply(200, { success: true });
-
-      const result = await client.getReplicationStatus({ id: 'r1' });
-
-      expect(result.success).toBe(true);
-      expect(result.status).toBeUndefined();
-    });
-
-    it('should handle metadata with alternate field names', async () => {
-      nock(baseUrl).get('/objects').reply(200, {
-        objects: [
-          {
-            key: 'file1.txt',
-            modified: '2023-01-01T00:00:00Z',
-            metadata: {
-              content_type: 'text/plain',
-              custom: { author: 'test' },
+  // --------------------------------------------------------------------------
+  // getPolicies
+  // --------------------------------------------------------------------------
+  describe('getPolicies', () => {
+    it('rest_get_policies_success', async () => {
+      const scope = nock(baseUrl)
+        .get('/policies')
+        .query(true)
+        .reply(200, {
+          policies: [
+            {
+              id: 'p1',
+              prefix: 'logs/',
+              retention_seconds: 86400,
+              action: 'delete',
+              destination_type: '',
             },
+          ],
+          success: true,
+        });
+
+      const response = await client.getPolicies({ prefix: 'logs/' });
+
+      expect(response.policies).toHaveLength(1);
+      expect(response.policies[0].id).toBe('p1');
+      expect(response.policies[0].retentionSeconds).toBe(86400);
+      scope.done();
+    });
+
+    it('rest_get_policies_error', async () => {
+      nock(baseUrl).get('/policies').query(true).reply(500, { message: 'boom' });
+      await expect(client.getPolicies()).rejects.toThrow('REST API error (500)');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // applyPolicies
+  // --------------------------------------------------------------------------
+  describe('applyPolicies', () => {
+    it('rest_apply_policies_success', async () => {
+      const scope = nock(baseUrl)
+        .post('/policies/apply')
+        .reply(200, { success: true, policies_count: 2, objects_processed: 7, message: 'applied' });
+
+      const response = await client.applyPolicies();
+
+      expect(response.success).toBe(true);
+      expect(response.policiesCount).toBe(2);
+      expect(response.objectsProcessed).toBe(7);
+      scope.done();
+    });
+
+    it('rest_apply_policies_error', async () => {
+      nock(baseUrl).post('/policies/apply').reply(500, { message: 'boom' });
+      await expect(client.applyPolicies()).rejects.toThrow('REST API error (500)');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // addReplicationPolicy
+  // --------------------------------------------------------------------------
+  describe('addReplicationPolicy', () => {
+    const repPolicy = {
+      id: 'r1',
+      sourceBackend: 'local',
+      sourceSettings: {},
+      sourcePrefix: '',
+      destinationBackend: 's3',
+      destinationSettings: {},
+      checkIntervalSeconds: 60,
+      enabled: true,
+      replicationMode: ReplicationMode.TRANSPARENT,
+    };
+
+    it('rest_add_replication_policy_success', async () => {
+      const scope = nock(baseUrl)
+        .post('/replication/policies')
+        .reply(200, { success: true, message: 'added' });
+
+      const response = await client.addReplicationPolicy({ policy: repPolicy });
+
+      expect(response.success).toBe(true);
+      expect(response.message).toBe('added');
+      scope.done();
+    });
+
+    it('rest_add_replication_policy_error', async () => {
+      nock(baseUrl).post('/replication/policies').reply(500, { message: 'boom' });
+      await expect(
+        client.addReplicationPolicy({ policy: repPolicy })
+      ).rejects.toThrow('REST API error (500)');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // removeReplicationPolicy
+  // --------------------------------------------------------------------------
+  describe('removeReplicationPolicy', () => {
+    it('rest_remove_replication_policy_success', async () => {
+      const scope = nock(baseUrl)
+        .delete('/replication/policies/r1')
+        .reply(200, { success: true, message: 'removed' });
+
+      const response = await client.removeReplicationPolicy({ id: 'r1' });
+
+      expect(response.success).toBe(true);
+      expect(response.message).toBe('removed');
+      scope.done();
+    });
+
+    it('rest_remove_replication_policy_error', async () => {
+      nock(baseUrl).delete('/replication/policies/r1').reply(500, { message: 'boom' });
+      await expect(
+        client.removeReplicationPolicy({ id: 'r1' })
+      ).rejects.toThrow('REST API error (500)');
+    });
+
+    it('rest_remove_replication_policy_not_found', async () => {
+      nock(baseUrl).delete('/replication/policies/missing').reply(404, { message: 'not found' });
+      await expect(
+        client.removeReplicationPolicy({ id: 'missing' })
+      ).rejects.toThrow('REST API error (404)');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // getReplicationPolicies
+  // --------------------------------------------------------------------------
+  describe('getReplicationPolicies', () => {
+    it('rest_get_replication_policies_success', async () => {
+      const scope = nock(baseUrl)
+        .get('/replication/policies')
+        .reply(200, {
+          policies: [
+            {
+              id: 'r1',
+              source_backend: 'local',
+              destination_backend: 's3',
+              check_interval_seconds: 60,
+              enabled: true,
+              replication_mode: 'transparent',
+            },
+          ],
+        });
+
+      const response = await client.getReplicationPolicies();
+
+      expect(response.policies).toHaveLength(1);
+      expect(response.policies[0].id).toBe('r1');
+      expect(response.policies[0].replicationMode).toBe(ReplicationMode.TRANSPARENT);
+      scope.done();
+    });
+
+    it('rest_get_replication_policies_error', async () => {
+      nock(baseUrl).get('/replication/policies').reply(500, { message: 'boom' });
+      await expect(client.getReplicationPolicies()).rejects.toThrow('REST API error (500)');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // getReplicationPolicy
+  // --------------------------------------------------------------------------
+  describe('getReplicationPolicy', () => {
+    it('rest_get_replication_policy_success', async () => {
+      const scope = nock(baseUrl)
+        .get('/replication/policies/r1')
+        .reply(200, {
+          id: 'r1',
+          source_backend: 'local',
+          destination_backend: 's3',
+          check_interval_seconds: 60,
+          enabled: true,
+          replication_mode: 'opaque',
+        });
+
+      const response = await client.getReplicationPolicy({ id: 'r1' });
+
+      expect(response.policy?.id).toBe('r1');
+      expect(response.policy?.replicationMode).toBe(ReplicationMode.OPAQUE);
+      scope.done();
+    });
+
+    it('rest_get_replication_policy_error', async () => {
+      nock(baseUrl).get('/replication/policies/r1').reply(500, { message: 'boom' });
+      await expect(
+        client.getReplicationPolicy({ id: 'r1' })
+      ).rejects.toThrow('REST API error (500)');
+    });
+
+    it('rest_get_replication_policy_not_found', async () => {
+      nock(baseUrl).get('/replication/policies/missing').reply(404, { message: 'not found' });
+      await expect(
+        client.getReplicationPolicy({ id: 'missing' })
+      ).rejects.toThrow('REST API error (404)');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // triggerReplication
+  // --------------------------------------------------------------------------
+  describe('triggerReplication', () => {
+    it('rest_trigger_replication_success', async () => {
+      const scope = nock(baseUrl)
+        .post('/replication/trigger')
+        .reply(200, {
+          success: true,
+          result: {
+            policy_id: 'r1',
+            synced: 5,
+            deleted: 1,
+            failed: 0,
+            bytes_total: 1024,
+            duration_ms: 200,
+            errors: [],
           },
-        ],
-        truncated: false,
+        });
+
+      const response = await client.triggerReplication({ policyId: 'r1' });
+
+      expect(response.success).toBe(true);
+      expect(response.result?.synced).toBe(5);
+      expect(response.result?.bytesTotal).toBe(1024);
+      scope.done();
+    });
+
+    it('rest_trigger_replication_error', async () => {
+      nock(baseUrl).post('/replication/trigger').reply(500, { message: 'boom' });
+      await expect(
+        client.triggerReplication({ policyId: 'r1' })
+      ).rejects.toThrow('REST API error (500)');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // getReplicationStatus
+  // --------------------------------------------------------------------------
+  describe('getReplicationStatus', () => {
+    it('rest_get_replication_status_success', async () => {
+      // The server sends ReplicationStatusResponse fields at the top level of
+      // the response body (no "status" wrapper key), and average_sync_duration
+      // is a Go time.Duration string (e.g. "150ms"), not a numeric _ms field.
+      const scope = nock(baseUrl)
+        .get('/replication/status/r1')
+        .reply(200, {
+          policy_id: 'r1',
+          source_backend: 'local',
+          destination_backend: 's3',
+          enabled: true,
+          total_objects_synced: 10,
+          total_objects_deleted: 2,
+          total_bytes_synced: 2048,
+          total_errors: 0,
+          average_sync_duration: '150ms',
+          sync_count: 3,
+        });
+
+      const response = await client.getReplicationStatus({ id: 'r1' });
+
+      expect(response.success).toBe(true);
+      expect(response.status?.totalObjectsSynced).toBe(10);
+      expect(response.status?.syncCount).toBe(3);
+      expect(response.status?.averageSyncDurationMs).toBe(150);
+      scope.done();
+    });
+
+    it('rest_get_replication_status_error', async () => {
+      nock(baseUrl).get('/replication/status/r1').reply(500, { message: 'boom' });
+      await expect(
+        client.getReplicationStatus({ id: 'r1' })
+      ).rejects.toThrow('REST API error (500)');
+    });
+
+    it('rest_get_replication_status_not_found', async () => {
+      nock(baseUrl).get('/replication/status/missing').reply(404, { message: 'not found' });
+      await expect(
+        client.getReplicationStatus({ id: 'missing' })
+      ).rejects.toThrow('REST API error (404)');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // metadata_round_trip
+  // --------------------------------------------------------------------------
+  describe('metadata round trip', () => {
+    it('rest_metadata_round_trip', async () => {
+      const custom = { author: 'jane', tier: 'gold' };
+
+      // put: assert request sets Content-Type, Content-Encoding and
+      // X-Object-Metadata = JSON(custom map only).
+      const putScope = nock(baseUrl)
+        .matchHeader('content-type', 'text/plain')
+        .matchHeader('content-encoding', 'gzip')
+        .matchHeader('x-object-metadata', JSON.stringify(custom))
+        .put('/objects/doc')
+        .reply(200, { message: 'stored' }, { etag: '"e"' });
+
+      await client.put({
+        key: 'doc',
+        data: Buffer.from('hello'),
+        metadata: { contentType: 'text/plain', contentEncoding: 'gzip', custom },
       });
+      putScope.done();
 
-      const result = await client.list({});
+      // get: response carries content-type + X-Object-Metadata. (The
+      // content-encoding round-trip is asserted as a PUT request header above;
+      // the HTTP layer consumes the content-encoding response header on the
+      // arraybuffer GET / JSON getMetadata body paths, so it is not re-asserted
+      // on those responses.)
+      const getScope = nock(baseUrl)
+        .get('/objects/doc')
+        .reply(200, 'hello', {
+          'content-type': 'text/plain',
+          'x-object-metadata': JSON.stringify(custom),
+        });
 
-      expect(result.objects[0].metadata?.lastModified).toBeDefined();
+      const getResp = await client.get({ key: 'doc' });
+      expect(getResp.metadata?.contentType).toBe('text/plain');
+      expect(getResp.metadata?.custom).toEqual(custom);
+      getScope.done();
+
+      // getMetadata: content_type from the JSON body, custom parsed back from
+      // the X-Object-Metadata response header.
+      const metaScope = nock(baseUrl)
+        .get('/metadata/doc')
+        .reply(200, JSON.stringify({ content_type: 'text/plain' }), {
+          'content-type': 'application/json',
+          'x-object-metadata': JSON.stringify(custom),
+        });
+
+      const metaResp = await client.getMetadata({ key: 'doc' });
+      expect(metaResp.metadata?.contentType).toBe('text/plain');
+      expect(metaResp.metadata?.custom).toEqual(custom);
+      metaScope.done();
     });
+  });
 
-    it('should handle error with response data message', async () => {
-      nock(baseUrl)
-        .get('/objects/test')
-        .reply(500, { message: 'Internal server error' });
-
-      // Error message is wrapped as "REST API error (500): ..."
-      await expect(client.get({ key: 'test' })).rejects.toThrow('REST API error (500)');
-    });
-
-    it('should handle error with response data error field', async () => {
-      nock(baseUrl).get('/objects/test').reply(400, { error: 'Bad request' });
-
-      // Error message is wrapped as "REST API error (400): ..."
-      await expect(client.get({ key: 'test' })).rejects.toThrow('REST API error (400)');
-    });
-
-    it('should handle non-axios errors', async () => {
-      // When a non-axios error occurs, it should be re-thrown
-      // This test verifies that errors without axios-specific properties are handled
-      nock(baseUrl).get('/objects/test').reply(500, { error: 'Server error' });
-
-      await expect(client.get({ key: 'test' })).rejects.toThrow('REST API error (500)');
-    });
-
-    it('should handle put response without etag header', async () => {
-      nock(baseUrl).put('/objects/test-key').reply(201, { message: 'success' });
-
-      const result = await client.put({
-        key: 'test-key',
-        data: Buffer.from('test data'),
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.etag).toBeUndefined();
-    });
-
-    it('should serialize metadata with all fields', async () => {
-      nock(baseUrl)
-        .put('/objects/test-key', () => true)
-        .reply(201, { message: 'success' });
-
-      const result = await client.put({
-        key: 'test-key',
-        data: Buffer.from('test data'),
-        metadata: {
-          contentType: 'application/json',
-          contentEncoding: 'gzip',
-          size: 100,
-          etag: 'abc123',
-          lastModified: new Date('2023-01-01'),
-          custom: { version: '1.0' },
-        },
-      });
-
-      expect(result.success).toBe(true);
+  // --------------------------------------------------------------------------
+  // validation_empty_key
+  // --------------------------------------------------------------------------
+  describe('validation', () => {
+    it('rest_validation_empty_key', async () => {
+      // The REST client has no client-side validation, so an empty key would
+      // hit /objects/ on the wire. With NO nock interceptor registered, the
+      // request is refused (no successful network call) and the call rejects.
+      nock.disableNetConnect();
+      try {
+        await expect(
+          client.put({ key: '', data: Buffer.from('data') })
+        ).rejects.toThrow();
+      } finally {
+        nock.enableNetConnect();
+      }
     });
   });
 });

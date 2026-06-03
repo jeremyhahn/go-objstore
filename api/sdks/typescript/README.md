@@ -20,7 +20,7 @@ A comprehensive TypeScript SDK for [go-objstore](https://github.com/jeremyhahn/g
 ## Installation
 
 ```bash
-npm install @go-objstore/typescript-sdk
+npm install @go-objstore/client
 ```
 
 ## Quick Start
@@ -28,7 +28,7 @@ npm install @go-objstore/typescript-sdk
 ### REST Client
 
 ```typescript
-import { ObjectStoreClient } from '@go-objstore/typescript-sdk';
+import { ObjectStoreClient } from '@go-objstore/client';
 
 const client = new ObjectStoreClient({
   protocol: 'rest',
@@ -71,7 +71,7 @@ await client.delete({ key: 'documents/file.pdf' });
 ### gRPC Client
 
 ```typescript
-import { ObjectStoreClient } from '@go-objstore/typescript-sdk';
+import { ObjectStoreClient } from '@go-objstore/client';
 
 const client = new ObjectStoreClient({
   protocol: 'grpc',
@@ -93,7 +93,7 @@ const data = await client.get({ key: 'data.json' });
 ### QUIC/HTTP3 Client
 
 ```typescript
-import { ObjectStoreClient } from '@go-objstore/typescript-sdk';
+import { ObjectStoreClient } from '@go-objstore/client';
 
 const client = new ObjectStoreClient({
   protocol: 'quic',
@@ -274,7 +274,7 @@ console.log(`Processed ${response.objectsProcessed} objects`);
 #### Add Replication Policy
 
 ```typescript
-import { ReplicationMode } from '@go-objstore/typescript-sdk';
+import { ReplicationMode } from '@go-objstore/client';
 
 await client.addReplicationPolicy({
   policy: {
@@ -352,7 +352,7 @@ await client.archive({
 ### Health Check
 
 ```typescript
-import { HealthStatus } from '@go-objstore/typescript-sdk';
+import { HealthStatus } from '@go-objstore/client';
 
 const response = await client.health();
 if (response.status === HealthStatus.SERVING) {
@@ -459,7 +459,7 @@ import type {
   Metadata,
   LifecyclePolicy,
   ReplicationPolicy,
-} from '@go-objstore/typescript-sdk';
+} from '@go-objstore/client';
 ```
 
 ## Error Handling
@@ -501,6 +501,11 @@ AGPL-3.0 - See LICENSE file for details
 - Documentation: https://github.com/jeremyhahn/go-objstore
 
 ## Changelog
+
+### 0.2.0
+
+- Go toolchain updated to 1.26.3
+- API parity across all SDKs
 
 ### 0.1.0 (Initial Release)
 

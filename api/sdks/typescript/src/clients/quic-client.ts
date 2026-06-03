@@ -61,15 +61,34 @@ export class QuicClient implements IObjectStoreClient {
   }
 
   async put(request: PutRequest): Promise<PutResponse> {
-    const response = await this.makeRequest('PUT', `/objects/${encodeURIComponent(request.key)}`, {
-      body: request.data,
-      metadata: request.metadata,
-    });
+    // QUIC server reads metadata from headers: Content-Type, Content-Encoding,
+    // and one X-Meta-<key> header per custom metadata entry. The etag is
+    // returned only in the ETag response header (the body is {key, message}).
+    const headers: Record<string, string> = {};
+    if (request.metadata) {
+      if (request.metadata.contentType) {
+        headers['Content-Type'] = request.metadata.contentType;
+      }
+      if (request.metadata.contentEncoding) {
+        headers['Content-Encoding'] = request.metadata.contentEncoding;
+      }
+      if (request.metadata.custom) {
+        for (const [k, v] of Object.entries(request.metadata.custom)) {
+          headers[`X-Meta-${k}`] = v;
+        }
+      }
+    }
+
+    const { body, headers: responseHeaders } = await this.makeRequest(
+      'PUT',
+      `/objects/${encodeURIComponent(request.key)}`,
+      { body: request.data, headers, returnHeaders: true }
+    );
 
     return {
       success: true,
-      message: response.message,
-      etag: response.etag,
+      message: body.message,
+      etag: responseHeaders?.get('etag') || undefined,
     };
   }
 
@@ -84,15 +103,10 @@ export class QuicClient implements IObjectStoreClient {
     }
 
     const data = Buffer.from(await response.arrayBuffer());
-    const metadata: Metadata = {
-      contentType: response.headers.get('content-type') || undefined,
-      contentEncoding: response.headers.get('content-encoding') || undefined,
-      etag: response.headers.get('etag') || undefined,
-      size: parseInt(response.headers.get('content-length') || '0', 10) || data.length,
-      lastModified: response.headers.get('last-modified')
-        ? new Date(response.headers.get('last-modified')!)
-        : undefined,
-    };
+    const metadata = this.metadataFromHeaders(response.headers);
+    if (metadata.size === undefined) {
+      metadata.size = data.length;
+    }
 
     return { data, metadata };
   }
@@ -110,8 +124,19 @@ export class QuicClient implements IObjectStoreClient {
     const params = new URLSearchParams();
     if (request.prefix) params.append('prefix', request.prefix);
     if (request.delimiter) params.append('delimiter', request.delimiter);
-    if (request.maxResults) params.append('limit', request.maxResults.toString());
-    if (request.continueFrom) params.append('token', request.continueFrom);
+    // The QUIC server reads `max`/`continue` for list pagination. In Node the
+    // TypeScript QUIC client has no native HTTP/3 and is pointed at the REST
+    // endpoint, which instead reads `limit`/`token`. Send both spellings so the
+    // request paginates correctly regardless of which server handles it; the
+    // unrecognized keys are ignored by each server.
+    if (request.maxResults) {
+      params.append('max', request.maxResults.toString());
+      params.append('limit', request.maxResults.toString());
+    }
+    if (request.continueFrom) {
+      params.append('continue', request.continueFrom);
+      params.append('token', request.continueFrom);
+    }
 
     const response = await this.makeRequest('GET', `/objects?${params.toString()}`);
 
@@ -127,31 +152,58 @@ export class QuicClient implements IObjectStoreClient {
   }
 
   async exists(request: ExistsRequest): Promise<ExistsResponse> {
+    // QUIC server: HEAD /objects/{key} → 200 exists / 404 absent.
+    // Distinguish 404 from real errors; only swallow network failures.
     try {
       const url = `${this.baseUrl}/objects/${encodeURIComponent(request.key)}`;
       const response = await fetch(url, { method: 'HEAD' });
-      return { exists: response.ok };
+      if (response.status === 404) {
+        return { exists: false };
+      }
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        throw new Error(`QUIC/HTTP3 error (${response.status}): ${errorText}`);
+      }
+      return { exists: true };
     } catch (error) {
+      // Network-level failures are reported as not-existing for backward
+      // compatibility; HTTP errors above are surfaced via the thrown Error.
+      if (error instanceof Error && error.message.startsWith('QUIC/HTTP3 error')) {
+        throw error;
+      }
       return { exists: false };
     }
   }
 
   async getMetadata(request: GetMetadataRequest): Promise<MetadataResponse> {
-    // REST API uses /metadata/:key endpoint
-    const response = await this.makeRequest('GET', `/metadata/${encodeURIComponent(request.key)}`);
+    // QUIC server: metadata is exposed via HEAD /objects/{key}; there is no
+    // /metadata route. Parse the response headers (incl. X-Meta-*).
+    const url = `${this.baseUrl}/objects/${encodeURIComponent(request.key)}`;
+    const response = await fetch(url, { method: 'HEAD' });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '');
+      throw new Error(`QUIC/HTTP3 error (${response.status}): ${errorText}`);
+    }
 
     return {
-      metadata: this.deserializeMetadata(response),
+      metadata: this.metadataFromHeaders(response.headers),
       success: true,
     };
   }
 
   async updateMetadata(request: UpdateMetadataRequest): Promise<UpdateMetadataResponse> {
-    // REST API uses /metadata/:key endpoint
+    // QUIC server: PATCH /objects/{key} with JSON {content_type, content_encoding, custom}.
     const response = await this.makeRequest(
-      'PUT',
-      `/metadata/${encodeURIComponent(request.key)}`,
-      { body: this.serializeMetadata(request.metadata) }
+      'PATCH',
+      `/objects/${encodeURIComponent(request.key)}`,
+      {
+        body: {
+          content_type: request.metadata.contentType,
+          content_encoding: request.metadata.contentEncoding,
+          custom: request.metadata.custom,
+        },
+      }
     );
 
     return {
@@ -259,7 +311,8 @@ export class QuicClient implements IObjectStoreClient {
         source_prefix: request.policy.sourcePrefix,
         destination_backend: request.policy.destinationBackend,
         destination_settings: request.policy.destinationSettings,
-        check_interval_seconds: request.policy.checkIntervalSeconds,
+        // QUIC server field is `check_interval` (seconds), not check_interval_seconds.
+        check_interval: request.policy.checkIntervalSeconds,
         enabled: request.policy.enabled,
         encryption: request.policy.encryption,
         replication_mode: replicationModeToString(request.policy.replicationMode),
@@ -299,7 +352,7 @@ export class QuicClient implements IObjectStoreClient {
         sourcePrefix: p.source_prefix,
         destinationBackend: p.destination_backend,
         destinationSettings: p.destination_settings,
-        checkIntervalSeconds: p.check_interval_seconds,
+        checkIntervalSeconds: p.check_interval ?? p.check_interval_seconds,
         lastSyncTime: p.last_sync_time ? new Date(p.last_sync_time) : undefined,
         enabled: p.enabled,
         encryption: p.encryption,
@@ -324,7 +377,7 @@ export class QuicClient implements IObjectStoreClient {
         sourcePrefix: response.source_prefix,
         destinationBackend: response.destination_backend,
         destinationSettings: response.destination_settings,
-        checkIntervalSeconds: response.check_interval_seconds,
+        checkIntervalSeconds: response.check_interval ?? response.check_interval_seconds,
         lastSyncTime: response.last_sync_time ? new Date(response.last_sync_time) : undefined,
         enabled: response.enabled,
         encryption: response.encryption,
@@ -336,13 +389,14 @@ export class QuicClient implements IObjectStoreClient {
   async triggerReplication(
     request: TriggerReplicationRequest
   ): Promise<TriggerReplicationResponse> {
-    const response = await this.makeRequest('POST', '/replication/trigger', {
-      body: {
-        policy_id: request.policyId,
-        parallel: request.parallel,
-        worker_count: request.workerCount,
-      },
-    });
+    // QUIC server takes policy_id as a QUERY param (empty = sync all policies).
+    const params = new URLSearchParams();
+    if (request.policyId) params.append('policy_id', request.policyId);
+    const query = params.toString();
+    const response = await this.makeRequest(
+      'POST',
+      `/replication/trigger${query ? `?${query}` : ''}`
+    );
 
     return {
       success: response.success || true,
@@ -407,12 +461,20 @@ export class QuicClient implements IObjectStoreClient {
     };
 
     let body: any;
-    if (options.body) {
+    if (options.body !== undefined) {
       if (Buffer.isBuffer(options.body)) {
         body = options.body;
         headers['Content-Type'] = 'application/octet-stream';
       } else {
         body = JSON.stringify(options.body);
+      }
+    }
+
+    // Caller-supplied headers (e.g. Content-Type, Content-Encoding, X-Meta-*)
+    // override the defaults above.
+    if (options.headers) {
+      for (const [k, v] of Object.entries(options.headers as Record<string, string>)) {
+        headers[k] = v;
       }
     }
 
@@ -428,31 +490,47 @@ export class QuicClient implements IObjectStoreClient {
       throw new Error(`QUIC/HTTP3 error (${response.status}): ${errorText}`);
     }
 
-    if (method === 'HEAD') {
-      return {};
+    const parsedBody =
+      method === 'HEAD'
+        ? {}
+        : response.headers.get('content-type')?.includes('application/json')
+        ? await response.json()
+        : await response.text();
+
+    if (options.returnHeaders) {
+      return { body: parsedBody, headers: response.headers };
     }
 
-    if (response.headers.get('content-type')?.includes('application/json')) {
-      return await response.json();
-    }
-
-    return await response.text();
+    return parsedBody;
   }
 
-  private serializeMetadata(metadata: Metadata): any {
-    // REST API expects common.Metadata JSON format (snake_case)
+  private metadataFromHeaders(headers: Headers): Metadata {
+    const custom: Record<string, string> = {};
+    // Iterate headers to collect X-Meta-* custom metadata. Guard forEach for
+    // environments/mocks that expose only Headers.get().
+    if (typeof headers.forEach === 'function') {
+      headers.forEach((value: string, name: string) => {
+        if (name.toLowerCase().startsWith('x-meta-')) {
+          custom[name.substring('x-meta-'.length)] = value;
+        }
+      });
+    }
+
+    const contentLength = headers.get('content-length');
     return {
-      content_type: metadata.contentType,
-      content_encoding: metadata.contentEncoding,
-      size: metadata.size,
-      last_modified: metadata.lastModified?.toISOString(),
-      etag: metadata.etag,
-      custom: metadata.custom,
+      contentType: headers.get('content-type') || undefined,
+      contentEncoding: headers.get('content-encoding') || undefined,
+      etag: headers.get('etag') || undefined,
+      size: contentLength ? parseInt(contentLength, 10) : undefined,
+      lastModified: headers.get('last-modified')
+        ? new Date(headers.get('last-modified')!)
+        : undefined,
+      custom: Object.keys(custom).length > 0 ? custom : undefined,
     };
   }
 
   private deserializeMetadata(obj: any): Metadata {
-    // REST API returns ObjectResponse format:
+    // List responses return ObjectResponse-style JSON:
     // - content_type (snake_case)
     // - modified (not last_modified)
     // - size, etag, key, metadata (for custom)

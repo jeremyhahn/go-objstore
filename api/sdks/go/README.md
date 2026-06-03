@@ -531,6 +531,20 @@ This SDK is dual-licensed:
 2. **Commercial License**
    - Contact licensing@automatethethings.com for commercial licensing options
 
+## Changelog
+
+### 0.2.0
+
+- Go toolchain updated to 1.26.3
+- API parity across all SDKs
+
+### 0.1.0
+
+- Initial release
+- REST, gRPC, and QUIC/HTTP3 protocol support
+- Comprehensive test suite
+- Full API coverage
+
 ## Support
 
 - Documentation: [https://github.com/jeremyhahn/go-objstore](https://github.com/jeremyhahn/go-objstore)

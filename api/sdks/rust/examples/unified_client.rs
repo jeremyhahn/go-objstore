@@ -2,7 +2,10 @@ use bytes::Bytes;
 use go_objstore::{ObjectStore, ObjectStoreClient};
 
 /// Demonstrates using the unified ObjectStore trait
-async fn test_client(mut client: impl ObjectStore, name: &str) -> Result<(), Box<dyn std::error::Error>> {
+async fn test_client(
+    mut client: impl ObjectStore,
+    name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n==> Testing {} client", name);
 
     // Health check

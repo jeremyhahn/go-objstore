@@ -19,6 +19,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -305,12 +306,25 @@ func setupTestServer(t *testing.T, opts ...ServerOption) (*Server, objstorepb.Ob
 		}
 	}()
 
-	// Wait for server to start
-	time.Sleep(100 * time.Millisecond)
+	// Wait deterministically for the listener to bind and expose its real
+	// (OS-assigned) port. Polling GetAddress avoids a fixed-sleep race where,
+	// under load, the goroutine has not yet stored the listener and we would
+	// otherwise dial the unbound "127.0.0.1:0" configured address.
+	var addr string
+	for i := 0; i < 200; i++ {
+		addr = server.GetAddress()
+		if addr != "" && !strings.HasSuffix(addr, ":0") {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if addr == "" || strings.HasSuffix(addr, ":0") {
+		t.Fatalf("server did not bind a port in time, got address %q", addr)
+	}
 
 	// Create client
 	conn, err := grpc.Dial(
-		server.GetAddress(),
+		addr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
 	if err != nil {

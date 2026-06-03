@@ -36,6 +36,17 @@ const (
 	actionArchive = "archive"
 )
 
+// Response and log field keys used across the QUIC server.
+const (
+	fieldError   = "error"
+	fieldKey     = "key"
+	fieldMessage = "message"
+	fieldSuccess = "success"
+	fieldMethod  = "method"
+	fieldStatus  = "status"
+	fieldPath    = "path"
+)
+
 // contextKey is a custom type for context keys to avoid collisions
 type contextKey string
 
@@ -52,13 +63,22 @@ type Handler struct {
 	writeTimeout       time.Duration
 	logger             adapters.Logger
 	authenticator      adapters.Authenticator
+	authorizer         adapters.Authorizer
+	allowedOrigins     []string
 }
 
 // NewHandler creates a new HTTP/3 handler using the ObjstoreFacade.
 // The facade must be initialized before calling this function.
-func NewHandler(backend string, maxRequestBodySize int64, readTimeout, writeTimeout time.Duration, logger adapters.Logger, authenticator adapters.Authenticator) (*Handler, error) {
+//
+// allowedOrigins controls CORS behavior: when empty/nil (or ["*"]), all origins
+// are allowed without credentials; when set to a specific allowlist, only those
+// origins are echoed back and credentials are permitted.
+func NewHandler(backend string, maxRequestBodySize int64, readTimeout, writeTimeout time.Duration, logger adapters.Logger, authenticator adapters.Authenticator, authorizer adapters.Authorizer, allowedOrigins []string) (*Handler, error) {
 	if !objstore.IsInitialized() {
 		return nil, objstore.ErrNotInitialized
+	}
+	if authorizer == nil {
+		authorizer = adapters.NewNoOpAuthorizer()
 	}
 	return &Handler{
 		backend:            backend,
@@ -67,6 +87,8 @@ func NewHandler(backend string, maxRequestBodySize int64, readTimeout, writeTime
 		writeTimeout:       writeTimeout,
 		logger:             logger,
 		authenticator:      authenticator,
+		authorizer:         authorizer,
+		allowedOrigins:     allowedOrigins,
 	}, nil
 }
 
@@ -78,14 +100,55 @@ func (h *Handler) keyRef(key string) string {
 	return h.backend + ":" + key
 }
 
+// setCORSHeaders applies CORS response headers based on the handler's allowed
+// origins configuration.
+//
+//   - When allowedOrigins is empty/nil (or ["*"]), all origins are allowed via
+//     "Access-Control-Allow-Origin: *" and credentials are NOT sent, since the
+//     wildcard origin combined with credentials is invalid per the Fetch
+//     standard.
+//   - When allowedOrigins is a specific allowlist, the request's Origin header
+//     is echoed back (with "Vary: Origin") only if it is allowlisted, and in
+//     that case "Access-Control-Allow-Credentials: true" is also sent. A
+//     non-allowlisted Origin receives no "Access-Control-Allow-Origin" header.
+func (h *Handler) setCORSHeaders(w http.ResponseWriter, r *http.Request) {
+	header := w.Header()
+
+	if len(h.allowedOrigins) == 0 || (len(h.allowedOrigins) == 1 && h.allowedOrigins[0] == "*") {
+		header.Set("Access-Control-Allow-Origin", "*")
+	} else {
+		origin := r.Header.Get("Origin")
+		if originAllowed(origin, h.allowedOrigins) {
+			header.Set("Access-Control-Allow-Origin", origin)
+			header.Add("Vary", "Origin")
+			header.Set("Access-Control-Allow-Credentials", "true")
+		}
+	}
+
+	header.Set("Access-Control-Allow-Methods", "GET, PUT, DELETE, HEAD, PATCH, POST, OPTIONS")
+	header.Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Authorization")
+}
+
+// originAllowed reports whether the given request origin is present in the
+// allowlist. An empty origin never matches.
+func originAllowed(origin string, allowedOrigins []string) bool {
+	if origin == "" {
+		return false
+	}
+	for _, allowed := range allowedOrigins {
+		if allowed == origin {
+			return true
+		}
+	}
+	return false
+}
+
 // ServeHTTP handles HTTP/3 requests and routes them to appropriate handlers.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
 	// Set CORS headers for cross-origin requests
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, PUT, DELETE, HEAD, PATCH, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Authorization")
+	h.setCORSHeaders(w, r)
 
 	// Handle preflight OPTIONS request
 	if r.Method == http.MethodOptions {
@@ -104,22 +167,36 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	principal, err := h.authenticator.AuthenticateHTTP(r.Context(), r)
 	if err != nil {
 		h.logger.Warn(r.Context(), "QUIC authentication failed",
-			adapters.Field{Key: "error", Value: err.Error()},
-			adapters.Field{Key: "path", Value: r.URL.Path},
-			adapters.Field{Key: "method", Value: r.Method},
+			adapters.Field{Key: fieldError, Value: err.Error()},
+			adapters.Field{Key: fieldPath, Value: r.URL.Path},
+			adapters.Field{Key: fieldMethod, Value: r.Method},
 		)
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	// Add principal to context and logger
+	// Add principal to context and enrich a request-local logger.
+	// Do NOT assign back to h.logger — that would mutate shared handler state
+	// and cause a data race under concurrent requests.
 	ctx := context.WithValue(r.Context(), principalContextKey, principal)
 	r = r.WithContext(ctx)
 
-	h.logger = h.logger.WithFields(
+	reqLogger := h.logger.WithFields(
 		adapters.Field{Key: "principal_id", Value: principal.ID},
 		adapters.Field{Key: "principal_name", Value: principal.Name},
 	)
+
+	// Authorize the request after successful authentication.
+	action, resource := deriveActionResource(r)
+	if err := h.authorizer.Authorize(ctx, principal, action, resource); err != nil {
+		reqLogger.Warn(ctx, "QUIC authorization denied",
+			adapters.Field{Key: fieldError, Value: err.Error()},
+			adapters.Field{Key: fieldPath, Value: r.URL.Path},
+			adapters.Field{Key: fieldMethod, Value: r.Method},
+		)
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 
 	// Create a response writer wrapper to capture status code
 	rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
@@ -150,23 +227,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(rw, "not found", http.StatusNotFound)
 	}
 
-	// Log the request
+	// Log the request using the request-local enriched logger.
 	duration := time.Since(start)
 	fields := []adapters.Field{
-		{Key: "method", Value: r.Method},
-		{Key: "path", Value: r.URL.Path},
-		{Key: "status", Value: rw.statusCode},
+		{Key: fieldMethod, Value: r.Method},
+		{Key: fieldPath, Value: r.URL.Path},
+		{Key: fieldStatus, Value: rw.statusCode},
 		{Key: "duration", Value: duration.String()},
 		{Key: "protocol", Value: "HTTP/3"},
 	}
 
 	switch {
 	case rw.statusCode >= 500:
-		h.logger.Error(r.Context(), "QUIC request completed", fields...)
+		reqLogger.Error(r.Context(), "QUIC request completed", fields...)
 	case rw.statusCode >= 400:
-		h.logger.Warn(r.Context(), "QUIC request completed", fields...)
+		reqLogger.Warn(r.Context(), "QUIC request completed", fields...)
 	default:
-		h.logger.Info(r.Context(), "QUIC request completed", fields...)
+		reqLogger.Info(r.Context(), "QUIC request completed", fields...)
 	}
 }
 
@@ -186,10 +263,10 @@ func (h *Handler) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(map[string]string{
-		"status":   "healthy",
-		"protocol": "HTTP/3",
+		fieldStatus: "healthy",
+		"protocol":  "HTTP/3",
 	}); err != nil {
-		h.logger.Error(r.Context(), "failed to encode health response", adapters.Field{Key: "error", Value: err.Error()})
+		h.logger.Error(r.Context(), "failed to encode health response", adapters.Field{Key: fieldError, Value: err.Error()})
 	}
 }
 
@@ -267,17 +344,17 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request, key string) 
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
 		return
 	}
 
 	w.WriteHeader(http.StatusCreated)
 	if err := json.NewEncoder(w).Encode(map[string]string{
-		"key":     key,
-		"message": "object stored successfully",
+		fieldKey:     key,
+		fieldMessage: "object stored successfully",
 	}); err != nil {
 		// Log error but response already started
-		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: "error", Value: err.Error()})
+		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: fieldError, Value: err.Error()})
 	}
 }
 
@@ -346,7 +423,7 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request, key strin
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
 		return
 	}
 
@@ -421,7 +498,7 @@ func (h *Handler) handleList(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
 		return
 	}
 
@@ -443,7 +520,7 @@ func (h *Handler) handleList(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		// Log error but response already started
-		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: "error", Value: err.Error()})
+		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: fieldError, Value: err.Error()})
 	}
 }
 
@@ -459,7 +536,7 @@ func (h *Handler) handleExists(w http.ResponseWriter, r *http.Request, key strin
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
 		return
 	}
 
@@ -468,7 +545,7 @@ func (h *Handler) handleExists(w http.ResponseWriter, r *http.Request, key strin
 	if err := json.NewEncoder(w).Encode(map[string]bool{
 		"exists": exists,
 	}); err != nil {
-		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: "error", Value: err.Error()})
+		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: fieldError, Value: err.Error()})
 	}
 }
 
@@ -503,17 +580,17 @@ func (h *Handler) handleUpdateMetadata(w http.ResponseWriter, r *http.Request, k
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(map[string]string{
-		"message": "metadata updated successfully",
-		"key":     key,
+		fieldMessage: "metadata updated successfully",
+		fieldKey:     key,
 	}); err != nil {
-		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: "error", Value: err.Error()})
+		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: fieldError, Value: err.Error()})
 	}
 }
 
@@ -563,18 +640,18 @@ func (h *Handler) handleArchive(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(map[string]string{
-		"message":     "object archived successfully",
-		"key":         req.Key,
+		fieldMessage:  "object archived successfully",
+		fieldKey:      req.Key,
 		"destination": req.DestinationType,
 	}); err != nil {
-		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: "error", Value: err.Error()})
+		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: fieldError, Value: err.Error()})
 	}
 }
 
@@ -604,7 +681,7 @@ func (h *Handler) handleGetPolicies(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
 		return
 	}
 
@@ -635,7 +712,7 @@ func (h *Handler) handleGetPolicies(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: "error", Value: err.Error()})
+		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: fieldError, Value: err.Error()})
 	}
 }
 
@@ -674,8 +751,8 @@ func (h *Handler) handleAddPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.RetentionSeconds <= 0 {
-		http.Error(w, "retention_seconds must be positive", http.StatusBadRequest)
+	if req.RetentionSeconds < 0 {
+		http.Error(w, "retention_seconds must not be negative", http.StatusBadRequest)
 		return
 	}
 
@@ -713,17 +790,17 @@ func (h *Handler) handleAddPolicy(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "policy already exists", http.StatusConflict)
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	if err := json.NewEncoder(w).Encode(map[string]string{
-		"message": "policy added successfully",
-		"id":      req.ID,
+		fieldMessage: "policy added successfully",
+		"id":         req.ID,
 	}); err != nil {
-		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: "error", Value: err.Error()})
+		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: fieldError, Value: err.Error()})
 	}
 }
 
@@ -755,17 +832,17 @@ func (h *Handler) handlePolicyByID(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "policy not found", http.StatusNotFound)
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(map[string]string{
-		"message": "policy removed successfully",
-		"id":      id,
+		fieldMessage: "policy removed successfully",
+		"id":         id,
 	}); err != nil {
-		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: "error", Value: err.Error()})
+		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: fieldError, Value: err.Error()})
 	}
 }
 
@@ -786,7 +863,7 @@ func (h *Handler) handleApplyPolicies(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
 		return
 	}
 
@@ -794,11 +871,11 @@ func (h *Handler) handleApplyPolicies(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		if err := json.NewEncoder(w).Encode(map[string]any{
-			"message":           "no lifecycle policies to apply",
+			fieldMessage:        "no lifecycle policies to apply",
 			"policies_count":    0,
 			"objects_processed": 0,
 		}); err != nil {
-			h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: "error", Value: err.Error()})
+			h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: fieldError, Value: err.Error()})
 		}
 		return
 	}
@@ -815,7 +892,7 @@ func (h *Handler) handleApplyPolicies(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "request timeout", http.StatusRequestTimeout)
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
 		return
 	}
 
@@ -842,8 +919,8 @@ func (h *Handler) handleApplyPolicies(w http.ResponseWriter, r *http.Request) {
 			case "delete":
 				if err := objstore.DeleteWithContext(ctx, h.keyRef(obj.Key)); err != nil {
 					h.logger.Error(ctx, "Failed to delete object during policy application",
-						adapters.Field{Key: "key", Value: obj.Key},
-						adapters.Field{Key: "error", Value: err.Error()},
+						adapters.Field{Key: fieldKey, Value: obj.Key},
+						adapters.Field{Key: fieldError, Value: err.Error()},
 					)
 					continue
 				}
@@ -852,8 +929,8 @@ func (h *Handler) handleApplyPolicies(w http.ResponseWriter, r *http.Request) {
 				if policy.Destination != nil {
 					if err := objstore.Archive(h.keyRef(obj.Key), policy.Destination); err != nil {
 						h.logger.Error(ctx, "Failed to archive object during policy application",
-							adapters.Field{Key: "key", Value: obj.Key},
-							adapters.Field{Key: "error", Value: err.Error()},
+							adapters.Field{Key: fieldKey, Value: obj.Key},
+							adapters.Field{Key: fieldError, Value: err.Error()},
 						)
 						continue
 					}
@@ -866,11 +943,48 @@ func (h *Handler) handleApplyPolicies(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(map[string]any{
-		"message":           "lifecycle policies applied successfully",
+		fieldMessage:        "lifecycle policies applied successfully",
 		"policies_count":    len(policies),
 		"objects_processed": objectsProcessed,
 	}); err != nil {
-		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: "error", Value: err.Error()})
+		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: fieldError, Value: err.Error()})
+	}
+}
+
+// deriveActionResource maps an HTTP/3 request to a (action, resource) pair using
+// the route taxonomy. Object operations use the object key as the resource;
+// management operations use the resource category constants.
+func deriveActionResource(r *http.Request) (action, resource string) {
+	urlPath := r.URL.Path
+	method := r.Method
+
+	switch {
+	case strings.HasPrefix(urlPath, "/replication"):
+		return adapters.ActionAdmin, adapters.ResourceReplication
+	case strings.HasPrefix(urlPath, "/policies"):
+		return adapters.ActionAdmin, adapters.ResourcePolicy
+	case urlPath == "/archive":
+		return adapters.ActionAdmin, adapters.ResourcePolicy
+	case urlPath == "/objects":
+		return adapters.ActionList, ""
+	case strings.HasPrefix(urlPath, "/objects/"):
+		key := path.Clean(strings.TrimPrefix(urlPath, "/objects/"))
+		// exists check is a GET with the exists query parameter.
+		if method == http.MethodGet && r.URL.Query().Get("exists") != "" {
+			return adapters.ActionRead, key
+		}
+		switch method {
+		case http.MethodPut:
+			return adapters.ActionWrite, key
+		case http.MethodPatch:
+			return adapters.ActionWrite, key
+		case http.MethodDelete:
+			return adapters.ActionDelete, key
+		default:
+			return adapters.ActionRead, key
+		}
+	default:
+		return adapters.ActionRead, urlPath
 	}
 }
 

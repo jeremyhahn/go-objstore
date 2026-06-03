@@ -21,8 +21,7 @@ build:
 # Run unit tests in Docker
 test:
 	@echo "Running unit tests in Docker..."
-	docker compose up --build --abort-on-container-exit go-unit-tests
-	docker compose down -v
+	docker compose up --build --abort-on-container-exit go-unit-tests; rc=$$?; docker compose down -v; exit $$rc
 
 # Run tests with coverage
 coverage:
@@ -37,8 +36,7 @@ coverage:
 # Run integration tests in Docker
 integration-test:
 	@echo "Running integration tests in Docker..."
-	docker compose up --build --abort-on-container-exit objstore-server go-integration-tests
-	docker compose down -v
+	docker compose up --build --abort-on-container-exit objstore-server go-integration-tests; rc=$$?; docker compose down -v; exit $$rc
 
 # Format code
 fmt:
@@ -86,14 +84,12 @@ docker-build:
 # Run unit tests in Docker
 docker-test-unit:
 	@echo "Running unit tests in Docker..."
-	docker compose up --build --abort-on-container-exit go-unit-tests
-	docker compose down -v
+	docker compose up --build --abort-on-container-exit go-unit-tests; rc=$$?; docker compose down -v; exit $$rc
 
 # Run integration tests in Docker
 docker-test-integration:
 	@echo "Running integration tests in Docker..."
-	docker compose up --build --abort-on-container-exit objstore-server go-integration-tests
-	docker compose down -v
+	docker compose up --build --abort-on-container-exit objstore-server go-integration-tests; rc=$$?; docker compose down -v; exit $$rc
 
 # Run all tests in Docker
 docker-test: docker-test-unit docker-test-integration

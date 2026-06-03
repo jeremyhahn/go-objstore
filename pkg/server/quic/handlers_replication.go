@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -89,15 +90,15 @@ func (h *Handler) handleGetReplicationPolicies(w http.ResponseWriter, r *http.Re
 	}
 
 	response := map[string]any{
-		"success":  true,
-		"policies": policyResults,
-		"count":    len(policyResults),
+		fieldSuccess: true,
+		"policies":   policyResults,
+		"count":      len(policyResults),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: "error", Value: err.Error()})
+		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: fieldError, Value: err.Error()})
 	}
 }
 
@@ -208,11 +209,11 @@ func (h *Handler) handleAddReplicationPolicy(w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	if err := json.NewEncoder(w).Encode(map[string]any{
-		"success": true,
-		"message": "replication policy added successfully",
-		"id":      req.ID,
+		fieldSuccess: true,
+		fieldMessage: "replication policy added successfully",
+		"id":         req.ID,
 	}); err != nil {
-		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: "error", Value: err.Error()})
+		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: fieldError, Value: err.Error()})
 	}
 }
 
@@ -271,7 +272,7 @@ func (h *Handler) handleGetReplicationPolicy(w http.ResponseWriter, r *http.Requ
 	}
 
 	policyResult := map[string]any{
-		"success":              true,
+		fieldSuccess:           true,
 		"id":                   policy.ID,
 		"source_backend":       policy.SourceBackend,
 		"source_settings":      policy.SourceSettings,
@@ -288,7 +289,7 @@ func (h *Handler) handleGetReplicationPolicy(w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(policyResult); err != nil {
-		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: "error", Value: err.Error()})
+		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: fieldError, Value: err.Error()})
 	}
 }
 
@@ -337,11 +338,11 @@ func (h *Handler) handleDeleteReplicationPolicy(w http.ResponseWriter, r *http.R
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(map[string]any{
-		"success": true,
-		"message": "replication policy removed successfully",
-		"id":      id,
+		fieldSuccess: true,
+		fieldMessage: "replication policy removed successfully",
+		"id":         id,
 	}); err != nil {
-		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: "error", Value: err.Error()})
+		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: fieldError, Value: err.Error()})
 	}
 }
 
@@ -355,7 +356,10 @@ func (h *Handler) handleTriggerReplication(w http.ResponseWriter, r *http.Reques
 	ctx, cancel := context.WithTimeout(r.Context(), h.writeTimeout)
 	defer cancel()
 
-	policyID := r.URL.Query().Get("policy_id")
+	query := r.URL.Query()
+	policyID := query.Get("policy_id")
+	parallel, _ := strconv.ParseBool(query.Get("parallel"))
+	workerCount, _ := strconv.Atoi(query.Get("worker_count"))
 
 	// Get replication manager from facade
 	repMgr, err := objstore.GetReplicationManager(h.backend)
@@ -374,11 +378,18 @@ func (h *Handler) handleTriggerReplication(w http.ResponseWriter, r *http.Reques
 
 	var result *common.SyncResult
 
-	// Trigger sync
-	if policyID == "" {
+	// Trigger sync, honoring the parallel/worker_count query params.
+	switch {
+	case parallel && policyID == "":
+		// Sync all policies in parallel
+		result, err = repMgr.SyncAllParallel(ctx, workerCount)
+	case parallel:
+		// Sync a specific policy in parallel
+		result, err = repMgr.SyncPolicyParallel(ctx, policyID, workerCount)
+	case policyID == "":
 		// Sync all policies
 		result, err = repMgr.SyncAll(ctx)
-	} else {
+	default:
 		// Sync specific policy
 		result, err = repMgr.SyncPolicy(ctx, policyID)
 	}
@@ -397,7 +408,7 @@ func (h *Handler) handleTriggerReplication(w http.ResponseWriter, r *http.Reques
 	}
 
 	response := map[string]any{
-		"success": true,
+		fieldSuccess: true,
 		"result": map[string]any{
 			"policy_id":   result.PolicyID,
 			"synced":      result.Synced,
@@ -407,13 +418,13 @@ func (h *Handler) handleTriggerReplication(w http.ResponseWriter, r *http.Reques
 			"duration":    result.Duration.String(),
 			"errors":      result.Errors,
 		},
-		"message": "replication triggered successfully",
+		fieldMessage: "replication triggered successfully",
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: "error", Value: err.Error()})
+		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: fieldError, Value: err.Error()})
 	}
 }
 
@@ -467,7 +478,7 @@ func (h *Handler) handleGetReplicationStatus(w http.ResponseWriter, r *http.Requ
 	}
 
 	statusResult := map[string]any{
-		"success":               true,
+		fieldSuccess:            true,
 		"policy_id":             replicationStatus.PolicyID,
 		"source_backend":        replicationStatus.SourceBackend,
 		"destination_backend":   replicationStatus.DestinationBackend,
@@ -484,6 +495,6 @@ func (h *Handler) handleGetReplicationStatus(w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(statusResult); err != nil {
-		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: "error", Value: err.Error()})
+		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: fieldError, Value: err.Error()})
 	}
 }

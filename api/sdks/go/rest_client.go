@@ -76,6 +76,9 @@ func newRESTClient(config *ClientConfig) (*RESTClient, error) {
 
 // Put stores an object.
 func (c *RESTClient) Put(ctx context.Context, key string, data []byte, metadata *Metadata) (*PutResult, error) {
+	if err := validateKey(key); err != nil {
+		return nil, err
+	}
 	url := fmt.Sprintf("%s/objects/%s", c.baseURL, url.PathEscape(key))
 
 	req, err := http.NewRequestWithContext(ctx, "PUT", url, bytes.NewReader(data))
@@ -136,6 +139,9 @@ func (c *RESTClient) Put(ctx context.Context, key string, data []byte, metadata 
 
 // Get retrieves an object.
 func (c *RESTClient) Get(ctx context.Context, key string) (*GetResult, error) {
+	if err := validateKey(key); err != nil {
+		return nil, err
+	}
 	url := fmt.Sprintf("%s/objects/%s", c.baseURL, url.PathEscape(key))
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -315,7 +321,15 @@ func (c *RESTClient) Exists(ctx context.Context, key string) (bool, error) {
 	}
 	defer resp.Body.Close()
 
-	return resp.StatusCode == http.StatusOK, nil
+	if resp.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("HEAD failed with status %d", resp.StatusCode)
+	}
+
+	return true, nil
 }
 
 // GetMetadata retrieves object metadata using HEAD request.
@@ -372,15 +386,36 @@ func (c *RESTClient) GetMetadata(ctx context.Context, key string) (*Metadata, er
 	return metadata, nil
 }
 
-// UpdateMetadata updates object metadata.
-// Note: REST API requires re-uploading the object to update metadata.
-// This is a limitation of the REST protocol compared to gRPC.
+// UpdateMetadata updates object metadata via PUT /metadata/{key}.
 func (c *RESTClient) UpdateMetadata(ctx context.Context, key string, metadata *Metadata) error {
-	// REST doesn't have a dedicated metadata update endpoint that works like gRPC.
-	// The server's /objects/{key}/metadata endpoint doesn't work as expected.
-	// To properly update metadata, you need to GET the object, then PUT it back with new metadata.
-	// For now, we'll return ErrNotSupported to indicate this limitation.
-	return ErrNotSupported
+	reqURL := fmt.Sprintf("%s/metadata/%s", c.baseURL, url.PathEscape(key))
+
+	body, err := json.Marshal(metadataToJSON(metadata))
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "PUT", reqURL, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return ErrObjectNotFound
+	}
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("UPDATE metadata failed with status %d", resp.StatusCode)
+	}
+
+	return nil
 }
 
 // Health performs a health check.
@@ -413,59 +448,366 @@ func (c *RESTClient) Health(ctx context.Context) (*HealthStatus, error) {
 	}, nil
 }
 
-// Archive copies an object to archival storage.
+// Archive copies an object to archival storage via POST /archive.
 func (c *RESTClient) Archive(ctx context.Context, key string, destinationType string, settings map[string]string) error {
-	return ErrStreamingNotSupported // REST API doesn't support archive in the OpenAPI spec
+	reqBody := map[string]interface{}{
+		"key":                  key,
+		"destination_type":     destinationType,
+		"destination_settings": settings,
+	}
+
+	resp, err := c.doJSON(ctx, "POST", c.baseURL+"/archive", reqBody)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("ARCHIVE failed with status %d", resp.StatusCode)
+	}
+
+	return nil
 }
 
-// AddPolicy adds a lifecycle policy.
+// AddPolicy adds a lifecycle policy via POST /policies.
 func (c *RESTClient) AddPolicy(ctx context.Context, policy *LifecyclePolicy) error {
-	return ErrStreamingNotSupported // REST API doesn't support lifecycle policies in the OpenAPI spec
+	if policy == nil {
+		return ErrInvalidConfig
+	}
+
+	reqBody := map[string]interface{}{
+		"id":                policy.ID,
+		"prefix":            policy.Prefix,
+		"retention_seconds": policy.RetentionSeconds,
+		"action":            policy.Action,
+	}
+	if policy.DestinationType != "" {
+		reqBody["destination_type"] = policy.DestinationType
+	}
+	if len(policy.DestinationSettings) > 0 {
+		reqBody["destination_settings"] = policy.DestinationSettings
+	}
+
+	resp, err := c.doJSON(ctx, "POST", c.baseURL+"/policies", reqBody)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("ADD policy failed with status %d", resp.StatusCode)
+	}
+
+	return nil
 }
 
-// RemovePolicy removes a lifecycle policy.
+// RemovePolicy removes a lifecycle policy via DELETE /policies/{id}.
 func (c *RESTClient) RemovePolicy(ctx context.Context, policyID string) error {
-	return ErrStreamingNotSupported // REST API doesn't support lifecycle policies in the OpenAPI spec
+	reqURL := fmt.Sprintf("%s/policies/%s", c.baseURL, url.PathEscape(policyID))
+
+	resp, err := c.doJSON(ctx, "DELETE", reqURL, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return ErrObjectNotFound
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("REMOVE policy failed with status %d", resp.StatusCode)
+	}
+
+	return nil
 }
 
-// GetPolicies retrieves lifecycle policies.
+// GetPolicies retrieves lifecycle policies via GET /policies.
 func (c *RESTClient) GetPolicies(ctx context.Context, prefix string) ([]*LifecyclePolicy, error) {
-	return nil, ErrStreamingNotSupported // REST API doesn't support lifecycle policies in the OpenAPI spec
+	reqURL := c.baseURL + "/policies"
+	if prefix != "" {
+		params := url.Values{}
+		params.Add("prefix", prefix)
+		reqURL += "?" + params.Encode()
+	}
+
+	resp, err := c.doJSON(ctx, "GET", reqURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET policies failed with status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Policies []struct {
+			ID               string `json:"id"`
+			Prefix           string `json:"prefix"`
+			RetentionSeconds int64  `json:"retention_seconds"`
+			Action           string `json:"action"`
+			DestinationType  string `json:"destination_type"`
+		} `json:"policies"`
+		Count int `json:"count"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	policies := make([]*LifecyclePolicy, len(result.Policies))
+	for i, p := range result.Policies {
+		policies[i] = &LifecyclePolicy{
+			ID:               p.ID,
+			Prefix:           p.Prefix,
+			RetentionSeconds: p.RetentionSeconds,
+			Action:           p.Action,
+			DestinationType:  p.DestinationType,
+		}
+	}
+
+	return policies, nil
 }
 
-// ApplyPolicies executes all lifecycle policies.
+// ApplyPolicies executes all lifecycle policies via POST /policies/apply.
 func (c *RESTClient) ApplyPolicies(ctx context.Context) (*ApplyPoliciesResult, error) {
-	return nil, ErrStreamingNotSupported // REST API doesn't support lifecycle policies in the OpenAPI spec
+	resp, err := c.doJSON(ctx, "POST", c.baseURL+"/policies/apply", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("APPLY policies failed with status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Message          string `json:"message"`
+		PoliciesCount    int32  `json:"policies_count"`
+		ObjectsProcessed int32  `json:"objects_processed"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	return &ApplyPoliciesResult{
+		Success:          true,
+		PoliciesCount:    result.PoliciesCount,
+		ObjectsProcessed: result.ObjectsProcessed,
+		Message:          result.Message,
+	}, nil
 }
 
-// AddReplicationPolicy adds a replication policy.
+// AddReplicationPolicy adds a replication policy via POST /replication/policies.
 func (c *RESTClient) AddReplicationPolicy(ctx context.Context, policy *ReplicationPolicy) error {
-	return ErrStreamingNotSupported // REST API doesn't support replication policies in the OpenAPI spec
+	if policy == nil {
+		return ErrInvalidConfig
+	}
+
+	resp, err := c.doJSON(ctx, "POST", c.baseURL+"/replication/policies", replicationPolicyToJSON(policy))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("ADD replication policy failed with status %d", resp.StatusCode)
+	}
+
+	return nil
 }
 
-// RemoveReplicationPolicy removes a replication policy.
+// RemoveReplicationPolicy removes a replication policy via DELETE /replication/policies/{id}.
 func (c *RESTClient) RemoveReplicationPolicy(ctx context.Context, policyID string) error {
-	return ErrStreamingNotSupported // REST API doesn't support replication policies in the OpenAPI spec
+	reqURL := fmt.Sprintf("%s/replication/policies/%s", c.baseURL, url.PathEscape(policyID))
+
+	resp, err := c.doJSON(ctx, "DELETE", reqURL, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return ErrObjectNotFound
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("REMOVE replication policy failed with status %d", resp.StatusCode)
+	}
+
+	return nil
 }
 
-// GetReplicationPolicies retrieves all replication policies.
+// GetReplicationPolicies retrieves all replication policies via GET /replication/policies.
 func (c *RESTClient) GetReplicationPolicies(ctx context.Context) ([]*ReplicationPolicy, error) {
-	return nil, ErrStreamingNotSupported // REST API doesn't support replication policies in the OpenAPI spec
+	resp, err := c.doJSON(ctx, "GET", c.baseURL+"/replication/policies", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET replication policies failed with status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Policies []restReplicationPolicy `json:"policies"`
+		Count    int                     `json:"count"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	policies := make([]*ReplicationPolicy, len(result.Policies))
+	for i := range result.Policies {
+		policies[i] = result.Policies[i].toModel()
+	}
+
+	return policies, nil
 }
 
-// GetReplicationPolicy retrieves a specific replication policy.
+// GetReplicationPolicy retrieves a specific replication policy via GET /replication/policies/{id}.
 func (c *RESTClient) GetReplicationPolicy(ctx context.Context, policyID string) (*ReplicationPolicy, error) {
-	return nil, ErrStreamingNotSupported // REST API doesn't support replication policies in the OpenAPI spec
+	reqURL := fmt.Sprintf("%s/replication/policies/%s", c.baseURL, url.PathEscape(policyID))
+
+	resp, err := c.doJSON(ctx, "GET", reqURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, ErrObjectNotFound
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET replication policy failed with status %d", resp.StatusCode)
+	}
+
+	var policy restReplicationPolicy
+	if err := json.NewDecoder(resp.Body).Decode(&policy); err != nil {
+		return nil, err
+	}
+
+	return policy.toModel(), nil
 }
 
-// TriggerReplication triggers replication synchronization.
+// TriggerReplication triggers replication synchronization via POST /replication/trigger.
 func (c *RESTClient) TriggerReplication(ctx context.Context, opts *TriggerReplicationOptions) (*SyncResult, error) {
-	return nil, ErrStreamingNotSupported // REST API doesn't support replication in the OpenAPI spec
+	if opts == nil {
+		opts = &TriggerReplicationOptions{}
+	}
+
+	reqBody := map[string]interface{}{
+		"policy_id":    opts.PolicyID,
+		"parallel":     opts.Parallel,
+		"worker_count": opts.WorkerCount,
+	}
+
+	resp, err := c.doJSON(ctx, "POST", c.baseURL+"/replication/trigger", reqBody)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("TRIGGER replication failed with status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+		Result  *struct {
+			PolicyID   string   `json:"policy_id"`
+			Synced     int32    `json:"synced"`
+			Deleted    int32    `json:"deleted"`
+			Failed     int32    `json:"failed"`
+			BytesTotal int64    `json:"bytes_total"`
+			Duration   string   `json:"duration"`
+			Errors     []string `json:"errors,omitempty"`
+		} `json:"result,omitempty"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	syncResult := &SyncResult{}
+	if result.Result != nil {
+		syncResult.PolicyID = result.Result.PolicyID
+		syncResult.Synced = result.Result.Synced
+		syncResult.Deleted = result.Result.Deleted
+		syncResult.Failed = result.Result.Failed
+		syncResult.BytesTotal = result.Result.BytesTotal
+		syncResult.Errors = result.Result.Errors
+		if d, err := time.ParseDuration(result.Result.Duration); err == nil {
+			syncResult.DurationMs = d.Milliseconds()
+		}
+	}
+
+	return syncResult, nil
 }
 
-// GetReplicationStatus retrieves replication status and metrics.
+// GetReplicationStatus retrieves replication status and metrics via GET /replication/status/{id}.
 func (c *RESTClient) GetReplicationStatus(ctx context.Context, policyID string) (*ReplicationStatus, error) {
-	return nil, ErrStreamingNotSupported // REST API doesn't support replication in the OpenAPI spec
+	reqURL := fmt.Sprintf("%s/replication/status/%s", c.baseURL, url.PathEscape(policyID))
+
+	resp, err := c.doJSON(ctx, "GET", reqURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, ErrObjectNotFound
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET replication status failed with status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		PolicyID            string `json:"policy_id"`
+		SourceBackend       string `json:"source_backend"`
+		DestinationBackend  string `json:"destination_backend"`
+		Enabled             bool   `json:"enabled"`
+		TotalObjectsSynced  int64  `json:"total_objects_synced"`
+		TotalObjectsDeleted int64  `json:"total_objects_deleted"`
+		TotalBytesSynced    int64  `json:"total_bytes_synced"`
+		TotalErrors         int64  `json:"total_errors"`
+		LastSyncTime        string `json:"last_sync_time,omitempty"`
+		AverageSyncDuration string `json:"average_sync_duration"`
+		SyncCount           int64  `json:"sync_count"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	status := &ReplicationStatus{
+		PolicyID:            result.PolicyID,
+		SourceBackend:       result.SourceBackend,
+		DestinationBackend:  result.DestinationBackend,
+		Enabled:             result.Enabled,
+		TotalObjectsSynced:  result.TotalObjectsSynced,
+		TotalObjectsDeleted: result.TotalObjectsDeleted,
+		TotalBytesSynced:    result.TotalBytesSynced,
+		TotalErrors:         result.TotalErrors,
+		SyncCount:           result.SyncCount,
+	}
+	if d, err := time.ParseDuration(result.AverageSyncDuration); err == nil {
+		status.AverageSyncDurationMs = d.Milliseconds()
+	}
+	if result.LastSyncTime != "" {
+		if t, err := time.Parse(time.RFC3339, result.LastSyncTime); err == nil {
+			status.LastSyncTime = t
+		}
+	}
+
+	return status, nil
 }
 
 // Close closes any resources held by the client.
@@ -475,6 +817,77 @@ func (c *RESTClient) Close() error {
 	return nil
 }
 
+// doJSON performs an HTTP request with an optional JSON body and returns the response.
+// The caller is responsible for closing the response body.
+func (c *RESTClient) doJSON(ctx context.Context, method, reqURL string, body interface{}) (*http.Response, error) {
+	var reader io.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		reader = bytes.NewReader(data)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, reqURL, reader)
+	if err != nil {
+		return nil, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	return c.httpClient.Do(req)
+}
+
+// metadataToJSON converts a Metadata value into the server's common.Metadata JSON shape.
+func metadataToJSON(m *Metadata) map[string]interface{} {
+	out := map[string]interface{}{}
+	if m == nil {
+		return out
+	}
+	if m.ContentType != "" {
+		out["content_type"] = m.ContentType
+	}
+	if m.ContentEncoding != "" {
+		out["content_encoding"] = m.ContentEncoding
+	}
+	if m.Size != 0 {
+		out["size"] = m.Size
+	}
+	if len(m.Custom) > 0 {
+		out["custom"] = m.Custom
+	}
+	return out
+}
+
+// replicationPolicyToJSON converts a ReplicationPolicy into the REST request shape.
+func replicationPolicyToJSON(p *ReplicationPolicy) map[string]interface{} {
+	out := map[string]interface{}{
+		"id":                     p.ID,
+		"source_backend":         p.SourceBackend,
+		"destination_backend":    p.DestinationBackend,
+		"check_interval_seconds": p.CheckIntervalSeconds,
+		"enabled":                p.Enabled,
+	}
+	if len(p.SourceSettings) > 0 {
+		out["source_settings"] = p.SourceSettings
+	}
+	if p.SourcePrefix != "" {
+		out["source_prefix"] = p.SourcePrefix
+	}
+	if len(p.DestinationSettings) > 0 {
+		out["destination_settings"] = p.DestinationSettings
+	}
+	switch p.ReplicationMode {
+	case ReplicationModeOpaque:
+		out["replication_mode"] = "opaque"
+	case ReplicationModeTransparent:
+		out["replication_mode"] = "transparent"
+	}
+	return out
+}
+
 // restObjectInfo matches the REST API's ObjectResponse schema.
 type restObjectInfo struct {
 	Key      string            `json:"key"`
@@ -482,6 +895,43 @@ type restObjectInfo struct {
 	Modified string            `json:"modified,omitempty"`
 	ETag     string            `json:"etag,omitempty"`
 	Metadata map[string]string `json:"metadata,omitempty"`
+}
+
+// restReplicationPolicy matches the REST API's ReplicationPolicyResponse schema.
+type restReplicationPolicy struct {
+	ID                   string            `json:"id"`
+	SourceBackend        string            `json:"source_backend"`
+	SourceSettings       map[string]string `json:"source_settings,omitempty"`
+	SourcePrefix         string            `json:"source_prefix,omitempty"`
+	DestinationBackend   string            `json:"destination_backend"`
+	DestinationSettings  map[string]string `json:"destination_settings,omitempty"`
+	CheckIntervalSeconds int64             `json:"check_interval_seconds"`
+	LastSyncTime         string            `json:"last_sync_time,omitempty"`
+	Enabled              bool              `json:"enabled"`
+	ReplicationMode      string            `json:"replication_mode"`
+}
+
+// toModel converts the wire representation into the SDK ReplicationPolicy type.
+func (p *restReplicationPolicy) toModel() *ReplicationPolicy {
+	policy := &ReplicationPolicy{
+		ID:                   p.ID,
+		SourceBackend:        p.SourceBackend,
+		SourceSettings:       p.SourceSettings,
+		SourcePrefix:         p.SourcePrefix,
+		DestinationBackend:   p.DestinationBackend,
+		DestinationSettings:  p.DestinationSettings,
+		CheckIntervalSeconds: p.CheckIntervalSeconds,
+		Enabled:              p.Enabled,
+	}
+	if p.ReplicationMode == "opaque" {
+		policy.ReplicationMode = ReplicationModeOpaque
+	}
+	if p.LastSyncTime != "" {
+		if t, err := time.Parse(time.RFC3339, p.LastSyncTime); err == nil {
+			policy.LastSyncTime = t
+		}
+	}
+	return policy
 }
 
 // Ensure RESTClient implements Client interface

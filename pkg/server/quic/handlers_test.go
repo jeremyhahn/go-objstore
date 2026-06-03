@@ -41,7 +41,7 @@ func setupTestHandler(t *testing.T) (*Handler, common.Storage) {
 	initTestFacade(t, storage)
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()
-	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to create handler: %v", err)
 	}
@@ -1663,7 +1663,7 @@ func TestHandlerExistsStorageError(t *testing.T) {
 	initTestFacade(t, mockStorage)
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()
-	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to create handler: %v", err)
 	}
@@ -1688,7 +1688,7 @@ func TestHandlerUpdateMetadataStorageError(t *testing.T) {
 	initTestFacade(t, mockStorage)
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()
-	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to create handler: %v", err)
 	}
@@ -1719,7 +1719,7 @@ func TestHandlerArchiveStorageError(t *testing.T) {
 	initTestFacade(t, mockStorage)
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()
-	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to create handler: %v", err)
 	}
@@ -1748,7 +1748,7 @@ func TestHandlerGetPoliciesStorageError(t *testing.T) {
 	initTestFacade(t, mockStorage)
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()
-	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to create handler: %v", err)
 	}
@@ -1781,7 +1781,7 @@ func TestHandlerGetPoliciesWithPrefixFilter(t *testing.T) {
 	initTestFacade(t, mockStorage)
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()
-	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to create handler: %v", err)
 	}
@@ -1813,7 +1813,7 @@ func TestHandlerAddPolicyStorageError(t *testing.T) {
 	initTestFacade(t, mockStorage)
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()
-	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to create handler: %v", err)
 	}
@@ -1842,7 +1842,7 @@ func TestHandlerRemovePolicyNotFound(t *testing.T) {
 	initTestFacade(t, mockStorage)
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()
-	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to create handler: %v", err)
 	}
@@ -1863,7 +1863,7 @@ func TestHandlerRemovePolicyStorageError(t *testing.T) {
 	initTestFacade(t, mockStorage)
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()
-	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to create handler: %v", err)
 	}
@@ -1883,7 +1883,7 @@ func TestHandlerAddPolicyConflict(t *testing.T) {
 	initTestFacade(t, mockStorage)
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()
-	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to create handler: %v", err)
 	}
@@ -1938,7 +1938,7 @@ func TestHandlerGetWithFullMetadata(t *testing.T) {
 	initTestFacade(t, mockStorage)
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()
-	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to create handler: %v", err)
 	}
@@ -1976,7 +1976,7 @@ func TestHandlerListWithPaginationAndDelimiter(t *testing.T) {
 	initTestFacade(t, mockStorage)
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()
-	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to create handler: %v", err)
 	}
@@ -2013,7 +2013,7 @@ func TestHandlerListStorageError(t *testing.T) {
 	initTestFacade(t, mockStorage)
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()
-	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to create handler: %v", err)
 	}
@@ -2034,7 +2034,7 @@ func TestHandlerDeleteStorageError(t *testing.T) {
 	initTestFacade(t, mockStorage)
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()
-	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth)
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to create handler: %v", err)
 	}

@@ -513,6 +513,25 @@ module ObjectStore
       @protocol
     end
 
+    # Close the client and release any underlying resources
+    #
+    # Delegates to the underlying protocol client. For gRPC this closes the
+    # long-lived channel/stub; for REST/QUIC it closes any held HTTP
+    # connection (otherwise a safe no-op). Safe to call multiple times.
+    #
+    # @return [void]
+    #
+    # @example
+    #   client = ObjectStore::Client.new(protocol: :grpc)
+    #   begin
+    #     client.put("file.txt", "data")
+    #   ensure
+    #     client.close
+    #   end
+    def close
+      @client.close if @client.respond_to?(:close)
+    end
+
     private
 
     def create_client(host, port, use_ssl, timeout)

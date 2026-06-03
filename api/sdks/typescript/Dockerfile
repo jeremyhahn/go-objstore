@@ -15,6 +15,8 @@ WORKDIR /app
 # Copy package files for dependency caching
 COPY sdks/typescript/package*.json ./
 COPY sdks/typescript/tsconfig.json ./
+COPY sdks/typescript/tsconfig.cjs.json ./
+COPY sdks/typescript/tsconfig.esm.json ./
 
 # Install dependencies
 RUN npm ci
@@ -23,7 +25,8 @@ RUN npm ci
 # Proto files are mounted at runtime via docker-compose volumes
 # COPY proto ./proto
 
-# Copy source code
+# Copy build helper scripts and source code
+COPY sdks/typescript/scripts ./scripts
 COPY sdks/typescript/src ./src
 COPY sdks/typescript/tests ./tests
 

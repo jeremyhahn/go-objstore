@@ -5,7 +5,7 @@ go-objstore is a unified object storage abstraction library built around a consi
 ## Core Components
 
 ### Storage Layer
-The foundation is the `Storage` interface, which defines 14 methods for object operations. All backends implement this interface completely, ensuring consistent behavior whether you're using local filesystem or cloud storage.
+The foundation is the `Storage` interface, which defines 19 methods for object operations organized into five categories: configuration, basic operations, context-aware operations, metadata operations, lifecycle management, and archival. All backends implement this interface completely, ensuring consistent behavior whether you're using local filesystem or cloud storage.
 
 Backends include local filesystem, Amazon S3, Google Cloud Storage, Azure Blob Storage, MinIO, AWS Glacier, and Azure Archive.
 
@@ -17,6 +17,7 @@ Multiple server implementations provide different protocols for accessing the st
 - gRPC server for high-performance RPC with Protocol Buffers
 - REST API server using HTTP/JSON
 - QUIC server for HTTP/3 over QUIC
+- Unix socket server for local IPC
 - MCP server for AI model integrations
 
 All servers support TLS/mTLS and pluggable authentication.
@@ -29,7 +30,7 @@ A filesystem abstraction layer that wraps any storage backend with familiar file
 [Read more about StorageFS](storagefs.md)
 
 ### Encryption
-Optional at-rest encryption using go-xkms for key management. Supports AES-GCM encryption with multiple key sizes and backends including software keystores and hardware security modules.
+Optional at-rest encryption via a pluggable interface. Bring your own key management (HashiCorp Vault, AWS KMS, GCP KMS, Azure Key Vault, or a custom implementation) by implementing the Encrypter and EncrypterFactory interfaces. Supports AES-GCM and any other algorithm your implementation provides.
 
 [Read more about encryption](encryption.md)
 

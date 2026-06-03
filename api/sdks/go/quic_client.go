@@ -14,8 +14,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
 
-	objstorepb "github.com/jeremyhahn/go-objstore/api/proto"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 )
@@ -74,37 +77,32 @@ func newQUICClient(config *ClientConfig) (*QUICClient, error) {
 	}, nil
 }
 
-// The QUIC client uses HTTP3, so we can leverage the gRPC-over-HTTP3 or use REST-like HTTP3.
-// For simplicity, we'll implement it using HTTP3 with a REST-like interface similar to RESTClient,
-// but we could also use gRPC-over-HTTP3. Let's use a hybrid approach where we use HTTP3 for
-// transport but gRPC-like message encoding for better type safety.
+// The QUIC client speaks HTTP/3 to the server's bare RESTful routes (no /api/v1 prefix).
+// Object data is transferred as raw request/response bodies; metadata travels in headers.
 
-// For this implementation, we'll use HTTP3 with JSON encoding similar to REST.
-
-// Put stores an object.
+// Put stores an object via PUT /objects/{key} with the raw body and X-Meta-* headers.
 func (c *QUICClient) Put(ctx context.Context, key string, data []byte, metadata *Metadata) (*PutResult, error) {
-	// Create request body with metadata
-	reqBody := struct {
-		Key      string    `json:"key"`
-		Data     []byte    `json:"data"`
-		Metadata *Metadata `json:"metadata,omitempty"`
-	}{
-		Key:      key,
-		Data:     data,
-		Metadata: metadata,
+	if err := validateKey(key); err != nil {
+		return nil, err
 	}
+	reqURL := fmt.Sprintf("%s/objects/%s", c.baseURL, url.PathEscape(key))
 
-	body, err := json.Marshal(reqBody)
+	req, err := http.NewRequestWithContext(ctx, "PUT", reqURL, bytes.NewReader(data))
 	if err != nil {
 		return nil, err
 	}
 
-	url := fmt.Sprintf("%s/api/v1/put", c.baseURL)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
+	if metadata != nil {
+		if metadata.ContentType != "" {
+			req.Header.Set("Content-Type", metadata.ContentType)
+		}
+		if metadata.ContentEncoding != "" {
+			req.Header.Set("Content-Encoding", metadata.ContentEncoding)
+		}
+		for k, v := range metadata.Custom {
+			req.Header.Set("X-Meta-"+k, v)
+		}
 	}
-	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -112,18 +110,32 @@ func (c *QUICClient) Put(ctx context.Context, key string, data []byte, metadata 
 	}
 	defer resp.Body.Close()
 
-	var result PutResult
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("PUT failed with status %d", resp.StatusCode)
 	}
 
-	return &result, nil
+	var result struct {
+		Key     string `json:"key"`
+		Message string `json:"message"`
+	}
+	// The body has no etag; ignore decode errors so a missing/extra body never masks success.
+	_ = json.NewDecoder(resp.Body).Decode(&result)
+
+	return &PutResult{
+		Success: true,
+		Message: result.Message,
+		ETag:    resp.Header.Get("ETag"),
+	}, nil
 }
 
-// Get retrieves an object.
+// Get retrieves an object via GET /objects/{key}.
 func (c *QUICClient) Get(ctx context.Context, key string) (*GetResult, error) {
-	url := fmt.Sprintf("%s/api/v1/get?key=%s", c.baseURL, key)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err := validateKey(key); err != nil {
+		return nil, err
+	}
+	reqURL := fmt.Sprintf("%s/objects/%s", c.baseURL, url.PathEscape(key))
+
+	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -138,30 +150,26 @@ func (c *QUICClient) Get(ctx context.Context, key string) (*GetResult, error) {
 		return nil, ErrObjectNotFound
 	}
 
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET failed with status %d", resp.StatusCode)
+	}
+
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
 
-	var result struct {
-		Data     []byte    `json:"data"`
-		Metadata *Metadata `json:"metadata,omitempty"`
-	}
-
-	if err := json.Unmarshal(data, &result); err != nil {
-		return nil, err
-	}
-
 	return &GetResult{
-		Data:     result.Data,
-		Metadata: result.Metadata,
+		Data:     data,
+		Metadata: metadataFromHeaders(resp.Header),
 	}, nil
 }
 
-// Delete removes an object.
+// Delete removes an object via DELETE /objects/{key}.
 func (c *QUICClient) Delete(ctx context.Context, key string) error {
-	url := fmt.Sprintf("%s/api/v1/delete?key=%s", c.baseURL, key)
-	req, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
+	reqURL := fmt.Sprintf("%s/objects/%s", c.baseURL, url.PathEscape(key))
+
+	req, err := http.NewRequestWithContext(ctx, "DELETE", reqURL, nil)
 	if err != nil {
 		return err
 	}
@@ -176,26 +184,41 @@ func (c *QUICClient) Delete(ctx context.Context, key string) error {
 		return ErrObjectNotFound
 	}
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("DELETE failed with status %d", resp.StatusCode)
 	}
 
 	return nil
 }
 
-// List returns a list of objects.
+// List returns a list of objects via GET /objects with continue/max query params.
 func (c *QUICClient) List(ctx context.Context, opts *ListOptions) (*ListResult, error) {
-	reqBody, err := json.Marshal(opts)
-	if err != nil {
-		return nil, err
+	if opts == nil {
+		opts = &ListOptions{}
 	}
 
-	url := fmt.Sprintf("%s/api/v1/list", c.baseURL)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBody))
+	reqURL := c.baseURL + "/objects"
+	params := url.Values{}
+	if opts.Prefix != "" {
+		params.Add("prefix", opts.Prefix)
+	}
+	if opts.Delimiter != "" {
+		params.Add("delimiter", opts.Delimiter)
+	}
+	if opts.MaxResults > 0 {
+		params.Add("max", strconv.Itoa(int(opts.MaxResults)))
+	}
+	if opts.ContinueFrom != "" {
+		params.Add("continue", opts.ContinueFrom)
+	}
+	if len(params) > 0 {
+		reqURL += "?" + params.Encode()
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -203,18 +226,60 @@ func (c *QUICClient) List(ctx context.Context, opts *ListOptions) (*ListResult, 
 	}
 	defer resp.Body.Close()
 
-	var result ListResult
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("LIST failed with status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Objects []struct {
+			Key      string `json:"key"`
+			Metadata *struct {
+				ContentType     string            `json:"content_type"`
+				ContentEncoding string            `json:"content_encoding"`
+				Size            int64             `json:"size"`
+				LastModified    time.Time         `json:"last_modified"`
+				ETag            string            `json:"etag"`
+				Custom          map[string]string `json:"custom"`
+			} `json:"metadata,omitempty"`
+		} `json:"objects"`
+		Prefixes  []string `json:"prefixes,omitempty"`
+		NextToken string   `json:"next_token,omitempty"`
+		Truncated bool     `json:"truncated"`
+	}
+
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
 
-	return &result, nil
+	objects := make([]*ObjectInfo, len(result.Objects))
+	for i, obj := range result.Objects {
+		info := &ObjectInfo{Key: obj.Key}
+		if obj.Metadata != nil {
+			info.Metadata = &Metadata{
+				ContentType:     obj.Metadata.ContentType,
+				ContentEncoding: obj.Metadata.ContentEncoding,
+				Size:            obj.Metadata.Size,
+				LastModified:    obj.Metadata.LastModified,
+				ETag:            obj.Metadata.ETag,
+				Custom:          obj.Metadata.Custom,
+			}
+		}
+		objects[i] = info
+	}
+
+	return &ListResult{
+		Objects:        objects,
+		CommonPrefixes: result.Prefixes,
+		NextToken:      result.NextToken,
+		Truncated:      result.Truncated,
+	}, nil
 }
 
-// Exists checks if an object exists.
+// Exists checks if an object exists via GET /objects/{key}?exists=1.
 func (c *QUICClient) Exists(ctx context.Context, key string) (bool, error) {
-	url := fmt.Sprintf("%s/api/v1/exists?key=%s", c.baseURL, key)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	reqURL := fmt.Sprintf("%s/objects/%s?exists=1", c.baseURL, url.PathEscape(key))
+
+	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
 		return false, err
 	}
@@ -225,10 +290,13 @@ func (c *QUICClient) Exists(ctx context.Context, key string) (bool, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("EXISTS failed with status %d", resp.StatusCode)
+	}
+
 	var result struct {
 		Exists bool `json:"exists"`
 	}
-
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return false, err
 	}
@@ -236,10 +304,11 @@ func (c *QUICClient) Exists(ctx context.Context, key string) (bool, error) {
 	return result.Exists, nil
 }
 
-// GetMetadata retrieves object metadata.
+// GetMetadata retrieves object metadata via HEAD /objects/{key}, reading headers.
 func (c *QUICClient) GetMetadata(ctx context.Context, key string) (*Metadata, error) {
-	url := fmt.Sprintf("%s/api/v1/metadata?key=%s", c.baseURL, key)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	reqURL := fmt.Sprintf("%s/objects/%s", c.baseURL, url.PathEscape(key))
+
+	req, err := http.NewRequestWithContext(ctx, "HEAD", reqURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -254,31 +323,23 @@ func (c *QUICClient) GetMetadata(ctx context.Context, key string) (*Metadata, er
 		return nil, ErrObjectNotFound
 	}
 
-	var metadata Metadata
-	if err := json.NewDecoder(resp.Body).Decode(&metadata); err != nil {
-		return nil, err
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET metadata failed with status %d", resp.StatusCode)
 	}
 
-	return &metadata, nil
+	return metadataFromHeaders(resp.Header), nil
 }
 
-// UpdateMetadata updates object metadata.
+// UpdateMetadata updates object metadata via PATCH /objects/{key}.
 func (c *QUICClient) UpdateMetadata(ctx context.Context, key string, metadata *Metadata) error {
-	reqBody := struct {
-		Key      string    `json:"key"`
-		Metadata *Metadata `json:"metadata"`
-	}{
-		Key:      key,
-		Metadata: metadata,
-	}
+	reqURL := fmt.Sprintf("%s/objects/%s", c.baseURL, url.PathEscape(key))
 
-	body, err := json.Marshal(reqBody)
+	body, err := json.Marshal(metadataToJSON(metadata))
 	if err != nil {
 		return err
 	}
 
-	url := fmt.Sprintf("%s/api/v1/metadata", c.baseURL)
-	req, err := http.NewRequestWithContext(ctx, "PUT", url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "PATCH", reqURL, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -301,10 +362,9 @@ func (c *QUICClient) UpdateMetadata(ctx context.Context, key string, metadata *M
 	return nil
 }
 
-// Health performs a health check.
+// Health performs a health check via GET /health.
 func (c *QUICClient) Health(ctx context.Context) (*HealthStatus, error) {
-	url := fmt.Sprintf("%s/api/v1/health", c.baseURL)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/health", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -315,15 +375,25 @@ func (c *QUICClient) Health(ctx context.Context) (*HealthStatus, error) {
 	}
 	defer resp.Body.Close()
 
-	var status HealthStatus
-	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HEALTH failed with status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Status   string `json:"status"`
+		Protocol string `json:"protocol"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
 
-	return &status, nil
+	return &HealthStatus{
+		Status:  strings.ToUpper(result.Status),
+		Message: result.Protocol,
+	}, nil
 }
 
-// Archive copies an object to archival storage.
+// Archive copies an object to archival storage via POST /archive.
 func (c *QUICClient) Archive(ctx context.Context, key string, destinationType string, settings map[string]string) error {
 	reqBody := map[string]interface{}{
 		"key":                  key,
@@ -331,19 +401,7 @@ func (c *QUICClient) Archive(ctx context.Context, key string, destinationType st
 		"destination_settings": settings,
 	}
 
-	body, err := json.Marshal(reqBody)
-	if err != nil {
-		return err
-	}
-
-	url := fmt.Sprintf("%s/api/v1/archive", c.baseURL)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doJSON(ctx, "POST", c.baseURL+"/archive", reqBody)
 	if err != nil {
 		return err
 	}
@@ -356,46 +414,51 @@ func (c *QUICClient) Archive(ctx context.Context, key string, destinationType st
 	return nil
 }
 
-// AddPolicy adds a lifecycle policy.
+// AddPolicy adds a lifecycle policy via POST /policies.
 func (c *QUICClient) AddPolicy(ctx context.Context, policy *LifecyclePolicy) error {
-	body, err := json.Marshal(policy)
-	if err != nil {
-		return err
+	if policy == nil {
+		return ErrInvalidConfig
 	}
 
-	url := fmt.Sprintf("%s/api/v1/policies", c.baseURL)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
-	if err != nil {
-		return err
+	reqBody := map[string]interface{}{
+		"id":                policy.ID,
+		"prefix":            policy.Prefix,
+		"retention_seconds": policy.RetentionSeconds,
+		"action":            policy.Action,
 	}
-	req.Header.Set("Content-Type", "application/json")
+	if policy.DestinationType != "" {
+		reqBody["destination_type"] = policy.DestinationType
+	}
+	if len(policy.DestinationSettings) > 0 {
+		reqBody["destination_settings"] = policy.DestinationSettings
+	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doJSON(ctx, "POST", c.baseURL+"/policies", reqBody)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("ADD policy failed with status %d", resp.StatusCode)
 	}
 
 	return nil
 }
 
-// RemovePolicy removes a lifecycle policy.
+// RemovePolicy removes a lifecycle policy via DELETE /policies/{id}.
 func (c *QUICClient) RemovePolicy(ctx context.Context, policyID string) error {
-	url := fmt.Sprintf("%s/api/v1/policies/%s", c.baseURL, policyID)
-	req, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
-	if err != nil {
-		return err
-	}
+	reqURL := fmt.Sprintf("%s/policies/%s", c.baseURL, url.PathEscape(policyID))
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doJSON(ctx, "DELETE", reqURL, nil)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return ErrObjectNotFound
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("REMOVE policy failed with status %d", resp.StatusCode)
@@ -404,93 +467,137 @@ func (c *QUICClient) RemovePolicy(ctx context.Context, policyID string) error {
 	return nil
 }
 
-// GetPolicies retrieves lifecycle policies.
+// GetPolicies retrieves lifecycle policies via GET /policies.
 func (c *QUICClient) GetPolicies(ctx context.Context, prefix string) ([]*LifecyclePolicy, error) {
-	url := fmt.Sprintf("%s/api/v1/policies?prefix=%s", c.baseURL, prefix)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, err
+	reqURL := c.baseURL + "/policies"
+	if prefix != "" {
+		params := url.Values{}
+		params.Add("prefix", prefix)
+		reqURL += "?" + params.Encode()
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doJSON(ctx, "GET", reqURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET policies failed with status %d", resp.StatusCode)
+	}
 
 	var result struct {
-		Policies []*LifecyclePolicy `json:"policies"`
+		Policies []struct {
+			ID               string `json:"id"`
+			Prefix           string `json:"prefix"`
+			RetentionSeconds int64  `json:"retention_seconds"`
+			Action           string `json:"action"`
+		} `json:"policies"`
+		Count int `json:"count"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
 
-	return result.Policies, nil
+	policies := make([]*LifecyclePolicy, len(result.Policies))
+	for i, p := range result.Policies {
+		policies[i] = &LifecyclePolicy{
+			ID:               p.ID,
+			Prefix:           p.Prefix,
+			RetentionSeconds: p.RetentionSeconds,
+			Action:           p.Action,
+		}
+	}
+
+	return policies, nil
 }
 
-// ApplyPolicies executes all lifecycle policies.
+// ApplyPolicies executes all lifecycle policies via POST /policies/apply.
 func (c *QUICClient) ApplyPolicies(ctx context.Context) (*ApplyPoliciesResult, error) {
-	url := fmt.Sprintf("%s/api/v1/policies/apply", c.baseURL)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doJSON(ctx, "POST", c.baseURL+"/policies/apply", nil)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	var result ApplyPoliciesResult
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("APPLY policies failed with status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Message          string `json:"message"`
+		PoliciesCount    int32  `json:"policies_count"`
+		ObjectsProcessed int32  `json:"objects_processed"`
+	}
+
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
 
-	return &result, nil
+	return &ApplyPoliciesResult{
+		Success:          true,
+		PoliciesCount:    result.PoliciesCount,
+		ObjectsProcessed: result.ObjectsProcessed,
+		Message:          result.Message,
+	}, nil
 }
 
-// AddReplicationPolicy adds a replication policy.
+// AddReplicationPolicy adds a replication policy via POST /replication/policies.
 func (c *QUICClient) AddReplicationPolicy(ctx context.Context, policy *ReplicationPolicy) error {
-	body, err := json.Marshal(policy)
-	if err != nil {
-		return err
+	if policy == nil {
+		return ErrInvalidConfig
 	}
 
-	url := fmt.Sprintf("%s/api/v1/replication/policies", c.baseURL)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
-	if err != nil {
-		return err
+	reqBody := map[string]interface{}{
+		"id":                  policy.ID,
+		"source_backend":      policy.SourceBackend,
+		"destination_backend": policy.DestinationBackend,
+		"check_interval":      policy.CheckIntervalSeconds,
+		"enabled":             policy.Enabled,
 	}
-	req.Header.Set("Content-Type", "application/json")
+	if len(policy.SourceSettings) > 0 {
+		reqBody["source_settings"] = policy.SourceSettings
+	}
+	if policy.SourcePrefix != "" {
+		reqBody["source_prefix"] = policy.SourcePrefix
+	}
+	if len(policy.DestinationSettings) > 0 {
+		reqBody["destination_settings"] = policy.DestinationSettings
+	}
+	switch policy.ReplicationMode {
+	case ReplicationModeOpaque:
+		reqBody["replication_mode"] = "opaque"
+	case ReplicationModeTransparent:
+		reqBody["replication_mode"] = "transparent"
+	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doJSON(ctx, "POST", c.baseURL+"/replication/policies", reqBody)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("ADD replication policy failed with status %d", resp.StatusCode)
 	}
 
 	return nil
 }
 
-// RemoveReplicationPolicy removes a replication policy.
+// RemoveReplicationPolicy removes a replication policy via DELETE /replication/policies/{id}.
 func (c *QUICClient) RemoveReplicationPolicy(ctx context.Context, policyID string) error {
-	url := fmt.Sprintf("%s/api/v1/replication/policies/%s", c.baseURL, policyID)
-	req, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
-	if err != nil {
-		return err
-	}
+	reqURL := fmt.Sprintf("%s/replication/policies/%s", c.baseURL, url.PathEscape(policyID))
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doJSON(ctx, "DELETE", reqURL, nil)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return ErrObjectNotFound
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("REMOVE replication policy failed with status %d", resp.StatusCode)
@@ -499,101 +606,181 @@ func (c *QUICClient) RemoveReplicationPolicy(ctx context.Context, policyID strin
 	return nil
 }
 
-// GetReplicationPolicies retrieves all replication policies.
+// GetReplicationPolicies retrieves all replication policies via GET /replication/policies.
 func (c *QUICClient) GetReplicationPolicies(ctx context.Context) ([]*ReplicationPolicy, error) {
-	url := fmt.Sprintf("%s/api/v1/replication/policies", c.baseURL)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doJSON(ctx, "GET", c.baseURL+"/replication/policies", nil)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET replication policies failed with status %d", resp.StatusCode)
+	}
+
 	var result struct {
-		Policies []*ReplicationPolicy `json:"policies"`
+		Success  bool                    `json:"success"`
+		Policies []quicReplicationPolicy `json:"policies"`
+		Count    int                     `json:"count"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
 
-	return result.Policies, nil
-}
-
-// GetReplicationPolicy retrieves a specific replication policy.
-func (c *QUICClient) GetReplicationPolicy(ctx context.Context, policyID string) (*ReplicationPolicy, error) {
-	url := fmt.Sprintf("%s/api/v1/replication/policies/%s", c.baseURL, policyID)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, err
+	policies := make([]*ReplicationPolicy, len(result.Policies))
+	for i := range result.Policies {
+		policies[i] = result.Policies[i].toModel()
 	}
 
-	resp, err := c.httpClient.Do(req)
+	return policies, nil
+}
+
+// GetReplicationPolicy retrieves a specific replication policy via GET /replication/policies/{id}.
+func (c *QUICClient) GetReplicationPolicy(ctx context.Context, policyID string) (*ReplicationPolicy, error) {
+	reqURL := fmt.Sprintf("%s/replication/policies/%s", c.baseURL, url.PathEscape(policyID))
+
+	resp, err := c.doJSON(ctx, "GET", reqURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	var policy ReplicationPolicy
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, ErrObjectNotFound
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET replication policy failed with status %d", resp.StatusCode)
+	}
+
+	var policy quicReplicationPolicy
 	if err := json.NewDecoder(resp.Body).Decode(&policy); err != nil {
 		return nil, err
 	}
 
-	return &policy, nil
+	return policy.toModel(), nil
 }
 
-// TriggerReplication triggers replication synchronization.
+// TriggerReplication triggers replication via POST /replication/trigger?policy_id=.
 func (c *QUICClient) TriggerReplication(ctx context.Context, opts *TriggerReplicationOptions) (*SyncResult, error) {
-	body, err := json.Marshal(opts)
-	if err != nil {
-		return nil, err
+	if opts == nil {
+		opts = &TriggerReplicationOptions{}
 	}
 
-	url := fmt.Sprintf("%s/api/v1/replication/trigger", c.baseURL)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
+	reqURL := c.baseURL + "/replication/trigger"
+	if opts.PolicyID != "" {
+		params := url.Values{}
+		params.Add("policy_id", opts.PolicyID)
+		reqURL += "?" + params.Encode()
 	}
-	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doJSON(ctx, "POST", reqURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	var result SyncResult
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, ErrObjectNotFound
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("TRIGGER replication failed with status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+		Result  *struct {
+			PolicyID   string   `json:"policy_id"`
+			Synced     int32    `json:"synced"`
+			Deleted    int32    `json:"deleted"`
+			Failed     int32    `json:"failed"`
+			BytesTotal int64    `json:"bytes_total"`
+			Duration   string   `json:"duration"`
+			Errors     []string `json:"errors,omitempty"`
+		} `json:"result,omitempty"`
+	}
+
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
 
-	return &result, nil
-}
-
-// GetReplicationStatus retrieves replication status and metrics.
-func (c *QUICClient) GetReplicationStatus(ctx context.Context, policyID string) (*ReplicationStatus, error) {
-	url := fmt.Sprintf("%s/api/v1/replication/status/%s", c.baseURL, policyID)
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, err
+	syncResult := &SyncResult{}
+	if result.Result != nil {
+		syncResult.PolicyID = result.Result.PolicyID
+		syncResult.Synced = result.Result.Synced
+		syncResult.Deleted = result.Result.Deleted
+		syncResult.Failed = result.Result.Failed
+		syncResult.BytesTotal = result.Result.BytesTotal
+		syncResult.Errors = result.Result.Errors
+		if d, err := time.ParseDuration(result.Result.Duration); err == nil {
+			syncResult.DurationMs = d.Milliseconds()
+		}
 	}
 
-	resp, err := c.httpClient.Do(req)
+	return syncResult, nil
+}
+
+// GetReplicationStatus retrieves replication status via GET /replication/status/{id}.
+func (c *QUICClient) GetReplicationStatus(ctx context.Context, policyID string) (*ReplicationStatus, error) {
+	reqURL := fmt.Sprintf("%s/replication/status/%s", c.baseURL, url.PathEscape(policyID))
+
+	resp, err := c.doJSON(ctx, "GET", reqURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	var status ReplicationStatus
-	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, ErrObjectNotFound
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET replication status failed with status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Success             bool   `json:"success"`
+		PolicyID            string `json:"policy_id"`
+		SourceBackend       string `json:"source_backend"`
+		DestinationBackend  string `json:"destination_backend"`
+		Enabled             bool   `json:"enabled"`
+		TotalObjectsSynced  int64  `json:"total_objects_synced"`
+		TotalObjectsDeleted int64  `json:"total_objects_deleted"`
+		TotalBytesSynced    int64  `json:"total_bytes_synced"`
+		TotalErrors         int64  `json:"total_errors"`
+		LastSyncTime        string `json:"last_sync_time,omitempty"`
+		AverageSyncDuration string `json:"average_sync_duration"`
+		SyncCount           int64  `json:"sync_count"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
 
-	return &status, nil
+	status := &ReplicationStatus{
+		PolicyID:            result.PolicyID,
+		SourceBackend:       result.SourceBackend,
+		DestinationBackend:  result.DestinationBackend,
+		Enabled:             result.Enabled,
+		TotalObjectsSynced:  result.TotalObjectsSynced,
+		TotalObjectsDeleted: result.TotalObjectsDeleted,
+		TotalBytesSynced:    result.TotalBytesSynced,
+		TotalErrors:         result.TotalErrors,
+		SyncCount:           result.SyncCount,
+	}
+	if d, err := time.ParseDuration(result.AverageSyncDuration); err == nil {
+		status.AverageSyncDurationMs = d.Milliseconds()
+	}
+	if result.LastSyncTime != "" {
+		if t, err := time.Parse(time.RFC3339, result.LastSyncTime); err == nil {
+			status.LastSyncTime = t
+		}
+	}
+
+	return status, nil
 }
 
 // Close closes the QUIC connection.
@@ -604,10 +791,101 @@ func (c *QUICClient) Close() error {
 	return nil
 }
 
+// doJSON performs an HTTP/3 request with an optional JSON body and returns the response.
+// The caller is responsible for closing the response body.
+func (c *QUICClient) doJSON(ctx context.Context, method, reqURL string, body interface{}) (*http.Response, error) {
+	var reader io.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		reader = bytes.NewReader(data)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, reqURL, reader)
+	if err != nil {
+		return nil, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	return c.httpClient.Do(req)
+}
+
+// metadataFromHeaders reconstructs object metadata from QUIC response headers.
+func metadataFromHeaders(header http.Header) *Metadata {
+	metadata := &Metadata{
+		ContentType:     header.Get("Content-Type"),
+		ContentEncoding: header.Get("Content-Encoding"),
+		ETag:            header.Get("ETag"),
+	}
+
+	if contentLength := header.Get("Content-Length"); contentLength != "" {
+		if size, err := strconv.ParseInt(contentLength, 10, 64); err == nil {
+			metadata.Size = size
+		}
+	}
+
+	if lastModified := header.Get("Last-Modified"); lastModified != "" {
+		if t, err := http.ParseTime(lastModified); err == nil {
+			metadata.LastModified = t
+		}
+	}
+
+	custom := make(map[string]string)
+	for name, values := range header {
+		if strings.HasPrefix(name, "X-Meta-") && len(values) > 0 {
+			// Go canonicalises header names (e.g. "X-Meta-Version"), so we
+			// lowercase the extracted key to match what was stored.
+			custom[strings.ToLower(strings.TrimPrefix(name, "X-Meta-"))] = values[0]
+		}
+	}
+	if len(custom) > 0 {
+		metadata.Custom = custom
+	}
+
+	return metadata
+}
+
+// quicReplicationPolicy matches the QUIC server's replication policy JSON shape
+// (note: check_interval, not check_interval_seconds).
+type quicReplicationPolicy struct {
+	ID                  string            `json:"id"`
+	SourceBackend       string            `json:"source_backend"`
+	SourceSettings      map[string]string `json:"source_settings,omitempty"`
+	SourcePrefix        string            `json:"source_prefix,omitempty"`
+	DestinationBackend  string            `json:"destination_backend"`
+	DestinationSettings map[string]string `json:"destination_settings,omitempty"`
+	CheckInterval       int64             `json:"check_interval"`
+	LastSyncTime        string            `json:"last_sync_time,omitempty"`
+	Enabled             bool              `json:"enabled"`
+	ReplicationMode     string            `json:"replication_mode"`
+}
+
+// toModel converts the QUIC wire representation into the SDK ReplicationPolicy type.
+func (p *quicReplicationPolicy) toModel() *ReplicationPolicy {
+	policy := &ReplicationPolicy{
+		ID:                   p.ID,
+		SourceBackend:        p.SourceBackend,
+		SourceSettings:       p.SourceSettings,
+		SourcePrefix:         p.SourcePrefix,
+		DestinationBackend:   p.DestinationBackend,
+		DestinationSettings:  p.DestinationSettings,
+		CheckIntervalSeconds: p.CheckInterval,
+		Enabled:              p.Enabled,
+	}
+	if p.ReplicationMode == "opaque" {
+		policy.ReplicationMode = ReplicationModeOpaque
+	}
+	if p.LastSyncTime != "" {
+		if t, err := time.Parse(time.RFC3339, p.LastSyncTime); err == nil {
+			policy.LastSyncTime = t
+		}
+	}
+	return policy
+}
+
 // Ensure QUICClient implements Client interface
 var _ Client = (*QUICClient)(nil)
-
-// Conversion helpers for protobuf types (reuse from grpc_client)
-func protoToMetadata(m *objstorepb.Metadata) *Metadata {
-	return metadataFromProto(m)
-}

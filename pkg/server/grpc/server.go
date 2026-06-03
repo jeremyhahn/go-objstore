@@ -33,6 +33,12 @@ import (
 	"google.golang.org/grpc/reflection"
 )
 
+// Structured log field keys used across the gRPC server.
+const (
+	fieldError  = "error"
+	fieldMethod = "method"
+)
+
 // Server represents a gRPC server for object storage operations.
 type Server struct {
 	objstorepb.UnimplementedObjectStoreServer
@@ -167,7 +173,7 @@ func (s *Server) buildServerOptions() []grpc.ServerOption {
 		tlsConfig, err := s.opts.AdapterTLSConfig.Build()
 		if err != nil {
 			s.opts.Logger.Error(context.TODO(), "Failed to build TLS config",
-				adapters.Field{Key: "error", Value: err.Error()},
+				adapters.Field{Key: fieldError, Value: err.Error()},
 			)
 		} else {
 			creds := credentials.NewTLS(tlsConfig)
@@ -228,6 +234,15 @@ func (s *Server) buildServerOptions() []grpc.ServerOption {
 	// Add authentication interceptors (always enabled, uses NoOpAuthenticator by default)
 	unaryInterceptors = append(unaryInterceptors, AuthenticationUnaryInterceptor(s.opts.Authenticator, s.opts.Logger))
 	streamInterceptors = append(streamInterceptors, AuthenticationStreamInterceptor(s.opts.Authenticator, s.opts.Logger))
+
+	// Add authorization interceptors (always enabled, uses NoOpAuthorizer by default).
+	// Runs after authentication so the principal is available in context.
+	authorizer := s.opts.Authorizer
+	if authorizer == nil {
+		authorizer = adapters.NewNoOpAuthorizer()
+	}
+	unaryInterceptors = append(unaryInterceptors, AuthorizationUnaryInterceptor(authorizer, s.opts.Logger))
+	streamInterceptors = append(streamInterceptors, AuthorizationStreamInterceptor(authorizer, s.opts.Logger))
 
 	// Add logging interceptors
 	if s.opts.EnableLogging {

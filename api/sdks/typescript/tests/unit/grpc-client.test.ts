@@ -1,44 +1,17 @@
 import { GrpcClient } from '../../src/clients/grpc-client';
-import { HealthStatus } from '../../src/types';
+import { HealthStatus, ReplicationMode } from '../../src/types';
+import { ConnectionError, ValidationError } from '../../src/errors';
 
-// Mock grpc-js module
+// Mock the grpc-js module so no real proto loading or connections occur.
 jest.mock('@grpc/grpc-js', () => {
-  const mockClient = {
-    put: jest.fn(),
-    get: jest.fn(),
-    delete: jest.fn(),
-    list: jest.fn(),
-    exists: jest.fn(),
-    getMetadata: jest.fn(),
-    updateMetadata: jest.fn(),
-    health: jest.fn(),
-    archive: jest.fn(),
-    addPolicy: jest.fn(),
-    removePolicy: jest.fn(),
-    getPolicies: jest.fn(),
-    applyPolicies: jest.fn(),
-    addReplicationPolicy: jest.fn(),
-    removeReplicationPolicy: jest.fn(),
-    getReplicationPolicies: jest.fn(),
-    getReplicationPolicy: jest.fn(),
-    triggerReplication: jest.fn(),
-    getReplicationStatus: jest.fn(),
-    close: jest.fn(),
-  };
-
+  const actual = jest.requireActual('@grpc/grpc-js');
   return {
+    ...actual,
+    loadPackageDefinition: jest.fn(),
     credentials: {
-      createInsecure: jest.fn(),
-      createSsl: jest.fn(),
+      createInsecure: jest.fn(() => ({})),
+      createSsl: jest.fn(() => ({})),
     },
-    loadPackageDefinition: jest.fn(() => ({
-      objstore: {
-        v1: {
-          ObjectStore: jest.fn(() => mockClient),
-        },
-      },
-    })),
-    ServiceError: class ServiceError extends Error {},
   };
 });
 
@@ -46,529 +19,664 @@ jest.mock('@grpc/proto-loader', () => ({
   loadSync: jest.fn(() => ({})),
 }));
 
+import * as grpc from '@grpc/grpc-js';
+
+const EventEmitter = require('events');
+
+/**
+ * Canonical gRPC client unit-test matrix.
+ *
+ * For each of the 19 operations: success + error (gRPC error status). Nine
+ * operations additionally get a not_found (gRPC NOT_FOUND / code 5) case. Plus
+ * metadata_round_trip and validation_empty_key. The service stub is mocked; no
+ * live server is required.
+ */
 describe('GrpcClient', () => {
   let client: GrpcClient;
-  let mockGrpcClient: any;
+  let mockServiceClient: any;
+
+  /** Make a unary stub method resolve with the given response. */
+  const unarySuccess = (method: string, response: any) => {
+    mockServiceClient[method].mockImplementation((_req: any, callback: any) => {
+      callback(null, response);
+    });
+  };
+
+  /** Make a unary stub method fail with the given gRPC status code. */
+  const unaryError = (method: string, code = 13, message = 'failed') => {
+    mockServiceClient[method].mockImplementation((_req: any, callback: any) => {
+      const error: any = new Error(message);
+      error.code = code;
+      error.details = message;
+      callback(error, null);
+    });
+  };
 
   beforeEach(() => {
-    const grpc = require('@grpc/grpc-js');
-    client = new GrpcClient({ address: 'localhost:50051', secure: false });
-    mockGrpcClient = (grpc.loadPackageDefinition({}) as any).objstore.v1.ObjectStore();
-  });
+    mockServiceClient = {
+      put: jest.fn(),
+      get: jest.fn(),
+      delete: jest.fn(),
+      list: jest.fn(),
+      exists: jest.fn(),
+      getMetadata: jest.fn(),
+      updateMetadata: jest.fn(),
+      health: jest.fn(),
+      archive: jest.fn(),
+      addPolicy: jest.fn(),
+      removePolicy: jest.fn(),
+      getPolicies: jest.fn(),
+      applyPolicies: jest.fn(),
+      addReplicationPolicy: jest.fn(),
+      removeReplicationPolicy: jest.fn(),
+      getReplicationPolicies: jest.fn(),
+      getReplicationPolicy: jest.fn(),
+      triggerReplication: jest.fn(),
+      getReplicationStatus: jest.fn(),
+      close: jest.fn(),
+    };
 
-  describe('put', () => {
-    it('should upload an object successfully', async () => {
-      mockGrpcClient.put.mockImplementation((_req: any, callback: any) => {
-        callback(null, { success: true, etag: 'test-etag' });
-      });
-
-      const result = await client.put({
-        key: 'test-key',
-        data: Buffer.from('test data'),
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.etag).toBe('test-etag');
+    (grpc.loadPackageDefinition as jest.Mock).mockReturnValue({
+      objstore: {
+        v1: { ObjectStore: jest.fn(() => mockServiceClient) },
+      },
     });
 
-    it('should handle errors', async () => {
-      mockGrpcClient.put.mockImplementation((_req: any, callback: any) => {
-        callback(new Error('gRPC error'));
-      });
+    client = new GrpcClient({ address: 'localhost:50051' });
+  });
 
+  // --------------------------------------------------------------------------
+  // put
+  // --------------------------------------------------------------------------
+  describe('put', () => {
+    it('grpc_put_success', async () => {
+      unarySuccess('put', { success: true, message: 'stored', etag: '"abc"' });
+      const response = await client.put({ key: 'test-key', data: Buffer.from('data') });
+      expect(response.success).toBe(true);
+      expect(response.etag).toBe('"abc"');
+    });
+
+    it('grpc_put_error', async () => {
+      unaryError('put');
       await expect(
         client.put({ key: 'test-key', data: Buffer.from('data') })
-      ).rejects.toThrow('gRPC error');
+      ).rejects.toThrow(ConnectionError);
     });
   });
 
+  // --------------------------------------------------------------------------
+  // get (server-streaming)
+  // --------------------------------------------------------------------------
   describe('get', () => {
-    it('should retrieve an object successfully', async () => {
-      const mockStream: any = {
-        on: jest.fn((event: string, handler: any): any => {
-          if (event === 'data') {
-            handler({ data: Buffer.from('test'), metadata: { contentType: 'text/plain' } });
-          } else if (event === 'end') {
-            handler();
-          }
-          return mockStream;
-        }),
-      };
+    it('grpc_get_success', async () => {
+      mockServiceClient.get.mockImplementation(() => {
+        const emitter = new EventEmitter();
+        setImmediate(() => {
+          emitter.emit('data', {
+            metadata: { contentType: 'text/plain', size: 4 },
+            data: Buffer.from('data'),
+          });
+          emitter.emit('end');
+        });
+        return emitter;
+      });
 
-      mockGrpcClient.get.mockReturnValue(mockStream);
-
-      const result = await client.get({ key: 'test-key' });
-
-      expect(result.data.toString()).toBe('test');
+      const response = await client.get({ key: 'test-key' });
+      expect(response.data.toString()).toBe('data');
+      expect(response.metadata?.contentType).toBe('text/plain');
     });
 
-    it('should handle streaming errors', async () => {
-      const mockStream: any = {
-        on: jest.fn((event: string, handler: any): any => {
-          if (event === 'error') {
-            handler(new Error('Stream error'));
-          }
-          return mockStream;
-        }),
-      };
+    it('grpc_get_error', async () => {
+      mockServiceClient.get.mockImplementation(() => {
+        const emitter = new EventEmitter();
+        setImmediate(() => {
+          const error: any = new Error('failed');
+          error.code = 13;
+          emitter.emit('error', error);
+        });
+        return emitter;
+      });
 
-      mockGrpcClient.get.mockReturnValue(mockStream);
+      await expect(client.get({ key: 'test-key' })).rejects.toThrow(ConnectionError);
+    });
 
-      await expect(client.get({ key: 'test-key' })).rejects.toThrow('Stream error');
+    it('grpc_get_not_found', async () => {
+      mockServiceClient.get.mockImplementation(() => {
+        const emitter = new EventEmitter();
+        setImmediate(() => {
+          const error: any = new Error('missing');
+          error.code = 5; // NOT_FOUND
+          error.details = 'missing';
+          emitter.emit('error', error);
+        });
+        return emitter;
+      });
+
+      await expect(client.get({ key: 'missing' })).rejects.toThrow('Not found');
     });
   });
 
+  // --------------------------------------------------------------------------
+  // delete
+  // --------------------------------------------------------------------------
   describe('delete', () => {
-    it('should delete an object successfully', async () => {
-      mockGrpcClient.delete.mockImplementation((_req: any, callback: any) => {
-        callback(null, { success: true });
-      });
+    it('grpc_delete_success', async () => {
+      unarySuccess('delete', { success: true, message: 'deleted' });
+      const response = await client.delete({ key: 'test-key' });
+      expect(response.success).toBe(true);
+    });
 
-      const result = await client.delete({ key: 'test-key' });
+    it('grpc_delete_error', async () => {
+      unaryError('delete');
+      await expect(client.delete({ key: 'test-key' })).rejects.toThrow(ConnectionError);
+    });
 
-      expect(result.success).toBe(true);
+    it('grpc_delete_not_found', async () => {
+      unaryError('delete', 5, 'missing');
+      await expect(client.delete({ key: 'missing' })).rejects.toThrow('Not found');
     });
   });
 
+  // --------------------------------------------------------------------------
+  // list
+  // --------------------------------------------------------------------------
   describe('list', () => {
-    it('should list objects', async () => {
-      mockGrpcClient.list.mockImplementation((_req: any, callback: any) => {
-        callback(null, {
-          objects: [{ key: 'file1.txt', metadata: {} }],
-          commonPrefixes: [],
-          truncated: false,
-        });
+    it('grpc_list_success', async () => {
+      unarySuccess('list', {
+        objects: [{ key: 'a', metadata: { contentType: 'text/plain', size: 3 } }],
+        commonPrefixes: ['p/'],
+        nextToken: 'tok',
+        truncated: true,
       });
 
-      const result = await client.list({ prefix: 'test/' });
+      const response = await client.list({ prefix: 'a' });
+      expect(response.objects).toHaveLength(1);
+      expect(response.objects[0].key).toBe('a');
+      expect(response.commonPrefixes).toEqual(['p/']);
+      expect(response.truncated).toBe(true);
+    });
 
-      expect(result.objects).toHaveLength(1);
+    it('grpc_list_error', async () => {
+      unaryError('list');
+      await expect(client.list()).rejects.toThrow(ConnectionError);
     });
   });
 
+  // --------------------------------------------------------------------------
+  // exists
+  // --------------------------------------------------------------------------
   describe('exists', () => {
-    it('should check if object exists', async () => {
-      mockGrpcClient.exists.mockImplementation((_req: any, callback: any) => {
-        callback(null, { exists: true });
-      });
+    it('grpc_exists_success', async () => {
+      unarySuccess('exists', { exists: true });
+      const response = await client.exists({ key: 'test-key' });
+      expect(response.exists).toBe(true);
+    });
 
-      const result = await client.exists({ key: 'test-key' });
+    it('grpc_exists_error', async () => {
+      unaryError('exists');
+      await expect(client.exists({ key: 'test-key' })).rejects.toThrow(ConnectionError);
+    });
 
-      expect(result.exists).toBe(true);
+    it('grpc_exists_not_found', async () => {
+      // NOT_FOUND for exists surfaces as exists:false from the server response.
+      unarySuccess('exists', { exists: false });
+      const response = await client.exists({ key: 'missing' });
+      expect(response.exists).toBe(false);
     });
   });
 
+  // --------------------------------------------------------------------------
+  // getMetadata
+  // --------------------------------------------------------------------------
   describe('getMetadata', () => {
-    it('should retrieve object metadata', async () => {
-      mockGrpcClient.getMetadata.mockImplementation((_req: any, callback: any) => {
-        callback(null, {
-          success: true,
-          metadata: { contentType: 'text/plain', size: 100 },
-        });
+    it('grpc_get_metadata_success', async () => {
+      unarySuccess('getMetadata', {
+        metadata: { contentType: 'text/plain', size: 9, custom: { author: 'jane' } },
+        success: true,
       });
 
-      const result = await client.getMetadata({ key: 'test-key' });
+      const response = await client.getMetadata({ key: 'test-key' });
+      expect(response.success).toBe(true);
+      expect(response.metadata?.contentType).toBe('text/plain');
+      expect(response.metadata?.custom).toEqual({ author: 'jane' });
+    });
 
-      expect(result.success).toBe(true);
-      expect(result.metadata?.contentType).toBe('text/plain');
+    it('grpc_get_metadata_error', async () => {
+      unaryError('getMetadata');
+      await expect(client.getMetadata({ key: 'test-key' })).rejects.toThrow(ConnectionError);
+    });
+
+    it('grpc_get_metadata_not_found', async () => {
+      unaryError('getMetadata', 5, 'missing');
+      await expect(client.getMetadata({ key: 'missing' })).rejects.toThrow('Not found');
     });
   });
 
+  // --------------------------------------------------------------------------
+  // updateMetadata
+  // --------------------------------------------------------------------------
   describe('updateMetadata', () => {
-    it('should update object metadata', async () => {
-      mockGrpcClient.updateMetadata.mockImplementation((_req: any, callback: any) => {
-        callback(null, { success: true });
-      });
-
-      const result = await client.updateMetadata({
+    it('grpc_update_metadata_success', async () => {
+      unarySuccess('updateMetadata', { success: true, message: 'updated' });
+      const response = await client.updateMetadata({
         key: 'test-key',
-        metadata: { contentType: 'application/json' },
+        metadata: { contentType: 'text/plain' },
       });
+      expect(response.success).toBe(true);
+    });
 
-      expect(result.success).toBe(true);
+    it('grpc_update_metadata_error', async () => {
+      unaryError('updateMetadata');
+      await expect(
+        client.updateMetadata({ key: 'test-key', metadata: { contentType: 'text/plain' } })
+      ).rejects.toThrow(ConnectionError);
+    });
+
+    it('grpc_update_metadata_not_found', async () => {
+      unaryError('updateMetadata', 5, 'missing');
+      await expect(
+        client.updateMetadata({ key: 'missing', metadata: { contentType: 'text/plain' } })
+      ).rejects.toThrow('Not found');
     });
   });
 
+  // --------------------------------------------------------------------------
+  // health
+  // --------------------------------------------------------------------------
   describe('health', () => {
-    it('should check health', async () => {
-      mockGrpcClient.health.mockImplementation((_req: any, callback: any) => {
-        callback(null, { status: HealthStatus.SERVING });
-      });
+    it('grpc_health_success', async () => {
+      unarySuccess('health', { status: 'SERVING', message: 'OK' });
+      const response = await client.health();
+      expect(response.status).toBe(HealthStatus.SERVING);
+    });
 
-      const result = await client.health();
-
-      expect(result.status).toBe(HealthStatus.SERVING);
+    it('grpc_health_error', async () => {
+      unaryError('health', 14, 'unavailable');
+      await expect(client.health()).rejects.toThrow(ConnectionError);
     });
   });
 
+  // --------------------------------------------------------------------------
+  // archive
+  // --------------------------------------------------------------------------
   describe('archive', () => {
-    it('should archive an object', async () => {
-      mockGrpcClient.archive.mockImplementation((_req: any, callback: any) => {
-        callback(null, { success: true });
-      });
-
-      const result = await client.archive({
-        key: 'test-key',
-        destinationType: 'glacier',
-      });
-
-      expect(result.success).toBe(true);
-    });
-  });
-
-  describe('lifecycle policies', () => {
-    it('should add a policy', async () => {
-      mockGrpcClient.addPolicy.mockImplementation((_req: any, callback: any) => {
-        callback(null, { success: true });
-      });
-
-      const result = await client.addPolicy({
-        policy: {
-          id: 'p1',
-          prefix: 'logs/',
-          retentionSeconds: 86400,
-          action: 'delete',
-        },
-      });
-
-      expect(result.success).toBe(true);
+    it('grpc_archive_success', async () => {
+      unarySuccess('archive', { success: true, message: 'archived' });
+      const response = await client.archive({ key: 'test-key', destinationType: 'glacier' });
+      expect(response.success).toBe(true);
     });
 
-    it('should remove a policy', async () => {
-      mockGrpcClient.removePolicy.mockImplementation((_req: any, callback: any) => {
-        callback(null, { success: true });
-      });
-
-      const result = await client.removePolicy({ id: 'p1' });
-
-      expect(result.success).toBe(true);
-    });
-
-    it('should get policies', async () => {
-      mockGrpcClient.getPolicies.mockImplementation((_req: any, callback: any) => {
-        callback(null, {
-          policies: [{ id: 'p1', prefix: 'logs/', retentionSeconds: 86400, action: 'delete' }],
-          success: true,
-        });
-      });
-
-      const result = await client.getPolicies();
-
-      expect(result.policies).toHaveLength(1);
-    });
-
-    it('should apply policies', async () => {
-      mockGrpcClient.applyPolicies.mockImplementation((_req: any, callback: any) => {
-        callback(null, { success: true, policiesCount: 5, objectsProcessed: 100 });
-      });
-
-      const result = await client.applyPolicies();
-
-      expect(result.success).toBe(true);
-      expect(result.policiesCount).toBe(5);
-    });
-  });
-
-  describe('replication policies', () => {
-    it('should add a replication policy', async () => {
-      mockGrpcClient.addReplicationPolicy.mockImplementation((_req: any, callback: any) => {
-        callback(null, { success: true });
-      });
-
-      const result = await client.addReplicationPolicy({
-        policy: {
-          id: 'r1',
-          sourceBackend: 's3',
-          sourceSettings: {},
-          sourcePrefix: '',
-          destinationBackend: 'gcs',
-          destinationSettings: {},
-          checkIntervalSeconds: 3600,
-          enabled: true,
-          replicationMode: 0,
-        },
-      });
-
-      expect(result.success).toBe(true);
-    });
-
-    it('should remove a replication policy', async () => {
-      mockGrpcClient.removeReplicationPolicy.mockImplementation((_req: any, callback: any) => {
-        callback(null, { success: true });
-      });
-
-      const result = await client.removeReplicationPolicy({ id: 'r1' });
-
-      expect(result.success).toBe(true);
-    });
-
-    it('should get replication policies', async () => {
-      mockGrpcClient.getReplicationPolicies.mockImplementation((_req: any, callback: any) => {
-        callback(null, {
-          policies: [
-            {
-              id: 'r1',
-              sourceBackend: 's3',
-              sourceSettings: {},
-              sourcePrefix: '',
-              destinationBackend: 'gcs',
-              destinationSettings: {},
-              checkIntervalSeconds: 3600,
-              enabled: true,
-              replicationMode: 0,
-            },
-          ],
-        });
-      });
-
-      const result = await client.getReplicationPolicies();
-
-      expect(result.policies).toHaveLength(1);
-    });
-
-    it('should get a specific replication policy', async () => {
-      mockGrpcClient.getReplicationPolicy.mockImplementation((_req: any, callback: any) => {
-        callback(null, {
-          policy: {
-            id: 'r1',
-            sourceBackend: 's3',
-            sourceSettings: {},
-            sourcePrefix: '',
-            destinationBackend: 'gcs',
-            destinationSettings: {},
-            checkIntervalSeconds: 3600,
-            enabled: true,
-            replicationMode: 0,
-          },
-        });
-      });
-
-      const result = await client.getReplicationPolicy({ id: 'r1' });
-
-      expect(result.policy?.id).toBe('r1');
-    });
-
-    it('should trigger replication', async () => {
-      mockGrpcClient.triggerReplication.mockImplementation((_req: any, callback: any) => {
-        callback(null, {
-          success: true,
-          result: {
-            policyId: 'r1',
-            synced: 10,
-            deleted: 2,
-            failed: 0,
-            bytesTotal: 1024,
-            durationMs: 500,
-            errors: [],
-          },
-        });
-      });
-
-      const result = await client.triggerReplication({ policyId: 'r1' });
-
-      expect(result.success).toBe(true);
-      expect(result.result?.synced).toBe(10);
-    });
-
-    it('should get replication status', async () => {
-      mockGrpcClient.getReplicationStatus.mockImplementation((_req: any, callback: any) => {
-        callback(null, {
-          success: true,
-          status: {
-            policyId: 'r1',
-            sourceBackend: 's3',
-            destinationBackend: 'gcs',
-            enabled: true,
-            totalObjectsSynced: 100,
-            totalObjectsDeleted: 10,
-            totalBytesSynced: 1048576,
-            totalErrors: 0,
-            averageSyncDurationMs: 500,
-            syncCount: 5,
-          },
-        });
-      });
-
-      const result = await client.getReplicationStatus({ id: 'r1' });
-
-      expect(result.success).toBe(true);
-      expect(result.status?.totalObjectsSynced).toBe(100);
-    });
-  });
-
-  describe('close', () => {
-    it('should close the client', async () => {
-      await expect(client.close()).resolves.toBeUndefined();
-    });
-  });
-
-  describe('error handling', () => {
-    it('should handle delete errors', async () => {
-      mockGrpcClient.delete.mockImplementation((_req: any, callback: any) => {
-        callback(new Error('Delete failed'));
-      });
-
-      await expect(client.delete({ key: 'test' })).rejects.toThrow('Delete failed');
-    });
-
-    it('should handle list errors', async () => {
-      mockGrpcClient.list.mockImplementation((_req: any, callback: any) => {
-        callback(new Error('List failed'));
-      });
-
-      await expect(client.list()).rejects.toThrow('List failed');
-    });
-
-    it('should handle exists errors', async () => {
-      mockGrpcClient.exists.mockImplementation((_req: any, callback: any) => {
-        callback(new Error('Exists failed'));
-      });
-
-      await expect(client.exists({ key: 'test' })).rejects.toThrow('Exists failed');
-    });
-
-    it('should handle getMetadata errors', async () => {
-      mockGrpcClient.getMetadata.mockImplementation((_req: any, callback: any) => {
-        callback(new Error('GetMetadata failed'));
-      });
-
-      await expect(client.getMetadata({ key: 'test' })).rejects.toThrow('GetMetadata failed');
-    });
-
-    it('should handle updateMetadata errors', async () => {
-      mockGrpcClient.updateMetadata.mockImplementation((_req: any, callback: any) => {
-        callback(new Error('UpdateMetadata failed'));
-      });
-
+    it('grpc_archive_error', async () => {
+      unaryError('archive');
       await expect(
-        client.updateMetadata({ key: 'test', metadata: {} })
-      ).rejects.toThrow('UpdateMetadata failed');
+        client.archive({ key: 'test-key', destinationType: 'glacier' })
+      ).rejects.toThrow(ConnectionError);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // addPolicy
+  // --------------------------------------------------------------------------
+  describe('addPolicy', () => {
+    it('grpc_add_policy_success', async () => {
+      unarySuccess('addPolicy', { success: true, message: 'added' });
+      const response = await client.addPolicy({
+        policy: { id: 'p1', prefix: 'logs/', retentionSeconds: 86400, action: 'delete' },
+      });
+      expect(response.success).toBe(true);
     });
 
-    it('should handle health errors', async () => {
-      mockGrpcClient.health.mockImplementation((_req: any, callback: any) => {
-        callback(new Error('Health failed'));
-      });
-
-      await expect(client.health()).rejects.toThrow('Health failed');
-    });
-
-    it('should handle archive errors', async () => {
-      mockGrpcClient.archive.mockImplementation((_req: any, callback: any) => {
-        callback(new Error('Archive failed'));
-      });
-
-      await expect(
-        client.archive({ key: 'test', destinationType: 'glacier' })
-      ).rejects.toThrow('Archive failed');
-    });
-
-    it('should handle addPolicy errors', async () => {
-      mockGrpcClient.addPolicy.mockImplementation((_req: any, callback: any) => {
-        callback(new Error('AddPolicy failed'));
-      });
-
+    it('grpc_add_policy_error', async () => {
+      unaryError('addPolicy');
       await expect(
         client.addPolicy({
-          policy: { id: 'p1', prefix: 'logs/', retentionSeconds: 86400, action: 'delete' },
+          policy: { id: 'p1', prefix: 'logs/', retentionSeconds: 1, action: 'delete' },
         })
-      ).rejects.toThrow('AddPolicy failed');
+      ).rejects.toThrow(ConnectionError);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // removePolicy
+  // --------------------------------------------------------------------------
+  describe('removePolicy', () => {
+    it('grpc_remove_policy_success', async () => {
+      unarySuccess('removePolicy', { success: true, message: 'removed' });
+      const response = await client.removePolicy({ id: 'p1' });
+      expect(response.success).toBe(true);
     });
 
-    it('should handle removePolicy errors', async () => {
-      mockGrpcClient.removePolicy.mockImplementation((_req: any, callback: any) => {
-        callback(new Error('RemovePolicy failed'));
-      });
-
-      await expect(client.removePolicy({ id: 'p1' })).rejects.toThrow('RemovePolicy failed');
+    it('grpc_remove_policy_error', async () => {
+      unaryError('removePolicy');
+      await expect(client.removePolicy({ id: 'p1' })).rejects.toThrow(ConnectionError);
     });
 
-    it('should handle getPolicies errors', async () => {
-      mockGrpcClient.getPolicies.mockImplementation((_req: any, callback: any) => {
-        callback(new Error('GetPolicies failed'));
-      });
-
-      await expect(client.getPolicies()).rejects.toThrow('GetPolicies failed');
+    it('grpc_remove_policy_not_found', async () => {
+      unaryError('removePolicy', 5, 'missing');
+      await expect(client.removePolicy({ id: 'missing' })).rejects.toThrow('Not found');
     });
+  });
 
-    it('should handle applyPolicies errors', async () => {
-      mockGrpcClient.applyPolicies.mockImplementation((_req: any, callback: any) => {
-        callback(new Error('ApplyPolicies failed'));
-      });
-
-      await expect(client.applyPolicies()).rejects.toThrow('ApplyPolicies failed');
-    });
-
-    it('should handle addReplicationPolicy errors', async () => {
-      mockGrpcClient.addReplicationPolicy.mockImplementation((_req: any, callback: any) => {
-        callback(new Error('AddReplicationPolicy failed'));
-      });
-
-      await expect(
-        client.addReplicationPolicy({
-          policy: {
-            id: 'r1',
-            sourceBackend: 's3',
-            sourceSettings: {},
-            sourcePrefix: '',
-            destinationBackend: 'gcs',
-            destinationSettings: {},
-            checkIntervalSeconds: 3600,
-            enabled: true,
-            replicationMode: 0,
+  // --------------------------------------------------------------------------
+  // getPolicies
+  // --------------------------------------------------------------------------
+  describe('getPolicies', () => {
+    it('grpc_get_policies_success', async () => {
+      unarySuccess('getPolicies', {
+        policies: [
+          {
+            id: 'p1',
+            prefix: 'logs/',
+            retentionSeconds: 86400,
+            action: 'delete',
           },
-        })
-      ).rejects.toThrow('AddReplicationPolicy failed');
-    });
-
-    it('should handle removeReplicationPolicy errors', async () => {
-      mockGrpcClient.removeReplicationPolicy.mockImplementation((_req: any, callback: any) => {
-        callback(new Error('RemoveReplicationPolicy failed'));
+        ],
+        success: true,
       });
 
-      await expect(client.removeReplicationPolicy({ id: 'r1' })).rejects.toThrow(
-        'RemoveReplicationPolicy failed'
-      );
+      const response = await client.getPolicies({ prefix: 'logs/' });
+      expect(response.policies).toHaveLength(1);
+      expect(response.policies[0].id).toBe('p1');
     });
 
-    it('should handle getReplicationPolicies errors', async () => {
-      mockGrpcClient.getReplicationPolicies.mockImplementation((_req: any, callback: any) => {
-        callback(new Error('GetReplicationPolicies failed'));
+    it('grpc_get_policies_error', async () => {
+      unaryError('getPolicies');
+      await expect(client.getPolicies()).rejects.toThrow(ConnectionError);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // applyPolicies
+  // --------------------------------------------------------------------------
+  describe('applyPolicies', () => {
+    it('grpc_apply_policies_success', async () => {
+      unarySuccess('applyPolicies', {
+        success: true,
+        policiesCount: 2,
+        objectsProcessed: 7,
       });
 
-      await expect(client.getReplicationPolicies()).rejects.toThrow(
-        'GetReplicationPolicies failed'
-      );
+      const response = await client.applyPolicies();
+      expect(response.success).toBe(true);
+      expect(response.policiesCount).toBe(2);
+      expect(response.objectsProcessed).toBe(7);
     });
 
-    it('should handle getReplicationPolicy errors', async () => {
-      mockGrpcClient.getReplicationPolicy.mockImplementation((_req: any, callback: any) => {
-        callback(new Error('GetReplicationPolicy failed'));
-      });
+    it('grpc_apply_policies_error', async () => {
+      unaryError('applyPolicies');
+      await expect(client.applyPolicies()).rejects.toThrow(ConnectionError);
+    });
+  });
 
-      await expect(client.getReplicationPolicy({ id: 'r1' })).rejects.toThrow(
-        'GetReplicationPolicy failed'
-      );
+  // --------------------------------------------------------------------------
+  // addReplicationPolicy
+  // --------------------------------------------------------------------------
+  describe('addReplicationPolicy', () => {
+    const repPolicy = {
+      id: 'r1',
+      sourceBackend: 'local',
+      sourceSettings: {},
+      sourcePrefix: '',
+      destinationBackend: 's3',
+      destinationSettings: {},
+      checkIntervalSeconds: 60,
+      enabled: true,
+      replicationMode: ReplicationMode.TRANSPARENT,
+    };
+
+    it('grpc_add_replication_policy_success', async () => {
+      unarySuccess('addReplicationPolicy', { success: true, message: 'added' });
+      const response = await client.addReplicationPolicy({ policy: repPolicy });
+      expect(response.success).toBe(true);
     });
 
-    it('should handle triggerReplication errors', async () => {
-      mockGrpcClient.triggerReplication.mockImplementation((_req: any, callback: any) => {
-        callback(new Error('TriggerReplication failed'));
-      });
+    it('grpc_add_replication_policy_error', async () => {
+      unaryError('addReplicationPolicy');
+      await expect(
+        client.addReplicationPolicy({ policy: repPolicy })
+      ).rejects.toThrow(ConnectionError);
+    });
+  });
 
-      await expect(client.triggerReplication({ policyId: 'r1' })).rejects.toThrow(
-        'TriggerReplication failed'
-      );
+  // --------------------------------------------------------------------------
+  // removeReplicationPolicy
+  // --------------------------------------------------------------------------
+  describe('removeReplicationPolicy', () => {
+    it('grpc_remove_replication_policy_success', async () => {
+      unarySuccess('removeReplicationPolicy', { success: true, message: 'removed' });
+      const response = await client.removeReplicationPolicy({ id: 'r1' });
+      expect(response.success).toBe(true);
     });
 
-    it('should handle getReplicationStatus errors', async () => {
-      mockGrpcClient.getReplicationStatus.mockImplementation((_req: any, callback: any) => {
-        callback(new Error('GetReplicationStatus failed'));
+    it('grpc_remove_replication_policy_error', async () => {
+      unaryError('removeReplicationPolicy');
+      await expect(
+        client.removeReplicationPolicy({ id: 'r1' })
+      ).rejects.toThrow(ConnectionError);
+    });
+
+    it('grpc_remove_replication_policy_not_found', async () => {
+      unaryError('removeReplicationPolicy', 5, 'missing');
+      await expect(
+        client.removeReplicationPolicy({ id: 'missing' })
+      ).rejects.toThrow('Not found');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // getReplicationPolicies
+  // --------------------------------------------------------------------------
+  describe('getReplicationPolicies', () => {
+    it('grpc_get_replication_policies_success', async () => {
+      unarySuccess('getReplicationPolicies', {
+        policies: [
+          {
+            id: 'r1',
+            sourceBackend: 'local',
+            destinationBackend: 's3',
+            checkIntervalSeconds: 60,
+            enabled: true,
+            replicationMode: ReplicationMode.TRANSPARENT,
+          },
+        ],
       });
 
-      await expect(client.getReplicationStatus({ id: 'r1' })).rejects.toThrow(
-        'GetReplicationStatus failed'
-      );
+      const response = await client.getReplicationPolicies();
+      expect(response.policies).toHaveLength(1);
+      expect(response.policies[0].id).toBe('r1');
+      expect(response.policies[0].checkIntervalSeconds).toBe(60);
+    });
+
+    it('grpc_get_replication_policies_error', async () => {
+      unaryError('getReplicationPolicies');
+      await expect(client.getReplicationPolicies()).rejects.toThrow(ConnectionError);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // getReplicationPolicy
+  // --------------------------------------------------------------------------
+  describe('getReplicationPolicy', () => {
+    it('grpc_get_replication_policy_success', async () => {
+      unarySuccess('getReplicationPolicy', {
+        policy: {
+          id: 'r1',
+          sourceBackend: 'local',
+          destinationBackend: 's3',
+          checkIntervalSeconds: 60,
+          enabled: true,
+          replicationMode: ReplicationMode.OPAQUE,
+        },
+      });
+
+      const response = await client.getReplicationPolicy({ id: 'r1' });
+      expect(response.policy?.id).toBe('r1');
+      expect(response.policy?.replicationMode).toBe(ReplicationMode.OPAQUE);
+    });
+
+    it('grpc_get_replication_policy_error', async () => {
+      unaryError('getReplicationPolicy');
+      await expect(
+        client.getReplicationPolicy({ id: 'r1' })
+      ).rejects.toThrow(ConnectionError);
+    });
+
+    it('grpc_get_replication_policy_not_found', async () => {
+      unaryError('getReplicationPolicy', 5, 'missing');
+      await expect(
+        client.getReplicationPolicy({ id: 'missing' })
+      ).rejects.toThrow('Not found');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // triggerReplication
+  // --------------------------------------------------------------------------
+  describe('triggerReplication', () => {
+    it('grpc_trigger_replication_success', async () => {
+      unarySuccess('triggerReplication', {
+        success: true,
+        result: {
+          policyId: 'r1',
+          synced: 5,
+          deleted: 1,
+          failed: 0,
+          bytesTotal: 1024,
+          durationMs: 200,
+          errors: [],
+        },
+      });
+
+      const response = await client.triggerReplication({ policyId: 'r1' });
+      expect(response.success).toBe(true);
+      expect(response.result?.synced).toBe(5);
+      expect(response.result?.bytesTotal).toBe(1024);
+    });
+
+    it('grpc_trigger_replication_error', async () => {
+      unaryError('triggerReplication');
+      await expect(
+        client.triggerReplication({ policyId: 'r1' })
+      ).rejects.toThrow(ConnectionError);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // getReplicationStatus
+  // --------------------------------------------------------------------------
+  describe('getReplicationStatus', () => {
+    it('grpc_get_replication_status_success', async () => {
+      unarySuccess('getReplicationStatus', {
+        success: true,
+        status: {
+          policyId: 'r1',
+          sourceBackend: 'local',
+          destinationBackend: 's3',
+          enabled: true,
+          totalObjectsSynced: 10,
+          totalObjectsDeleted: 2,
+          totalBytesSynced: 2048,
+          totalErrors: 0,
+          averageSyncDurationMs: 150,
+          syncCount: 3,
+        },
+      });
+
+      const response = await client.getReplicationStatus({ id: 'r1' });
+      expect(response.success).toBe(true);
+      expect(response.status?.totalObjectsSynced).toBe(10);
+      expect(response.status?.syncCount).toBe(3);
+    });
+
+    it('grpc_get_replication_status_error', async () => {
+      unaryError('getReplicationStatus');
+      await expect(
+        client.getReplicationStatus({ id: 'r1' })
+      ).rejects.toThrow(ConnectionError);
+    });
+
+    it('grpc_get_replication_status_not_found', async () => {
+      unaryError('getReplicationStatus', 5, 'missing');
+      await expect(
+        client.getReplicationStatus({ id: 'missing' })
+      ).rejects.toThrow('Not found');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // metadata_round_trip
+  // --------------------------------------------------------------------------
+  describe('metadata round trip', () => {
+    it('grpc_metadata_round_trip', async () => {
+      const custom = { author: 'jane', tier: 'gold' };
+      const metadata = {
+        contentType: 'text/plain',
+        contentEncoding: 'gzip',
+        size: 5,
+        custom,
+      };
+
+      // put: assert metadata travels in the proto message fields.
+      let putReq: any;
+      mockServiceClient.put.mockImplementation((req: any, callback: any) => {
+        putReq = req;
+        callback(null, { success: true, message: 'stored', etag: '"e"' });
+      });
+      await client.put({ key: 'doc', data: Buffer.from('hello'), metadata });
+      expect(putReq.metadata.contentType).toBe('text/plain');
+      expect(putReq.metadata.contentEncoding).toBe('gzip');
+      expect(putReq.metadata.custom).toEqual(custom);
+
+      // get: metadata comes back via the proto message.
+      mockServiceClient.get.mockImplementation(() => {
+        const emitter = new EventEmitter();
+        setImmediate(() => {
+          emitter.emit('data', {
+            metadata: { contentType: 'text/plain', contentEncoding: 'gzip', custom },
+            data: Buffer.from('hello'),
+          });
+          emitter.emit('end');
+        });
+        return emitter;
+      });
+      const getResp = await client.get({ key: 'doc' });
+      expect(getResp.metadata?.contentType).toBe('text/plain');
+      expect(getResp.metadata?.contentEncoding).toBe('gzip');
+      expect(getResp.metadata?.custom).toEqual(custom);
+
+      // getMetadata: metadata in the proto message fields.
+      unarySuccess('getMetadata', {
+        metadata: { contentType: 'text/plain', contentEncoding: 'gzip', custom },
+        success: true,
+      });
+      const metaResp = await client.getMetadata({ key: 'doc' });
+      expect(metaResp.metadata?.contentType).toBe('text/plain');
+      expect(metaResp.metadata?.contentEncoding).toBe('gzip');
+      expect(metaResp.metadata?.custom).toEqual(custom);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // validation_empty_key
+  // --------------------------------------------------------------------------
+  describe('validation', () => {
+    it('grpc_validation_empty_key', async () => {
+      // The gRPC client validates client-side; an empty key throws before any
+      // network call is attempted.
+      await expect(
+        client.put({ key: '', data: Buffer.from('data') })
+      ).rejects.toThrow(ValidationError);
+      expect(mockServiceClient.put).not.toHaveBeenCalled();
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // close
+  // --------------------------------------------------------------------------
+  describe('close', () => {
+    it('grpc_close', async () => {
+      await expect(client.close()).resolves.toBeUndefined();
+      expect(mockServiceClient.close).toHaveBeenCalled();
     });
   });
 });

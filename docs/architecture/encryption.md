@@ -7,7 +7,6 @@ go-objstore provides optional at-rest encryption for all stored data through a c
 **Dependency Inversion:** go-objstore defines encryption interfaces but provides NO concrete implementations. This design eliminates hard dependencies on specific key management systems.
 
 **Pluggable Architecture:** You can use:
-- [go-xkms](https://github.com/jeremyhahn/go-xkms) (recommended)
 - HashiCorp Vault
 - Cloud KMS services (AWS/GCP/Azure)
 - Your own custom key management
@@ -80,22 +79,16 @@ type EncrypterFactory interface {
 
 go-objstore **does not provide** key management. You must bring your own:
 
-**Option A:** Use [go-xkms](https://github.com/jeremyhahn/go-xkms)
-- Enterprise-grade key management
-- Supports HSM, TPM, KMS, software keys
-- Implements `EncrypterFactory` interface
-- Drop-in ready
-
-**Option B:** Integrate your existing system
+**Option A:** Integrate your existing system
 - Implement interfaces with your Vault/KMS client
 - Full control over key lifecycle
 - No additional dependencies
 
-**Option C:** Custom implementation
-- Direct crypto operations with Go stdlib
+**Option B:** Custom implementation
+- Direct crypto operations with Go stdlib (see `examples/encryption`)
 - Your own key storage and rotation logic
 
-**Option D:** Use Service Provider
+**Option C:** Use Service Provider
 - Configure encryption at the bucket level
 - Use Terraform or IaaC to create bucket with encryption policy
 
@@ -144,12 +137,11 @@ go-objstore is **key-management-agnostic**. Your `EncrypterFactory` determines w
 
 ### Common Implementations
 
-**go-xkms** (recommended for most use cases):
+**HashiCorp Vault / Cloud KMS (example):**
 ```go
-import "github.com/jeremyhahn/go-xkms"
-
-kc, _ := xkms.New(config)
-encryptedStorage := common.NewEncryptedStorage(storage, kc)
+// Implement common.EncrypterFactory with your KMS client
+factory := myapp.NewKMSFactory(config)
+encryptedStorage := common.NewEncryptedStorage(storage, factory)
 ```
 
 **HashiCorp Vault:**

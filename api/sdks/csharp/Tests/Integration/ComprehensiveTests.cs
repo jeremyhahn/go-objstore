@@ -1,3 +1,4 @@
+using System.IO;
 using System.Text;
 using FluentAssertions;
 using ObjStore.SDK;
@@ -13,10 +14,15 @@ namespace ObjStore.SDK.Tests.Integration;
 /// This test suite uses xUnit Theory with MemberData for parameterized testing,
 /// ensuring complete protocol coverage with minimal code duplication.
 ///
-/// Environment Variables:
-/// - REST_BASE_URL: REST endpoint (default: http://localhost:8080)
-/// - GRPC_ADDRESS: gRPC endpoint (default: http://localhost:9090)
-/// - QUIC_BASE_URL: QUIC endpoint (default: https://localhost:8443)
+/// Environment Variables (set by docker-compose integration-tests service):
+/// - OBJSTORE_REST_URL: REST endpoint (default: http://localhost:8080)
+/// - OBJSTORE_GRPC_HOST / OBJSTORE_GRPC_PORT: gRPC host and port (default: localhost:50051)
+/// - OBJSTORE_QUIC_URL: QUIC endpoint (default: https://localhost:4433)
+///
+/// Canonical replication policy payload (per sdk_canonical_test_spec.md):
+///   source_backend="local", source_settings path=/tmp/src
+///   destination_backend="local", destination_settings path=/tmp/dst
+///   mode async, check_interval_seconds=3600
 /// </summary>
 [Collection("Integration")]
 [Trait("Category", "Comprehensive")]
@@ -24,13 +30,11 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
 {
     private readonly List<string> _testKeys = new();
     private readonly Dictionary<string, string> _policyIds = new();
-    private bool? _supportsReplication;
-    private bool? _supportsArchive;
 
     #region Protocol Factory
 
     /// <summary>
-    /// Factory method to create clients for each protocol
+    /// Factory method to create clients for each protocol.
     /// </summary>
     private IObjectStoreClient CreateClient(Protocol protocol)
     {
@@ -44,7 +48,7 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
     }
 
     /// <summary>
-    /// Provides test data for all protocol combinations
+    /// Provides test data for all protocol combinations.
     /// </summary>
     public static IEnumerable<object[]> GetAllProtocols()
     {
@@ -54,7 +58,7 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
     }
 
     /// <summary>
-    /// Provides test data for cross-protocol consistency tests
+    /// Provides test data for cross-protocol consistency tests.
     /// </summary>
     public static IEnumerable<object[]> GetProtocolPairs()
     {
@@ -72,95 +76,71 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
         }
     }
 
-    #endregion
-
-    #region Feature Detection
-
     /// <summary>
-    /// Checks if the backend supports replication by attempting to add a policy.
-    /// Caches the result to avoid repeated checks.
+    /// Returns true when the given protocol endpoint has been confirmed available during
+    /// InitializeAsync. Tests for unavailable protocols are skipped with an explicit log,
+    /// consistent with the canonical spec's "explicit skip, never silent fail" rule.
     /// </summary>
-    private async Task<bool> SupportsReplication()
+    private bool IsProtocolAvailable(Protocol protocol)
     {
-        if (_supportsReplication.HasValue)
-            return _supportsReplication.Value;
-
-        try
+        return protocol switch
         {
-            using var client = CreateClient(Protocol.REST);
-            var testPolicy = new ReplicationPolicy
-            {
-                Id = $"feature-check-{Guid.NewGuid()}",
-                SourceBackend = "local",
-                DestinationBackend = "local",
-                CheckIntervalSeconds = 300,
-                Enabled = false,
-                ReplicationMode = ReplicationMode.Transparent
-            };
-
-            await client.AddReplicationPolicyAsync(testPolicy);
-            await client.RemoveReplicationPolicyAsync(testPolicy.Id);
-            _supportsReplication = true;
-            return true;
-        }
-        catch (Exception ex) when (ex.Message.Contains("not supported") ||
-                                     ex.Message.Contains("not implemented") ||
-                                     ex.Message.Contains("unsupported"))
-        {
-            _supportsReplication = false;
-            return false;
-        }
-        catch
-        {
-            _supportsReplication = true;
-            return true;
-        }
+            Protocol.REST => IsServerAvailable,
+            Protocol.GRPC => IsGrpcAvailable,
+            Protocol.QUIC => IsQuicAvailable,
+            _ => false
+        };
     }
 
     /// <summary>
-    /// Checks if the backend supports archive operations.
-    /// Caches the result to avoid repeated checks.
+    /// Returns true when this test should be skipped (QUIC unavailable only).
+    /// Fails the test immediately when the REST or gRPC endpoint is unavailable, because
+    /// those are required protocols — unavailability is a harness failure, not a skip.
     /// </summary>
-    private async Task<bool> SupportsArchive()
+    private bool ShouldSkip(Protocol protocol)
     {
-        if (_supportsArchive.HasValue)
-            return _supportsArchive.Value;
-
-        try
+        if (!IsProtocolAvailable(protocol))
         {
-            using var client = CreateClient(Protocol.REST);
-            var testKey = $"feature-check/archive-{Guid.NewGuid()}.txt";
-            var data = Encoding.UTF8.GetBytes("archive feature check");
-
-            await client.PutAsync(testKey, data);
-
-            try
+            if (protocol == Protocol.QUIC)
             {
-                await client.ArchiveAsync(testKey, "glacier", new Dictionary<string, string>
-                {
-                    ["vault"] = "test-vault"
-                });
-
-                _supportsArchive = true;
+                Console.WriteLine($"[SKIP] QUIC/HTTP3 not available; skipping test.");
                 return true;
             }
-            catch (Exception ex) when (ex.Message.Contains("not supported") ||
-                                        ex.Message.Contains("not implemented") ||
-                                        ex.Message.Contains("unsupported"))
-            {
-                _supportsArchive = false;
-                return false;
-            }
-            finally
-            {
-                try { await client.DeleteAsync(testKey); } catch { }
-            }
+
+            // REST and gRPC are always-on — unavailability is a failure, not a skip.
+            Assert.Fail($"{protocol} server unavailable — integration tests require the objstore-server container (this is a failure, not a skip).");
         }
-        catch
+
+        return false;
+    }
+
+    #endregion
+
+    #region Canonical Replication Policy Builder
+
+    /// <summary>
+    /// Builds the canonical replication policy payload as defined in sdk_canonical_test_spec.md:
+    ///   source_backend="local", source_settings path=tmpSrc
+    ///   destination_backend="local", destination_settings path=tmpDst
+    ///   mode async (ReplicationMode.Transparent), check_interval_seconds=3600
+    /// </summary>
+    private static ReplicationPolicy BuildCanonicalReplicationPolicy(string id)
+    {
+        var tmpSrc = Path.Combine(Path.GetTempPath(), $"objstore-repl-src-{id}");
+        var tmpDst = Path.Combine(Path.GetTempPath(), $"objstore-repl-dst-{id}");
+
+        return new ReplicationPolicy
         {
-            _supportsArchive = false;
-            return false;
-        }
+            Id = id,
+            SourceBackend = "local",
+            SourceSettings = new Dictionary<string, string> { ["path"] = tmpSrc },
+            DestinationBackend = "local",
+            DestinationSettings = new Dictionary<string, string> { ["path"] = tmpDst },
+            // "async" mode maps to ReplicationMode.Transparent in this SDK
+            ReplicationMode = ReplicationMode.Transparent,
+            CheckIntervalSeconds = 3600,
+            Enabled = true
+        };
     }
 
     #endregion
@@ -175,7 +155,7 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
     [Trait("Operation", "Put")]
     public async Task Put_StoresObjectSuccessfully(Protocol protocol)
     {
-        if (!IsServerAvailable) return;
+        if (ShouldSkip(protocol)) return;
 
         using var client = CreateClient(protocol);
         var key = $"comprehensive/{protocol}/put-{Guid.NewGuid()}.txt";
@@ -201,7 +181,7 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
     [Trait("Operation", "Get")]
     public async Task Get_RetrievesObjectSuccessfully(Protocol protocol)
     {
-        if (!IsServerAvailable) return;
+        if (ShouldSkip(protocol)) return;
 
         using var client = CreateClient(protocol);
         var key = $"comprehensive/{protocol}/get-{Guid.NewGuid()}.txt";
@@ -225,7 +205,7 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
     [Trait("Operation", "Delete")]
     public async Task Delete_RemovesObjectSuccessfully(Protocol protocol)
     {
-        if (!IsServerAvailable) return;
+        if (ShouldSkip(protocol)) return;
 
         using var client = CreateClient(protocol);
         var key = $"comprehensive/{protocol}/delete-{Guid.NewGuid()}.txt";
@@ -248,7 +228,7 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
     [Trait("Operation", "Exists")]
     public async Task Exists_ChecksObjectExistenceCorrectly(Protocol protocol)
     {
-        if (!IsServerAvailable) return;
+        if (ShouldSkip(protocol)) return;
 
         using var client = CreateClient(protocol);
         var key = $"comprehensive/{protocol}/exists-{Guid.NewGuid()}.txt";
@@ -272,7 +252,7 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
     [Trait("Operation", "List")]
     public async Task List_ReturnsMatchingObjects(Protocol protocol)
     {
-        if (!IsServerAvailable) return;
+        if (ShouldSkip(protocol)) return;
 
         using var client = CreateClient(protocol);
         var prefix = $"comprehensive/{protocol}/list-{Guid.NewGuid()}/";
@@ -294,6 +274,10 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
 
         result.Should().NotBeNull();
         result.Objects.Should().HaveCountGreaterOrEqualTo(3);
+        foreach (var key in keys)
+        {
+            result.Objects.Should().Contain(o => o.Key == key, $"key '{key}' should be present in listing");
+        }
     }
 
     #endregion
@@ -301,14 +285,15 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
     #region 2. Metadata Operations Tests
 
     /// <summary>
-    /// Test 6/19: GetMetadataAsync - Retrieves only the metadata for an object
+    /// Test 6/19: GetMetadataAsync - Retrieves only the metadata for an object.
+    /// Asserts size==len(data), content_type matches, and custom key is present.
     /// </summary>
     [Theory]
     [MemberData(nameof(GetAllProtocols))]
     [Trait("Operation", "GetMetadata")]
     public async Task GetMetadata_RetrievesMetadataWithoutContent(Protocol protocol)
     {
-        if (!IsServerAvailable) return;
+        if (ShouldSkip(protocol)) return;
 
         using var client = CreateClient(protocol);
         var key = $"comprehensive/{protocol}/get-metadata-{Guid.NewGuid()}.txt";
@@ -330,26 +315,33 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
         var retrievedMetadata = await client.GetMetadataAsync(key);
 
         retrievedMetadata.Should().NotBeNull();
-        retrievedMetadata!.Size.Should().BeGreaterThan(0);
-        retrievedMetadata.ContentType.Should().NotBeNullOrEmpty();
+        retrievedMetadata!.Size.Should().Be(data.Length);
+        retrievedMetadata.ContentType.Should().Be("text/plain");
+        retrievedMetadata.Custom.Should().NotBeNull();
+        retrievedMetadata.Custom!["version"].Should().Be("1.0");
     }
 
     /// <summary>
-    /// Test 7/19: UpdateMetadataAsync - Updates the metadata for an existing object
+    /// Test 7/19: UpdateMetadataAsync - Updates the metadata for an existing object.
+    /// Calls getMetadata after update and asserts the NEW content_type and custom values persisted.
     /// </summary>
     [Theory]
     [MemberData(nameof(GetAllProtocols))]
     [Trait("Operation", "UpdateMetadata")]
     public async Task UpdateMetadata_UpdatesMetadataSuccessfully(Protocol protocol)
     {
-        if (!IsServerAvailable) return;
+        if (ShouldSkip(protocol)) return;
 
         using var client = CreateClient(protocol);
         var key = $"comprehensive/{protocol}/update-metadata-{Guid.NewGuid()}.txt";
         _testKeys.Add(key);
 
         var data = Encoding.UTF8.GetBytes("Update metadata test");
-        await client.PutAsync(key, data);
+        await client.PutAsync(key, data, new ObjectMetadata
+        {
+            ContentType = "text/plain",
+            Custom = new Dictionary<string, string> { ["state"] = "original" }
+        });
 
         var newMetadata = new ObjectMetadata
         {
@@ -357,13 +349,20 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
             Custom = new Dictionary<string, string>
             {
                 ["updated"] = "true",
-                ["timestamp"] = DateTime.UtcNow.ToString("O")
+                ["state"] = "modified"
             }
         };
 
         var updated = await client.UpdateMetadataAsync(key, newMetadata);
-
         updated.Should().BeTrue();
+
+        // Read-back: assert the new values persisted
+        var readBack = await client.GetMetadataAsync(key);
+        readBack.Should().NotBeNull();
+        readBack!.ContentType.Should().Be("application/json");
+        readBack.Custom.Should().NotBeNull();
+        readBack.Custom!["updated"].Should().Be("true");
+        readBack.Custom["state"].Should().Be("modified");
     }
 
     #endregion
@@ -371,18 +370,19 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
     #region 3. Lifecycle Policy Tests
 
     /// <summary>
-    /// Test 8/19: AddPolicyAsync - Adds a new lifecycle policy
+    /// Test 8/19: AddPolicyAsync - Adds a new lifecycle policy.
+    /// Verifies via getPolicies that the policy id is present after add.
     /// </summary>
     [Theory]
     [MemberData(nameof(GetAllProtocols))]
     [Trait("Operation", "AddPolicy")]
     public async Task AddPolicy_AddsLifecyclePolicySuccessfully(Protocol protocol)
     {
-        if (!IsServerAvailable) return;
+        if (ShouldSkip(protocol)) return;
 
         using var client = CreateClient(protocol);
         var policyId = $"comprehensive-{protocol}-{Guid.NewGuid()}";
-        _policyIds[$"lifecycle-{protocol}"] = policyId;
+        _policyIds[$"lifecycle-{protocol}-{policyId}"] = policyId;
 
         var policy = new LifecyclePolicy
         {
@@ -393,19 +393,23 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
         };
 
         var added = await client.AddPolicyAsync(policy);
-
         added.Should().BeTrue();
+
+        // Verify via getPolicies
+        var policies = await client.GetPoliciesAsync();
+        policies.Should().Contain(p => p.Id == policyId, $"newly added policy '{policyId}' should be present");
     }
 
     /// <summary>
-    /// Test 9/19: RemovePolicyAsync - Removes an existing lifecycle policy
+    /// Test 9/19: RemovePolicyAsync - Removes an existing lifecycle policy.
+    /// Verifies policy is gone from the list after removal.
     /// </summary>
     [Theory]
     [MemberData(nameof(GetAllProtocols))]
     [Trait("Operation", "RemovePolicy")]
     public async Task RemovePolicy_RemovesLifecyclePolicySuccessfully(Protocol protocol)
     {
-        if (!IsServerAvailable) return;
+        if (ShouldSkip(protocol)) return;
 
         using var client = CreateClient(protocol);
         var policyId = $"comprehensive-remove-{protocol}-{Guid.NewGuid()}";
@@ -421,19 +425,23 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
         await client.AddPolicyAsync(policy);
 
         var removed = await client.RemovePolicyAsync(policyId);
-
         removed.Should().BeTrue();
+
+        // Verify it is gone
+        var policies = await client.GetPoliciesAsync();
+        policies.Should().NotContain(p => p.Id == policyId, $"removed policy '{policyId}' should not be present");
     }
 
     /// <summary>
-    /// Test 10/19: GetPoliciesAsync - Retrieves all lifecycle policies
+    /// Test 10/19: GetPoliciesAsync - Retrieves all lifecycle policies.
+    /// Asserts the added policy id is present.
     /// </summary>
     [Theory]
     [MemberData(nameof(GetAllProtocols))]
     [Trait("Operation", "GetPolicies")]
     public async Task GetPolicies_RetrievesLifecyclePoliciesSuccessfully(Protocol protocol)
     {
-        if (!IsServerAvailable) return;
+        if (ShouldSkip(protocol)) return;
 
         using var client = CreateClient(protocol);
         var policyId = $"comprehensive-get-policies-{protocol}-{Guid.NewGuid()}";
@@ -469,7 +477,7 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
     [Trait("Operation", "ApplyPolicies")]
     public async Task ApplyPolicies_ExecutesLifecyclePoliciesSuccessfully(Protocol protocol)
     {
-        if (!IsServerAvailable) return;
+        if (ShouldSkip(protocol)) return;
 
         using var client = CreateClient(protocol);
 
@@ -485,90 +493,52 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
     #region 4. Replication Tests
 
     /// <summary>
-    /// Test 12/19: AddReplicationPolicyAsync - Adds a new replication policy
+    /// Test 12/19: AddReplicationPolicyAsync - Adds a replication policy using the canonical payload.
+    /// Asserts success (HTTP 201 equivalent). SupportsReplication() is a genuine fallback — on a
+    /// correctly-configured server this should always take the assert path.
     /// </summary>
     [Theory]
     [MemberData(nameof(GetAllProtocols))]
     [Trait("Operation", "AddReplicationPolicy")]
     public async Task AddReplicationPolicy_AddsReplicationPolicySuccessfully(Protocol protocol)
     {
-        if (!IsServerAvailable) return;
-        if (!await SupportsReplication()) return;
+        if (ShouldSkip(protocol)) return;
+        if (!await SupportsReplication())
+        {
+            Console.WriteLine("[SKIP] AddReplicationPolicy: server reports replication unsupported.");
+            return;
+        }
 
         using var client = CreateClient(protocol);
-        var policyId = $"comprehensive-repl-{protocol}-{Guid.NewGuid()}";
-        _policyIds[$"replication-{protocol}"] = policyId;
+        var policyId = $"comprehensive-repl-add-{protocol}-{Guid.NewGuid()}";
+        _policyIds[$"replication-{protocol}-{policyId}"] = policyId;
 
-        var policy = new ReplicationPolicy
-        {
-            Id = policyId,
-            SourceBackend = "local",
-            DestinationBackend = "local",
-            CheckIntervalSeconds = 300,
-            Enabled = true,
-            ReplicationMode = ReplicationMode.Transparent
-        };
+        var policy = BuildCanonicalReplicationPolicy(policyId);
 
         var added = await client.AddReplicationPolicyAsync(policy);
-
-        added.Should().BeTrue();
+        added.Should().BeTrue($"AddReplicationPolicy should succeed for policy '{policyId}'");
     }
 
     /// <summary>
-    /// Test 13/19: RemoveReplicationPolicyAsync - Removes an existing replication policy
-    /// </summary>
-    [Theory]
-    [MemberData(nameof(GetAllProtocols))]
-    [Trait("Operation", "RemoveReplicationPolicy")]
-    public async Task RemoveReplicationPolicy_RemovesReplicationPolicySuccessfully(Protocol protocol)
-    {
-        if (!IsServerAvailable) return;
-        if (!await SupportsReplication()) return;
-
-        using var client = CreateClient(protocol);
-        var policyId = $"comprehensive-remove-repl-{protocol}-{Guid.NewGuid()}";
-
-        var policy = new ReplicationPolicy
-        {
-            Id = policyId,
-            SourceBackend = "local",
-            DestinationBackend = "local",
-            CheckIntervalSeconds = 300,
-            Enabled = false,
-            ReplicationMode = ReplicationMode.Transparent
-        };
-
-        await client.AddReplicationPolicyAsync(policy);
-
-        var removed = await client.RemoveReplicationPolicyAsync(policyId);
-
-        removed.Should().BeTrue();
-    }
-
-    /// <summary>
-    /// Test 14/19: GetReplicationPoliciesAsync - Retrieves all replication policies
+    /// Test 13/19: GetReplicationPoliciesAsync - Retrieves all replication policies.
+    /// Asserts the added id is present and count >= 1.
     /// </summary>
     [Theory]
     [MemberData(nameof(GetAllProtocols))]
     [Trait("Operation", "GetReplicationPolicies")]
-    public async Task GetReplicationPolicies_RetrievesReplicationPoliciesSuccessfully(Protocol protocol)
+    public async Task GetReplicationPolicies_ContainsAddedPolicy(Protocol protocol)
     {
-        if (!IsServerAvailable) return;
-        if (!await SupportsReplication()) return;
+        if (ShouldSkip(protocol)) return;
+        if (!await SupportsReplication())
+        {
+            Console.WriteLine("[SKIP] GetReplicationPolicies: server reports replication unsupported.");
+            return;
+        }
 
         using var client = CreateClient(protocol);
-        var policyId = $"comprehensive-get-repl-policies-{protocol}-{Guid.NewGuid()}";
+        var policyId = $"comprehensive-repl-getlist-{protocol}-{Guid.NewGuid()}";
 
-        var policy = new ReplicationPolicy
-        {
-            Id = policyId,
-            SourceBackend = "local",
-            DestinationBackend = "local",
-            CheckIntervalSeconds = 300,
-            Enabled = true,
-            ReplicationMode = ReplicationMode.Transparent
-        };
-
+        var policy = BuildCanonicalReplicationPolicy(policyId);
         await client.AddReplicationPolicyAsync(policy);
 
         try
@@ -576,7 +546,8 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
             var policies = await client.GetReplicationPoliciesAsync();
 
             policies.Should().NotBeNull();
-            policies.Should().Contain(p => p.Id == policyId);
+            policies.Count.Should().BeGreaterOrEqualTo(1);
+            policies.Should().Contain(p => p.Id == policyId, $"id '{policyId}' should be present in list");
         }
         finally
         {
@@ -585,29 +556,25 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
     }
 
     /// <summary>
-    /// Test 15/19: GetReplicationPolicyAsync - Retrieves a specific replication policy
+    /// Test 14/19: GetReplicationPolicyAsync - Retrieves a specific replication policy.
+    /// Asserts id, source_backend=="local", destination_backend=="local", check_interval_seconds==3600.
     /// </summary>
     [Theory]
     [MemberData(nameof(GetAllProtocols))]
     [Trait("Operation", "GetReplicationPolicy")]
-    public async Task GetReplicationPolicy_RetrievesSpecificPolicySuccessfully(Protocol protocol)
+    public async Task GetReplicationPolicy_ReturnsCanonicalFields(Protocol protocol)
     {
-        if (!IsServerAvailable) return;
-        if (!await SupportsReplication()) return;
+        if (ShouldSkip(protocol)) return;
+        if (!await SupportsReplication())
+        {
+            Console.WriteLine("[SKIP] GetReplicationPolicy: server reports replication unsupported.");
+            return;
+        }
 
         using var client = CreateClient(protocol);
-        var policyId = $"comprehensive-get-single-repl-{protocol}-{Guid.NewGuid()}";
+        var policyId = $"comprehensive-repl-getsingle-{protocol}-{Guid.NewGuid()}";
 
-        var policy = new ReplicationPolicy
-        {
-            Id = policyId,
-            SourceBackend = "local",
-            DestinationBackend = "local",
-            CheckIntervalSeconds = 600,
-            Enabled = true,
-            ReplicationMode = ReplicationMode.Opaque
-        };
-
+        var policy = BuildCanonicalReplicationPolicy(policyId);
         await client.AddReplicationPolicyAsync(policy);
 
         try
@@ -618,6 +585,7 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
             retrievedPolicy!.Id.Should().Be(policyId);
             retrievedPolicy.SourceBackend.Should().Be("local");
             retrievedPolicy.DestinationBackend.Should().Be("local");
+            retrievedPolicy.CheckIntervalSeconds.Should().Be(3600);
         }
         finally
         {
@@ -626,36 +594,40 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
     }
 
     /// <summary>
-    /// Test 16/19: TriggerReplicationAsync - Triggers synchronization for policies
+    /// Test 15/19: TriggerReplicationAsync - Triggers synchronization for a policy.
+    /// Asserts the rich server result: success==true, policy_id matches, counters >= 0,
+    /// bytes_total >= 0, and DurationMs >= 0.
     /// </summary>
     [Theory]
     [MemberData(nameof(GetAllProtocols))]
     [Trait("Operation", "TriggerReplication")]
-    public async Task TriggerReplication_TriggersReplicationSuccessfully(Protocol protocol)
+    public async Task TriggerReplication_ReturnsRichResult(Protocol protocol)
     {
-        if (!IsServerAvailable) return;
-        if (!await SupportsReplication()) return;
+        if (ShouldSkip(protocol)) return;
+        if (!await SupportsReplication())
+        {
+            Console.WriteLine("[SKIP] TriggerReplication: server reports replication unsupported.");
+            return;
+        }
 
         using var client = CreateClient(protocol);
-        var policyId = $"comprehensive-trigger-repl-{protocol}-{Guid.NewGuid()}";
+        var policyId = $"comprehensive-repl-trigger-{protocol}-{Guid.NewGuid()}";
 
-        var policy = new ReplicationPolicy
-        {
-            Id = policyId,
-            SourceBackend = "local",
-            DestinationBackend = "local",
-            CheckIntervalSeconds = 300,
-            Enabled = true,
-            ReplicationMode = ReplicationMode.Transparent
-        };
-
+        var policy = BuildCanonicalReplicationPolicy(policyId);
         await client.AddReplicationPolicyAsync(policy);
 
         try
         {
             var result = await client.TriggerReplicationAsync(policyId, parallel: true, workerCount: 2);
 
-            result.Should().BeTrue();
+            result.Success.Should().BeTrue($"TriggerReplication for policy '{policyId}' should succeed");
+            result.SyncResult.Should().NotBeNull("server should return a sync result payload");
+            result.SyncResult!.PolicyId.Should().Be(policyId, "returned policy_id must match the triggered policy");
+            result.SyncResult.Synced.Should().BeGreaterOrEqualTo(0, "synced counter must be non-negative");
+            result.SyncResult.Deleted.Should().BeGreaterOrEqualTo(0, "deleted counter must be non-negative");
+            result.SyncResult.Failed.Should().BeGreaterOrEqualTo(0, "failed counter must be non-negative");
+            result.SyncResult.BytesTotal.Should().BeGreaterOrEqualTo(0, "bytes_total must be non-negative");
+            result.SyncResult.DurationMs.Should().BeGreaterOrEqualTo(0, "duration_ms must be non-negative");
         }
         finally
         {
@@ -664,29 +636,25 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
     }
 
     /// <summary>
-    /// Test 17/19: GetReplicationStatusAsync - Retrieves status and metrics for a policy
+    /// Test 16/19: GetReplicationStatusAsync - Retrieves status and metrics for a policy.
+    /// Asserts policy_id matches, total_objects_synced >= 0, sync_count >= 0.
     /// </summary>
     [Theory]
     [MemberData(nameof(GetAllProtocols))]
     [Trait("Operation", "GetReplicationStatus")]
-    public async Task GetReplicationStatus_RetrievesStatusSuccessfully(Protocol protocol)
+    public async Task GetReplicationStatus_ReturnsCounters(Protocol protocol)
     {
-        if (!IsServerAvailable) return;
-        if (!await SupportsReplication()) return;
+        if (ShouldSkip(protocol)) return;
+        if (!await SupportsReplication())
+        {
+            Console.WriteLine("[SKIP] GetReplicationStatus: server reports replication unsupported.");
+            return;
+        }
 
         using var client = CreateClient(protocol);
-        var policyId = $"comprehensive-status-repl-{protocol}-{Guid.NewGuid()}";
+        var policyId = $"comprehensive-repl-status-{protocol}-{Guid.NewGuid()}";
 
-        var policy = new ReplicationPolicy
-        {
-            Id = policyId,
-            SourceBackend = "local",
-            DestinationBackend = "local",
-            CheckIntervalSeconds = 300,
-            Enabled = true,
-            ReplicationMode = ReplicationMode.Transparent
-        };
-
+        var policy = BuildCanonicalReplicationPolicy(policyId);
         await client.AddReplicationPolicyAsync(policy);
 
         try
@@ -696,7 +664,7 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
             status.Should().NotBeNull();
             status!.PolicyId.Should().Be(policyId);
             status.TotalObjectsSynced.Should().BeGreaterOrEqualTo(0);
-            status.TotalErrors.Should().BeGreaterOrEqualTo(0);
+            status.SyncCount.Should().BeGreaterOrEqualTo(0);
         }
         finally
         {
@@ -704,20 +672,54 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Test 17/19: RemoveReplicationPolicyAsync - Removes a replication policy.
+    /// Asserts success and that the id is no longer in the list.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(GetAllProtocols))]
+    [Trait("Operation", "RemoveReplicationPolicy")]
+    public async Task RemoveReplicationPolicy_SuccessAndGoneFromList(Protocol protocol)
+    {
+        if (ShouldSkip(protocol)) return;
+        if (!await SupportsReplication())
+        {
+            Console.WriteLine("[SKIP] RemoveReplicationPolicy: server reports replication unsupported.");
+            return;
+        }
+
+        using var client = CreateClient(protocol);
+        var policyId = $"comprehensive-repl-remove-{protocol}-{Guid.NewGuid()}";
+
+        var policy = BuildCanonicalReplicationPolicy(policyId);
+        await client.AddReplicationPolicyAsync(policy);
+
+        var removed = await client.RemoveReplicationPolicyAsync(policyId);
+        removed.Should().BeTrue($"RemoveReplicationPolicy for '{policyId}' should succeed");
+
+        var policies = await client.GetReplicationPoliciesAsync();
+        policies.Should().NotContain(p => p.Id == policyId, $"removed policy '{policyId}' should not appear in list");
+    }
+
     #endregion
 
     #region 5. Archive Tests
 
     /// <summary>
-    /// Test 18/19: ArchiveAsync - Copies an object to archival storage backend
+    /// Test 18/19: ArchiveAsync - Copies an object to archival storage backend.
+    /// Skips with explicit log if the backend genuinely lacks archive support.
     /// </summary>
     [Theory]
     [MemberData(nameof(GetAllProtocols))]
     [Trait("Operation", "Archive")]
     public async Task Archive_ArchivesObjectSuccessfully(Protocol protocol)
     {
-        if (!IsServerAvailable) return;
-        if (!await SupportsArchive()) return;
+        if (ShouldSkip(protocol)) return;
+        if (!await SupportsArchive())
+        {
+            Console.WriteLine("[SKIP] Archive: server reports archive unsupported.");
+            return;
+        }
 
         using var client = CreateClient(protocol);
         var key = $"comprehensive/{protocol}/archive-{Guid.NewGuid()}.txt";
@@ -747,7 +749,7 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
     [Trait("Operation", "Health")]
     public async Task Health_ReturnsHealthyStatus(Protocol protocol)
     {
-        if (!IsServerAvailable) return;
+        if (ShouldSkip(protocol)) return;
 
         using var client = CreateClient(protocol);
 
@@ -762,7 +764,8 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
     #region Cross-Protocol Consistency Tests
 
     /// <summary>
-    /// Verifies that an object written via one protocol can be read via another
+    /// Verifies that an object written via one protocol can be read via another,
+    /// and that data bytes are identical.
     /// </summary>
     [Theory]
     [MemberData(nameof(GetProtocolPairs))]
@@ -771,7 +774,16 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
         Protocol writeProtocol,
         Protocol readProtocol)
     {
-        if (!IsServerAvailable) return;
+        if (!IsProtocolAvailable(writeProtocol) || !IsProtocolAvailable(readProtocol))
+        {
+            // QUIC is a permitted skip; REST/gRPC unavailability is a harness failure.
+            if (writeProtocol == Protocol.QUIC || readProtocol == Protocol.QUIC)
+            {
+                Console.WriteLine($"[SKIP] CrossProtocol {writeProtocol}->{readProtocol}: QUIC not available; skipping.");
+                return;
+            }
+            Assert.Fail($"CrossProtocol {writeProtocol}->{readProtocol}: REST or gRPC server unavailable — integration tests require the objstore-server container (this is a failure, not a skip).");
+        }
 
         var key = $"comprehensive/cross-protocol/{writeProtocol}-to-{readProtocol}-{Guid.NewGuid()}.txt";
         _testKeys.Add(key);
@@ -800,38 +812,86 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
     }
 
     /// <summary>
-    /// Verifies that metadata operations work consistently across protocols
+    /// Verifies that metadata written via one protocol is readable via another with
+    /// equal size and content_type. Custom metadata key equality is also asserted.
     /// </summary>
     [Theory]
     [MemberData(nameof(GetProtocolPairs))]
     [Trait("Category", "CrossProtocol")]
-    public async Task CrossProtocol_MetadataConsistency_AcrossProtocols(
-        Protocol protocol1,
-        Protocol protocol2)
+    public async Task CrossProtocol_MetadataConsistency_SizeAndContentTypeEqual(
+        Protocol writeProtocol,
+        Protocol readProtocol)
     {
-        if (!IsServerAvailable) return;
+        if (!IsProtocolAvailable(writeProtocol) || !IsProtocolAvailable(readProtocol))
+        {
+            if (writeProtocol == Protocol.QUIC || readProtocol == Protocol.QUIC)
+            {
+                Console.WriteLine($"[SKIP] CrossProtocol metadata {writeProtocol}->{readProtocol}: QUIC not available; skipping.");
+                return;
+            }
+            Assert.Fail($"CrossProtocol metadata {writeProtocol}->{readProtocol}: REST or gRPC server unavailable — integration tests require the objstore-server container (this is a failure, not a skip).");
+        }
 
-        var key = $"comprehensive/cross-protocol-metadata/{protocol1}-to-{protocol2}-{Guid.NewGuid()}.txt";
+        var key = $"comprehensive/cross-protocol-metadata/{writeProtocol}-to-{readProtocol}-{Guid.NewGuid()}.txt";
         _testKeys.Add(key);
 
-        using var client1 = CreateClient(protocol1);
         var data = Encoding.UTF8.GetBytes("Metadata consistency test");
-        await client1.PutAsync(key, data, new ObjectMetadata
+        var originalContentType = "text/plain";
+        var originalCustomValue = "consistency-check";
+
+        using var writeClient = CreateClient(writeProtocol);
+        await writeClient.PutAsync(key, data, new ObjectMetadata
         {
-            ContentType = "text/plain",
-            Custom = new Dictionary<string, string> { ["test"] = "value" }
+            ContentType = originalContentType,
+            Custom = new Dictionary<string, string> { ["test"] = originalCustomValue }
         });
 
-        using var client2 = CreateClient(protocol2);
-        var metadata = await client2.GetMetadataAsync(key);
+        using var readClient = CreateClient(readProtocol);
+        var metadata = await readClient.GetMetadataAsync(key);
 
         metadata.Should().NotBeNull();
-        metadata!.Size.Should().BeGreaterThan(0);
-        metadata.ContentType.Should().NotBeNullOrEmpty();
+        metadata!.Size.Should().Be(data.Length);
+        metadata.ContentType.Should().Be(originalContentType);
+        metadata.Custom.Should().NotBeNull();
+        metadata.Custom!["test"].Should().Be(originalCustomValue);
     }
 
     /// <summary>
-    /// Verifies that lifecycle policies created via one protocol are visible via another
+    /// Verifies that a delete performed via one protocol is visible via another (exists == false).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(GetProtocolPairs))]
+    [Trait("Category", "CrossProtocol")]
+    public async Task CrossProtocol_DeleteViaOneExistenceViaAnother_ReturnsFalse(
+        Protocol deleteProtocol,
+        Protocol existsProtocol)
+    {
+        if (!IsProtocolAvailable(deleteProtocol) || !IsProtocolAvailable(existsProtocol))
+        {
+            if (deleteProtocol == Protocol.QUIC || existsProtocol == Protocol.QUIC)
+            {
+                Console.WriteLine($"[SKIP] CrossProtocol delete {deleteProtocol}->{existsProtocol}: QUIC not available; skipping.");
+                return;
+            }
+            Assert.Fail($"CrossProtocol delete {deleteProtocol}->{existsProtocol}: REST or gRPC server unavailable — integration tests require the objstore-server container (this is a failure, not a skip).");
+        }
+
+        var key = $"comprehensive/cross-protocol-delete/{deleteProtocol}-to-{existsProtocol}-{Guid.NewGuid()}.txt";
+
+        using var writeClient = CreateClient(Protocol.REST);
+        await writeClient.PutAsync(key, Encoding.UTF8.GetBytes("cross-protocol delete test"));
+
+        using var deleteClient = CreateClient(deleteProtocol);
+        var deleted = await deleteClient.DeleteAsync(key);
+        deleted.Should().BeTrue();
+
+        using var existsClient = CreateClient(existsProtocol);
+        var exists = await existsClient.ExistsAsync(key);
+        exists.Should().BeFalse($"object deleted via {deleteProtocol} should not exist when checked via {existsProtocol}");
+    }
+
+    /// <summary>
+    /// Verifies that lifecycle policies created via one protocol are visible via another.
     /// </summary>
     [Theory]
     [MemberData(nameof(GetProtocolPairs))]
@@ -840,7 +900,15 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
         Protocol createProtocol,
         Protocol readProtocol)
     {
-        if (!IsServerAvailable) return;
+        if (!IsProtocolAvailable(createProtocol) || !IsProtocolAvailable(readProtocol))
+        {
+            if (createProtocol == Protocol.QUIC || readProtocol == Protocol.QUIC)
+            {
+                Console.WriteLine($"[SKIP] CrossProtocol policy {createProtocol}->{readProtocol}: QUIC not available; skipping.");
+                return;
+            }
+            Assert.Fail($"CrossProtocol policy {createProtocol}->{readProtocol}: REST or gRPC server unavailable — integration tests require the objstore-server container (this is a failure, not a skip).");
+        }
 
         var policyId = $"cross-protocol-policy-{createProtocol}-to-{readProtocol}-{Guid.NewGuid()}";
 
@@ -880,7 +948,7 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
     [Trait("Category", "EdgeCase")]
     public async Task EdgeCase_EmptyObject_HandledCorrectly(Protocol protocol)
     {
-        if (!IsServerAvailable) return;
+        if (ShouldSkip(protocol)) return;
 
         using var client = CreateClient(protocol);
         var key = $"comprehensive/{protocol}/empty-{Guid.NewGuid()}.txt";
@@ -904,7 +972,7 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
     [Trait("Category", "EdgeCase")]
     public async Task EdgeCase_LargeObject_HandledCorrectly(Protocol protocol)
     {
-        if (!IsServerAvailable) return;
+        if (ShouldSkip(protocol)) return;
 
         using var client = CreateClient(protocol);
         var key = $"comprehensive/{protocol}/large-{Guid.NewGuid()}.bin";
@@ -930,7 +998,7 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
     [Trait("Category", "EdgeCase")]
     public async Task EdgeCase_BinaryData_PreservesAllBytes(Protocol protocol)
     {
-        if (!IsServerAvailable) return;
+        if (ShouldSkip(protocol)) return;
 
         using var client = CreateClient(protocol);
         var key = $"comprehensive/{protocol}/binary-{Guid.NewGuid()}.bin";
@@ -954,7 +1022,7 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
     [Trait("Category", "ErrorHandling")]
     public async Task ErrorHandling_GetNonexistent_ThrowsException(Protocol protocol)
     {
-        if (!IsServerAvailable) return;
+        if (ShouldSkip(protocol)) return;
 
         using var client = CreateClient(protocol);
         var key = $"comprehensive/{protocol}/nonexistent-{Guid.NewGuid()}.txt";
@@ -971,7 +1039,7 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
     [Trait("Category", "ErrorHandling")]
     public async Task ErrorHandling_DeleteNonexistent_HandledGracefully(Protocol protocol)
     {
-        if (!IsServerAvailable) return;
+        if (ShouldSkip(protocol)) return;
 
         using var client = CreateClient(protocol);
         var key = $"comprehensive/{protocol}/nonexistent-delete-{Guid.NewGuid()}.txt";
@@ -989,7 +1057,7 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
     [Trait("Category", "EdgeCase")]
     public async Task EdgeCase_HierarchicalList_WithDelimiter(Protocol protocol)
     {
-        if (!IsServerAvailable) return;
+        if (ShouldSkip(protocol)) return;
 
         using var client = CreateClient(protocol);
         var prefix = $"comprehensive/{protocol}/hierarchy-{Guid.NewGuid()}/";
@@ -1023,6 +1091,8 @@ public class ComprehensiveTests : IntegrationTestBase, IAsyncDisposable
     /// </summary>
     public new async ValueTask DisposeAsync()
     {
+        // Cleanup is best-effort: if the server is unavailable, InitializeAsync already
+        // threw and real test failures have been recorded — don't suppress them here.
         if (!IsServerAvailable) return;
 
         // Clean up test objects

@@ -83,6 +83,19 @@ func main() {
 		log.Fatalf("Failed to initialize objstore facade: %v", err)
 	}
 
+	// Enable replication on the default backend so the replication API
+	// (policies, trigger, status) is fully functional. Backends that do not
+	// support a replication manager simply log a warning and continue.
+	replicationPolicyPath := *basePath + "/.replication-policies.json"
+	if err := objstore.EnableReplication("", &objstore.ReplicationConfig{
+		PolicyFilePath:  replicationPolicyPath,
+		RunInBackground: false,
+	}); err != nil {
+		log.Printf("Warning: Failed to enable replication: %v", err)
+	} else {
+		log.Printf("Replication enabled with policy file: %s", replicationPolicyPath)
+	}
+
 	// Enhanced startup logging
 	log.Println("============================================================")
 	log.Println("  Object Storage Server")

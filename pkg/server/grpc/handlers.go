@@ -134,8 +134,11 @@ func (s *Server) Get(req *objstorepb.GetRequest, stream objstorepb.ObjectStore_G
 		return mapError(err)
 	}
 
-	// Send metadata in the first response
-	firstResponse := true
+	// Send metadata in the first response.  For zero-byte objects, reader.Read
+	// returns (0, io.EOF) immediately so the data loop never fires; we carry
+	// the metadataSent flag to ensure metadata is always included in the very
+	// first message sent to the client.
+	metadataSent := false
 	buffer := make([]byte, s.opts.ChunkSize)
 
 	for {
@@ -152,9 +155,9 @@ func (s *Server) Get(req *objstorepb.GetRequest, stream objstorepb.ObjectStore_G
 				IsLast: false,
 			}
 
-			if firstResponse {
+			if !metadataSent {
 				resp.Metadata = metadataToProto(metadata)
-				firstResponse = false
+				metadataSent = true
 			}
 
 			if err := stream.Send(resp); err != nil {
@@ -163,11 +166,16 @@ func (s *Server) Get(req *objstorepb.GetRequest, stream objstorepb.ObjectStore_G
 		}
 
 		if err == io.EOF {
-			// Send final response
-			if err := stream.Send(&objstorepb.GetResponse{
+			// Final response — include metadata here when the object was empty
+			// (no data chunks were sent) so clients always receive metadata.
+			final := &objstorepb.GetResponse{
 				Data:   []byte{},
 				IsLast: true,
-			}); err != nil {
+			}
+			if !metadataSent {
+				final.Metadata = metadataToProto(metadata)
+			}
+			if err := stream.Send(final); err != nil {
 				return mapError(err)
 			}
 			break
@@ -482,7 +490,7 @@ func (s *Server) ApplyPolicies(ctx context.Context, req *objstorepb.ApplyPolicie
 				if err := objstore.DeleteWithContext(ctx, s.keyRef(obj.Key)); err != nil {
 					s.opts.Logger.Error(ctx, "Failed to delete object during policy application",
 						adapters.Field{Key: "key", Value: obj.Key},
-						adapters.Field{Key: "error", Value: err.Error()},
+						adapters.Field{Key: fieldError, Value: err.Error()},
 					)
 					continue
 				}
@@ -492,7 +500,7 @@ func (s *Server) ApplyPolicies(ctx context.Context, req *objstorepb.ApplyPolicie
 					if err := objstore.Archive(s.keyRef(obj.Key), policy.Destination); err != nil {
 						s.opts.Logger.Error(ctx, "Failed to archive object during policy application",
 							adapters.Field{Key: "key", Value: obj.Key},
-							adapters.Field{Key: "error", Value: err.Error()},
+							adapters.Field{Key: fieldError, Value: err.Error()},
 						)
 						continue
 					}
@@ -570,36 +578,48 @@ func protoToMetadata(m *objstorepb.Metadata) *common.Metadata {
 }
 
 // mapError maps common errors to gRPC status codes.
+//
+// Sentinel matching uses errors.Is so that wrapped errors (e.g. fmt.Errorf("%w: %s",
+// common.ErrKeyNotFound, key)) are correctly classified. String-based fallbacks handle
+// custom error types from third-party backends that carry the right message but do not
+// wrap the canonical sentinels.
 func mapError(err error) error {
 	if err == nil {
 		return nil
 	}
 
-	errStr := err.Error()
+	switch {
+	// Not-found sentinels — covers wrapped errors such as "key not found: <key>".
+	case errors.Is(err, common.ErrKeyNotFound),
+		errors.Is(err, common.ErrMetadataNotFound),
+		errors.Is(err, common.ErrPolicyNotFound):
+		return status.Error(codes.NotFound, "object not found")
 
-	switch errStr {
-	case "not found", "key not found":
-		return status.Error(codes.NotFound, err.Error())
-	case "already exists":
-		return status.Error(codes.AlreadyExists, err.Error())
-	case "permission denied":
-		return status.Error(codes.PermissionDenied, err.Error())
-	case "invalid argument", "invalid key":
-		return status.Error(codes.InvalidArgument, err.Error())
-	case "deadline exceeded", "context deadline exceeded":
-		return status.Error(codes.DeadlineExceeded, err.Error())
-	case "canceled", "context canceled":
-		return status.Error(codes.Canceled, err.Error())
+	// Cancellation / deadline — check real context errors before string fallbacks.
+	case errors.Is(err, context.Canceled):
+		return status.Error(codes.Canceled, "request canceled")
+	case errors.Is(err, context.DeadlineExceeded):
+		return status.Error(codes.DeadlineExceeded, "deadline exceeded")
+
+	// String-based fallbacks for custom error types that do not wrap the sentinels.
 	default:
-		if ctx := context.Background(); ctx.Err() != nil {
-			if errors.Is(ctx.Err(), context.Canceled) {
-				return status.Error(codes.Canceled, err.Error())
-			}
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return status.Error(codes.DeadlineExceeded, err.Error())
-			}
+		errStr := err.Error()
+		switch errStr {
+		case "not found", "key not found":
+			return status.Error(codes.NotFound, "object not found")
+		case "already exists":
+			return status.Error(codes.AlreadyExists, errStr)
+		case "permission denied":
+			return status.Error(codes.PermissionDenied, errStr)
+		case "invalid argument", "invalid key":
+			return status.Error(codes.InvalidArgument, errStr)
+		case "deadline exceeded", "context deadline exceeded":
+			return status.Error(codes.DeadlineExceeded, errStr)
+		case "canceled", "context canceled":
+			return status.Error(codes.Canceled, errStr)
+		default:
+			return status.Error(codes.Internal, common.SanitizeErrorMessage(err))
 		}
-		return status.Error(codes.Internal, err.Error())
 	}
 }
 

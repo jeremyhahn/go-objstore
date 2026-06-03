@@ -14,12 +14,15 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
@@ -54,6 +57,10 @@ type ServerConfig struct {
 	// Authenticator is the pluggable authentication adapter for HTTP mode
 	// (default: NoOpAuthenticator). Not used for stdio mode.
 	Authenticator adapters.Authenticator
+
+	// Authorizer is the pluggable authorization adapter for HTTP mode
+	// (default: NoOpAuthorizer = allow-all). Not used for stdio mode.
+	Authorizer adapters.Authorizer
 
 	// TLSConfig is the TLS/mTLS configuration for HTTP mode (optional)
 	TLSConfig *adapters.TLSConfig
@@ -92,6 +99,11 @@ func NewServer(config *ServerConfig) (*Server, error) {
 	// Set default authenticator if not provided (for HTTP mode)
 	if config.Authenticator == nil {
 		config.Authenticator = adapters.NewNoOpAuthenticator()
+	}
+
+	// Set default authorizer if not provided (for HTTP mode)
+	if config.Authorizer == nil {
+		config.Authorizer = adapters.NewNoOpAuthorizer()
 	}
 
 	// Initialize components
@@ -230,18 +242,80 @@ func (s *Server) authenticationMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Store principal in context
+		// Store principal in context and enrich a request-local logger.
+		// Do NOT assign back to s.config.Logger — that would mutate shared
+		// server state and cause a data race under concurrent requests.
 		ctx := context.WithValue(r.Context(), principalContextKey, principal)
 		r = r.WithContext(ctx)
 
-		// Add principal info to logger
-		s.config.Logger = s.config.Logger.WithFields(
+		reqLogger := s.config.Logger.WithFields(
 			adapters.Field{Key: "principal_id", Value: principal.ID},
 			adapters.Field{Key: "principal_name", Value: principal.Name},
 		)
 
+		// Authorize the request. Peek at the JSON-RPC body to derive the
+		// MCP method (and tool name for tools/call), then restore the body
+		// for the downstream handler.
+		action, resource, body := s.deriveMCPActionResource(r)
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		if err := s.config.Authorizer.Authorize(ctx, principal, action, resource); err != nil {
+			reqLogger.Warn(ctx, "MCP HTTP authorization denied",
+				adapters.Field{Key: "error", Value: err.Error()},
+				adapters.Field{Key: "path", Value: r.URL.Path},
+				adapters.Field{Key: "action", Value: action},
+			)
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
 		next.ServeHTTP(w, r)
 	})
+}
+
+// mcpToolActions maps an MCP tool name to its required action per the standard
+// taxonomy. Tools not present default to admin (deny-safe).
+var mcpToolActions = map[string]string{
+	"objstore_get":             adapters.ActionRead,
+	"objstore_exists":          adapters.ActionRead,
+	"objstore_get_metadata":    adapters.ActionRead,
+	"objstore_list":            adapters.ActionList,
+	"objstore_put":             adapters.ActionWrite,
+	"objstore_update_metadata": adapters.ActionWrite,
+	"objstore_delete":          adapters.ActionDelete,
+}
+
+// deriveMCPActionResource reads the request body and maps the MCP JSON-RPC
+// method (and tool name for tools/call) to an (action, resource) pair. It
+// returns the consumed body bytes so the caller can restore r.Body. Read-only
+// protocol methods (initialize, tools/list, resources/*, ping) map to read.
+func (s *Server) deriveMCPActionResource(r *http.Request) (action, resource string, body []byte) {
+	body, _ = io.ReadAll(r.Body) // #nosec G104 -- body re-read errors surface downstream as invalid JSON
+	_ = r.Body.Close()
+
+	var parsed struct {
+		Method string `json:"method"`
+		Params struct {
+			Name string `json:"name"`
+		} `json:"params"`
+	}
+	_ = json.Unmarshal(body, &parsed) // #nosec G104 -- malformed bodies are rejected by the downstream handler
+
+	if parsed.Method != methodToolsCall {
+		// initialize, tools/list, resources/list, resources/read, ping.
+		return adapters.ActionRead, "", body
+	}
+
+	tool := parsed.Params.Name
+	if act, ok := mcpToolActions[tool]; ok {
+		return act, tool, body
+	}
+	// Lifecycle/replication tools and any unmapped tool require admin.
+	switch {
+	case strings.Contains(tool, "replication"):
+		return adapters.ActionAdmin, adapters.ResourceReplication, body
+	default:
+		return adapters.ActionAdmin, adapters.ResourcePolicy, body
+	}
 }
 
 // ListTools returns all available tools

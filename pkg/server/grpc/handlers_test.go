@@ -16,6 +16,7 @@ package grpc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"testing"
 	"time"
@@ -89,6 +90,35 @@ func TestMapError_Various(t *testing.T) {
 			name:     "unknown error",
 			err:      errors.New("some random error"),
 			wantCode: codes.Internal,
+		},
+		// Wrapped sentinel cases — the production scenario that was previously broken.
+		// Backends use fmt.Errorf("%w: %s", common.ErrKeyNotFound, key), producing a
+		// message like "key not found: mykey" that never matched the old exact-string
+		// switch, causing these to fall through to codes.Internal.
+		{
+			name:     "wrapped ErrKeyNotFound",
+			err:      fmt.Errorf("%w: %s", common.ErrKeyNotFound, "mykey"),
+			wantCode: codes.NotFound,
+		},
+		{
+			name:     "wrapped ErrMetadataNotFound",
+			err:      fmt.Errorf("%w: %s", common.ErrMetadataNotFound, "mykey"),
+			wantCode: codes.NotFound,
+		},
+		{
+			name:     "wrapped ErrPolicyNotFound",
+			err:      fmt.Errorf("%w: %s", common.ErrPolicyNotFound, "pol-1"),
+			wantCode: codes.NotFound,
+		},
+		{
+			name:     "context.Canceled sentinel",
+			err:      context.Canceled,
+			wantCode: codes.Canceled,
+		},
+		{
+			name:     "context.DeadlineExceeded sentinel",
+			err:      context.DeadlineExceeded,
+			wantCode: codes.DeadlineExceeded,
 		},
 	}
 

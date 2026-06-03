@@ -26,6 +26,30 @@ import (
 
 const (
 	jsonRPCVersion = "2.0"
+
+	// methodToolsCall is the JSON-RPC method name for invoking an MCP tool.
+	methodToolsCall = "tools/call"
+)
+
+// JSON Schema field keys and values used when building MCP tool definitions
+// and tool result payloads.
+const (
+	schemaType        = "type"
+	schemaObject      = "object"
+	schemaString      = "string"
+	schemaProperties  = "properties"
+	schemaRequired    = "required"
+	schemaDescription = "description"
+
+	fieldKey                 = "key"
+	fieldPrefix              = "prefix"
+	fieldSuccess             = "success"
+	fieldMessage             = "message"
+	fieldPolicyID            = "policy_id"
+	fieldEnabled             = "enabled"
+	fieldSourceBackend       = "source_backend"
+	fieldDestinationBackend  = "destination_backend"
+	fieldDestinationSettings = "destination_settings"
 )
 
 // JSONRPCRequest represents a JSON-RPC 2.0 request
@@ -79,7 +103,7 @@ func (h *RPCHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonr
 		return h.handleInitialize(ctx, req.Params)
 	case "tools/list":
 		return h.handleToolsList(ctx)
-	case "tools/call":
+	case methodToolsCall:
 		return h.handleToolsCall(ctx, req.Params)
 	case "resources/list":
 		return h.handleResourcesList(ctx, req.Params)
@@ -173,8 +197,8 @@ func (h *RPCHandler) handleToolsCall(ctx context.Context, params *json.RawMessag
 	return map[string]any{
 		"content": []map[string]any{
 			{
-				"type": "text",
-				"text": result,
+				schemaType: "text",
+				"text":     result,
 			},
 		},
 	}, nil

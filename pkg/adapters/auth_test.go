@@ -90,13 +90,6 @@ func TestNoOpAuthenticator(t *testing.T) {
 		}
 	})
 
-	t.Run("ValidatePermission", func(t *testing.T) {
-		principal := &Principal{ID: "test"}
-		err := auth.ValidatePermission(ctx, principal, "resource", "action")
-		if err != nil {
-			t.Errorf("NoOpAuthenticator.ValidatePermission() error = %v, want nil", err)
-		}
-	})
 }
 
 func TestBearerTokenAuthenticator_HTTP(t *testing.T) {
@@ -216,29 +209,6 @@ func TestBearerTokenAuthenticator_gRPC(t *testing.T) {
 		}
 	})
 
-	t.Run("ValidatePermission always succeeds", func(t *testing.T) {
-		principal := &Principal{ID: "user1", Type: "user"}
-		err := auth.ValidatePermission(ctx, principal, "any-resource", "any-action")
-		if err != nil {
-			t.Errorf("ValidatePermission() should not return error, got %v", err)
-		}
-	})
-
-	t.Run("ValidatePermission with admin role", func(t *testing.T) {
-		principal := &Principal{ID: "admin1", Type: "user", Roles: []string{"admin"}}
-		err := auth.ValidatePermission(ctx, principal, "any-resource", "any-action")
-		if err != nil {
-			t.Errorf("ValidatePermission() should not return error for admin, got %v", err)
-		}
-	})
-
-	t.Run("ValidatePermission with non-admin role", func(t *testing.T) {
-		principal := &Principal{ID: "user1", Type: "user", Roles: []string{"viewer"}}
-		err := auth.ValidatePermission(ctx, principal, "any-resource", "any-action")
-		if err != nil {
-			t.Errorf("ValidatePermission() should not return error for non-admin, got %v", err)
-		}
-	})
 }
 
 func TestMTLSAuthenticator(t *testing.T) {
@@ -346,13 +316,6 @@ func TestMTLSAuthenticator(t *testing.T) {
 		}
 	})
 
-	t.Run("ValidatePermission succeeds", func(t *testing.T) {
-		principal := &Principal{ID: "cert-user", Type: "certificate"}
-		err := auth.ValidatePermission(ctx, principal, "any-resource", "any-action")
-		if err != nil {
-			t.Errorf("ValidatePermission() should not return error, got %v", err)
-		}
-	})
 }
 
 func TestCompositeAuthenticator(t *testing.T) {
@@ -444,14 +407,6 @@ func TestCompositeAuthenticator(t *testing.T) {
 		}
 	})
 
-	t.Run("ValidatePermission succeeds", func(t *testing.T) {
-		principal := &Principal{ID: "user", Type: "token"}
-		err := auth.ValidatePermission(ctx, principal, "resource", "action")
-		if err != nil {
-			t.Errorf("ValidatePermission() should not return error, got %v", err)
-		}
-	})
-
 	t.Run("AuthenticateGRPC all methods fail", func(t *testing.T) {
 		md := metadata.MD{
 			"authorization": []string{"Bearer invalid-token"},
@@ -474,15 +429,6 @@ func TestCompositeAuthenticator(t *testing.T) {
 		_, err := auth.AuthenticateMTLS(ctx, state)
 		if err == nil {
 			t.Error("AuthenticateMTLS() error = nil, want error when all methods fail")
-		}
-	})
-
-	t.Run("ValidatePermission with empty authenticators", func(t *testing.T) {
-		emptyAuth := NewCompositeAuthenticator()
-		principal := &Principal{ID: "user", Type: "token"}
-		err := emptyAuth.ValidatePermission(ctx, principal, "resource", "action")
-		if err != nil {
-			t.Errorf("ValidatePermission() with empty authenticators should not return error, got %v", err)
 		}
 	})
 
@@ -516,3 +462,115 @@ func TestCompositeAuthenticator(t *testing.T) {
 		}
 	})
 }
+
+func TestNoOpAuthorizer(t *testing.T) {
+	authz := NewNoOpAuthorizer()
+	ctx := context.Background()
+
+	cases := []struct {
+		name      string
+		principal *Principal
+		action    string
+		resource  string
+	}{
+		{"nil principal", nil, ActionRead, ResourceObject},
+		{"read object", &Principal{ID: "u"}, ActionRead, "obj-key"},
+		{"write object", &Principal{ID: "u"}, ActionWrite, "obj-key"},
+		{"admin policy", &Principal{ID: "u"}, ActionAdmin, ResourcePolicy},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := authz.Authorize(ctx, tc.principal, tc.action, tc.resource); err != nil {
+				t.Errorf("NoOpAuthorizer.Authorize() = %v, want nil", err)
+			}
+		})
+	}
+}
+
+func TestRBACAuthorizer(t *testing.T) {
+	ctx := context.Background()
+	authz := NewRBACAuthorizer(map[string][]string{
+		"reader": {ActionRead, ActionList},
+		"writer": {ActionWrite},
+		"admin":  {wildcardPermission},
+	})
+
+	t.Run("nil principal is denied", func(t *testing.T) {
+		if err := authz.Authorize(ctx, nil, ActionRead, ResourceObject); !errors.Is(err, ErrInsufficientPermissions) {
+			t.Errorf("Authorize(nil) = %v, want ErrInsufficientPermissions", err)
+		}
+	})
+
+	t.Run("role grants matching action", func(t *testing.T) {
+		p := &Principal{ID: "r", Roles: []string{"reader"}}
+		if err := authz.Authorize(ctx, p, ActionRead, "key"); err != nil {
+			t.Errorf("reader read = %v, want nil", err)
+		}
+		if err := authz.Authorize(ctx, p, ActionList, ""); err != nil {
+			t.Errorf("reader list = %v, want nil", err)
+		}
+	})
+
+	t.Run("role denies non-granted action", func(t *testing.T) {
+		p := &Principal{ID: "r", Roles: []string{"reader"}}
+		if err := authz.Authorize(ctx, p, ActionWrite, "key"); !errors.Is(err, ErrInsufficientPermissions) {
+			t.Errorf("reader write = %v, want ErrInsufficientPermissions", err)
+		}
+		if err := authz.Authorize(ctx, p, ActionDelete, "key"); !errors.Is(err, ErrInsufficientPermissions) {
+			t.Errorf("reader delete = %v, want ErrInsufficientPermissions", err)
+		}
+	})
+
+	t.Run("wildcard grants any action", func(t *testing.T) {
+		p := &Principal{ID: "a", Roles: []string{"admin"}}
+		for _, action := range []string{ActionRead, ActionWrite, ActionDelete, ActionList, ActionAdmin} {
+			if err := authz.Authorize(ctx, p, action, ResourcePolicy); err != nil {
+				t.Errorf("admin %s = %v, want nil", action, err)
+			}
+		}
+	})
+
+	t.Run("multi-role union of permissions", func(t *testing.T) {
+		p := &Principal{ID: "rw", Roles: []string{"reader", "writer"}}
+		if err := authz.Authorize(ctx, p, ActionRead, "key"); err != nil {
+			t.Errorf("reader+writer read = %v, want nil", err)
+		}
+		if err := authz.Authorize(ctx, p, ActionWrite, "key"); err != nil {
+			t.Errorf("reader+writer write = %v, want nil", err)
+		}
+		if err := authz.Authorize(ctx, p, ActionDelete, "key"); !errors.Is(err, ErrInsufficientPermissions) {
+			t.Errorf("reader+writer delete = %v, want ErrInsufficientPermissions", err)
+		}
+	})
+
+	t.Run("unknown role is denied", func(t *testing.T) {
+		p := &Principal{ID: "x", Roles: []string{"nobody"}}
+		if err := authz.Authorize(ctx, p, ActionRead, "key"); !errors.Is(err, ErrInsufficientPermissions) {
+			t.Errorf("unknown role = %v, want ErrInsufficientPermissions", err)
+		}
+	})
+
+	t.Run("no roles is denied", func(t *testing.T) {
+		p := &Principal{ID: "x"}
+		if err := authz.Authorize(ctx, p, ActionRead, "key"); !errors.Is(err, ErrInsufficientPermissions) {
+			t.Errorf("no roles = %v, want ErrInsufficientPermissions", err)
+		}
+	})
+
+	t.Run("input map is copied", func(t *testing.T) {
+		src := map[string][]string{"reader": {ActionRead}}
+		a := NewRBACAuthorizer(src)
+		src["reader"] = []string{ActionWrite}
+		p := &Principal{ID: "r", Roles: []string{"reader"}}
+		if err := a.Authorize(ctx, p, ActionRead, "key"); err != nil {
+			t.Errorf("mutating source map affected authorizer: read = %v, want nil", err)
+		}
+	})
+}
+
+// Compile-time checks that the constructors return types implementing Authorizer.
+var (
+	_ Authorizer = (*NoOpAuthorizer)(nil)
+	_ Authorizer = (*RBACAuthorizer)(nil)
+)

@@ -91,21 +91,19 @@ func TestPutObjectDirectUploadMetadataValidationFails(t *testing.T) {
 		customMetadata[strings.Repeat("k", i)] = strings.Repeat("v", i)
 	}
 
-	metadata := map[string]any{
-		"custom": customMetadata,
-	}
-	metadataJSON, _ := json.Marshal(metadata)
+	metadataJSON, _ := json.Marshal(customMetadata)
 
 	req := httptest.NewRequest("PUT", "/objects/test.txt", strings.NewReader("content"))
 	req.Header.Set("Content-Type", "text/plain")
-	req.Header.Set("X-Metadata", string(metadataJSON))
+	req.Header.Set("X-Object-Metadata", string(metadataJSON))
 	w := httptest.NewRecorder()
 
 	router.ServeHTTP(w, req)
 
-	// May succeed or fail depending on ValidateMetadata implementation
-	if w.Code != http.StatusBadRequest && w.Code != http.StatusCreated {
-		t.Logf("PutObject() direct upload with many metadata fields status = %v", w.Code)
+	// Too many metadata entries fails up-front validation and must
+	// return 400, never 201 or a 500 from deeper in the stack.
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400, got %d", w.Code)
 	}
 }
 

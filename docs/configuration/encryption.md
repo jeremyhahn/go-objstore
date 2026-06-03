@@ -4,7 +4,7 @@ Configuration reference for at-rest encryption.
 
 ## Overview
 
-go-objstore provides encryption through an **abstraction layer** - you provide an implementation of the `Encrypter` and `EncrypterFactory` interfaces. This allows you to use **any key management solution** (go-xkms, HashiCorp Vault, cloud KMS, etc.) without hard-coded dependencies.
+go-objstore provides encryption through an **abstraction layer** - you provide an implementation of the `Encrypter` and `EncrypterFactory` interfaces. This allows you to use **any key management solution** (HashiCorp Vault, cloud KMS, a custom implementation, etc.) without hard-coded dependencies.
 
 ## Programmatic API
 
@@ -23,7 +23,7 @@ storage, err := factory.NewStorage("s3", map[string]string{
 })
 
 // 2. Create your encrypter factory implementation
-// (using go-xkms, Vault, or your own implementation)
+// (using your KMS, Vault, or your own implementation)
 encrypterFactory := myapp.NewEncrypterFactory(config)
 
 // 3. Wrap storage with encryption
@@ -74,41 +74,20 @@ type EncrypterFactory interface {
 
 ## Implementation Options
 
-You can use **any** key management solution by implementing the interfaces above:
+You can use **any** key management solution by implementing the interfaces above.
 
-Use [go-xkms](https://github.com/jeremyhahn/go-xkms) which provides enterprise-grade key management with support for:
-- **PKCS#8** - Software-based key files
-- **PKCS#11** - Hardware security modules (HSMs)
-- **TPM 2.0** - Trusted platform module
-- **AWS KMS** - Amazon Key Management Service
-- **GCP KMS** - Google Cloud Key Management
-- **Azure Key Vault** - Microsoft key vault
-- **HashiCorp Vault** - Multi-cloud secrets management
+### Option 1: Go Standard Library (AES-256-GCM)
+
+The `examples/encryption` directory contains a self-contained reference implementation
+using only `crypto/aes`, `crypto/cipher`, and `crypto/rand` from the Go standard library.
+It demonstrates the full interface contract with no external KMS dependency:
 
 ```go
-import "github.com/jeremyhahn/go-xkms"
-
-// Create xKMS with your configuration
-xkmsConfig := &xkms.Config{
-    DefaultKeyID: "primary",
-    Keystores: []xkms.KeystoreConfig{
-        {
-            Type: "software",
-            Config: map[string]interface{}{
-                "storage_type": "memory",
-            },
-        },
-    },
-}
-
-kc, err := xkms.New(xkmsConfig)
-if err != nil {
-    return err
-}
-
-// Use xKMS as EncrypterFactory
-encryptedStorage := common.NewEncryptedStorage(storage, kc)
+// AESEncrypter — stdlib AES-256-GCM, no external deps
+encryptedStorage := common.NewEncryptedStorage(storage, myAESFactory)
 ```
+
+See `examples/encryption/kms_adapter.go` for the complete implementation.
 
 ### Option 2: HashiCorp Vault
 
@@ -308,7 +287,6 @@ package main
 import (
     "github.com/jeremyhahn/go-objstore/pkg/common"
     "github.com/jeremyhahn/go-objstore/pkg/factory"
-    "github.com/jeremyhahn/go-xkms"
 )
 
 func main() {
@@ -321,30 +299,14 @@ func main() {
         panic(err)
     }
 
-    // 2. Set up encryption with go-xkms
-    xkmsConfig := &xkms.Config{
-        DefaultKeyID: "prod-2024",
-        Keystores: []xkms.KeystoreConfig{
-            {
-                Type: "awskms",
-                Config: map[string]interface{}{
-                    "region": "us-east-1",
-                    "key_id": os.Getenv("AWS_KMS_KEY_ID"),
-                },
-            },
-        },
-    }
-
-    kc, err := xkms.New(xkmsConfig)
-    if err != nil {
-        panic(err)
-    }
-    defer kc.Close()
+    // 2. Create your EncrypterFactory (any KMS or custom implementation)
+    encrypterFactory := myapp.NewEncrypterFactory(config)
+    defer encrypterFactory.Close()
 
     // 3. Wrap with encryption
-    encryptedStorage := common.NewEncryptedStorage(storage, kc)
+    encryptedStorage := common.NewEncryptedStorage(storage, encrypterFactory)
 
-    // 4. Use normally - encryption is transparent!
+    // 4. Use normally - encryption is transparent
     err = encryptedStorage.Put("sensitive-data.txt", dataReader)
     if err != nil {
         panic(err)

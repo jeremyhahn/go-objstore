@@ -47,14 +47,14 @@ func basicExample() {
 	// Create encryption configuration
 	encryptionConfig := &Config{
 		Enabled:    true,
-		DefaultKey: "primary", // Changed from DefaultKeyID to DefaultKey
-		XKMS:&XKMSConfig{
+		DefaultKey: "primary",
+		KMS: &KMSConfig{
 			Keystores: []*KeystoreConfig{
 				{
 					Name: "primary-keystore",
-					Type: "software", // or "pkcs8"
+					Type: "software",
 					Config: map[string]any{
-						"storage_type": "memory", // Use "memory" for this example
+						"storage_type": "memory",
 					},
 					Keys: []*KeyConfig{
 						{
@@ -73,7 +73,7 @@ func basicExample() {
 		log.Fatalf("Invalid encryption config: %v", err)
 	}
 
-	// Create encrypter factory using the xKMS adapter
+	// Create encrypter factory using the self-contained AES-GCM adapter
 	encrypterFactory, err := NewEncrypterFactory(encryptionConfig)
 	if err != nil {
 		log.Fatalf("Failed to create encrypter factory: %v", err)
@@ -91,7 +91,7 @@ func basicExample() {
 	if err != nil {
 		log.Fatalf("Failed to put encrypted data: %v", err)
 	}
-	fmt.Println("✓ Data encrypted and stored successfully")
+	fmt.Println("Data encrypted and stored successfully")
 
 	// All Get operations are automatically decrypted
 	reader, err := encryptedStorage.GetWithContext(ctx, "test-key")
@@ -106,11 +106,11 @@ func basicExample() {
 	}
 
 	if retrievedData.String() == string(testData) {
-		fmt.Println("✓ Data decrypted successfully")
-		fmt.Printf("  Original: %s\n", testData)
+		fmt.Println("Data decrypted successfully")
+		fmt.Printf("  Original:  %s\n", testData)
 		fmt.Printf("  Retrieved: %s\n", retrievedData.String())
 	} else {
-		log.Fatal("✗ Decrypted data doesn't match original!")
+		log.Fatal("Decrypted data doesn't match original!")
 	}
 
 	fmt.Println()
@@ -124,7 +124,7 @@ func keyRotationExample() {
 	encryptionConfig := &Config{
 		Enabled:    true,
 		DefaultKey: "primary", // New encryptions use primary key
-		XKMS:&XKMSConfig{
+		KMS: &KMSConfig{
 			Keystores: []*KeystoreConfig{
 				{
 					Name: "rotation-keystore",
@@ -149,10 +149,10 @@ func keyRotationExample() {
 		},
 	}
 
-	fmt.Println("✓ Configuration supports multiple keys")
+	fmt.Println("Configuration supports multiple keys")
 	fmt.Printf("  Default key for new encryptions: %s\n", encryptionConfig.DefaultKey)
 	keyCount := 0
-	for _, ks := range encryptionConfig.XKMS.Keystores {
+	for _, ks := range encryptionConfig.KMS.Keystores {
 		keyCount += len(ks.Keys)
 	}
 	fmt.Printf("  Available keys: %d\n", keyCount)
@@ -173,7 +173,7 @@ func configFileExample() {
 	fmt.Println("encryption:")
 	fmt.Println("  enabled: true")
 	fmt.Println("  default_key: primary")
-	fmt.Println("  xkms:")
+	fmt.Println("  kms:")
 	fmt.Println("    keystores:")
 	fmt.Println("      - name: primary-keystore")
 	fmt.Println("        type: software")
@@ -185,14 +185,14 @@ func configFileExample() {
 	fmt.Println("            key_size: 256")
 	fmt.Println("```")
 	fmt.Println()
-	fmt.Println("For AWS KMS (when implemented):")
+	fmt.Println("For a cloud KMS backend (e.g. AWS KMS, HashiCorp Vault):")
 	fmt.Println("```yaml")
 	fmt.Println("encryption:")
 	fmt.Println("  enabled: true")
 	fmt.Println("  default_key: production")
-	fmt.Println("  xkms:")
+	fmt.Println("  kms:")
 	fmt.Println("    keystores:")
-	fmt.Println("      - name: aws-kms")
+	fmt.Println("      - name: cloud-kms")
 	fmt.Println("        type: awskms")
 	fmt.Println("        config:")
 	fmt.Println("          region: us-east-1")
@@ -204,14 +204,14 @@ func configFileExample() {
 	fmt.Println()
 }
 
-// Example helper function for production use
-// Note: In production, replace mockStorage with your actual storage backend
+// createProductionEncryptedStorage shows how to wrap any storage backend with
+// AES-256-GCM encryption. In production, replace NewEncrypterFactory with a
+// factory backed by your KMS (HashiCorp Vault, AWS KMS, GCP KMS, etc.).
 func createProductionEncryptedStorage(baseStorage common.Storage, keyID string) (common.Storage, error) {
-	// Create encryption config
 	encryptionConfig := &Config{
 		Enabled:    true,
 		DefaultKey: keyID,
-		XKMS:&XKMSConfig{
+		KMS: &KMSConfig{
 			Keystores: []*KeystoreConfig{
 				{
 					Name: "production-keystore",
@@ -231,19 +231,17 @@ func createProductionEncryptedStorage(baseStorage common.Storage, keyID string) 
 		},
 	}
 
-	// Create encrypter factory
 	encrypterFactory, err := NewEncrypterFactory(encryptionConfig)
 	if err != nil {
 		return nil, err
 	}
-	// Note: In production, you'd want to manage the lifecycle of encrypterFactory
-	// and ensure Close() is called when done
+	// Note: In production, manage the lifecycle of encrypterFactory and call
+	// Close() when done.
 
-	// Wrap with encryption
 	return common.NewEncryptedStorage(baseStorage, encrypterFactory), nil
 }
 
-// mockStorage is a simple in-memory storage for demonstration purposes
+// mockStorage is a simple in-memory storage for demonstration purposes.
 type mockStorage struct {
 	data map[string][]byte
 }

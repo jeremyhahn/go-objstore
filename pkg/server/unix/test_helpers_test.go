@@ -252,7 +252,7 @@ func initTestFacade(t *testing.T, storage common.Storage) {
 func createTestHandler(t *testing.T, storage common.Storage) *Handler {
 	t.Helper()
 	initTestFacade(t, storage)
-	return NewHandler("", &mockLogger{})
+	return NewHandler("", &mockLogger{}, nil, nil)
 }
 
 // createTestServer creates a Server for testing after setting up the facade.
@@ -389,6 +389,37 @@ func (m *MockReplicationManager) SyncPolicy(ctx context.Context, policyID string
 	}, nil
 }
 
+func (m *MockReplicationManager) SyncAllParallel(ctx context.Context, workerCount int) (*common.SyncResult, error) {
+	synced := 0
+	for id := range m.policies {
+		if m.statuses[id] != nil {
+			m.statuses[id].SyncCount++
+			m.statuses[id].LastSyncTime = time.Now()
+		}
+		synced++
+	}
+	return &common.SyncResult{
+		Synced:     synced,
+		Failed:     0,
+		BytesTotal: 1024,
+	}, nil
+}
+
+func (m *MockReplicationManager) SyncPolicyParallel(ctx context.Context, policyID string, workerCount int) (*common.SyncResult, error) {
+	if _, ok := m.policies[policyID]; !ok {
+		return nil, common.ErrPolicyNotFound
+	}
+	if m.statuses[policyID] != nil {
+		m.statuses[policyID].SyncCount++
+		m.statuses[policyID].LastSyncTime = time.Now()
+	}
+	return &common.SyncResult{
+		Synced:     1,
+		Failed:     0,
+		BytesTotal: 512,
+	}, nil
+}
+
 func (m *MockReplicationManager) SetBackendEncrypterFactory(policyID string, factory common.EncrypterFactory) error {
 	return nil
 }
@@ -437,5 +468,5 @@ func initTestFacadeWithReplication(t *testing.T, storage *MockReplicableStorage)
 func createTestHandlerWithReplication(t *testing.T, storage *MockReplicableStorage) *Handler {
 	t.Helper()
 	initTestFacadeWithReplication(t, storage)
-	return NewHandler("", &mockLogger{})
+	return NewHandler("", &mockLogger{}, nil, nil)
 }

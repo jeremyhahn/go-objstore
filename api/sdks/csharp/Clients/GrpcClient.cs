@@ -197,14 +197,33 @@ public class GrpcClient : IObjectStoreClient
 
         _logger?.LogDebug("Updating metadata for object with key: {Key}", key);
 
-        var request = new UpdateMetadataRequest
+        try
         {
-            Key = key,
-            Metadata = ConvertToProtoMetadata(metadata)
-        };
+            var request = new UpdateMetadataRequest
+            {
+                Key = key,
+                Metadata = ConvertToProtoMetadata(metadata)
+            };
 
-        var response = await _client.UpdateMetadataAsync(request, cancellationToken: cancellationToken);
-        return response.Success;
+            var response = await _client.UpdateMetadataAsync(request, cancellationToken: cancellationToken);
+
+            if (!response.Success)
+            {
+                throw new ObjectNotFoundException(key);
+            }
+
+            return true;
+        }
+        catch (ObjectNotFoundException)
+        {
+            throw;
+        }
+        catch (Grpc.Core.RpcException ex) when (ex.StatusCode == Grpc.Core.StatusCode.NotFound ||
+            ex.Status.Detail.Contains("no such file") ||
+            ex.Status.Detail.Contains("not found", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ObjectNotFoundException(key);
+        }
     }
 
     public async Task<Models.HealthResponse> HealthAsync(string? service = null, CancellationToken cancellationToken = default)
@@ -362,7 +381,7 @@ public class GrpcClient : IObjectStoreClient
         return response.Policy != null ? ConvertFromProtoReplicationPolicy(response.Policy) : null;
     }
 
-    public async Task<bool> TriggerReplicationAsync(string? policyId = null, bool parallel = false, int workerCount = 4, CancellationToken cancellationToken = default)
+    public async Task<Models.TriggerReplicationResult> TriggerReplicationAsync(string? policyId = null, bool parallel = false, int workerCount = 4, CancellationToken cancellationToken = default)
     {
         _logger?.LogDebug("Triggering replication for policy: {PolicyId}", policyId ?? "all");
 
@@ -374,7 +393,28 @@ public class GrpcClient : IObjectStoreClient
         };
 
         var response = await _client.TriggerReplicationAsync(request, cancellationToken: cancellationToken);
-        return response.Success;
+
+        Models.SyncResult? syncResult = null;
+        if (response.Result != null)
+        {
+            syncResult = new Models.SyncResult
+            {
+                PolicyId = response.Result.PolicyId,
+                Synced = response.Result.Synced,
+                Deleted = response.Result.Deleted,
+                Failed = response.Result.Failed,
+                BytesTotal = response.Result.BytesTotal,
+                // gRPC returns duration_ms as an integer directly
+                DurationMs = response.Result.DurationMs
+            };
+        }
+
+        return new Models.TriggerReplicationResult
+        {
+            Success = response.Success,
+            SyncResult = syncResult,
+            Message = response.Message
+        };
     }
 
     public async Task<Models.ReplicationStatus?> GetReplicationStatusAsync(string id, CancellationToken cancellationToken = default)

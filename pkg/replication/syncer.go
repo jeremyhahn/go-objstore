@@ -143,8 +143,8 @@ func (s *Syncer) SyncAll(ctx context.Context) (*common.SyncResult, error) {
 			result.Failed++
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", key, err))
 			s.logger.Error(ctx, "Object sync failed",
-				adapters.Field{Key: "key", Value: key},
-				adapters.Field{Key: "error", Value: err.Error()})
+				adapters.Field{Key: fieldKey, Value: key},
+				adapters.Field{Key: fieldError, Value: err.Error()})
 		} else {
 			result.Synced++
 			result.BytesTotal += size
@@ -160,9 +160,9 @@ func (s *Syncer) SyncAll(ctx context.Context) (*common.SyncResult, error) {
 	s.metrics.RecordSync(result.Duration)
 
 	s.logger.Info(ctx, "Sync completed",
-		adapters.Field{Key: "policy_id", Value: s.policy.ID},
+		adapters.Field{Key: fieldPolicyID, Value: s.policy.ID},
 		adapters.Field{Key: "synced", Value: result.Synced},
-		adapters.Field{Key: "failed", Value: result.Failed},
+		adapters.Field{Key: fieldFailed, Value: result.Failed},
 		adapters.Field{Key: "duration", Value: result.Duration.String()})
 
 	return result, nil
@@ -190,12 +190,12 @@ func (s *Syncer) SyncAllParallel(ctx context.Context, workerCount int) (*common.
 	if len(changedKeys) == 0 {
 		result.Duration = time.Since(startTime)
 		s.logger.Info(ctx, "No changes detected",
-			adapters.Field{Key: "policy_id", Value: s.policy.ID})
+			adapters.Field{Key: fieldPolicyID, Value: s.policy.ID})
 		return result, nil
 	}
 
 	s.logger.Info(ctx, "Starting parallel sync",
-		adapters.Field{Key: "policy_id", Value: s.policy.ID},
+		adapters.Field{Key: fieldPolicyID, Value: s.policy.ID},
 		adapters.Field{Key: "objects", Value: len(changedKeys)},
 		adapters.Field{Key: "workers", Value: workerCount})
 
@@ -221,8 +221,8 @@ func (s *Syncer) SyncAllParallel(ctx context.Context, workerCount int) (*common.
 	for _, key := range changedKeys {
 		if err := pool.Submit(WorkItem{Key: key}); err != nil {
 			s.logger.Error(ctx, "Failed to submit work item",
-				adapters.Field{Key: "key", Value: key},
-				adapters.Field{Key: "error", Value: err.Error()})
+				adapters.Field{Key: fieldKey, Value: key},
+				adapters.Field{Key: fieldError, Value: err.Error()})
 			result.Failed++
 		}
 	}
@@ -261,9 +261,9 @@ func (s *Syncer) SyncAllParallel(ctx context.Context, workerCount int) (*common.
 	s.metrics.RecordSync(result.Duration)
 
 	s.logger.Info(ctx, "Parallel sync completed",
-		adapters.Field{Key: "policy_id", Value: s.policy.ID},
+		adapters.Field{Key: fieldPolicyID, Value: s.policy.ID},
 		adapters.Field{Key: "synced", Value: result.Synced},
-		adapters.Field{Key: "failed", Value: result.Failed},
+		adapters.Field{Key: fieldFailed, Value: result.Failed},
 		adapters.Field{Key: "bytes", Value: result.BytesTotal},
 		adapters.Field{Key: "duration", Value: result.Duration.String()})
 
@@ -299,7 +299,7 @@ func (s *Syncer) SyncObject(ctx context.Context, key string) (int64, error) {
 		"", "", "", key, "", "", srcMetadata.Size, "success", nil)
 
 	s.logger.Debug(ctx, "Object synced",
-		adapters.Field{Key: "key", Value: key},
+		adapters.Field{Key: fieldKey, Value: key},
 		adapters.Field{Key: "size", Value: srcMetadata.Size})
 
 	return srcMetadata.Size, nil
@@ -332,7 +332,7 @@ func (s *Syncer) SyncIncremental(ctx context.Context, changeLog ChangeLog) (*com
 	}
 
 	s.logger.Info(ctx, "Starting incremental sync",
-		adapters.Field{Key: "policy_id", Value: s.policy.ID},
+		adapters.Field{Key: fieldPolicyID, Value: s.policy.ID},
 		adapters.Field{Key: "unprocessed_changes", Value: len(changes)})
 
 	// Process each change
@@ -348,17 +348,17 @@ func (s *Syncer) SyncIncremental(ctx context.Context, changeLog ChangeLog) (*com
 				result.Failed++
 				result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", change.Key, err))
 				s.logger.Error(ctx, "Object sync failed",
-					adapters.Field{Key: "key", Value: change.Key},
+					adapters.Field{Key: fieldKey, Value: change.Key},
 					adapters.Field{Key: "operation", Value: operationPut},
-					adapters.Field{Key: "error", Value: err.Error()})
+					adapters.Field{Key: fieldError, Value: err.Error()})
 			} else {
 				result.Synced++
 				result.BytesTotal += size
 				// Mark as processed
 				if markErr := changeLog.MarkProcessed(change.Key, s.policy.ID); markErr != nil {
 					s.logger.Warn(ctx, "Failed to mark change as processed",
-						adapters.Field{Key: "key", Value: change.Key},
-						adapters.Field{Key: "error", Value: markErr.Error()})
+						adapters.Field{Key: fieldKey, Value: change.Key},
+						adapters.Field{Key: fieldError, Value: markErr.Error()})
 				}
 			}
 
@@ -369,9 +369,9 @@ func (s *Syncer) SyncIncremental(ctx context.Context, changeLog ChangeLog) (*com
 				result.Failed++
 				result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", change.Key, err))
 				s.logger.Error(ctx, "Object delete failed",
-					adapters.Field{Key: "key", Value: change.Key},
+					adapters.Field{Key: fieldKey, Value: change.Key},
 					adapters.Field{Key: "operation", Value: operationDelete},
-					adapters.Field{Key: "error", Value: err.Error()})
+					adapters.Field{Key: fieldError, Value: err.Error()})
 			} else {
 				result.Deleted++
 				// Audit log
@@ -381,14 +381,14 @@ func (s *Syncer) SyncIncremental(ctx context.Context, changeLog ChangeLog) (*com
 				// Mark as processed
 				if markErr := changeLog.MarkProcessed(change.Key, s.policy.ID); markErr != nil {
 					s.logger.Warn(ctx, "Failed to mark change as processed",
-						adapters.Field{Key: "key", Value: change.Key},
-						adapters.Field{Key: "error", Value: markErr.Error()})
+						adapters.Field{Key: fieldKey, Value: change.Key},
+						adapters.Field{Key: fieldError, Value: markErr.Error()})
 				}
 			}
 
 		default:
 			s.logger.Warn(ctx, "Unknown operation in change log",
-				adapters.Field{Key: "key", Value: change.Key},
+				adapters.Field{Key: fieldKey, Value: change.Key},
 				adapters.Field{Key: "operation", Value: change.Operation})
 		}
 	}
@@ -402,10 +402,10 @@ func (s *Syncer) SyncIncremental(ctx context.Context, changeLog ChangeLog) (*com
 	s.metrics.RecordSync(result.Duration)
 
 	s.logger.Info(ctx, "Incremental sync completed",
-		adapters.Field{Key: "policy_id", Value: s.policy.ID},
+		adapters.Field{Key: fieldPolicyID, Value: s.policy.ID},
 		adapters.Field{Key: "synced", Value: result.Synced},
 		adapters.Field{Key: "deleted", Value: result.Deleted},
-		adapters.Field{Key: "failed", Value: result.Failed},
+		adapters.Field{Key: fieldFailed, Value: result.Failed},
 		adapters.Field{Key: "bytes", Value: result.BytesTotal},
 		adapters.Field{Key: "duration", Value: result.Duration.String()})
 

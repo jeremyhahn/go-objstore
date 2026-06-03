@@ -108,3 +108,7 @@ go.work
 go.work.sum
 gosec-results.json
 storage/
+
+# Tooling
+.serena/
+CLAUDE.md

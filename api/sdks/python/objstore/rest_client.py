@@ -110,6 +110,31 @@ class RestClient:
                 status_code=response.status_code,
             )
 
+    @staticmethod
+    def _parse_custom_header(response: requests.Response) -> Dict[str, str]:
+        """Parse the custom metadata map from the X-Object-Metadata header.
+
+        The server returns custom metadata as a JSON string->string object in
+        the X-Object-Metadata response header. A missing or malformed header
+        yields an empty map.
+
+        Args:
+            response: HTTP response
+
+        Returns:
+            Custom metadata map
+        """
+        header = response.headers.get("X-Object-Metadata")
+        if not header:
+            return {}
+        try:
+            parsed = json.loads(header)
+        except (ValueError, TypeError):
+            return {}
+        if not isinstance(parsed, dict):
+            return {}
+        return {str(k): str(v) for k, v in parsed.items()}
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
@@ -197,8 +222,10 @@ class RestClient:
             if response.status_code == 200:
                 metadata = Metadata(
                     content_type=response.headers.get("Content-Type"),
+                    content_encoding=response.headers.get("Content-Encoding"),
                     size=int(response.headers.get("Content-Length", 0)),
                     etag=response.headers.get("ETag"),
+                    custom=self._parse_custom_header(response),
                 )
                 return response.content, metadata
 
@@ -379,7 +406,15 @@ class RestClient:
 
         try:
             response = self.session.head(url, timeout=self.timeout)
-            return ExistsResponse(exists=response.status_code == 200)
+
+            if response.status_code == 200:
+                return ExistsResponse(exists=True)
+
+            if response.status_code == 404:
+                return ExistsResponse(exists=False)
+
+            self._handle_error(response)
+            return ExistsResponse(exists=False)
 
         except requests.exceptions.Timeout:
             raise TimeoutError("Request timed out")
@@ -410,12 +445,22 @@ class RestClient:
 
             if response.status_code == 200:
                 data = response.json()
+                # Custom metadata is carried in the X-Object-Metadata response
+                # header (JSON string->string map). The /metadata/{key} body
+                # also returns the custom map under the "metadata" key, so fall
+                # back to that when the header is absent.
+                custom = self._parse_custom_header(response)
+                if not custom:
+                    body_custom = data.get("metadata")
+                    if isinstance(body_custom, dict):
+                        custom = {str(k): str(v) for k, v in body_custom.items()}
                 return Metadata(
-                    content_type=data.get("metadata", {}).get("content_type"),
-                    content_encoding=data.get("metadata", {}).get("content_encoding"),
+                    content_type=data.get("content_type")
+                    or response.headers.get("Content-Type"),
+                    content_encoding=response.headers.get("Content-Encoding"),
                     size=data.get("size"),
                     etag=data.get("etag"),
-                    custom=data.get("metadata", {}),
+                    custom=custom,
                 )
 
             self._handle_error(response)
@@ -859,14 +904,15 @@ class RestClient:
 
             if response.status_code == 200:
                 data = response.json()
-                return ReplicationPolicy(**data.get("policy", {}))
+                # The server responds with a bare ReplicationPolicyResponse
+                # object (no "policy" wrapper key).
+                return ReplicationPolicy(**data)
 
             self._handle_error(response)
             return ReplicationPolicy(
                 id="",
                 source_backend="",
                 destination_backend="",
-                check_interval_seconds=0,
             )
 
         except requests.exceptions.Timeout:
@@ -947,12 +993,13 @@ class RestClient:
                 data = response.json()
                 from objstore.models import ReplicationStatus
 
-                status_data = data.get("status")
-                status = ReplicationStatus(**status_data) if status_data else None
+                # The server responds with a bare ReplicationStatusResponse
+                # object (no "status" wrapper key).
+                status = ReplicationStatus(**data)
                 return GetReplicationStatusResponse(
                     success=True,
                     status=status,
-                    message=data.get("message", "Status retrieved successfully"),
+                    message="Status retrieved successfully",
                 )
 
             self._handle_error(response)
