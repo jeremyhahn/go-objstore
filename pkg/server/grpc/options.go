@@ -85,6 +85,9 @@ type ServerOptions struct {
 	// Authenticator is the pluggable authentication adapter (default: NoOpAuthenticator)
 	Authenticator adapters.Authenticator
 
+	// Authorizer is the pluggable authorization adapter (default: NoOpAuthorizer = allow-all)
+	Authorizer adapters.Authorizer
+
 	// AdapterTLSConfig is the TLS/mTLS configuration using the adapter (preferred over TLSConfig)
 	AdapterTLSConfig *adapters.TLSConfig
 
@@ -122,6 +125,7 @@ func DefaultServerOptions() *ServerOptions {
 		StreamInterceptors:    []grpc.StreamServerInterceptor{},
 		Logger:                adapters.NewDefaultLogger(),
 		Authenticator:         adapters.NewNoOpAuthenticator(),
+		Authorizer:            adapters.NewNoOpAuthorizer(),
 		AdapterTLSConfig:      nil, // No TLS by default
 		AuditLogger:           audit.NewDefaultAuditLogger(),
 		EnableAudit:           true,
@@ -235,6 +239,13 @@ func WithLogger(logger adapters.Logger) ServerOption {
 func WithAuthenticator(auth adapters.Authenticator) ServerOption {
 	return func(o *ServerOptions) {
 		o.Authenticator = auth
+	}
+}
+
+// WithAuthorizer sets the authorization adapter.
+func WithAuthorizer(authz adapters.Authorizer) ServerOption {
+	return func(o *ServerOptions) {
+		o.Authorizer = authz
 	}
 }
 

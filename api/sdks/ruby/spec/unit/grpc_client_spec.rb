@@ -1,522 +1,456 @@
+# frozen_string_literal: true
+
 require "spec_helper"
-require "ostruct"
 require "objstore/proto/objstore_services_pb"
 
+# Canonical SDK unit-test matrix for the gRPC protocol client.
+#
+# The transport is mocked by replacing the gRPC stub with a test double, so no
+# live server is required. Each operation gets success + error; the 9 not_found
+# ops also get a not_found case. Plus metadata_round_trip and validation_empty_key.
 RSpec.describe ObjectStore::Clients::GrpcClient do
-  let(:client) { described_class.new(host: "localhost", port: 50051) }
-  let(:mock_stub) { double("GrpcStub") }
+  subject(:client) { described_class.new(host: "localhost", port: 50_051) }
 
-  describe "#initialize" do
-    it "uses default values" do
-      client = described_class.new
-      expect(client.host).to eq("localhost")
-      expect(client.port).to eq(50051)
-      expect(client.use_ssl).to be false
-      expect(client.timeout).to eq(30)
+  let(:stub) { double("ObjectStore::Stub") }
+
+  before do
+    # Inject the test double in place of the real stub; bypass ensure_stub's
+    # channel creation entirely.
+    allow(client).to receive(:ensure_stub)
+    client.instance_variable_set(:@stub, stub)
+  end
+
+  # Build a gRPC NOT_FOUND / generic error.
+  def bad_status(code)
+    GRPC::BadStatus.new(code, "boom")
+  end
+
+  def not_found_error
+    bad_status(GRPC::Core::StatusCodes::NOT_FOUND)
+  end
+
+  def server_error
+    bad_status(GRPC::Core::StatusCodes::UNIMPLEMENTED)
+  end
+
+  describe "put" do
+    it "grpc_put_success" do
+      resp = double(success: true, message: "ok", etag: "e1")
+      allow(stub).to receive(:put).and_return(resp)
+
+      res = client.put("k", "data")
+      expect(res).to be_a(ObjectStore::Models::PutResponse)
+      expect(res.etag).to eq("e1")
     end
 
-    it "accepts custom values" do
-      client = described_class.new(host: "example.com", port: 9000, use_ssl: true, timeout: 60)
-      expect(client.host).to eq("example.com")
-      expect(client.port).to eq(9000)
-      expect(client.use_ssl).to be true
-      expect(client.timeout).to eq(60)
+    it "grpc_put_error" do
+      allow(stub).to receive(:put).and_raise(server_error)
+      expect { client.put("k", "data") }.to raise_error(ObjectStore::ServerError)
     end
   end
 
-  describe "gRPC operations" do
-    before do
-      client.instance_variable_set(:@stub, mock_stub)
+  describe "get" do
+    it "grpc_get_success" do
+      meta = double(content_type: "text/plain", content_encoding: nil, size: 4,
+                    etag: "e", custom: {})
+      chunk = double(data: "data", metadata: meta)
+      allow(stub).to receive(:get).and_return([chunk])
+
+      res = client.get("k")
+      expect(res.data).to eq("data")
+      expect(res.metadata.content_type).to eq("text/plain")
     end
 
-    describe "#put" do
-      let(:mock_response) { OpenStruct.new(success: true, message: "OK", etag: "abc123") }
-
-      before do
-        allow(mock_stub).to receive(:put).and_return(mock_response)
-      end
-
-      it "returns a PutResponse" do
-        response = client.put("test.txt", "hello world")
-        expect(response).to be_a(ObjectStore::Models::PutResponse)
-        expect(response.success).to be true
-        expect(response.etag).to eq("abc123")
-      end
-
-      it "accepts metadata" do
-        metadata = ObjectStore::Models::Metadata.new(content_type: "text/plain")
-        response = client.put("test.txt", "hello world", metadata)
-        expect(response).to be_a(ObjectStore::Models::PutResponse)
-      end
-
-      it "accepts hash metadata" do
-        response = client.put("test.txt", "hello world", { content_type: "text/plain" })
-        expect(response).to be_a(ObjectStore::Models::PutResponse)
-      end
+    it "grpc_get_not_found" do
+      allow(stub).to receive(:get).and_raise(not_found_error)
+      expect { client.get("k") }.to raise_error(ObjectStore::NotFoundError)
     end
 
-    describe "#put_stream" do
-      let(:mock_response) { OpenStruct.new(success: true, message: "OK", etag: "abc123") }
-
-      before do
-        allow(mock_stub).to receive(:put).and_return(mock_response)
-      end
-
-      it "reads from IO and uploads" do
-        io = StringIO.new("stream data")
-        response = client.put_stream("stream.txt", io)
-        expect(response).to be_a(ObjectStore::Models::PutResponse)
-      end
-
-      it "accepts metadata option" do
-        io = StringIO.new("stream data")
-        metadata = ObjectStore::Models::Metadata.new(content_type: "application/octet-stream")
-        response = client.put_stream("stream.txt", io, metadata: metadata)
-        expect(response).to be_a(ObjectStore::Models::PutResponse)
-      end
-
-      it "respects chunk_size parameter" do
-        io = StringIO.new("x" * 100)
-        response = client.put_stream("large.bin", io, chunk_size: 10)
-        expect(response).to be_a(ObjectStore::Models::PutResponse)
-      end
-    end
-
-    describe "#get" do
-      let(:mock_metadata) { OpenStruct.new(content_type: "text/plain", size: 11) }
-      let(:mock_responses) do
-        [OpenStruct.new(data: "hello world", metadata: mock_metadata)]
-      end
-
-      before do
-        allow(mock_stub).to receive(:get).and_return(mock_responses)
-      end
-
-      it "returns a GetResponse" do
-        response = client.get("test.txt")
-        expect(response).to be_a(ObjectStore::Models::GetResponse)
-        expect(response.data).to eq("hello world")
-      end
-    end
-
-    describe "#get_stream" do
-      let(:mock_metadata) { OpenStruct.new(content_type: "text/plain", size: 11) }
-      let(:mock_responses) do
-        [OpenStruct.new(data: "hello ", metadata: mock_metadata),
-         OpenStruct.new(data: "world", metadata: nil)]
-      end
-
-      before do
-        allow(mock_stub).to receive(:get).and_return(mock_responses)
-      end
-
-      it "yields chunks to block" do
-        chunks = []
-        metadata = client.get_stream("test.txt") { |chunk| chunks << chunk }
-        expect(metadata).to be_a(ObjectStore::Models::Metadata)
-        expect(chunks).to eq(["hello ", "world"])
-      end
-
-      it "returns metadata without block" do
-        metadata = client.get_stream("test.txt")
-        expect(metadata).to be_a(ObjectStore::Models::Metadata)
-      end
-    end
-
-    describe "#delete" do
-      let(:mock_response) { OpenStruct.new(success: true, message: "Deleted") }
-
-      before do
-        allow(mock_stub).to receive(:delete).and_return(mock_response)
-      end
-
-      it "returns a DeleteResponse" do
-        response = client.delete("test.txt")
-        expect(response).to be_a(ObjectStore::Models::DeleteResponse)
-        expect(response.success).to be true
-      end
-    end
-
-    describe "#list" do
-      let(:mock_response) do
-        OpenStruct.new(
-          objects: [OpenStruct.new(key: "file1.txt", metadata: nil)],
-          common_prefixes: ["dir/"],
-          next_token: nil,
-          truncated: false
-        )
-      end
-
-      before do
-        allow(mock_stub).to receive(:list).and_return(mock_response)
-      end
-
-      it "returns a ListResponse" do
-        response = client.list
-        expect(response).to be_a(ObjectStore::Models::ListResponse)
-        expect(response.objects.length).to eq(1)
-      end
-
-      it "accepts prefix parameter" do
-        response = client.list(prefix: "test/")
-        expect(response).to be_a(ObjectStore::Models::ListResponse)
-      end
-
-      it "accepts all parameters" do
-        response = client.list(
-          prefix: "test/",
-          delimiter: "/",
-          max_results: 50,
-          continue_from: "token123"
-        )
-        expect(response).to be_a(ObjectStore::Models::ListResponse)
-      end
-    end
-
-    describe "#exists?" do
-      before do
-        allow(mock_stub).to receive(:exists).and_return(OpenStruct.new(exists: true))
-      end
-
-      it "returns boolean" do
-        result = client.exists?("test.txt")
-        expect(result).to be true
-      end
-    end
-
-    describe "#get_metadata" do
-      let(:mock_metadata) { OpenStruct.new(content_type: "text/plain", size: 100) }
-      let(:mock_response) { OpenStruct.new(metadata: mock_metadata, success: true, message: "OK") }
-
-      before do
-        allow(mock_stub).to receive(:get_metadata).and_return(mock_response)
-      end
-
-      it "returns a MetadataResponse" do
-        response = client.get_metadata("test.txt")
-        expect(response).to be_a(ObjectStore::Models::MetadataResponse)
-        expect(response.success).to be true
-      end
-    end
-
-    describe "#update_metadata" do
-      let(:mock_response) { OpenStruct.new(success: true, message: "Updated") }
-
-      before do
-        allow(mock_stub).to receive(:update_metadata).and_return(mock_response)
-      end
-
-      it "returns an UpdateMetadataResponse" do
-        metadata = ObjectStore::Models::Metadata.new(content_type: "application/json")
-        response = client.update_metadata("test.txt", metadata)
-        expect(response).to be_a(ObjectStore::Models::UpdateMetadataResponse)
-      end
-
-      it "accepts hash metadata" do
-        response = client.update_metadata("test.txt", { content_type: "application/json" })
-        expect(response).to be_a(ObjectStore::Models::UpdateMetadataResponse)
-      end
-    end
-
-    describe "#health" do
-      let(:mock_response) { OpenStruct.new(status: :SERVING, message: "OK") }
-
-      before do
-        allow(mock_stub).to receive(:health).and_return(mock_response)
-      end
-
-      it "returns a HealthResponse" do
-        response = client.health
-        expect(response).to be_a(ObjectStore::Models::HealthResponse)
-        expect(response.healthy?).to be true
-      end
-
-      it "accepts service parameter" do
-        response = client.health(service: "storage")
-        expect(response).to be_a(ObjectStore::Models::HealthResponse)
-      end
-    end
-
-    describe "#archive" do
-      let(:mock_response) { OpenStruct.new(success: true, message: "Archived") }
-
-      before do
-        allow(mock_stub).to receive(:archive).and_return(mock_response)
-      end
-
-      it "returns an ArchiveResponse" do
-        response = client.archive("test.txt", destination_type: "glacier")
-        expect(response).to be_a(ObjectStore::Models::ArchiveResponse)
-      end
-
-      it "accepts destination_settings" do
-        response = client.archive(
-          "test.txt",
-          destination_type: "s3",
-          destination_settings: { bucket: "archive-bucket" }
-        )
-        expect(response).to be_a(ObjectStore::Models::ArchiveResponse)
-      end
-    end
-
-    describe "#add_policy" do
-      let(:mock_response) { OpenStruct.new(success: true, message: "Added") }
-
-      before do
-        allow(mock_stub).to receive(:add_policy).and_return(mock_response)
-      end
-
-      it "returns success hash" do
-        policy = ObjectStore::Models::LifecyclePolicy.new(
-          id: "p1",
-          prefix: "logs/",
-          retention_seconds: 86400,
-          action: "delete"
-        )
-        response = client.add_policy(policy)
-        expect(response).to be_a(Hash)
-        expect(response[:success]).to be true
-      end
-
-      it "accepts hash policy" do
-        response = client.add_policy(
-          id: "p1",
-          prefix: "logs/",
-          retention_seconds: 86400,
-          action: "delete"
-        )
-        expect(response).to be_a(Hash)
-      end
-    end
-
-    describe "#remove_policy" do
-      let(:mock_response) { OpenStruct.new(success: true, message: "Removed") }
-
-      before do
-        allow(mock_stub).to receive(:remove_policy).and_return(mock_response)
-      end
-
-      it "returns success hash" do
-        response = client.remove_policy("p1")
-        expect(response).to be_a(Hash)
-        expect(response[:success]).to be true
-      end
-    end
-
-    describe "#get_policies" do
-      let(:mock_response) { OpenStruct.new(policies: [], success: true) }
-
-      before do
-        allow(mock_stub).to receive(:get_policies).and_return(mock_response)
-      end
-
-      it "returns policies hash" do
-        response = client.get_policies
-        expect(response).to be_a(Hash)
-        expect(response).to have_key(:policies)
-      end
-
-      it "accepts prefix parameter" do
-        response = client.get_policies(prefix: "logs/")
-        expect(response).to be_a(Hash)
-      end
-    end
-
-    describe "#apply_policies" do
-      let(:mock_response) do
-        OpenStruct.new(success: true, policies_count: 2, objects_processed: 10, message: "OK")
-      end
-
-      before do
-        allow(mock_stub).to receive(:apply_policies).and_return(mock_response)
-      end
-
-      it "returns result hash" do
-        response = client.apply_policies
-        expect(response).to be_a(Hash)
-        expect(response[:success]).to be true
-        expect(response[:policies_count]).to eq(2)
-      end
-    end
-
-    describe "#add_replication_policy" do
-      let(:mock_response) { OpenStruct.new(success: true, message: "Added") }
-
-      before do
-        allow(mock_stub).to receive(:add_replication_policy).and_return(mock_response)
-      end
-
-      it "returns success hash" do
-        policy = ObjectStore::Models::ReplicationPolicy.new(
-          id: "rep1",
-          source_backend: "local",
-          destination_backend: "s3"
-        )
-        response = client.add_replication_policy(policy)
-        expect(response).to be_a(Hash)
-        expect(response[:success]).to be true
-      end
-
-      it "accepts hash policy" do
-        response = client.add_replication_policy(
-          id: "rep1",
-          source_backend: "local",
-          destination_backend: "s3"
-        )
-        expect(response).to be_a(Hash)
-      end
-    end
-
-    describe "#remove_replication_policy" do
-      let(:mock_response) { OpenStruct.new(success: true, message: "Removed") }
-
-      before do
-        allow(mock_stub).to receive(:remove_replication_policy).and_return(mock_response)
-      end
-
-      it "returns success hash" do
-        response = client.remove_replication_policy("rep1")
-        expect(response).to be_a(Hash)
-        expect(response[:success]).to be true
-      end
-    end
-
-    describe "#get_replication_policies" do
-      let(:mock_response) { OpenStruct.new(policies: []) }
-
-      before do
-        allow(mock_stub).to receive(:get_replication_policies).and_return(mock_response)
-      end
-
-      it "returns policies hash" do
-        response = client.get_replication_policies
-        expect(response).to be_a(Hash)
-        expect(response).to have_key(:policies)
-      end
-    end
-
-    describe "#get_replication_policy" do
-      let(:mock_policy) do
-        OpenStruct.new(
-          id: "rep1",
-          source_backend: "local",
-          source_settings: {},
-          source_prefix: "",
-          destination_backend: "s3",
-          destination_settings: {},
-          check_interval_seconds: 3600,
-          enabled: true,
-          replication_mode: :TRANSPARENT
-        )
-      end
-      let(:mock_response) { OpenStruct.new(policy: mock_policy) }
-
-      before do
-        allow(mock_stub).to receive(:get_replication_policy).and_return(mock_response)
-      end
-
-      it "returns policy hash" do
-        response = client.get_replication_policy("rep1")
-        expect(response).to be_a(Hash)
-        expect(response).to have_key(:policy)
-      end
-    end
-
-    describe "#trigger_replication" do
-      let(:mock_result) do
-        OpenStruct.new(
-          policy_id: "rep1",
-          synced: 10,
-          deleted: 0,
-          failed: 0,
-          bytes_total: 1024,
-          duration_ms: 100,
-          errors: []
-        )
-      end
-      let(:mock_response) { OpenStruct.new(success: true, result: mock_result, message: "OK") }
-
-      before do
-        allow(mock_stub).to receive(:trigger_replication).and_return(mock_response)
-      end
-
-      it "returns result hash" do
-        response = client.trigger_replication
-        expect(response).to be_a(Hash)
-        expect(response[:success]).to be true
-      end
-
-      it "accepts all parameters" do
-        response = client.trigger_replication(
-          policy_id: "rep1",
-          parallel: true,
-          worker_count: 8
-        )
-        expect(response).to be_a(Hash)
-      end
-    end
-
-    describe "#get_replication_status" do
-      let(:mock_status) do
-        OpenStruct.new(
-          policy_id: "rep1",
-          source_backend: "local",
-          destination_backend: "s3",
-          enabled: true,
-          total_objects_synced: 100,
-          total_objects_deleted: 5,
-          total_bytes_synced: 1024000,
-          total_errors: 0,
-          average_sync_duration_ms: 150,
-          sync_count: 10
-        )
-      end
-      let(:mock_response) { OpenStruct.new(success: true, status: mock_status, message: "OK") }
-
-      before do
-        allow(mock_stub).to receive(:get_replication_status).and_return(mock_response)
-      end
-
-      it "returns status hash" do
-        response = client.get_replication_status("rep1")
-        expect(response).to be_a(Hash)
-        expect(response[:success]).to be true
-        expect(response).to have_key(:status)
-      end
+    it "grpc_get_error" do
+      allow(stub).to receive(:get).and_raise(server_error)
+      expect { client.get("k") }.to raise_error(ObjectStore::ServerError)
     end
   end
 
-  describe "error handling" do
-    before do
-      client.instance_variable_set(:@stub, mock_stub)
+  describe "delete" do
+    it "grpc_delete_success" do
+      allow(stub).to receive(:delete).and_return(double(success: true, message: "ok"))
+      expect(client.delete("k").success).to be(true)
     end
 
-    it "handles NOT_FOUND error" do
-      error = GRPC::NotFound.new("Object not found")
-      allow(mock_stub).to receive(:get).and_raise(error)
-
-      expect { client.get("missing.txt") }.to raise_error(ObjectStore::NotFoundError)
+    it "grpc_delete_not_found" do
+      allow(stub).to receive(:delete).and_raise(not_found_error)
+      expect { client.delete("k") }.to raise_error(ObjectStore::NotFoundError)
     end
 
-    it "handles INVALID_ARGUMENT error" do
-      error = GRPC::InvalidArgument.new("Invalid key")
-      allow(mock_stub).to receive(:put).and_raise(error)
+    it "grpc_delete_error" do
+      allow(stub).to receive(:delete).and_raise(server_error)
+      expect { client.delete("k") }.to raise_error(ObjectStore::ServerError)
+    end
+  end
 
-      expect { client.put("", "data") }.to raise_error(ObjectStore::ValidationError)
+  describe "list" do
+    it "grpc_list_success" do
+      obj = double(key: "a", metadata: nil)
+      resp = double(objects: [obj], common_prefixes: [], next_token: "", truncated: false)
+      allow(stub).to receive(:list).and_return(resp)
+
+      res = client.list
+      expect(res.objects.first.key).to eq("a")
     end
 
-    it "handles DEADLINE_EXCEEDED error" do
-      error = GRPC::DeadlineExceeded.new("Request timed out")
-      allow(mock_stub).to receive(:get).and_raise(error)
+    it "grpc_list_error" do
+      allow(stub).to receive(:list).and_raise(server_error)
+      expect { client.list }.to raise_error(ObjectStore::ServerError)
+    end
+  end
 
-      expect { client.get("slow.txt") }.to raise_error(ObjectStore::TimeoutError)
+  describe "exists?" do
+    it "grpc_exists_success" do
+      allow(stub).to receive(:exists).and_return(double(exists: true))
+      expect(client.exists?("k")).to be(true)
     end
 
-    it "handles generic gRPC error" do
-      error = GRPC::Internal.new("Internal error")
-      allow(mock_stub).to receive(:delete).and_raise(error)
+    it "grpc_exists_not_found" do
+      # NOT_FOUND surfaces as the SDK's NotFoundError (exists has no false fallback).
+      allow(stub).to receive(:exists).and_raise(not_found_error)
+      expect { client.exists?("k") }.to raise_error(ObjectStore::NotFoundError)
+    end
 
-      expect { client.delete("test.txt") }.to raise_error(ObjectStore::Error)
+    it "grpc_exists_error" do
+      allow(stub).to receive(:exists).and_raise(server_error)
+      expect { client.exists?("k") }.to raise_error(ObjectStore::ServerError)
+    end
+  end
+
+  describe "get_metadata" do
+    it "grpc_get_metadata_success" do
+      meta = double(content_type: "text/plain", content_encoding: nil, size: 1,
+                    etag: "e", custom: {})
+      allow(stub).to receive(:get_metadata)
+        .and_return(double(metadata: meta, success: true, message: "ok"))
+
+      res = client.get_metadata("k")
+      expect(res.metadata.content_type).to eq("text/plain")
+    end
+
+    it "grpc_get_metadata_not_found" do
+      allow(stub).to receive(:get_metadata).and_raise(not_found_error)
+      expect { client.get_metadata("k") }.to raise_error(ObjectStore::NotFoundError)
+    end
+
+    it "grpc_get_metadata_error" do
+      allow(stub).to receive(:get_metadata).and_raise(server_error)
+      expect { client.get_metadata("k") }.to raise_error(ObjectStore::ServerError)
+    end
+  end
+
+  describe "update_metadata" do
+    it "grpc_update_metadata_success" do
+      allow(stub).to receive(:update_metadata).and_return(double(success: true, message: "ok"))
+      expect(client.update_metadata("k", {}).success).to be(true)
+    end
+
+    it "grpc_update_metadata_not_found" do
+      allow(stub).to receive(:update_metadata).and_raise(not_found_error)
+      expect { client.update_metadata("k", {}) }.to raise_error(ObjectStore::NotFoundError)
+    end
+
+    it "grpc_update_metadata_error" do
+      allow(stub).to receive(:update_metadata).and_raise(server_error)
+      expect { client.update_metadata("k", {}) }.to raise_error(ObjectStore::ServerError)
+    end
+  end
+
+  describe "health" do
+    it "grpc_health_success" do
+      allow(stub).to receive(:health).and_return(double(status: :SERVING, message: "ok"))
+      expect(client.health).to be_healthy
+    end
+
+    it "grpc_health_error" do
+      allow(stub).to receive(:health).and_raise(server_error)
+      expect { client.health }.to raise_error(ObjectStore::ServerError)
+    end
+  end
+
+  describe "archive" do
+    it "grpc_archive_success" do
+      allow(stub).to receive(:archive).and_return(double(success: true, message: "ok"))
+      expect(client.archive("k", destination_type: "glacier").success).to be(true)
+    end
+
+    it "grpc_archive_error" do
+      allow(stub).to receive(:archive).and_raise(server_error)
+      expect { client.archive("k", destination_type: "glacier") }
+        .to raise_error(ObjectStore::ServerError)
+    end
+  end
+
+  describe "add_policy" do
+    it "grpc_add_policy_success" do
+      allow(stub).to receive(:add_policy).and_return(double(success: true, message: "ok"))
+      expect(client.add_policy(id: "p1")[:success]).to be(true)
+    end
+
+    it "grpc_add_policy_error" do
+      allow(stub).to receive(:add_policy).and_raise(server_error)
+      expect { client.add_policy(id: "p1") }.to raise_error(ObjectStore::ServerError)
+    end
+  end
+
+  describe "remove_policy" do
+    it "grpc_remove_policy_success" do
+      allow(stub).to receive(:remove_policy).and_return(double(success: true, message: "ok"))
+      expect(client.remove_policy("p1")[:success]).to be(true)
+    end
+
+    it "grpc_remove_policy_not_found" do
+      allow(stub).to receive(:remove_policy).and_raise(not_found_error)
+      expect { client.remove_policy("p1") }.to raise_error(ObjectStore::NotFoundError)
+    end
+
+    it "grpc_remove_policy_error" do
+      allow(stub).to receive(:remove_policy).and_raise(server_error)
+      expect { client.remove_policy("p1") }.to raise_error(ObjectStore::ServerError)
+    end
+  end
+
+  describe "get_policies" do
+    it "grpc_get_policies_success" do
+      policy = double(id: "p1", prefix: "", retention_seconds: 0, action: "",
+                      destination_type: "", destination_settings: nil)
+      allow(stub).to receive(:get_policies).and_return(double(policies: [policy], success: true))
+      expect(client.get_policies[:policies].first.id).to eq("p1")
+    end
+
+    it "grpc_get_policies_error" do
+      allow(stub).to receive(:get_policies).and_raise(server_error)
+      expect { client.get_policies }.to raise_error(ObjectStore::ServerError)
+    end
+  end
+
+  describe "apply_policies" do
+    it "grpc_apply_policies_success" do
+      allow(stub).to receive(:apply_policies)
+        .and_return(double(success: true, policies_count: 1, objects_processed: 2, message: "ok"))
+      expect(client.apply_policies[:objects_processed]).to eq(2)
+    end
+
+    it "grpc_apply_policies_error" do
+      allow(stub).to receive(:apply_policies).and_raise(server_error)
+      expect { client.apply_policies }.to raise_error(ObjectStore::ServerError)
+    end
+  end
+
+  describe "add_replication_policy" do
+    it "grpc_add_replication_policy_success" do
+      allow(stub).to receive(:add_replication_policy)
+        .and_return(double(success: true, message: "ok"))
+      expect(client.add_replication_policy(id: "r1")[:success]).to be(true)
+    end
+
+    it "grpc_add_replication_policy_error" do
+      allow(stub).to receive(:add_replication_policy).and_raise(server_error)
+      expect { client.add_replication_policy(id: "r1") }.to raise_error(ObjectStore::ServerError)
+    end
+  end
+
+  describe "remove_replication_policy" do
+    it "grpc_remove_replication_policy_success" do
+      allow(stub).to receive(:remove_replication_policy)
+        .and_return(double(success: true, message: "ok"))
+      expect(client.remove_replication_policy("r1")[:success]).to be(true)
+    end
+
+    it "grpc_remove_replication_policy_not_found" do
+      allow(stub).to receive(:remove_replication_policy).and_raise(not_found_error)
+      expect { client.remove_replication_policy("r1") }.to raise_error(ObjectStore::NotFoundError)
+    end
+
+    it "grpc_remove_replication_policy_error" do
+      allow(stub).to receive(:remove_replication_policy).and_raise(server_error)
+      expect { client.remove_replication_policy("r1") }.to raise_error(ObjectStore::ServerError)
+    end
+  end
+
+  describe "get_replication_policies" do
+    let(:policy) do
+      double(id: "r1", source_backend: "", source_settings: nil, source_prefix: "",
+             destination_backend: "", destination_settings: nil, check_interval_seconds: 0,
+             enabled: false, replication_mode: :TRANSPARENT)
+    end
+
+    it "grpc_get_replication_policies_success" do
+      allow(stub).to receive(:get_replication_policies).and_return(double(policies: [policy]))
+      expect(client.get_replication_policies[:policies].first.id).to eq("r1")
+    end
+
+    it "grpc_get_replication_policies_error" do
+      allow(stub).to receive(:get_replication_policies).and_raise(server_error)
+      expect { client.get_replication_policies }.to raise_error(ObjectStore::ServerError)
+    end
+  end
+
+  describe "get_replication_policy" do
+    let(:policy) do
+      double(id: "r1", source_backend: "", source_settings: nil, source_prefix: "",
+             destination_backend: "", destination_settings: nil, check_interval_seconds: 0,
+             enabled: false, replication_mode: :TRANSPARENT)
+    end
+
+    it "grpc_get_replication_policy_success" do
+      allow(stub).to receive(:get_replication_policy).and_return(double(policy: policy))
+      expect(client.get_replication_policy("r1")[:policy].id).to eq("r1")
+    end
+
+    it "grpc_get_replication_policy_not_found" do
+      allow(stub).to receive(:get_replication_policy).and_raise(not_found_error)
+      expect { client.get_replication_policy("r1") }.to raise_error(ObjectStore::NotFoundError)
+    end
+
+    it "grpc_get_replication_policy_error" do
+      allow(stub).to receive(:get_replication_policy).and_raise(server_error)
+      expect { client.get_replication_policy("r1") }.to raise_error(ObjectStore::ServerError)
+    end
+  end
+
+  describe "trigger_replication" do
+    it "grpc_trigger_replication_success" do
+      result = double(policy_id: "r1", synced: 1, deleted: 0, failed: 0,
+                      bytes_total: 10, duration_ms: 5, errors: nil)
+      allow(stub).to receive(:trigger_replication)
+        .and_return(double(success: true, result: result, message: "ok"))
+      expect(client.trigger_replication[:success]).to be(true)
+    end
+
+    it "grpc_trigger_replication_error" do
+      allow(stub).to receive(:trigger_replication).and_raise(server_error)
+      expect { client.trigger_replication }.to raise_error(ObjectStore::ServerError)
+    end
+  end
+
+  describe "get_replication_status" do
+    let(:status) do
+      double(policy_id: "r1", source_backend: "", destination_backend: "", enabled: true,
+             total_objects_synced: 5, total_objects_deleted: 0, total_bytes_synced: 0,
+             total_errors: 0, average_sync_duration_ms: 0, sync_count: 1)
+    end
+
+    it "grpc_get_replication_status_success" do
+      allow(stub).to receive(:get_replication_status)
+        .and_return(double(success: true, status: status, message: "ok"))
+      expect(client.get_replication_status("r1")[:status].total_objects_synced).to eq(5)
+    end
+
+    it "grpc_get_replication_status_not_found" do
+      allow(stub).to receive(:get_replication_status).and_raise(not_found_error)
+      expect { client.get_replication_status("r1") }.to raise_error(ObjectStore::NotFoundError)
+    end
+
+    it "grpc_get_replication_status_error" do
+      allow(stub).to receive(:get_replication_status).and_raise(server_error)
+      expect { client.get_replication_status("r1") }.to raise_error(ObjectStore::ServerError)
+    end
+  end
+
+  describe "cross-cutting" do
+    it "grpc_metadata_round_trip" do
+      custom = { "owner" => "alice" }
+      meta = ObjectStore::Models::Metadata.new(
+        content_type: "text/plain", content_encoding: "gzip", custom: custom
+      )
+
+      # put: assert the proto message carries content_type/encoding/custom.
+      captured = nil
+      allow(stub).to receive(:put) do |req, **_|
+        captured = req
+        double(success: true, message: "ok", etag: "e")
+      end
+      client.put("k", "body", meta)
+      expect(captured.metadata.content_type).to eq("text/plain")
+      expect(captured.metadata.content_encoding).to eq("gzip")
+      expect(captured.metadata.custom.to_h).to eq(custom)
+
+      # get + get_metadata: metadata travels back in proto fields.
+      proto_meta = double(content_type: "text/plain", content_encoding: "gzip",
+                          size: 4, etag: "e", custom: custom)
+      allow(stub).to receive(:get).and_return([double(data: "body", metadata: proto_meta)])
+      got = client.get("k")
+      expect(got.metadata.content_type).to eq("text/plain")
+      expect(got.metadata.custom).to eq(custom)
+
+      allow(stub).to receive(:get_metadata)
+        .and_return(double(metadata: proto_meta, success: true, message: "ok"))
+      md = client.get_metadata("k")
+      expect(md.metadata.content_encoding).to eq("gzip")
+      expect(md.metadata.custom).to eq(custom)
+    end
+
+    it "grpc_validation_empty_key" do
+      unified = ObjectStore::Client.new(protocol: :grpc)
+      expect { unified.get("") }.to raise_error(ArgumentError)
+    end
+  end
+
+  # Language-specific extras: gRPC-native streaming and connection lifecycle,
+  # plus the replication-mode proto mapping. Not part of the canonical matrix
+  # but real code paths in this SDK.
+  describe "streaming and lifecycle" do
+    require "stringio"
+
+    it "grpc_put_stream_success" do
+      captured = nil
+      allow(stub).to receive(:put) do |req, **_|
+        captured = req
+        double(success: true, message: "ok", etag: "e")
+      end
+
+      res = client.put_stream("k", StringIO.new("hello stream"), chunk_size: 4)
+      expect(res).to be_a(ObjectStore::Models::PutResponse)
+      expect(captured.data).to eq("hello stream")
+    end
+
+    it "grpc_get_stream_success" do
+      meta = double(content_type: "text/plain", content_encoding: nil, size: 11,
+                    etag: "e", custom: {})
+      responses = [double(data: "hello ", metadata: meta),
+                   double(data: "world", metadata: nil)]
+      allow(stub).to receive(:get).and_return(responses)
+
+      chunks = []
+      metadata = client.get_stream("k") { |c| chunks << c }
+      expect(chunks).to eq(["hello ", "world"])
+      expect(metadata).to be_a(ObjectStore::Models::Metadata)
+      expect(metadata.content_type).to eq("text/plain")
+    end
+
+    it "grpc_add_replication_policy_maps_opaque_mode" do
+      captured = nil
+      allow(stub).to receive(:add_replication_policy) do |req, **_|
+        captured = req
+        double(success: true, message: "ok")
+      end
+
+      client.add_replication_policy(
+        id: "r1", source_backend: "local", destination_backend: "s3",
+        source_settings: { "a" => "1" }, destination_settings: { "b" => "2" },
+        check_interval_seconds: 60, enabled: true, replication_mode: "opaque"
+      )
+      expect(captured.policy.replication_mode).to eq(:OPAQUE)
+      expect(captured.policy.source_settings.to_h).to eq("a" => "1")
+    end
+
+    it "grpc_close_releases_channel_and_is_idempotent" do
+      channel = double("channel")
+      allow(channel).to receive(:respond_to?).with(:close).and_return(true)
+      allow(channel).to receive(:close)
+      allow(stub).to receive(:respond_to?).with(:instance_variable_get).and_return(true)
+      allow(stub).to receive(:instance_variable_get).with(:@ch).and_return(channel)
+
+      client.close
+      expect(channel).to have_received(:close)
+      expect { client.close }.not_to raise_error
     end
   end
 end

@@ -1,527 +1,679 @@
 import { QuicClient } from '../../src/clients/quic-client';
-import { HealthStatus } from '../../src/types';
+import { HealthStatus, ReplicationMode } from '../../src/types';
 
-// Mock fetch
-global.fetch = jest.fn();
+/**
+ * Canonical QUIC/HTTP3 client unit-test matrix.
+ *
+ * For each of the 19 operations: success + error (HTTP 5xx). Nine operations
+ * additionally get a not_found (HTTP 404) case. Plus metadata_round_trip and
+ * validation_empty_key. The QUIC client uses the global fetch API, which is
+ * mocked here; no live server is required.
+ */
+
+interface MockResponseInit {
+  ok?: boolean;
+  status?: number;
+  headers?: Record<string, string>;
+  json?: any;
+  text?: string;
+  arrayBuffer?: Buffer;
+}
+
+/** Build a minimal Response-like object that the QUIC client understands. */
+function mockResponse(init: MockResponseInit): any {
+  const status = init.status ?? 200;
+  const ok = init.ok ?? (status >= 200 && status < 300);
+  const headerMap = new Map<string, string>();
+  for (const [k, v] of Object.entries(init.headers || {})) {
+    headerMap.set(k.toLowerCase(), v);
+  }
+  const headers = {
+    get: (name: string) => headerMap.get(name.toLowerCase()) ?? null,
+    forEach: (cb: (value: string, name: string) => void) => {
+      headerMap.forEach((value, name) => cb(value, name));
+    },
+  };
+  return {
+    ok,
+    status,
+    headers,
+    json: async () => init.json ?? {},
+    text: async () => init.text ?? '',
+    arrayBuffer: async () => {
+      const buf = init.arrayBuffer ?? Buffer.alloc(0);
+      return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+    },
+  };
+}
+
+const jsonHeaders = { 'content-type': 'application/json' };
 
 describe('QuicClient', () => {
+  const address = 'localhost:8443';
   let client: QuicClient;
+  const mockFetch = jest.fn();
+
+  beforeAll(() => {
+    global.fetch = mockFetch as any;
+  });
 
   beforeEach(() => {
-    client = new QuicClient({ address: 'localhost:8443', secure: true });
-    jest.clearAllMocks();
+    client = new QuicClient({ address, secure: false });
+    mockFetch.mockReset();
   });
 
-  const mockFetch = (response: any, status = 200) => {
-    (global.fetch as jest.Mock).mockResolvedValueOnce({
-      ok: status >= 200 && status < 300,
-      status,
-      headers: new Map([['content-type', 'application/json']]),
-      json: async () => response,
-      text: async () => JSON.stringify(response),
-    });
-  };
+  /** Resolve fetch with a JSON body (5xx → error path). */
+  const resolveJson = (json: any, status = 200) =>
+    mockFetch.mockResolvedValue(mockResponse({ status, headers: jsonHeaders, json, text: 'error body' }));
 
-  // Mock for get() which uses arrayBuffer() and headers directly
-  const mockFetchBinary = (data: Buffer, headers: Record<string, string> = {}, status = 200) => {
-    const headerMap = new Map(Object.entries(headers));
-    (global.fetch as jest.Mock).mockResolvedValueOnce({
-      ok: status >= 200 && status < 300,
-      status,
-      headers: {
-        get: (name: string) => headerMap.get(name.toLowerCase()) || null,
-      },
-      arrayBuffer: async () => data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
-      text: async () => data.toString(),
-    });
-  };
+  /** Reject the next request with a 5xx HTTP error. */
+  const resolveError = (status = 500) =>
+    mockFetch.mockResolvedValue(mockResponse({ status, headers: jsonHeaders, text: 'boom' }));
 
+  // --------------------------------------------------------------------------
+  // put
+  // --------------------------------------------------------------------------
   describe('put', () => {
-    it('should upload an object successfully', async () => {
-      mockFetch({ message: 'success', etag: 'test-etag' });
+    it('quic_put_success', async () => {
+      mockFetch.mockResolvedValue(
+        mockResponse({ headers: { ...jsonHeaders, etag: '"abc123"' }, json: { message: 'stored' } })
+      );
 
-      const result = await client.put({
-        key: 'test-key',
-        data: Buffer.from('test data'),
-      });
+      const response = await client.put({ key: 'test-key', data: Buffer.from('data') });
 
-      expect(result.success).toBe(true);
+      expect(response.success).toBe(true);
+      expect(response.message).toBe('stored');
+      expect(response.etag).toBe('"abc123"');
+    });
+
+    it('quic_put_error', async () => {
+      resolveError();
+      await expect(
+        client.put({ key: 'test-key', data: Buffer.from('data') })
+      ).rejects.toThrow('QUIC/HTTP3 error (500)');
     });
   });
 
+  // --------------------------------------------------------------------------
+  // get
+  // --------------------------------------------------------------------------
   describe('get', () => {
-    it('should retrieve an object successfully', async () => {
-      mockFetchBinary(Buffer.from('test data'), {
-        'content-type': 'text/plain',
-        'content-length': '9',
-      });
+    it('quic_get_success', async () => {
+      mockFetch.mockResolvedValue(
+        mockResponse({
+          headers: { 'content-type': 'text/plain', 'content-length': '5' },
+          arrayBuffer: Buffer.from('hello'),
+        })
+      );
 
-      const result = await client.get({ key: 'test-key' });
+      const response = await client.get({ key: 'test-key' });
 
-      expect(result.data.toString()).toBe('test data');
-      expect(result.metadata?.contentType).toBe('text/plain');
+      expect(response.data.toString()).toBe('hello');
+      expect(response.metadata?.contentType).toBe('text/plain');
+      expect(response.metadata?.size).toBe(5);
+    });
+
+    it('quic_get_error', async () => {
+      mockFetch.mockResolvedValue(mockResponse({ status: 500, text: 'boom' }));
+      await expect(client.get({ key: 'test-key' })).rejects.toThrow('QUIC/HTTP3 error (500)');
+    });
+
+    it('quic_get_not_found', async () => {
+      mockFetch.mockResolvedValue(mockResponse({ status: 404, text: 'not found' }));
+      await expect(client.get({ key: 'missing' })).rejects.toThrow('QUIC/HTTP3 error (404)');
     });
   });
 
+  // --------------------------------------------------------------------------
+  // delete
+  // --------------------------------------------------------------------------
   describe('delete', () => {
-    it('should delete an object successfully', async () => {
-      mockFetch({ message: 'deleted' });
+    it('quic_delete_success', async () => {
+      resolveJson({ message: 'deleted' });
+      const response = await client.delete({ key: 'test-key' });
+      expect(response.success).toBe(true);
+      expect(response.message).toBe('deleted');
+    });
 
-      const result = await client.delete({ key: 'test-key' });
+    it('quic_delete_error', async () => {
+      resolveError();
+      await expect(client.delete({ key: 'test-key' })).rejects.toThrow('QUIC/HTTP3 error (500)');
+    });
 
-      expect(result.success).toBe(true);
+    it('quic_delete_not_found', async () => {
+      // makeRequest treats 404 as a non-error and parses the JSON body.
+      resolveJson({ message: 'not found' }, 404);
+      const response = await client.delete({ key: 'missing' });
+      expect(response.success).toBe(true);
     });
   });
 
+  // --------------------------------------------------------------------------
+  // list
+  // --------------------------------------------------------------------------
   describe('list', () => {
-    it('should list objects', async () => {
-      mockFetch({
-        objects: [
-          { key: 'file1.txt', metadata: { size: 100 } },
-          { key: 'file2.txt', metadata: { size: 200 } },
-        ],
-        truncated: false,
+    it('quic_list_success', async () => {
+      resolveJson({
+        objects: [{ key: 'a', content_type: 'text/plain', size: 3 }],
+        common_prefixes: ['p/'],
+        next_token: 'tok',
+        truncated: true,
       });
 
-      const result = await client.list({ prefix: 'test/' });
+      const response = await client.list({ prefix: 'a', maxResults: 5, continueFrom: 'c' });
 
-      expect(result.objects).toHaveLength(2);
+      expect(response.objects).toHaveLength(1);
+      expect(response.objects[0].key).toBe('a');
+      expect(response.commonPrefixes).toEqual(['p/']);
+      expect(response.truncated).toBe(true);
+    });
+
+    it('quic_list_error', async () => {
+      resolveError();
+      await expect(client.list()).rejects.toThrow('QUIC/HTTP3 error (500)');
     });
   });
 
+  // --------------------------------------------------------------------------
+  // exists
+  // --------------------------------------------------------------------------
   describe('exists', () => {
-    it('should return true when object exists', async () => {
-      (global.fetch as jest.Mock).mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-      });
-
-      const result = await client.exists({ key: 'test-key' });
-
-      expect(result.exists).toBe(true);
+    it('quic_exists_success', async () => {
+      mockFetch.mockResolvedValue(mockResponse({ status: 200 }));
+      const response = await client.exists({ key: 'test-key' });
+      expect(response.exists).toBe(true);
     });
 
-    it('should return false when object does not exist', async () => {
-      (global.fetch as jest.Mock).mockResolvedValueOnce({
-        ok: false,
-        status: 404,
-      });
+    it('quic_exists_error', async () => {
+      mockFetch.mockResolvedValue(mockResponse({ status: 500, text: 'boom' }));
+      await expect(client.exists({ key: 'test-key' })).rejects.toThrow('QUIC/HTTP3 error (500)');
+    });
 
-      const result = await client.exists({ key: 'missing-key' });
-
-      expect(result.exists).toBe(false);
+    it('quic_exists_not_found', async () => {
+      mockFetch.mockResolvedValue(mockResponse({ status: 404 }));
+      const response = await client.exists({ key: 'missing' });
+      expect(response.exists).toBe(false);
     });
   });
 
+  // --------------------------------------------------------------------------
+  // getMetadata
+  // --------------------------------------------------------------------------
   describe('getMetadata', () => {
-    it('should retrieve object metadata', async () => {
-      mockFetch({
-        content_type: 'text/plain',
-        size: 100,
-        etag: 'test-etag',
-      });
+    it('quic_get_metadata_success', async () => {
+      mockFetch.mockResolvedValue(
+        mockResponse({
+          status: 200,
+          headers: { 'content-type': 'text/plain', 'x-meta-author': 'jane' },
+        })
+      );
 
-      const result = await client.getMetadata({ key: 'test-key' });
+      const response = await client.getMetadata({ key: 'test-key' });
 
-      expect(result.success).toBe(true);
-      expect(result.metadata?.contentType).toBe('text/plain');
+      expect(response.success).toBe(true);
+      expect(response.metadata?.contentType).toBe('text/plain');
+      expect(response.metadata?.custom).toEqual({ author: 'jane' });
+    });
+
+    it('quic_get_metadata_error', async () => {
+      mockFetch.mockResolvedValue(mockResponse({ status: 500, text: 'boom' }));
+      await expect(client.getMetadata({ key: 'test-key' })).rejects.toThrow('QUIC/HTTP3 error (500)');
+    });
+
+    it('quic_get_metadata_not_found', async () => {
+      mockFetch.mockResolvedValue(mockResponse({ status: 404, text: 'not found' }));
+      await expect(client.getMetadata({ key: 'missing' })).rejects.toThrow('QUIC/HTTP3 error (404)');
     });
   });
 
+  // --------------------------------------------------------------------------
+  // updateMetadata
+  // --------------------------------------------------------------------------
   describe('updateMetadata', () => {
-    it('should update object metadata', async () => {
-      mockFetch({ message: 'updated' });
-
-      const result = await client.updateMetadata({
+    it('quic_update_metadata_success', async () => {
+      resolveJson({ message: 'updated' });
+      const response = await client.updateMetadata({
         key: 'test-key',
-        metadata: { contentType: 'application/json' },
+        metadata: { contentType: 'text/plain' },
       });
+      expect(response.success).toBe(true);
+      expect(response.message).toBe('updated');
+    });
 
-      expect(result.success).toBe(true);
+    it('quic_update_metadata_error', async () => {
+      resolveError();
+      await expect(
+        client.updateMetadata({ key: 'test-key', metadata: { contentType: 'text/plain' } })
+      ).rejects.toThrow('QUIC/HTTP3 error (500)');
+    });
+
+    it('quic_update_metadata_not_found', async () => {
+      resolveJson({ message: 'not found' }, 404);
+      const response = await client.updateMetadata({
+        key: 'missing',
+        metadata: { contentType: 'text/plain' },
+      });
+      expect(response.success).toBe(true);
     });
   });
 
+  // --------------------------------------------------------------------------
+  // health
+  // --------------------------------------------------------------------------
   describe('health', () => {
-    it('should check health successfully', async () => {
-      mockFetch({ status: 'healthy' });
+    it('quic_health_success', async () => {
+      resolveJson({ status: 'healthy', message: 'OK' });
+      const response = await client.health();
+      expect(response.status).toBe(HealthStatus.SERVING);
+      expect(response.message).toBe('OK');
+    });
 
-      const result = await client.health();
-
-      expect(result.status).toBe(HealthStatus.SERVING);
+    it('quic_health_error', async () => {
+      resolveError();
+      await expect(client.health()).rejects.toThrow('QUIC/HTTP3 error (500)');
     });
   });
 
+  // --------------------------------------------------------------------------
+  // archive
+  // --------------------------------------------------------------------------
   describe('archive', () => {
-    it('should archive an object', async () => {
-      mockFetch({ success: true });
+    it('quic_archive_success', async () => {
+      resolveJson({ success: true, message: 'archived' });
+      const response = await client.archive({ key: 'test-key', destinationType: 'glacier' });
+      expect(response.success).toBe(true);
+      expect(response.message).toBe('archived');
+    });
 
-      const result = await client.archive({
-        key: 'test-key',
-        destinationType: 'glacier',
-      });
-
-      expect(result.success).toBe(true);
+    it('quic_archive_error', async () => {
+      resolveError();
+      await expect(
+        client.archive({ key: 'test-key', destinationType: 'glacier' })
+      ).rejects.toThrow('QUIC/HTTP3 error (500)');
     });
   });
 
-  describe('lifecycle policies', () => {
-    it('should add a policy', async () => {
-      mockFetch({ success: true });
-
-      const result = await client.addPolicy({
-        policy: {
-          id: 'p1',
-          prefix: 'logs/',
-          retentionSeconds: 86400,
-          action: 'delete',
-        },
+  // --------------------------------------------------------------------------
+  // addPolicy
+  // --------------------------------------------------------------------------
+  describe('addPolicy', () => {
+    it('quic_add_policy_success', async () => {
+      resolveJson({ success: true, message: 'added' });
+      const response = await client.addPolicy({
+        policy: { id: 'p1', prefix: 'logs/', retentionSeconds: 86400, action: 'delete' },
       });
-
-      expect(result.success).toBe(true);
+      expect(response.success).toBe(true);
+      expect(response.message).toBe('added');
     });
 
-    it('should remove a policy', async () => {
-      mockFetch({ success: true });
+    it('quic_add_policy_error', async () => {
+      resolveError();
+      await expect(
+        client.addPolicy({
+          policy: { id: 'p1', prefix: 'logs/', retentionSeconds: 1, action: 'delete' },
+        })
+      ).rejects.toThrow('QUIC/HTTP3 error (500)');
+    });
+  });
 
-      const result = await client.removePolicy({ id: 'p1' });
-
-      expect(result.success).toBe(true);
+  // --------------------------------------------------------------------------
+  // removePolicy
+  // --------------------------------------------------------------------------
+  describe('removePolicy', () => {
+    it('quic_remove_policy_success', async () => {
+      resolveJson({ success: true, message: 'removed' });
+      const response = await client.removePolicy({ id: 'p1' });
+      expect(response.success).toBe(true);
+      expect(response.message).toBe('removed');
     });
 
-    it('should get policies', async () => {
-      mockFetch({
-        policies: [{ id: 'p1', prefix: 'logs/', retention_seconds: 86400, action: 'delete' }],
+    it('quic_remove_policy_error', async () => {
+      resolveError();
+      await expect(client.removePolicy({ id: 'p1' })).rejects.toThrow('QUIC/HTTP3 error (500)');
+    });
+
+    it('quic_remove_policy_not_found', async () => {
+      resolveJson({ success: true, message: 'not found' }, 404);
+      const response = await client.removePolicy({ id: 'missing' });
+      expect(response.success).toBe(true);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // getPolicies
+  // --------------------------------------------------------------------------
+  describe('getPolicies', () => {
+    it('quic_get_policies_success', async () => {
+      resolveJson({
+        policies: [
+          { id: 'p1', prefix: 'logs/', retention_seconds: 86400, action: 'delete' },
+        ],
         success: true,
       });
 
-      const result = await client.getPolicies();
+      const response = await client.getPolicies({ prefix: 'logs/' });
 
-      expect(result.policies).toHaveLength(1);
+      expect(response.policies).toHaveLength(1);
+      expect(response.policies[0].id).toBe('p1');
+      expect(response.policies[0].retentionSeconds).toBe(86400);
     });
 
-    it('should apply policies', async () => {
-      mockFetch({ success: true, policies_count: 5, objects_processed: 100 });
-
-      const result = await client.applyPolicies();
-
-      expect(result.success).toBe(true);
-      expect(result.policiesCount).toBe(5);
+    it('quic_get_policies_error', async () => {
+      resolveError();
+      await expect(client.getPolicies()).rejects.toThrow('QUIC/HTTP3 error (500)');
     });
   });
 
-  describe('replication policies', () => {
-    it('should add a replication policy', async () => {
-      mockFetch({ success: true });
+  // --------------------------------------------------------------------------
+  // applyPolicies
+  // --------------------------------------------------------------------------
+  describe('applyPolicies', () => {
+    it('quic_apply_policies_success', async () => {
+      resolveJson({ success: true, policies_count: 2, objects_processed: 7, message: 'applied' });
 
-      const result = await client.addReplicationPolicy({
-        policy: {
-          id: 'r1',
-          sourceBackend: 's3',
-          sourceSettings: {},
-          sourcePrefix: '',
-          destinationBackend: 'gcs',
-          destinationSettings: {},
-          checkIntervalSeconds: 3600,
-          enabled: true,
-          replicationMode: 0,
-        },
-      });
+      const response = await client.applyPolicies();
 
-      expect(result.success).toBe(true);
+      expect(response.success).toBe(true);
+      expect(response.policiesCount).toBe(2);
+      expect(response.objectsProcessed).toBe(7);
     });
 
-    it('should remove a replication policy', async () => {
-      mockFetch({ success: true });
+    it('quic_apply_policies_error', async () => {
+      resolveError();
+      await expect(client.applyPolicies()).rejects.toThrow('QUIC/HTTP3 error (500)');
+    });
+  });
 
-      const result = await client.removeReplicationPolicy({ id: 'r1' });
+  // --------------------------------------------------------------------------
+  // addReplicationPolicy
+  // --------------------------------------------------------------------------
+  describe('addReplicationPolicy', () => {
+    const repPolicy = {
+      id: 'r1',
+      sourceBackend: 'local',
+      sourceSettings: {},
+      sourcePrefix: '',
+      destinationBackend: 's3',
+      destinationSettings: {},
+      checkIntervalSeconds: 60,
+      enabled: true,
+      replicationMode: ReplicationMode.TRANSPARENT,
+    };
 
-      expect(result.success).toBe(true);
+    it('quic_add_replication_policy_success', async () => {
+      resolveJson({ success: true, message: 'added' });
+      const response = await client.addReplicationPolicy({ policy: repPolicy });
+      expect(response.success).toBe(true);
+      expect(response.message).toBe('added');
     });
 
-    it('should get replication policies', async () => {
-      mockFetch({
+    it('quic_add_replication_policy_error', async () => {
+      resolveError();
+      await expect(
+        client.addReplicationPolicy({ policy: repPolicy })
+      ).rejects.toThrow('QUIC/HTTP3 error (500)');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // removeReplicationPolicy
+  // --------------------------------------------------------------------------
+  describe('removeReplicationPolicy', () => {
+    it('quic_remove_replication_policy_success', async () => {
+      resolveJson({ success: true, message: 'removed' });
+      const response = await client.removeReplicationPolicy({ id: 'r1' });
+      expect(response.success).toBe(true);
+      expect(response.message).toBe('removed');
+    });
+
+    it('quic_remove_replication_policy_error', async () => {
+      resolveError();
+      await expect(
+        client.removeReplicationPolicy({ id: 'r1' })
+      ).rejects.toThrow('QUIC/HTTP3 error (500)');
+    });
+
+    it('quic_remove_replication_policy_not_found', async () => {
+      resolveJson({ success: true, message: 'not found' }, 404);
+      const response = await client.removeReplicationPolicy({ id: 'missing' });
+      expect(response.success).toBe(true);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // getReplicationPolicies
+  // --------------------------------------------------------------------------
+  describe('getReplicationPolicies', () => {
+    it('quic_get_replication_policies_success', async () => {
+      resolveJson({
         policies: [
           {
             id: 'r1',
-            source_backend: 's3',
-            source_settings: {},
-            source_prefix: '',
-            destination_backend: 'gcs',
-            destination_settings: {},
-            check_interval_seconds: 3600,
+            source_backend: 'local',
+            destination_backend: 's3',
+            check_interval: 60,
             enabled: true,
-            replication_mode: 0,
+            replication_mode: 'transparent',
           },
         ],
       });
 
-      const result = await client.getReplicationPolicies();
+      const response = await client.getReplicationPolicies();
 
-      expect(result.policies).toHaveLength(1);
+      expect(response.policies).toHaveLength(1);
+      expect(response.policies[0].id).toBe('r1');
+      expect(response.policies[0].checkIntervalSeconds).toBe(60);
+      expect(response.policies[0].replicationMode).toBe(ReplicationMode.TRANSPARENT);
     });
 
-    it('should get a specific replication policy', async () => {
-      mockFetch({
+    it('quic_get_replication_policies_error', async () => {
+      resolveError();
+      await expect(client.getReplicationPolicies()).rejects.toThrow('QUIC/HTTP3 error (500)');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // getReplicationPolicy
+  // --------------------------------------------------------------------------
+  describe('getReplicationPolicy', () => {
+    it('quic_get_replication_policy_success', async () => {
+      resolveJson({
         id: 'r1',
-        source_backend: 's3',
-        source_settings: {},
-        source_prefix: '',
-        destination_backend: 'gcs',
-        destination_settings: {},
-        check_interval_seconds: 3600,
+        source_backend: 'local',
+        destination_backend: 's3',
+        check_interval: 60,
         enabled: true,
-        replication_mode: 0,
+        replication_mode: 'opaque',
       });
 
-      const result = await client.getReplicationPolicy({ id: 'r1' });
+      const response = await client.getReplicationPolicy({ id: 'r1' });
 
-      expect(result.policy?.id).toBe('r1');
+      expect(response.policy?.id).toBe('r1');
+      expect(response.policy?.replicationMode).toBe(ReplicationMode.OPAQUE);
     });
 
-    it('should trigger replication', async () => {
-      mockFetch({
+    it('quic_get_replication_policy_error', async () => {
+      resolveError();
+      await expect(
+        client.getReplicationPolicy({ id: 'r1' })
+      ).rejects.toThrow('QUIC/HTTP3 error (500)');
+    });
+
+    it('quic_get_replication_policy_not_found', async () => {
+      // 404 → makeRequest returns parsed body; client maps fields (mostly undefined).
+      resolveJson({ id: '' }, 404);
+      const response = await client.getReplicationPolicy({ id: 'missing' });
+      expect(response.policy?.id).toBe('');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // triggerReplication
+  // --------------------------------------------------------------------------
+  describe('triggerReplication', () => {
+    it('quic_trigger_replication_success', async () => {
+      resolveJson({
         success: true,
         result: {
           policy_id: 'r1',
-          synced: 10,
-          deleted: 2,
+          synced: 5,
+          deleted: 1,
           failed: 0,
           bytes_total: 1024,
-          duration_ms: 500,
+          duration_ms: 200,
           errors: [],
         },
       });
 
-      const result = await client.triggerReplication({ policyId: 'r1' });
+      const response = await client.triggerReplication({ policyId: 'r1' });
 
-      expect(result.success).toBe(true);
-      expect(result.result?.synced).toBe(10);
+      expect(response.success).toBe(true);
+      expect(response.result?.synced).toBe(5);
+      expect(response.result?.bytesTotal).toBe(1024);
     });
 
-    it('should get replication status', async () => {
-      mockFetch({
-        success: true,
-        status: {
-          policy_id: 'r1',
-          source_backend: 's3',
-          destination_backend: 'gcs',
-          enabled: true,
-          total_objects_synced: 100,
-          total_objects_deleted: 10,
-          total_bytes_synced: 1048576,
-          total_errors: 0,
-          average_sync_duration_ms: 500,
-          sync_count: 5,
-        },
-      });
-
-      const result = await client.getReplicationStatus({ id: 'r1' });
-
-      expect(result.success).toBe(true);
-      expect(result.status?.totalObjectsSynced).toBe(100);
+    it('quic_trigger_replication_error', async () => {
+      resolveError();
+      await expect(
+        client.triggerReplication({ policyId: 'r1' })
+      ).rejects.toThrow('QUIC/HTTP3 error (500)');
     });
   });
 
+  // --------------------------------------------------------------------------
+  // getReplicationStatus
+  // --------------------------------------------------------------------------
+  describe('getReplicationStatus', () => {
+    it('quic_get_replication_status_success', async () => {
+      resolveJson({
+        success: true,
+        status: {
+          policy_id: 'r1',
+          source_backend: 'local',
+          destination_backend: 's3',
+          enabled: true,
+          total_objects_synced: 10,
+          total_objects_deleted: 2,
+          total_bytes_synced: 2048,
+          total_errors: 0,
+          average_sync_duration_ms: 150,
+          sync_count: 3,
+        },
+      });
+
+      const response = await client.getReplicationStatus({ id: 'r1' });
+
+      expect(response.success).toBe(true);
+      expect(response.status?.totalObjectsSynced).toBe(10);
+      expect(response.status?.syncCount).toBe(3);
+    });
+
+    it('quic_get_replication_status_error', async () => {
+      resolveError();
+      await expect(
+        client.getReplicationStatus({ id: 'r1' })
+      ).rejects.toThrow('QUIC/HTTP3 error (500)');
+    });
+
+    it('quic_get_replication_status_not_found', async () => {
+      resolveJson({ success: true }, 404);
+      const response = await client.getReplicationStatus({ id: 'missing' });
+      expect(response.success).toBe(true);
+      expect(response.status).toBeUndefined();
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // metadata_round_trip
+  // --------------------------------------------------------------------------
+  describe('metadata round trip', () => {
+    it('quic_metadata_round_trip', async () => {
+      const custom = { author: 'jane', tier: 'gold' };
+
+      // put: assert request sets Content-Type, Content-Encoding and one
+      // X-Meta-<key> header per custom entry.
+      mockFetch.mockResolvedValueOnce(
+        mockResponse({ headers: { ...jsonHeaders, etag: '"e"' }, json: { message: 'stored' } })
+      );
+      await client.put({
+        key: 'doc',
+        data: Buffer.from('hello'),
+        metadata: { contentType: 'text/plain', contentEncoding: 'gzip', custom },
+      });
+
+      const putInit = mockFetch.mock.calls[0][1];
+      expect(putInit.headers['Content-Type']).toBe('text/plain');
+      expect(putInit.headers['Content-Encoding']).toBe('gzip');
+      expect(putInit.headers['X-Meta-author']).toBe('jane');
+      expect(putInit.headers['X-Meta-tier']).toBe('gold');
+
+      // get: metadata returned via response headers.
+      mockFetch.mockResolvedValueOnce(
+        mockResponse({
+          headers: {
+            'content-type': 'text/plain',
+            'content-encoding': 'gzip',
+            'content-length': '5',
+            'x-meta-author': 'jane',
+            'x-meta-tier': 'gold',
+          },
+          arrayBuffer: Buffer.from('hello'),
+        })
+      );
+      const getResp = await client.get({ key: 'doc' });
+      expect(getResp.metadata?.contentType).toBe('text/plain');
+      expect(getResp.metadata?.contentEncoding).toBe('gzip');
+      expect(getResp.metadata?.custom).toEqual(custom);
+
+      // getMetadata: read via HEAD response headers (incl. X-Meta-*).
+      mockFetch.mockResolvedValueOnce(
+        mockResponse({
+          status: 200,
+          headers: {
+            'content-type': 'text/plain',
+            'content-encoding': 'gzip',
+            'x-meta-author': 'jane',
+            'x-meta-tier': 'gold',
+          },
+        })
+      );
+      const metaResp = await client.getMetadata({ key: 'doc' });
+      expect(metaResp.metadata?.contentType).toBe('text/plain');
+      expect(metaResp.metadata?.contentEncoding).toBe('gzip');
+      expect(metaResp.metadata?.custom).toEqual(custom);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // validation_empty_key
+  // --------------------------------------------------------------------------
+  describe('validation', () => {
+    it('quic_validation_empty_key', async () => {
+      // The QUIC client has no client-side validation; an empty key hits
+      // /objects/ on the wire. Simulate the server rejecting it and assert the
+      // call raises (no successful network call succeeds).
+      mockFetch.mockResolvedValue(mockResponse({ status: 500, text: 'bad key' }));
+      await expect(
+        client.get({ key: '' })
+      ).rejects.toThrow('QUIC/HTTP3 error');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // close
+  // --------------------------------------------------------------------------
   describe('close', () => {
-    it('should close without errors', async () => {
+    it('quic_close', async () => {
       await expect(client.close()).resolves.toBeUndefined();
     });
   });
 
-  describe('error handling', () => {
-    it('should handle fetch errors in put', async () => {
-      (global.fetch as jest.Mock).mockRejectedValueOnce(new Error('Network error'));
-
-      await expect(
-        client.put({ key: 'test', data: Buffer.from('data') })
-      ).rejects.toThrow('Network error');
-    });
-
-    it('should handle fetch errors in get', async () => {
-      (global.fetch as jest.Mock).mockRejectedValueOnce(new Error('Network error'));
-
-      await expect(client.get({ key: 'test' })).rejects.toThrow('Network error');
-    });
-
-    it('should handle fetch errors in delete', async () => {
-      (global.fetch as jest.Mock).mockRejectedValueOnce(new Error('Network error'));
-
-      await expect(client.delete({ key: 'test' })).rejects.toThrow('Network error');
-    });
-
-    it('should handle fetch errors in list', async () => {
-      (global.fetch as jest.Mock).mockRejectedValueOnce(new Error('Network error'));
-
-      await expect(client.list()).rejects.toThrow('Network error');
-    });
-
-    it('should handle fetch errors in exists by returning false', async () => {
-      (global.fetch as jest.Mock).mockRejectedValueOnce(new Error('Network error'));
-
-      // exists() catches errors and returns { exists: false } by design
-      const result = await client.exists({ key: 'test' });
-      expect(result.exists).toBe(false);
-    });
-
-    it('should handle non-ok responses', async () => {
-      (global.fetch as jest.Mock).mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-        json: async () => ({ error: 'Server error' }),
-      });
-
-      await expect(client.put({ key: 'test', data: Buffer.from('data') })).rejects.toThrow();
-    });
-
-    it('should handle error responses in getMetadata', async () => {
-      (global.fetch as jest.Mock).mockResolvedValueOnce({
-        ok: false,
-        status: 404,
-        json: async () => ({ error: 'Not found' }),
-      });
-
-      await expect(client.getMetadata({ key: 'test' })).rejects.toThrow();
-    });
-  });
-
-  describe('additional edge cases', () => {
-    it('should handle insecure connection', () => {
-      const insecureClient = new QuicClient({ address: 'localhost:8080', secure: false });
-      expect(insecureClient).toBeInstanceOf(QuicClient);
-    });
-
-    it('should handle get response with metadata', async () => {
-      mockFetchBinary(Buffer.from('test data'), {
-        'content-type': 'text/plain',
-        'content-encoding': 'gzip',
-        'content-length': '100',
-        'etag': 'abc123',
-        'last-modified': '2023-01-01T00:00:00Z',
-      });
-
-      const result = await client.get({ key: 'test' });
-
-      expect(result.data.toString()).toBe('test data');
-      expect(result.metadata?.contentType).toBe('text/plain');
-      expect(result.metadata?.contentEncoding).toBe('gzip');
-    });
-
-    it('should handle list with common prefixes', async () => {
-      mockFetch({
-        objects: [{ key: 'file1.txt', metadata: {} }],
-        common_prefixes: ['folder1/', 'folder2/'],
-        next_token: 'token123',
-        truncated: true,
-      });
-
-      const result = await client.list({ delimiter: '/' });
-
-      expect(result.commonPrefixes).toContain('folder1/');
-      expect(result.nextToken).toBe('token123');
-      expect(result.truncated).toBe(true);
-    });
-
-    it('should handle archive with all settings', async () => {
-      mockFetch({ success: true, message: 'Archived successfully' });
-
-      const result = await client.archive({
-        key: 'test',
-        destinationType: 'glacier',
-        destinationSettings: { tier: 'deep-archive' },
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.message).toBe('Archived successfully');
-    });
-
-    it('should handle policy with destination settings', async () => {
-      mockFetch({ success: true });
-
-      const result = await client.addPolicy({
-        policy: {
-          id: 'p1',
-          prefix: 'logs/',
-          retentionSeconds: 86400,
-          action: 'archive',
-          destinationType: 'glacier',
-          destinationSettings: { tier: 'standard' },
-        },
-      });
-
-      expect(result.success).toBe(true);
-    });
-
-    it('should handle replication with encryption', async () => {
-      mockFetch({ success: true });
-
-      const result = await client.addReplicationPolicy({
-        policy: {
-          id: 'r1',
-          sourceBackend: 's3',
-          sourceSettings: {},
-          sourcePrefix: '',
-          destinationBackend: 'gcs',
-          destinationSettings: {},
-          checkIntervalSeconds: 3600,
-          enabled: true,
-          replicationMode: 0,
-          encryption: {
-            source: {
-              enabled: true,
-              provider: 'kms',
-              defaultKey: 'key123',
-            },
-          },
-        },
-      });
-
-      expect(result.success).toBe(true);
-    });
-
-    it('should handle trigger replication with all options', async () => {
-      mockFetch({
-        success: true,
-        result: {
-          policy_id: 'r1',
-          synced: 10,
-          deleted: 2,
-          failed: 1,
-          bytes_total: 1024,
-          duration_ms: 500,
-          errors: ['Error 1'],
-        },
-      });
-
-      const result = await client.triggerReplication({
-        policyId: 'r1',
-        parallel: true,
-        workerCount: 4,
-      });
-
-      expect(result.result?.errors).toHaveLength(1);
-    });
-
-    it('should handle replication status with last sync time', async () => {
-      mockFetch({
-        success: true,
-        status: {
-          policy_id: 'r1',
-          source_backend: 's3',
-          destination_backend: 'gcs',
-          enabled: true,
-          total_objects_synced: 100,
-          total_objects_deleted: 10,
-          total_bytes_synced: 1048576,
-          total_errors: 0,
-          last_sync_time: '2023-01-01T00:00:00Z',
-          average_sync_duration_ms: 500,
-          sync_count: 5,
-        },
-      });
-
-      const result = await client.getReplicationStatus({ id: 'r1' });
-
-      expect(result.status?.lastSyncTime).toBeInstanceOf(Date);
+  describe('secure', () => {
+    it('quic_secure_uses_https', async () => {
+      const secureClient = new QuicClient({ address, secure: true });
+      mockFetch.mockResolvedValue(mockResponse({ headers: jsonHeaders, json: { status: 'healthy' } }));
+      await secureClient.health();
+      expect(mockFetch.mock.calls[0][0]).toMatch(/^https:\/\//);
     });
   });
 });

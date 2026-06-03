@@ -32,14 +32,12 @@ generate-proto:
 # Run unit tests in Docker
 test:
 	@echo "Running unit tests in Docker..."
-	docker compose up --build --abort-on-container-exit python-unit-tests
-	docker compose down -v
+	docker compose up --build --abort-on-container-exit python-unit-tests; rc=$$?; docker compose down -v; exit $$rc
 
 # Run integration tests in Docker
 integration-test:
 	@echo "Running integration tests in Docker..."
-	docker compose up --build --abort-on-container-exit objstore-server python-integration-tests
-	docker compose down -v
+	docker compose up --build --abort-on-container-exit objstore-server python-integration-tests; rc=$$?; docker compose down -v; exit $$rc
 
 # Build Docker test image
 docker-build:
@@ -49,14 +47,12 @@ docker-build:
 # Run unit tests in Docker
 docker-test-unit:
 	@echo "Running unit tests in Docker..."
-	docker compose up --build --abort-on-container-exit python-unit-tests
-	docker compose down -v
+	docker compose up --build --abort-on-container-exit python-unit-tests; rc=$$?; docker compose down -v; exit $$rc
 
 # Run integration tests in Docker
 docker-test-integration:
 	@echo "Running integration tests in Docker..."
-	docker compose up --build --abort-on-container-exit objstore-server python-integration-tests
-	docker compose down -v
+	docker compose up --build --abort-on-container-exit objstore-server python-integration-tests; rc=$$?; docker compose down -v; exit $$rc
 
 # Run all tests in Docker (unit + integration)
 docker-test: docker-test-unit docker-test-integration

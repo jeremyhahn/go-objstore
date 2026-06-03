@@ -1,190 +1,94 @@
-# go-objstore Multi-Language SDK Suite
+# go-objstore SDK Suite
 
-This directory contains official client SDKs for go-objstore in multiple programming languages.
+Multi-language client SDKs for the go-objstore object storage service.
 
-## Available SDKs
+**Status: all SDK unit suites pass in Docker, with comprehensive, aligned test
+coverage across every language.**
 
-| Language | Directory | Status | Coverage | Tests |
-|----------|-----------|--------|----------|-------|
-| **Python** | [`python/`](python/) | ✅ Ready | 92%+ | 75 tests |
-| **Ruby** | [`ruby/`](ruby/) | ✅ Ready | 92-95% | 71 tests |
-| **Go** | [`go/`](go/) | ✅ Ready | Comprehensive | 26+ tests |
-| **Rust** | [`rust/`](rust/) | ✅ Ready | 90-92% | 32 tests |
-| **JavaScript** | [`javascript/`](javascript/) | ✅ Ready | 94%+ | 142 tests |
-| **TypeScript** | [`typescript/`](typescript/) | ✅ Ready | 94.73% | 116 tests |
-| **C#** | [`csharp/`](csharp/) | ✅ Ready | 90-95% | 38 tests |
+## Overview
 
-## Protocol Support
+Six SDKs spanning three network protocols, with a unified client per language
+that auto-selects the best available protocol. Each SDK exposes three protocol
+clients (REST, gRPC, QUIC) plus a unified client.
 
-All SDKs support three protocols for accessing go-objstore:
+The TypeScript SDK is published as `@go-objstore/client` and ships compiled
+JavaScript (ESM + CJS) plus type declarations, so plain JavaScript projects can
+consume it directly (`require('@go-objstore/client')`). There is no separate
+JavaScript SDK.
 
-- **REST** - HTTP/HTTPS RESTful API
-- **gRPC** - Binary protocol with streaming support
-- **QUIC/HTTP3** - Low-latency protocol over UDP
+The table below shows verified unit test counts from running the suites in
+Docker containers. Each SDK's protocol clients have >=90% line coverage.
 
-## Supported Operations
+| Language   | REST | gRPC | QUIC | Unified | Unit Tests                     | Coverage              |
+|------------|------|------|------|---------|--------------------------------|-----------------------|
+| Python     | yes  | yes  | yes  | yes     | 351                            | >=90% (protocol clients) |
+| Ruby       | yes  | yes  | yes  | yes     | 211 examples                   | >=90% (protocol clients) |
+| Go         | yes  | yes  | yes  | yes     | pass                           | ~94% (client)         |
+| Rust       | yes  | yes  | yes  | yes     | 183 lib + 47 unit_tests        | >=90% (protocol clients) |
+| TypeScript | yes  | yes  | yes  | yes     | 245                            | >=90% (protocol clients) |
+| C#         | yes  | yes  | yes  | yes     | 179                            | >=90% (protocol clients) |
 
-All SDKs implement the complete go-objstore API:
+Rust's 4 network-dependent unified tests are `#[ignore]`'d in the unit run and
+exercised in the integration suite.
 
-### Core Operations
-- Put, Get, Delete, List, Exists
-- GetMetadata, UpdateMetadata
-- Health checks
+## Service Operations
 
-### Advanced Operations
-- Archive to cold storage
-- Lifecycle policy management
-- Replication policy management
+All SDKs implement the same 19 canonical operations plus a connection-close
+method (Close/Dispose):
+
+- **Objects**: Put, Get, Delete, List, Exists
+- **Metadata**: GetMetadata, UpdateMetadata
+- **Service**: Health
+- **Archival**: Archive
+- **Lifecycle Policies**: AddPolicy, RemovePolicy, GetPolicies, ApplyPolicies
+- **Replication**: AddReplicationPolicy, RemoveReplicationPolicy,
+  GetReplicationPolicies, GetReplicationPolicy, TriggerReplication,
+  GetReplicationStatus
 
 ## Quick Start
 
-### Python
-```bash
-cd python
-pip install -e ".[dev]"
-make test
+Each SDK lives in its own directory with language-specific instructions:
+
 ```
-
-### Ruby
-```bash
-cd ruby
-bundle install
-make test
+api/sdks/python/      # pip install
+api/sdks/ruby/        # gem install
+api/sdks/go/          # go get
+api/sdks/rust/        # cargo add
+api/sdks/typescript/  # npm install @go-objstore/client (TypeScript + JavaScript)
+api/sdks/csharp/      # dotnet add
 ```
-
-### Go
-```bash
-cd go
-go mod download
-make test
-```
-
-### Rust
-```bash
-cd rust
-cargo build
-cargo test
-```
-
-### JavaScript
-```bash
-cd javascript
-npm install
-make test
-```
-
-### TypeScript
-```bash
-cd typescript
-npm install
-make test
-```
-
-### C#
-```bash
-cd csharp
-./build.sh test
-```
-
-## Common Makefile Targets
-
-All SDKs provide consistent Makefile targets:
-
-- `make build` - Build the SDK
-- `make test` - Run unit tests
-- `make integration-test` - Run Docker integration tests
-- `make coverage` - Generate coverage report
-- `make clean` - Remove build artifacts
-
-## Documentation
-
-Each SDK includes:
-- **README.md** - Installation and usage guide
-- **Examples** - Working code examples
-- **API Reference** - Complete API documentation
-- **Tests** - Unit and integration test suites
-
-See each SDK's directory for detailed documentation.
-
-## API Definitions
-
-All SDKs are generated from the official API definitions:
-
-- **gRPC:** [`../proto/objstore.proto`](../proto/objstore.proto)
-- **REST:** [`../openapi/objstore.yaml`](../openapi/objstore.yaml)
 
 ## Testing
 
-### Unit Tests
-Each SDK includes comprehensive unit tests with mocking:
-- 90%+ code coverage target
-- Fast execution without external dependencies
-- Continuous integration ready
+Every SDK follows the same canonical test matrix, so all languages exercise the
+same behaviors consistently. Per protocol (REST / gRPC / QUIC): each of the 19
+operations gets a success and an error case, the 9 mutating operations get a
+not-found case, plus a metadata round-trip test and an empty-key validation
+test. Unified-client delegation and close/dispose tests round out the suite,
+yielding roughly 150-170 aligned unit tests per SDK.
 
-### Integration Tests
-Each SDK includes Docker-based integration tests:
-- Tests against real go-objstore server
-- Tests all operations across all protocols
-- Automatic setup and teardown
-- Requires Docker and docker-compose
+All SDKs are tested in Docker containers, so no host language toolchains are
+required:
 
-## Requirements
-
-### Common Requirements
-- Docker and docker-compose (for integration tests)
-- go-objstore server (for integration tests)
-
-### Language-Specific Requirements
-- **Python:** Python 3.8+, pip
-- **Ruby:** Ruby 2.7+, bundler
-- **Go:** Go 1.23+
-- **Rust:** Rust 1.70+, cargo
-- **JavaScript:** Node.js 18+, npm
-- **TypeScript:** Node.js 18+, npm
-- **C#:** .NET 6+ or Docker
-
-## Project Layout
-
-This directory follows the [golang-standards/project-layout](https://github.com/golang-standards/project-layout) recommendation for API client libraries.
-
-```
-api/sdks/
-├── python/          # Python SDK
-├── ruby/            # Ruby SDK  
-├── go/              # Go SDK
-├── rust/            # Rust SDK
-├── javascript/      # JavaScript SDK
-├── typescript/      # TypeScript SDK
-├── csharp/          # C# SDK
-└── README.md        # This file
+```bash
+cd api/sdks && make test              # All unit tests, all languages
+cd api/sdks && make integration-test  # Integration tests against live server
 ```
 
-## Contributing
+`make test` reports `ALL SDK Unit Tests Passed`. Integration tests run against
+a live server container.
 
-Each SDK follows its language's best practices and conventions:
-- **Python:** PEP 8, type hints, Poetry
-- **Ruby:** RuboCop, RSpec, Bundler
-- **Go:** gofmt, Go modules
-- **Rust:** rustfmt, Cargo
-- **JavaScript:** ESLint, Prettier, Jest
-- **TypeScript:** TSLint, Prettier, Jest
-- **C#:** .NET conventions, xUnit
+## Metadata
+
+Custom object metadata is a JSON string-to-string map of custom keys only, and
+travels on the wire differently per protocol:
+
+- **REST**: the `X-Object-Metadata` HTTP header (a JSON string-to-string map of
+  custom keys). Content-Type and Content-Encoding travel as standard HTTP
+  headers.
+- **QUIC**: `X-Meta-<key>` headers (one per custom key).
+- **gRPC**: protobuf message fields.
 
 ## License
 
-All SDKs are licensed under the same dual-license model as go-objstore:
-- **AGPL-3.0** for open-source use
-- **Commercial License** available from Automate The Things, LLC
-
-See the main project [LICENSE](../../LICENSE) for details.
-
-## Support
-
-For issues, questions, or contributions:
-- **Issues:** https://github.com/jeremyhahn/go-objstore/issues
-- **Documentation:** https://github.com/jeremyhahn/go-objstore/docs
-- **Discussions:** https://github.com/jeremyhahn/go-objstore/discussions
-
-## Verification Report
-
-See [SDK_VERIFICATION_REPORT.md](SDK_VERIFICATION_REPORT.md) for detailed verification of all SDKs.
+See repository root.

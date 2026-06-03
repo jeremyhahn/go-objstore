@@ -26,5 +26,5 @@ Multi-backend storage abstraction with facade pattern, replication, lifecycle po
 - `cmd/objstore-server` - All-in-one server
 - `cmd/objstore-{grpc,rest,quic,mcp}-server` - Individual server binaries
 - `cmd/objstorelib` - C shared library entry point
-- `api/` - Proto definitions + SDKs (TypeScript, Go, Python, Ruby, Rust, C#, JavaScript)
+- `api/` - Proto definitions + SDKs (TypeScript, Go, Python, Ruby, Rust, C#); the TypeScript SDK (`@go-objstore/client`) ships compiled JS + types for JavaScript consumers
 - `test/integration/` - Docker Compose-based integration tests per backend

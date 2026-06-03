@@ -18,7 +18,7 @@
 - `make test-servers` - Server integration tests (gRPC, REST, QUIC, MCP)
 - `make integration-test-all` - All integration tests including servers
 - `make test-sdks` - All SDK unit tests
-- `make test-sdk-<lang>` - Per-language SDK tests (typescript, go, python, ruby, rust, csharp, javascript)
+- `make test-sdk-<lang>` - Per-language SDK tests (typescript, go, python, ruby, rust, csharp)
 
 ## Code Quality
 - `make lint` - golangci-lint

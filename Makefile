@@ -65,9 +65,14 @@ else
 	TAG_FLAGS :=
 endif
 
+# Version injection (read VERSION file; override pkg/version.Version at link time)
+VERSION := $(shell cat VERSION 2>/dev/null || echo "0.1.0-alpha")
+VERSION_PKG := github.com/jeremyhahn/go-objstore/pkg/version
+VERSION_LDFLAGS := -X $(VERSION_PKG).Version=$(VERSION)
+
 # Go parameters
 GO := go
-GOBUILD := $(GO) build $(TAG_FLAGS)
+GOBUILD := $(GO) build $(TAG_FLAGS) -ldflags "$(VERSION_LDFLAGS)"
 GOTEST := $(GO) test $(TAG_FLAGS)
 GOMOD := $(GO) mod
 GOCLEAN := $(GO) clean
@@ -82,6 +87,10 @@ MODULE := go-objstore
 # Build directories
 BIN_DIR := bin
 COVERAGE_DIR := coverage
+
+# Minimum total unit-test coverage enforced by `make ci` (mirrors the
+# COVERAGE_THRESHOLD used by .github/workflows/ci.yml).
+COVERAGE_THRESHOLD := 89
 
 # Test coverage packages
 PKG_COVER := github.com/jeremyhahn/go-objstore/pkg/adapters,github.com/jeremyhahn/go-objstore/pkg/azure,github.com/jeremyhahn/go-objstore/pkg/azurearchive,github.com/jeremyhahn/go-objstore/pkg/local,github.com/jeremyhahn/go-objstore/pkg/s3,github.com/jeremyhahn/go-objstore/pkg/minio,github.com/jeremyhahn/go-objstore/pkg/factory,github.com/jeremyhahn/go-objstore/pkg/glacier,github.com/jeremyhahn/go-objstore/pkg/gcs,github.com/jeremyhahn/go-objstore/pkg/storagefs,github.com/jeremyhahn/go-objstore/pkg/cli,github.com/jeremyhahn/go-objstore/pkg/server/grpc,github.com/jeremyhahn/go-objstore/pkg/server/rest,github.com/jeremyhahn/go-objstore/pkg/server/quic,github.com/jeremyhahn/go-objstore/pkg/server/mcp
@@ -287,13 +296,13 @@ integration-test-all: integration-test test-servers
 # ==============================================================================
 
 .PHONY: test-sdks
-## test-sdks: Run ALL SDK unit tests (TypeScript, Go, Python, Ruby, Rust, C#, JavaScript)
+## test-sdks: Run ALL SDK unit tests (TypeScript, Go, Python, Ruby, Rust, C#)
 test-sdks:
 	@echo "$(CYAN)$(BOLD)→ Running all SDK unit tests...$(RESET)"
 	@cd api/sdks && $(MAKE) test
 
 .PHONY: integration-test-sdks
-## integration-test-sdks: Run ALL SDK integration tests (TypeScript, Go, Python, Ruby, Rust, C#, JavaScript)
+## integration-test-sdks: Run ALL SDK integration tests (TypeScript, Go, Python, Ruby, Rust, C#)
 integration-test-sdks:
 	@echo "$(CYAN)$(BOLD)→ Running all SDK integration tests...$(RESET)"
 	@cd api/sdks && $(MAKE) integration-test
@@ -328,11 +337,6 @@ test-sdk-rust:
 test-sdk-csharp:
 	@cd api/sdks/csharp && $(MAKE) test
 
-.PHONY: test-sdk-javascript
-## test-sdk-javascript: Run JavaScript SDK unit tests
-test-sdk-javascript:
-	@cd api/sdks/javascript && $(MAKE) test
-
 .PHONY: integration-test-sdk-typescript
 ## integration-test-sdk-typescript: Run TypeScript SDK integration tests
 integration-test-sdk-typescript:
@@ -363,10 +367,10 @@ integration-test-sdk-rust:
 integration-test-sdk-csharp:
 	@cd api/sdks/csharp && $(MAKE) integration-test
 
-.PHONY: integration-test-sdk-javascript
-## integration-test-sdk-javascript: Run JavaScript SDK integration tests
-integration-test-sdk-javascript:
-	@cd api/sdks/javascript && $(MAKE) integration-test
+.PHONY: test-sdks-all
+## test-sdks-all: Run ALL SDK unit + integration tests, fail-fast (aborts on first failure)
+test-sdks-all: test-sdk-typescript integration-test-sdk-typescript test-sdk-go integration-test-sdk-go test-sdk-python integration-test-sdk-python test-sdk-ruby integration-test-sdk-ruby test-sdk-rust integration-test-sdk-rust test-sdk-csharp integration-test-sdk-csharp
+	@echo "$(GREEN)$(BOLD)✓ All SDK unit + integration tests passed$(RESET)"
 
 # ==============================================================================
 # Cloud Integration Tests (Real AWS S3, GCP, Azure)
@@ -549,16 +553,19 @@ docker-test: docker-build
 lint:
 	@echo "$(CYAN)$(BOLD)→ Running golangci-lint...$(RESET)"
 	@GOPATH=$$(go env GOPATH); \
-	if [ -x "$$GOPATH/bin/golangci-lint" ]; then \
-		$$GOPATH/bin/golangci-lint run --timeout=10m && \
-		echo "$(GREEN)✓ Linting passed$(RESET)"; \
-	elif command -v golangci-lint > /dev/null 2>&1; then \
-		golangci-lint run --timeout=10m && \
+	BIN=""; \
+	for cand in "$$GOPATH/bin/golangci-lint" $$(command -v golangci-lint 2>/dev/null) /usr/local/bin/golangci-lint /usr/bin/golangci-lint; do \
+		[ -x "$$cand" ] || continue; \
+		ver=$$("$$cand" version 2>/dev/null | grep -oE 'version v?[0-9]+' | grep -oE '[0-9]+' | head -1); \
+		if [ "$$ver" = "2" ]; then BIN="$$cand"; break; fi; \
+	done; \
+	if [ -n "$$BIN" ]; then \
+		echo "$(CYAN)  Using $$BIN$(RESET)"; \
+		"$$BIN" run --timeout=10m && \
 		echo "$(GREEN)✓ Linting passed$(RESET)"; \
 	else \
-		echo "$(RED)✗ golangci-lint not found$(RESET)"; \
-		echo "$(YELLOW)  Install: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest$(RESET)"; \
-		echo "$(YELLOW)  Or: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b \$$(go env GOPATH)/bin$(RESET)"; \
+		echo "$(RED)✗ golangci-lint v2 not found (config is version: \"2\")$(RESET)"; \
+		echo "$(YELLOW)  Install: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b \$$(go env GOPATH)/bin$(RESET)"; \
 		exit 1; \
 	fi
 
@@ -605,48 +612,44 @@ security:
 	fi
 	@echo "$(GREEN)✓ Security checks complete$(RESET)"
 
-.PHONY: ci-local
-## ci-local: Run all CI checks locally (test, lint, security, build) - use this before committing!
-ci-local:
+.PHONY: ci
+## ci: Run the full CI pipeline locally (mirrors .github/workflows/ci.yml, Go-core only; SDKs via test-sdks-all)
+ci:
 	@echo "$(CYAN)$(BOLD)========================================$(RESET)"
-	@echo "$(CYAN)$(BOLD)  Running CI Checks Locally$(RESET)"
+	@echo "$(CYAN)$(BOLD)  Running CI Pipeline (mirrors GitHub CI)$(RESET)"
 	@echo "$(CYAN)$(BOLD)========================================$(RESET)"
 	@echo ""
-	@echo "$(CYAN)$(BOLD)[1/4] Running unit tests...$(RESET)"
+	@echo "$(CYAN)$(BOLD)[1/6] Verifying module dependencies...$(RESET)"
+	@$(GO) mod verify || (echo "$(RED)✗ Module verification failed$(RESET)" && exit 1)
+	@echo ""
+	@echo "$(CYAN)$(BOLD)[2/6] Running unit tests with coverage...$(RESET)"
 	@$(MAKE) test || (echo "$(RED)✗ Tests failed$(RESET)" && exit 1)
+	@COVERAGE=$$($(GO) tool cover -func=$(COVERAGE_DIR)/unit.out | grep total | awk '{print $$3}' | sed 's/%//'); \
+	echo "  Coverage: $${COVERAGE}% (threshold: $(COVERAGE_THRESHOLD)%)"; \
+	if awk "BEGIN{exit !($${COVERAGE} < $(COVERAGE_THRESHOLD))}"; then \
+		echo "$(RED)✗ Coverage $${COVERAGE}% is below threshold $(COVERAGE_THRESHOLD)%$(RESET)"; \
+		exit 1; \
+	fi
 	@echo ""
-	@echo "$(CYAN)$(BOLD)[2/4] Running linter...$(RESET)"
+	@echo "$(CYAN)$(BOLD)[3/6] Running linter...$(RESET)"
 	@$(MAKE) lint || (echo "$(RED)✗ Linting failed$(RESET)" && exit 1)
 	@echo ""
-	@echo "$(CYAN)$(BOLD)[3/4] Running security checks...$(RESET)"
+	@echo "$(CYAN)$(BOLD)[4/6] Running security checks...$(RESET)"
 	@$(MAKE) security || (echo "$(RED)✗ Security checks failed$(RESET)" && exit 1)
 	@echo ""
-	@echo "$(CYAN)$(BOLD)[4/4] Building binaries...$(RESET)"
+	@echo "$(CYAN)$(BOLD)[5/6] Building binaries...$(RESET)"
 	@WITH_LOCAL=1 WITH_AWS=1 WITH_GCP=1 WITH_AZURE=1 $(MAKE) build-cli || (echo "$(RED)✗ CLI build failed$(RESET)" && exit 1)
 	@WITH_LOCAL=1 WITH_AWS=1 WITH_GCP=1 WITH_AZURE=1 $(MAKE) build-server || (echo "$(RED)✗ Server build failed$(RESET)" && exit 1)
 	@WITH_LOCAL=1 WITH_AWS=1 WITH_GCP=1 WITH_AZURE=1 $(MAKE) lib || (echo "$(RED)✗ Library build failed$(RESET)" && exit 1)
 	@echo ""
-	@echo "$(GREEN)$(BOLD)========================================$(RESET)"
-	@echo "$(GREEN)$(BOLD)  ✓ All CI Checks Passed!$(RESET)"
-	@echo "$(GREEN)$(BOLD)========================================$(RESET)"
-	@echo ""
-	@echo "$(YELLOW)$(BOLD)TIP:$(RESET) Run 'make ci-local-full' to also run integration tests"
-
-.PHONY: ci-local-full
-## ci-local-full: Run ALL CI checks locally including integration tests - comprehensive pre-push check
-ci-local-full:
-	@echo "$(CYAN)$(BOLD)========================================$(RESET)"
-	@echo "$(CYAN)$(BOLD)  Running FULL CI Checks Locally$(RESET)"
-	@echo "$(CYAN)$(BOLD)========================================$(RESET)"
-	@echo ""
-	@$(MAKE) ci-local || exit 1
-	@echo ""
-	@echo "$(CYAN)$(BOLD)[5/5] Running integration tests...$(RESET)"
+	@echo "$(CYAN)$(BOLD)[6/6] Running integration tests...$(RESET)"
 	@$(MAKE) integration-test || (echo "$(RED)✗ Integration tests failed$(RESET)" && exit 1)
 	@echo ""
 	@echo "$(GREEN)$(BOLD)========================================$(RESET)"
-	@echo "$(GREEN)$(BOLD)  ✓ ALL Checks Passed (including integration tests)!$(RESET)"
+	@echo "$(GREEN)$(BOLD)  ✓ CI Pipeline Passed!$(RESET)"
 	@echo "$(GREEN)$(BOLD)========================================$(RESET)"
+	@echo ""
+	@echo "$(YELLOW)Note: container image vulnerability scanning (Trivy/Grype) runs only in GitHub CI.$(RESET)"
 
 .PHONY: pre-commit
 ## pre-commit: Run all pre-commit checks (format, vet, lint, test)
@@ -675,7 +678,6 @@ clean:
 	@find /tmp -type f -name "*objstore*.log" -o -name "*test*.log" -o -name "*objstore*.log" 2>/dev/null | xargs -r rm -f
 	@rm -f objstore-server objstore-quic-server objstore.pb.go objstore_grpc.pb.go
 	@# Clean SDK build artifacts (may require sudo if created by Docker)
-	@rm -rf api/sdks/javascript/node_modules api/sdks/javascript/coverage api/sdks/javascript/dist 2>/dev/null || true
 	@rm -rf api/sdks/typescript/node_modules api/sdks/typescript/coverage api/sdks/typescript/dist 2>/dev/null || true
 	@rm -rf api/sdks/python/.venv api/sdks/python/venv api/sdks/python/.pytest_cache api/sdks/python/.mypy_cache 2>/dev/null || true
 	@rm -rf api/sdks/python/*.egg-info api/sdks/python/dist api/sdks/python/build api/sdks/python/htmlcov 2>/dev/null || true
@@ -692,7 +694,7 @@ lib:
 	@echo "$(CYAN)$(BOLD)→ Building shared library...$(RESET)"
 	@echo "$(CYAN)  Build tags: $(BUILD_TAGS)$(RESET)"
 	@mkdir -p $(BIN_DIR)
-	@$(GO) build $(TAG_FLAGS) -buildmode=c-shared -o $(BIN_DIR)/libobjstore.so ./cmd/objstorelib
+	@$(GO) build $(TAG_FLAGS) -ldflags "$(VERSION_LDFLAGS)" -buildmode=c-shared -o $(BIN_DIR)/libobjstore.so ./cmd/objstorelib
 	@mv $(BIN_DIR)/libobjstore.h examples/c_client/libobjstore.h
 	@echo "$(GREEN)✓ Created $(BIN_DIR)/libobjstore.so and examples/c_client/libobjstore.h$(RESET)"
 
@@ -731,6 +733,10 @@ help:
 	@echo "  $(YELLOW)integration-test-cli$(RESET)         Run CLI integration tests"
 	@echo "  $(YELLOW)test-servers$(RESET)                 Run server integration tests (gRPC, REST, QUIC, MCP)"
 	@echo "  $(YELLOW)integration-test-all$(RESET)         Run all integration tests including servers"
+	@echo "  $(YELLOW)test-sdks$(RESET)                    Run ALL SDK unit tests (TS, Go, Python, Ruby, Rust, C#)"
+	@echo "  $(YELLOW)integration-test-sdks$(RESET)        Run ALL SDK integration tests (TS, Go, Python, Ruby, Rust, C#)"
+	@echo "  $(YELLOW)test-sdks-all$(RESET)                Run ALL SDK unit + integration tests, fail-fast"
+	@echo "  $(YELLOW)ci$(RESET)                           Run full CI pipeline locally (Go-core only; SDKs via test-sdks-all)"
 	@echo "  $(YELLOW)test-cloud$(RESET)                   Run all cloud backend tests (real AWS/GCP/Azure)"
 	@echo "  $(YELLOW)test-cloud-s3$(RESET)                Run AWS S3 cloud tests"
 	@echo "  $(YELLOW)test-cloud-gcs$(RESET)               Run Google Cloud Storage tests"
@@ -743,6 +749,9 @@ help:
 	@echo "  $(YELLOW)clean$(RESET)                        Clean up all resources"
 	@echo "  $(YELLOW)show-backends$(RESET)                Display enabled storage backends"
 	@echo "  $(YELLOW)version$(RESET)                      Display current version"
+	@echo "  $(YELLOW)version-sync$(RESET)                 Propagate root VERSION to all SDK manifests"
+	@echo "  $(YELLOW)version-check$(RESET)                Verify all SDK manifests match root VERSION"
+	@echo "  $(YELLOW)version-set$(RESET)                  Set root VERSION (VERSION=X.Y.Z) and sync SDKs"
 	@echo "  $(YELLOW)version-bump-patch$(RESET)           Bump patch version (X.Y.Z -> X.Y.Z+1)"
 	@echo "  $(YELLOW)version-bump-minor$(RESET)           Bump minor version (X.Y.Z -> X.Y+1.0)"
 	@echo "  $(YELLOW)version-bump-major$(RESET)           Bump major version (X.Y.Z -> X+1.0.0)"
@@ -815,13 +824,46 @@ show-backends:
 # Version Management
 # ==============================================================================
 
-# Read version from VERSION file
-VERSION := $(shell cat VERSION 2>/dev/null || echo "0.1.0-alpha")
+# VERSION is defined near the top of this file (used for ldflags injection).
 
 .PHONY: version
 ## version: Display current version
 version:
 	@echo "$(CYAN)$(BOLD)Current Version:$(RESET) $(VERSION)"
+
+.PHONY: version-sync
+## version-sync: Propagate the root VERSION to every SDK manifest
+version-sync:
+	@echo "$(CYAN)$(BOLD)→ Syncing VERSION ($(VERSION)) to all SDKs...$(RESET)"
+	@bash ./scripts/sync-version.sh
+	@echo "$(GREEN)✓ SDK versions synced$(RESET)"
+
+.PHONY: version-check
+## version-check: Verify every SDK manifest matches the root VERSION
+version-check:
+	@echo "$(CYAN)$(BOLD)→ Verifying SDK versions match VERSION ($(VERSION))...$(RESET)"
+	@bash ./scripts/check-version.sh
+	@echo "$(GREEN)✓ All SDK versions match$(RESET)"
+
+# version-set takes the new version via VERSION=X.Y.Z. Because the make
+# variable VERSION is always populated from the VERSION file, the argument is
+# only honored when it was provided on the command line; otherwise the target
+# errors instead of silently re-writing the file with the current value.
+.PHONY: version-set
+## version-set: Set root VERSION to X.Y.Z and sync all SDKs (usage: make version-set VERSION=X.Y.Z)
+version-set:
+	@if [ "$(origin VERSION)" != "command line" ]; then \
+		echo "$(RED)✗ VERSION must be passed on the command line (usage: make version-set VERSION=X.Y.Z)$(RESET)"; \
+		exit 1; \
+	fi
+	@if [ -z "$(strip $(VERSION))" ]; then \
+		echo "$(RED)✗ VERSION must not be empty (usage: make version-set VERSION=X.Y.Z)$(RESET)"; \
+		exit 1; \
+	fi
+	@echo "$(CYAN)$(BOLD)→ Setting version to $(VERSION)...$(RESET)"
+	@printf '%s\n' "$(VERSION)" > VERSION
+	@echo "$(GREEN)✓ Root VERSION set to $(VERSION)$(RESET)"
+	@$(MAKE) --no-print-directory version-sync
 
 .PHONY: version-bump-patch
 ## version-bump-patch: Bump patch version (X.Y.Z -> X.Y.Z+1)

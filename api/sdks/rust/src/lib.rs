@@ -86,6 +86,7 @@
 //! ```
 
 pub mod client;
+pub mod duration;
 pub mod error;
 pub mod grpc_client;
 pub mod quic_client;

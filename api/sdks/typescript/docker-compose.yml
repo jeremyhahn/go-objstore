@@ -8,9 +8,9 @@ services:
         BUILD_TAGS: local
     command: ["/app/objstore-server", "--quic-self-signed"]
     ports:
-      - "8080:8080"    # REST
-      - "50051:50051"  # gRPC
-      - "4433:4433"    # QUIC
+      - "18180:8080"    # REST
+      - "15151:50051"  # gRPC
+      - "14533:4433"    # QUIC
     environment:
       - STORAGE_BACKEND=local
       - STORAGE_PATH=/data

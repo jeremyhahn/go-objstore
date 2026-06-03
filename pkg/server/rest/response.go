@@ -15,7 +15,6 @@ package rest
 
 import (
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
@@ -70,7 +69,7 @@ type ArchiveRequest struct {
 type AddPolicyRequest struct {
 	ID                  string            `json:"id" binding:"required" example:"policy-1"`
 	Prefix              string            `json:"prefix,omitempty" example:"logs/"`
-	Retention           time.Duration     `json:"retention_seconds" binding:"required" example:"2592000"`
+	RetentionSeconds    int64             `json:"retention_seconds" example:"2592000"`
 	Action              string            `json:"action" binding:"required" example:"delete"`
 	DestinationType     string            `json:"destination_type,omitempty" example:"s3"`
 	DestinationSettings map[string]string `json:"destination_settings,omitempty"`

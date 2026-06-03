@@ -47,6 +47,8 @@ func New(opts *Options) (*Server, error) {
 		opts.WriteTimeout,
 		opts.Logger,
 		opts.Authenticator,
+		opts.Authorizer,
+		opts.AllowedOrigins,
 	)
 	if err != nil {
 		return nil, err
@@ -103,7 +105,7 @@ func (s *Server) Start() error {
 		if err != nil && s.running.Load() {
 			// Only log error if server is supposed to be running
 			s.opts.Logger.Error(context.TODO(), "QUIC server error",
-				adapters.Field{Key: "error", Value: err.Error()},
+				adapters.Field{Key: fieldError, Value: err.Error()},
 			)
 		}
 		s.running.Store(false)

@@ -17,6 +17,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"os"
 	"sync"
@@ -24,6 +25,37 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 )
+
+// ErrPeerCredUnsupported indicates that peer credentials could not be obtained
+// for the connection (e.g. on a platform without SO_PEERCRED, or for a
+// non-Unix connection). Callers fall back to the configured Authenticator when
+// this is returned.
+var ErrPeerCredUnsupported = errors.New("unix: peer credentials not supported on this platform/connection")
+
+// principalCtxKey is the context key under which a peer-credential principal is
+// carried from the connection layer to the request handler.
+type principalCtxKey struct{}
+
+// withPrincipal returns a copy of ctx carrying the given principal.
+func withPrincipal(ctx context.Context, p *adapters.Principal) context.Context {
+	return context.WithValue(ctx, principalCtxKey{}, p)
+}
+
+// principalFromContext returns the peer-credential principal stored in ctx, if any.
+func principalFromContext(ctx context.Context) (*adapters.Principal, bool) {
+	p, ok := ctx.Value(principalCtxKey{}).(*adapters.Principal)
+	return p, ok
+}
+
+// DisablePeerCredentials returns a *bool suitable for
+// ServerConfig.UsePeerCredentials to explicitly turn peer-credential
+// authentication off.
+func DisablePeerCredentials() *bool { b := false; return &b }
+
+// EnablePeerCredentials returns a *bool suitable for
+// ServerConfig.UsePeerCredentials to explicitly turn peer-credential
+// authentication on (this is also the default when left unset).
+func EnablePeerCredentials() *bool { b := true; return &b }
 
 // ServerConfig holds Unix socket server configuration
 type ServerConfig struct {
@@ -38,6 +70,43 @@ type ServerConfig struct {
 
 	// Logger is the pluggable logger adapter
 	Logger adapters.Logger
+
+	// Authenticator is the pluggable authentication adapter (default: NoOpAuthenticator).
+	//
+	// Unix-domain-socket transport carries no HTTP/gRPC/mTLS credential object,
+	// so the server cannot present transport credentials to the authenticator.
+	// With the default NoOpAuthenticator every request is treated as the
+	// anonymous principal. Custom authenticators are still honored for their
+	// principal shape, but principals here are derived without transport
+	// credentials. Richer unix authN (e.g. SO_PEERCRED-based identity) is a
+	// follow-up.
+	Authenticator adapters.Authenticator
+
+	// Authorizer is the pluggable authorization adapter (default: NoOpAuthorizer = allow-all).
+	Authorizer adapters.Authorizer
+
+	// UsePeerCredentials, when set, controls whether the request principal is
+	// derived from the connecting peer's OS credentials (SO_PEERCRED: uid/gid/pid)
+	// instead of the configured Authenticator.
+	//
+	// A nil value (the zero value, i.e. unset) is treated as TRUE: peer
+	// credentials are the natural, zero-config identity for a Unix domain socket
+	// and are strictly more informative than an anonymous principal. Use
+	// DisablePeerCredentials() to opt out, or EnablePeerCredentials() to be
+	// explicit.
+	//
+	// The socket file's permission bits (SocketPermissions, default 0660) remain
+	// the primary access gate: the OS only lets processes that can open the
+	// socket connect at all. Peer credentials add the authenticated identity
+	// (uid/gid and primary-group role) on top, which the Authorizer then uses for
+	// per-method decisions. With the default NoOpAuthorizer every method is still
+	// allowed, so enabling peer credentials does not change access on its own;
+	// supply an RBACAuthorizer keyed on the peer's group/role to restrict by OS
+	// identity.
+	//
+	// If peer credentials cannot be extracted (non-Linux platforms, or a non-Unix
+	// connection), the server falls back to the configured Authenticator.
+	UsePeerCredentials *bool
 }
 
 // DefaultConfig returns default server configuration
@@ -46,6 +115,8 @@ func DefaultConfig() *ServerConfig {
 		SocketPath:        "/var/run/objstore.sock",
 		SocketPermissions: 0660,
 		Logger:            adapters.NewDefaultLogger(),
+		Authenticator:     adapters.NewNoOpAuthenticator(),
+		Authorizer:        adapters.NewNoOpAuthorizer(),
 	}
 }
 
@@ -57,6 +128,9 @@ type Server struct {
 	mu       sync.Mutex
 	closed   bool
 	wg       sync.WaitGroup
+	// usePeerCred is the resolved value of ServerConfig.UsePeerCredentials
+	// (nil/unset defaults to true).
+	usePeerCred bool
 }
 
 // NewServer creates a new Unix socket server
@@ -82,11 +156,26 @@ func NewServer(config *ServerConfig) (*Server, error) {
 		config.SocketPermissions = 0660
 	}
 
-	handler := NewHandler(config.Backend, config.Logger)
+	if config.Authenticator == nil {
+		config.Authenticator = adapters.NewNoOpAuthenticator()
+	}
+
+	if config.Authorizer == nil {
+		config.Authorizer = adapters.NewNoOpAuthorizer()
+	}
+
+	handler := NewHandler(config.Backend, config.Logger, config.Authenticator, config.Authorizer)
+
+	// Peer-credential authentication defaults to enabled when left unset.
+	usePeerCred := true
+	if config.UsePeerCredentials != nil {
+		usePeerCred = *config.UsePeerCredentials
+	}
 
 	return &Server{
-		config:  config,
-		handler: handler,
+		config:      config,
+		handler:     handler,
+		usePeerCred: usePeerCred,
 	}, nil
 }
 
@@ -108,7 +197,9 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Set socket permissions
 	if err := os.Chmod(s.config.SocketPath, s.config.SocketPermissions); err != nil {
-		listener.Close()
+		// Close the listener we just opened; the chmod failure is the error we
+		// surface, so a close failure here is intentionally ignored.
+		_ = listener.Close()
 		return err
 	}
 
@@ -136,7 +227,7 @@ func (s *Server) acceptLoop(ctx context.Context) {
 				return
 			}
 			s.config.Logger.Warn(ctx, "Accept error",
-				adapters.Field{Key: "error", Value: err.Error()},
+				adapters.Field{Key: fieldError, Value: err.Error()},
 			)
 			continue
 		}
@@ -152,6 +243,24 @@ func (s *Server) handleConnection(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 
 	s.config.Logger.Debug(ctx, "New client connected")
+
+	// Extract the peer's OS credentials once per connection and carry the
+	// resulting principal in the context so the handler can authorize by the
+	// connecting process's identity. The socket file permissions remain the
+	// primary access gate; peer credentials supply the principal identity. If
+	// extraction is unsupported (non-Linux, non-Unix conn), fall back to the
+	// configured Authenticator by leaving the principal out of the context.
+	if s.usePeerCred {
+		if principal, err := peerCredPrincipal(conn); err != nil {
+			if !errors.Is(err, ErrPeerCredUnsupported) {
+				s.config.Logger.Warn(ctx, "peer credential extraction failed",
+					adapters.Field{Key: fieldError, Value: err.Error()},
+				)
+			}
+		} else {
+			ctx = withPrincipal(ctx, principal)
+		}
+	}
 
 	scanner := bufio.NewScanner(conn)
 	// Increase buffer size for large requests
@@ -169,7 +278,7 @@ func (s *Server) handleConnection(ctx context.Context, conn net.Conn) {
 		responseBytes, err := json.Marshal(response)
 		if err != nil {
 			s.config.Logger.Error(ctx, "Failed to marshal response",
-				adapters.Field{Key: "error", Value: err.Error()},
+				adapters.Field{Key: fieldError, Value: err.Error()},
 			)
 			continue
 		}
@@ -178,7 +287,7 @@ func (s *Server) handleConnection(ctx context.Context, conn net.Conn) {
 		responseBytes = append(responseBytes, '\n')
 		if _, err := conn.Write(responseBytes); err != nil {
 			s.config.Logger.Error(ctx, "Failed to write response",
-				adapters.Field{Key: "error", Value: err.Error()},
+				adapters.Field{Key: fieldError, Value: err.Error()},
 			)
 			return
 		}
@@ -186,7 +295,7 @@ func (s *Server) handleConnection(ctx context.Context, conn net.Conn) {
 
 	if err := scanner.Err(); err != nil {
 		s.config.Logger.Debug(ctx, "Client disconnected",
-			adapters.Field{Key: "error", Value: err.Error()},
+			adapters.Field{Key: fieldError, Value: err.Error()},
 		)
 	}
 }
@@ -229,7 +338,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	s.config.Logger.Info(ctx, "Shutting down Unix socket server")
 
 	if listener != nil {
-		listener.Close()
+		if err := listener.Close(); err != nil {
+			s.config.Logger.Warn(ctx, "Failed to close listener",
+				adapters.Field{Key: fieldError, Value: err.Error()},
+			)
+		}
 	}
 
 	// Wait for active connections to finish
@@ -238,7 +351,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	// Remove socket file
 	if err := os.Remove(s.config.SocketPath); err != nil && !os.IsNotExist(err) {
 		s.config.Logger.Warn(ctx, "Failed to remove socket file",
-			adapters.Field{Key: "error", Value: err.Error()},
+			adapters.Field{Key: fieldError, Value: err.Error()},
 		)
 	}
 

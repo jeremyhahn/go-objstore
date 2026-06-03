@@ -44,14 +44,11 @@ module ObjectStore
             req.headers["Content-Encoding"] = metadata_obj.content_encoding
           end
 
-          # Build metadata JSON including content_type and custom fields
-          metadata_hash = {}
-          metadata_hash["content_type"] = metadata_obj.content_type if metadata_obj.content_type
-          metadata_hash["content_encoding"] = metadata_obj.content_encoding if metadata_obj.content_encoding
-          metadata_hash.merge!(metadata_obj.custom) if metadata_obj.custom
-
-          if metadata_hash.any?
-            req.headers["X-Object-Metadata"] = metadata_hash.to_json
+          # X-Object-Metadata carries ONLY the custom string->string map.
+          # content_type/content_encoding are conveyed via standard HTTP headers above.
+          custom = metadata_obj.custom
+          if custom && custom.any?
+            req.headers["X-Object-Metadata"] = custom.to_json
           end
 
           req.body = data
@@ -103,9 +100,11 @@ module ObjectStore
         handle_response(response) do |body|
           metadata = Models::Metadata.new(
             content_type: response.headers["content-type"],
+            content_encoding: response.headers["content-encoding"],
             size: response.headers["content-length"]&.to_i,
             etag: response.headers["etag"],
-            last_modified: response.headers["last-modified"]
+            last_modified: response.headers["last-modified"],
+            custom: parse_custom_metadata(response)
           )
 
           Models::GetResponse.new(body, metadata)
@@ -133,9 +132,11 @@ module ObjectStore
           # Return metadata from headers
           Models::Metadata.new(
             content_type: response.headers["content-type"],
+            content_encoding: response.headers["content-encoding"],
             size: response.headers["content-length"]&.to_i,
             etag: response.headers["etag"],
-            last_modified: response.headers["last-modified"]
+            last_modified: response.headers["last-modified"],
+            custom: parse_custom_metadata(response)
           )
         end
       rescue StandardError
@@ -155,9 +156,11 @@ module ObjectStore
           # Return metadata
           Models::Metadata.new(
             content_type: response.headers["content-type"],
+            content_encoding: response.headers["content-encoding"],
             size: response.headers["content-length"]&.to_i,
             etag: response.headers["etag"],
-            last_modified: response.headers["last-modified"]
+            last_modified: response.headers["last-modified"],
+            custom: parse_custom_metadata(response)
           )
         end
       end
@@ -208,9 +211,13 @@ module ObjectStore
       # @return [Boolean] true if exists, false otherwise
       def exists?(key)
         response = @connection.head("/objects/#{encode_key(key)}")
-        response.status == 200
-      rescue ObjectStore::NotFoundError
-        false
+        return true if (200..299).cover?(response.status)
+        return false if response.status == 404
+
+        # Route any other non-2xx (notably 5xx) through the shared error
+        # handler so a server error raises rather than masquerading as "absent".
+        # HEAD has no body, so the handler's body parsing simply yields nothing.
+        handle_response(response) { false }
       end
 
       def get_metadata(key)
@@ -381,21 +388,33 @@ module ObjectStore
         handle_response(response) do |body|
           {
             success: true,
-            result: body["result"],
+            result: body["result"]&.transform_keys(&:to_sym),
             message: body["message"]
           }
         end
       end
 
       def get_replication_status(id)
-        response = @connection.get("/replication/policies/#{id}/status")
+        response = @connection.get("/replication/status/#{id}")
 
         handle_response(response) do |body|
+          # The server returns status fields flat at the top level (not nested
+          # under a "status" key).
           {
             success: true,
-            status: Models::ReplicationStatus.new(body["status"])
+            status: Models::ReplicationStatus.new(body)
           }
         end
+      end
+
+      # Close the underlying HTTP connection if one is held
+      #
+      # Closes the Faraday connection when the adapter supports it; otherwise
+      # this is a safe no-op. Safe to call multiple times.
+      #
+      # @return [void]
+      def close
+        @connection.close if @connection.respond_to?(:close)
       end
 
       private
@@ -415,6 +434,18 @@ module ObjectStore
 
       def encode_key(key)
         URI.encode_www_form_component(key)
+      end
+
+      # Parse the custom string->string metadata map from the X-Object-Metadata
+      # response header. Returns an empty hash when the header is absent or invalid.
+      def parse_custom_metadata(response)
+        header = response.headers["x-object-metadata"] || response.headers["X-Object-Metadata"]
+        return {} if header.nil? || header.empty?
+
+        parsed = JSON.parse(header)
+        parsed.is_a?(Hash) ? parsed : {}
+      rescue JSON::ParserError
+        {}
       end
 
       def handle_response(response)

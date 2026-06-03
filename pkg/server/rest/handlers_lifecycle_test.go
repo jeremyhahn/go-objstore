@@ -198,10 +198,10 @@ func TestAddPolicyEndpoint(t *testing.T) {
 				return newMockLifecycleStorage()
 			},
 			requestBody: AddPolicyRequest{
-				ID:        "policy1",
-				Prefix:    "logs/",
-				Retention: 24 * time.Hour,
-				Action:    "delete",
+				ID:               "policy1",
+				Prefix:           "logs/",
+				RetentionSeconds: 86400,
+				Action:           "delete",
 			},
 			wantStatusCode: http.StatusCreated,
 		},
@@ -228,10 +228,10 @@ func TestAddPolicyEndpoint(t *testing.T) {
 				return storage
 			},
 			requestBody: AddPolicyRequest{
-				ID:        "existing",
-				Prefix:    "logs/",
-				Retention: 24 * time.Hour,
-				Action:    "delete",
+				ID:               "existing",
+				Prefix:           "logs/",
+				RetentionSeconds: 86400,
+				Action:           "delete",
 			},
 			wantStatusCode: http.StatusConflict,
 		},
@@ -251,10 +251,10 @@ func TestAddPolicyEndpoint(t *testing.T) {
 				return storage
 			},
 			requestBody: AddPolicyRequest{
-				ID:        "policy3",
-				Prefix:    "logs/",
-				Retention: 24 * time.Hour,
-				Action:    "delete",
+				ID:               "policy3",
+				Prefix:           "logs/",
+				RetentionSeconds: 86400,
+				Action:           "delete",
 			},
 			wantStatusCode: http.StatusInternalServerError,
 		},

@@ -97,6 +97,14 @@ type ReplicationManager interface {
 	// SyncPolicy syncs a specific policy.
 	SyncPolicy(ctx context.Context, policyID string) (*SyncResult, error)
 
+	// SyncAllParallel syncs all enabled policies using the given number of
+	// worker goroutines. A workerCount <= 0 selects a sensible default.
+	SyncAllParallel(ctx context.Context, workerCount int) (*SyncResult, error)
+
+	// SyncPolicyParallel syncs a specific policy using the given number of
+	// worker goroutines. A workerCount <= 0 selects a sensible default.
+	SyncPolicyParallel(ctx context.Context, policyID string, workerCount int) (*SyncResult, error)
+
 	// SetBackendEncrypterFactory sets the backend at-rest encryption factory for a policy.
 	SetBackendEncrypterFactory(policyID string, factory EncrypterFactory) error
 

@@ -36,11 +36,11 @@ type Config struct {
 	ServerProtocol string // Server protocol: rest, grpc, or quic
 
 	// Encryption settings
-	EncryptionEnabled      bool
-	EncryptionKeyID        string
-	EncryptionBackend      string
-	EncryptionBackendPath  string
-	EncryptionXKMSPath string
+	EncryptionEnabled     bool
+	EncryptionKeyID       string
+	EncryptionBackend     string
+	EncryptionBackendPath string
+	EncryptionKMSPath     string
 }
 
 // InitConfig initializes the configuration using Viper.
@@ -136,8 +136,8 @@ func (c *Config) GetStorageSettings() map[string]string {
 	if c.EncryptionBackendPath != "" {
 		settings["encryption_backend_path"] = c.EncryptionBackendPath
 	}
-	if c.EncryptionXKMSPath != "" {
-		settings["encryption_xkms_path"] = c.EncryptionXKMSPath
+	if c.EncryptionKMSPath != "" {
+		settings["encryption_kms_path"] = c.EncryptionKMSPath
 	}
 
 	// For local backend, use persistent lifecycle manager so policies survive across CLI commands

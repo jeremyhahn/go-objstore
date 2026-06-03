@@ -1,10 +1,11 @@
 """Data models for the go-objstore SDK."""
 
+import re
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
 
 class HealthStatus(str, Enum):
@@ -104,12 +105,12 @@ class ReplicationPolicy(BaseModel):
     source_settings: Dict[str, str] = Field(
         default_factory=dict, description="Source backend settings"
     )
-    source_prefix: str = Field("", description="Source object prefix filter")
+    source_prefix: Optional[str] = Field("", description="Source object prefix filter")
     destination_backend: str = Field(..., description="Destination backend type")
     destination_settings: Dict[str, str] = Field(
         default_factory=dict, description="Destination backend settings"
     )
-    check_interval_seconds: int = Field(..., description="Check interval in seconds")
+    check_interval_seconds: int = Field(0, description="Check interval in seconds")
     last_sync_time: Optional[datetime] = Field(None, description="Last sync timestamp")
     enabled: bool = Field(True, description="Whether policy is active")
     encryption: Optional[EncryptionPolicy] = Field(None, description="Encryption configuration")
@@ -216,8 +217,55 @@ class GetReplicationPoliciesResponse(BaseModel):
     )
 
 
+def _parse_go_duration_ms(s: str) -> int:
+    """Parse a Go duration string (e.g. '80.481µs', '1.5s', '2m30s') into milliseconds.
+
+    Args:
+        s: Go duration string.
+
+    Returns:
+        Duration in milliseconds (rounded to nearest int).
+    """
+    if not s or s == "0s":
+        return 0
+    total_ns = 0.0
+    # Go duration unit suffixes and their nanosecond equivalents
+    units = [
+        ("ns", 1.0),
+        ("µs", 1_000.0),
+        ("us", 1_000.0),
+        ("ms", 1_000_000.0),
+        ("s", 1_000_000_000.0),
+        ("m", 60_000_000_000.0),
+        ("h", 3_600_000_000_000.0),
+    ]
+    remaining = s
+    while remaining:
+        m = re.match(r"([0-9]*\.?[0-9]+)", remaining)
+        if not m:
+            break
+        value = float(m.group(1))
+        remaining = remaining[m.end():]
+        matched = False
+        # Match longest unit first (µs before s, ms before s)
+        for suffix, ns_per_unit in sorted(units, key=lambda x: -len(x[0])):
+            if remaining.startswith(suffix):
+                total_ns += value * ns_per_unit
+                remaining = remaining[len(suffix):]
+                matched = True
+                break
+        if not matched:
+            break
+    return int(total_ns / 1_000_000)
+
+
 class SyncResult(BaseModel):
-    """Replication sync result."""
+    """Replication sync result.
+
+    Accepts both the gRPC wire format (``duration_ms`` int) and the REST wire
+    format (``duration`` Go-duration string such as ``"80.481µs"``).  When the
+    REST ``duration`` field is present, ``duration_ms`` is derived from it.
+    """
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -226,8 +274,21 @@ class SyncResult(BaseModel):
     deleted: int = Field(..., description="Objects deleted")
     failed: int = Field(..., description="Objects failed")
     bytes_total: int = Field(..., description="Total bytes transferred")
-    duration_ms: int = Field(..., description="Duration in milliseconds")
+    # REST server sends a Go duration string; gRPC sends an int.
+    # We accept both and normalise to duration_ms (int milliseconds).
+    duration: Optional[str] = Field(None, description="Go duration string from REST (e.g. '80.481µs')")
+    duration_ms: Optional[int] = Field(None, description="Duration in milliseconds")
     errors: List[str] = Field(default_factory=list, description="Error messages")
+
+    @model_validator(mode="after")
+    def _normalise_duration(self) -> "SyncResult":
+        """Derive duration_ms from duration string when duration_ms is absent."""
+        if self.duration_ms is None:
+            if self.duration is not None:
+                self.duration_ms = _parse_go_duration_ms(self.duration)
+            else:
+                self.duration_ms = 0
+        return self
 
 
 class TriggerReplicationResponse(BaseModel):
@@ -241,7 +302,13 @@ class TriggerReplicationResponse(BaseModel):
 
 
 class ReplicationStatus(BaseModel):
-    """Replication status."""
+    """Replication status.
+
+    Accepts both the gRPC wire format (``average_sync_duration_ms`` int) and
+    the REST wire format (``average_sync_duration`` Go-duration string such as
+    ``"2.5s"``).  When the REST string field is present,
+    ``average_sync_duration_ms`` is derived from it.
+    """
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -254,8 +321,22 @@ class ReplicationStatus(BaseModel):
     total_bytes_synced: int = Field(..., description="Total bytes synced")
     total_errors: int = Field(..., description="Total errors")
     last_sync_time: Optional[datetime] = Field(None, description="Last sync time")
-    average_sync_duration_ms: int = Field(..., description="Average sync duration")
+    # REST server sends a Go duration string; gRPC sends an int.
+    average_sync_duration: Optional[str] = Field(
+        None, description="Go duration string from REST (e.g. '2.5s')"
+    )
+    average_sync_duration_ms: Optional[int] = Field(None, description="Average sync duration in ms")
     sync_count: int = Field(..., description="Number of syncs performed")
+
+    @model_validator(mode="after")
+    def _normalise_avg_duration(self) -> "ReplicationStatus":
+        """Derive average_sync_duration_ms from string when int form is absent."""
+        if self.average_sync_duration_ms is None:
+            if self.average_sync_duration is not None:
+                self.average_sync_duration_ms = _parse_go_duration_ms(self.average_sync_duration)
+            else:
+                self.average_sync_duration_ms = 0
+        return self
 
 
 class TriggerReplicationOptions(BaseModel):

@@ -7,7 +7,7 @@ on:
     branches: [ main, develop ]
 
 env:
-  GO_VERSION: '1.25.5'
+  GO_VERSION: '1.26.3'
   COVERAGE_THRESHOLD: 89
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
@@ -19,10 +19,10 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         go-version: ${{ env.GO_VERSION }}
         cache: true
@@ -48,7 +48,7 @@ jobs:
         fi
 
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v4
+      uses: codecov/codecov-action@v6
       with:
         file: ./coverage/unit.out
         flags: unittests
@@ -62,10 +62,10 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         go-version: ${{ env.GO_VERSION }}
         cache: true
@@ -97,10 +97,10 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         go-version: ${{ env.GO_VERSION }}
         cache: true
@@ -108,7 +108,7 @@ jobs:
     - name: Run golangci-lint
       uses: golangci/golangci-lint-action@v7
       with:
-        version: v2.7.1
+        version: v2.11.1
         args: --timeout=10m
 
   security:
@@ -120,10 +120,10 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         go-version: ${{ env.GO_VERSION }}
         cache: true
@@ -134,7 +134,7 @@ jobs:
         args: '-no-fail -fmt json -out gosec-results.json -exclude-dir=examples ./...'
 
     - name: Upload gosec results as artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       if: always()
       with:
         name: gosec-results
@@ -152,10 +152,10 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         go-version: ${{ env.GO_VERSION }}
         cache: true
@@ -179,7 +179,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3
@@ -238,7 +238,7 @@ jobs:
         category: 'trivy-secrets'
 
     - name: Run Grype vulnerability scanner
-      uses: anchore/scan-action@v4
+      uses: anchore/scan-action@v6
       id: grype
       with:
         image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ci-scan
@@ -248,7 +248,11 @@ jobs:
 
     - name: Upload Grype results to GitHub Security tab
       uses: github/codeql-action/upload-sarif@v3
+      # SARIF upload to the Security tab is best-effort: a transient empty/truncated
+      # SARIF from the scanner must not fail an otherwise-green build (the scan itself
+      # already ran above). Guard on a non-empty output and never block on upload.
       if: always() && steps.grype.outputs.sarif != ''
+      continue-on-error: true
       with:
         sarif_file: ${{ steps.grype.outputs.sarif }}
         category: 'grype'

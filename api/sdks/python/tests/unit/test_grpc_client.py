@@ -1,491 +1,783 @@
-"""Unit tests for gRPC client."""
+"""Canonical unit tests for the gRPC client.
 
+Implements the SDK canonical test matrix for the gRPC transport:
+
+- success + error path for all 19 operations
+- not_found path for the 9 designated operations
+- metadata_round_trip
+- validation_empty_key
+
+The generated proto stubs are not shipped in this checkout (so
+``GRPC_AVAILABLE`` is False and the real ``__init__`` raises). Each test
+builds the *real, frozen* ``GrpcClient`` by bypassing the constructor,
+injects a fake stub, and patches a lightweight ``objstore_pb2`` onto the
+module so request construction works. This exercises the genuine client
+parsing/error-mapping code without a live server or generated protos.
+
+Test names follow ``test_grpc_<op>_<variant>``.
+"""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import Mock
+
+import grpc
 import pytest
-from datetime import datetime
-from unittest.mock import MagicMock, Mock, patch
 
+import objstore.grpc_client as grpc_module
+from objstore.grpc_client import GrpcClient
 from objstore.exceptions import (
-    ConnectionError,
     ObjectNotFoundError,
     ObjectStoreError,
     ServerError,
-    TimeoutError,
-)
-from objstore.models import (
-    ArchiveResponse,
-    ApplyPoliciesResponse,
-    DeleteResponse,
-    ExistsResponse,
-    GetPoliciesResponse,
-    GetReplicationPoliciesResponse,
-    GetReplicationStatusResponse,
-    HealthResponse,
-    HealthStatus,
-    LifecyclePolicy,
-    ListResponse,
-    Metadata,
-    ObjectInfo,
-    PolicyResponse,
-    PutResponse,
-    ReplicationMode,
-    ReplicationPolicy,
-    ReplicationStatus,
-    SyncResult,
-    TriggerReplicationOptions,
-    TriggerReplicationResponse,
 )
 
 
-class TestGrpcClientImport:
-    """Test gRPC client import behavior."""
-
-    def test_import_without_grpc(self) -> None:
-        """Test that GrpcClient handles missing gRPC gracefully."""
-        try:
-            from objstore.grpc_client import GrpcClient, GRPC_AVAILABLE
-
-            if not GRPC_AVAILABLE:
-                with pytest.raises(ImportError, match="gRPC support requires proto files"):
-                    client = GrpcClient()
-            else:
-                client = GrpcClient(host="localhost", port=50051)
-                assert client.host == "localhost"
-                assert client.port == 50051
-                assert client.timeout == 30
-                assert client.max_retries == 3
-        except ImportError:
-            pass
-
-
-class TestGrpcResponseParsing:
-    """Test gRPC response parsing patterns."""
-
-    def test_put_response_parsing(self) -> None:
-        """Test parsing put response."""
-        mock_response = Mock()
-        mock_response.success = True
-        mock_response.message = "success"
-        mock_response.etag = "abc123"
-
-        result = PutResponse(
-            success=mock_response.success,
-            message=mock_response.message,
-            etag=mock_response.etag,
-        )
-
-        assert result.success is True
-        assert result.etag == "abc123"
-
-    def test_get_response_parsing(self) -> None:
-        """Test parsing get response."""
-        mock_response = Mock()
-        mock_response.data = b"test data"
-        mock_metadata = Mock()
-        mock_metadata.content_type = "text/plain"
-        mock_metadata.content_encoding = ""
-        mock_metadata.size = 9
-        mock_metadata.etag = "abc123"
-        mock_metadata.custom = {}
-        mock_metadata.HasField = Mock(return_value=False)
-        mock_response.metadata = mock_metadata
-
-        metadata = Metadata(
-            content_type=mock_metadata.content_type,
-            size=mock_metadata.size,
-            etag=mock_metadata.etag,
-        )
-
-        assert mock_response.data == b"test data"
-        assert metadata.content_type == "text/plain"
-
-    def test_delete_response_parsing(self) -> None:
-        """Test parsing delete response."""
-        mock_response = Mock()
-        mock_response.success = True
-        mock_response.message = "deleted"
-
-        result = DeleteResponse(
-            success=mock_response.success, message=mock_response.message
-        )
-
-        assert result.success is True
-        assert result.message == "deleted"
-
-    def test_list_response_parsing(self) -> None:
-        """Test parsing list response."""
-        mock_response = Mock()
-        mock_response.objects = []
-        mock_response.common_prefixes = ["dir1/", "dir2/"]
-        mock_response.truncated = False
-        mock_response.next_token = ""
-
-        result = ListResponse(
-            objects=[],
-            common_prefixes=list(mock_response.common_prefixes),
-            truncated=mock_response.truncated,
-            next_token=mock_response.next_token or None,
-        )
-
-        assert isinstance(result.objects, list)
-        assert result.truncated is False
-        assert len(result.common_prefixes) == 2
-
-    def test_exists_response_true(self) -> None:
-        """Test exists response when object exists."""
-        mock_response = Mock()
-        mock_response.exists = True
-
-        result = ExistsResponse(exists=mock_response.exists)
-        assert result.exists is True
-
-    def test_exists_response_false(self) -> None:
-        """Test exists response when object does not exist."""
-        mock_response = Mock()
-        mock_response.exists = False
-
-        result = ExistsResponse(exists=mock_response.exists)
-        assert result.exists is False
-
-    def test_health_response_serving(self) -> None:
-        """Test health response parsing."""
-        mock_response = Mock()
-        mock_response.status = 1  # SERVING
-        mock_response.message = "healthy"
-
-        status_map = {0: HealthStatus.UNKNOWN, 1: HealthStatus.SERVING, 2: HealthStatus.NOT_SERVING}
-        result = HealthResponse(
-            status=status_map.get(mock_response.status, HealthStatus.UNKNOWN),
-            message=mock_response.message,
-        )
-
-        assert result.status == HealthStatus.SERVING
-
-    def test_policy_response_parsing(self) -> None:
-        """Test parsing policy response."""
-        mock_response = Mock()
-        mock_response.success = True
-        mock_response.message = "Policy added"
-
-        policy = LifecyclePolicy(
-            id="policy-1",
-            prefix="logs/",
-            retention_seconds=86400,
-            action="delete",
-        )
-        result = PolicyResponse(
-            success=mock_response.success, message=mock_response.message
-        )
-
-        assert result.success is True
-
-    def test_get_policies_response_parsing(self) -> None:
-        """Test parsing get policies response."""
-        mock_response = Mock()
-        mock_response.policies = []
-        mock_response.success = True
-        mock_response.message = "Policies retrieved"
-
-        result = GetPoliciesResponse(
-            policies=[],
-            success=mock_response.success,
-            message=mock_response.message,
-        )
-
-        assert result.success is True
-        assert isinstance(result.policies, list)
-
-    def test_apply_policies_response_parsing(self) -> None:
-        """Test parsing apply policies response."""
-        mock_response = Mock()
-        mock_response.success = True
-        mock_response.policies_count = 3
-        mock_response.objects_processed = 100
-        mock_response.message = "Policies applied"
-
-        result = ApplyPoliciesResponse(
-            success=mock_response.success,
-            policies_count=mock_response.policies_count,
-            objects_processed=mock_response.objects_processed,
-            message=mock_response.message,
-        )
-
-        assert result.success is True
-        assert result.policies_count == 3
-        assert result.objects_processed == 100
-
-    def test_replication_policy_parsing(self) -> None:
-        """Test parsing replication policy."""
-        mock_response = Mock()
-        mock_response.success = True
-        mock_response.message = "Replication policy added"
-
-        policy = ReplicationPolicy(
-            id="repl-1",
-            source_backend="local",
-            source_settings={"path": "/data"},
-            destination_backend="s3",
-            destination_settings={"bucket": "backup"},
-            check_interval_seconds=300,
-        )
-        result = PolicyResponse(
-            success=mock_response.success, message=mock_response.message
-        )
-
-        assert result.success is True
-
-    def test_get_replication_policies_response_parsing(self) -> None:
-        """Test parsing get replication policies response."""
-        mock_response = Mock()
-        mock_response.policies = []
-
-        result = GetReplicationPoliciesResponse(policies=[])
-
-        assert isinstance(result.policies, list)
-
-    def test_replication_policy_details_parsing(self) -> None:
-        """Test parsing replication policy details."""
-        mock_policy = Mock()
-        mock_policy.id = "repl-1"
-        mock_policy.source_backend = "local"
-        mock_policy.destination_backend = "s3"
-        mock_policy.check_interval_seconds = 300
-
-        policy = ReplicationPolicy(
-            id=mock_policy.id,
-            source_backend=mock_policy.source_backend,
-            destination_backend=mock_policy.destination_backend,
-            check_interval_seconds=mock_policy.check_interval_seconds,
-        )
-
-        assert policy.id == "repl-1"
-
-    def test_trigger_replication_response_parsing(self) -> None:
-        """Test parsing trigger replication response."""
-        mock_result = Mock()
-        mock_result.policy_id = "repl-1"
-        mock_result.synced = 100
-        mock_result.deleted = 5
-        mock_result.failed = 2
-        mock_result.bytes_total = 1048576
-        mock_result.duration_ms = 5000
-        mock_result.errors = []
-
-        mock_response = Mock()
-        mock_response.success = True
-        mock_response.result = mock_result
-        mock_response.message = "Replication triggered"
-
-        sync_result = SyncResult(
-            policy_id=mock_result.policy_id,
-            synced=mock_result.synced,
-            deleted=mock_result.deleted,
-            failed=mock_result.failed,
-            bytes_total=mock_result.bytes_total,
-            duration_ms=mock_result.duration_ms,
-        )
-        result = TriggerReplicationResponse(
-            success=mock_response.success,
-            result=sync_result,
-            message=mock_response.message,
-        )
-
-        assert result.success is True
-        assert result.result.synced == 100
-
-    def test_replication_status_parsing(self) -> None:
-        """Test parsing replication status."""
-        mock_status = Mock()
-        mock_status.policy_id = "repl-1"
-        mock_status.source_backend = "local"
-        mock_status.destination_backend = "s3"
-        mock_status.enabled = True
-        mock_status.total_objects_synced = 1000
-        mock_status.total_objects_deleted = 10
-        mock_status.total_bytes_synced = 10485760
-        mock_status.total_errors = 0
-        mock_status.average_sync_duration_ms = 2000
-        mock_status.sync_count = 5
-
-        status = ReplicationStatus(
-            policy_id=mock_status.policy_id,
-            source_backend=mock_status.source_backend,
-            destination_backend=mock_status.destination_backend,
-            enabled=mock_status.enabled,
-            total_objects_synced=mock_status.total_objects_synced,
-            total_objects_deleted=mock_status.total_objects_deleted,
-            total_bytes_synced=mock_status.total_bytes_synced,
-            total_errors=mock_status.total_errors,
-            average_sync_duration_ms=mock_status.average_sync_duration_ms,
-            sync_count=mock_status.sync_count,
-        )
-        result = GetReplicationStatusResponse(
-            success=True,
-            status=status,
-        )
-
-        assert result.success is True
-        assert result.status.total_objects_synced == 1000
-
-    def test_archive_response_parsing(self) -> None:
-        """Test parsing archive response."""
-        mock_response = Mock()
-        mock_response.success = True
-        mock_response.message = "archived"
-
-        result = ArchiveResponse(
-            success=mock_response.success, message=mock_response.message
-        )
-
-        assert result.success is True
-
-    def test_metadata_parsing(self) -> None:
-        """Test parsing metadata response."""
-        mock_metadata = Mock()
-        mock_metadata.content_type = "text/plain"
-        mock_metadata.content_encoding = ""
-        mock_metadata.size = 100
-        mock_metadata.etag = "abc123"
-        mock_metadata.custom = {"author": "test"}
-
-        metadata = Metadata(
-            content_type=mock_metadata.content_type,
-            size=mock_metadata.size,
-            etag=mock_metadata.etag,
-            custom=dict(mock_metadata.custom),
-        )
-
-        assert metadata.content_type == "text/plain"
-        assert metadata.size == 100
-
-
-class TestMetadataConversion:
-    """Test metadata conversion utilities."""
-
-    def test_metadata_to_proto_empty(self) -> None:
-        """Test converting None metadata."""
-        metadata = None
-        assert metadata is None
-
-    def test_metadata_to_proto_with_values(self) -> None:
-        """Test converting metadata with values."""
-        metadata = Metadata(
-            content_type="application/json",
-            content_encoding="gzip",
-            size=1024,
-            etag="abc123",
-            custom={"key1": "value1", "key2": "value2"},
-        )
-        assert metadata.content_type == "application/json"
-        assert metadata.content_encoding == "gzip"
-        assert metadata.size == 1024
-        assert metadata.etag == "abc123"
-        assert metadata.custom == {"key1": "value1", "key2": "value2"}
-
-    def test_proto_to_metadata_parsing(self) -> None:
-        """Test parsing proto metadata to model."""
-        mock_proto_metadata = Mock()
-        mock_proto_metadata.content_type = "text/plain"
-        mock_proto_metadata.content_encoding = "gzip"
-        mock_proto_metadata.size = 512
-        mock_proto_metadata.etag = "etag456"
-        mock_proto_metadata.custom = {"author": "test"}
-        mock_proto_metadata.HasField = Mock(return_value=False)
-
-        metadata = Metadata(
-            content_type=mock_proto_metadata.content_type or None,
-            content_encoding=mock_proto_metadata.content_encoding or None,
-            size=mock_proto_metadata.size if mock_proto_metadata.size else None,
-            etag=mock_proto_metadata.etag or None,
-            custom=dict(mock_proto_metadata.custom) if mock_proto_metadata.custom else {},
-        )
-
-        assert metadata.content_type == "text/plain"
-        assert metadata.content_encoding == "gzip"
-        assert metadata.size == 512
-        assert metadata.etag == "etag456"
-
-    def test_proto_to_metadata_with_timestamp(self) -> None:
-        """Test parsing proto metadata with timestamp."""
-        mock_proto_metadata = Mock()
-        mock_proto_metadata.content_type = "text/plain"
-        mock_proto_metadata.content_encoding = ""
-        mock_proto_metadata.size = 100
-        mock_proto_metadata.etag = ""
-        mock_proto_metadata.custom = {}
-        mock_proto_metadata.HasField = Mock(return_value=True)
-        mock_proto_metadata.last_modified = Mock()
-        mock_proto_metadata.last_modified.seconds = 1609459200  # 2021-01-01
-
-        has_timestamp = mock_proto_metadata.HasField("last_modified")
-        assert has_timestamp is True
-
-        if has_timestamp:
-            last_modified = datetime.fromtimestamp(
-                mock_proto_metadata.last_modified.seconds
-            )
-            assert last_modified.year == 2021
-
-
-class TestHealthStatusMapping:
-    """Test health status mapping."""
-
-    def test_health_status_serving(self) -> None:
-        """Test SERVING status."""
-        assert HealthStatus.SERVING.value == "SERVING"
-
-    def test_health_status_not_serving(self) -> None:
-        """Test NOT_SERVING status."""
-        assert HealthStatus.NOT_SERVING.value == "NOT_SERVING"
-
-    def test_health_status_unknown(self) -> None:
-        """Test UNKNOWN status."""
-        assert HealthStatus.UNKNOWN.value == "UNKNOWN"
-
-    def test_health_status_from_int(self) -> None:
-        """Test mapping integer to HealthStatus."""
-        status_map = {
-            0: HealthStatus.UNKNOWN,
-            1: HealthStatus.SERVING,
-            2: HealthStatus.NOT_SERVING,
-        }
-        assert status_map[0] == HealthStatus.UNKNOWN
-        assert status_map[1] == HealthStatus.SERVING
-        assert status_map[2] == HealthStatus.NOT_SERVING
-
-
-class TestReplicationMode:
-    """Test replication mode enum."""
-
-    def test_replication_mode_transparent(self) -> None:
-        """Test TRANSPARENT mode."""
-        assert ReplicationMode.TRANSPARENT.value == "TRANSPARENT"
-
-    def test_replication_mode_opaque(self) -> None:
-        """Test OPAQUE mode."""
-        assert ReplicationMode.OPAQUE.value == "OPAQUE"
-
-
-class TestErrorTypes:
-    """Test error type definitions."""
-
-    def test_error_types_exist(self) -> None:
-        """Test that error types are properly defined."""
-        assert ObjectNotFoundError is not None
-        assert ServerError is not None
-        assert TimeoutError is not None
-        assert ConnectionError is not None
-
-    def test_object_not_found_error(self) -> None:
-        """Test ObjectNotFoundError."""
-        error = ObjectNotFoundError("Test not found")
-        assert "not found" in str(error).lower()
-
-    def test_server_error(self) -> None:
-        """Test ServerError."""
-        error = ServerError("Internal server error", status_code=500)
-        assert error.status_code == 500
-
-    def test_object_store_error(self) -> None:
-        """Test ObjectStoreError."""
-        error = ObjectStoreError("Generic error")
-        assert str(error) == "Generic error"
+# ---- helpers ---------------------------------------------------------
+
+
+class _ProtoMessage(SimpleNamespace):
+    """A namespace that mimics a protobuf message closely enough for tests.
+
+    In particular ``custom`` defaults to a real dict so the client's
+    ``proto_metadata.custom.update(...)`` call works, matching the generated
+    map-field behaviour.
+    """
+
+    def __init__(self, **kw: Any) -> None:
+        kw.setdefault("custom", {})
+        super().__init__(**kw)
+
+
+class _FakePB2:
+    """Stand-in for the generated ``objstore_pb2`` module.
+
+    Every accessed attribute (PutRequest, GetRequest, Metadata, ...) becomes
+    a callable that accepts any keyword arguments and returns a message-like
+    namespace, so the client's ``objstore_pb2.XxxRequest(...)`` calls succeed.
+    """
+
+    def __getattr__(self, name: str):
+        return lambda **kw: _ProtoMessage(**kw)
+
+
+@pytest.fixture()
+def grpc_client(monkeypatch: pytest.MonkeyPatch) -> GrpcClient:
+    """A real GrpcClient with a fake stub and patched proto module."""
+    monkeypatch.setattr(grpc_module, "objstore_pb2", _FakePB2(), raising=False)
+    client = object.__new__(GrpcClient)
+    client.host = "localhost"
+    client.port = 50051
+    client.timeout = 30
+    client.max_retries = 3
+    client.channel = Mock()
+    client.stub = Mock()
+    return client
+
+
+def _rpc_error(code: grpc.StatusCode, details: str = "boom") -> grpc.RpcError:
+    err = grpc.RpcError()
+    err.code = Mock(return_value=code)
+    err.details = Mock(return_value=details)
+    return err
+
+
+def _not_found(details: str = "object missing") -> grpc.RpcError:
+    return _rpc_error(grpc.StatusCode.NOT_FOUND, details)
+
+
+def _internal(details: str = "boom") -> grpc.RpcError:
+    return _rpc_error(grpc.StatusCode.INTERNAL, details)
+
+
+def _meta(**kw: Any) -> SimpleNamespace:
+    base = {
+        "content_type": "text/plain",
+        "content_encoding": "",
+        "size": 3,
+        "etag": "etag-1",
+        "custom": {},
+    }
+    base.update(kw)
+    ns = SimpleNamespace(**base)
+    ns.HasField = Mock(return_value=False)
+    return ns
+
+
+# =====================================================================
+# put
+# =====================================================================
+
+
+def test_grpc_put_success(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.Put.return_value = Mock(success=True, message="ok", etag="etag-1")
+    result = grpc_client.put("k", b"abc")
+    assert result.success is True
+    assert result.etag == "etag-1"
+
+
+def test_grpc_put_error(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.Put.side_effect = _internal()
+    with pytest.raises(ServerError):
+        grpc_client.put("k", b"abc")
+
+
+# =====================================================================
+# get
+# =====================================================================
+
+
+def test_grpc_get_success(grpc_client: GrpcClient) -> None:
+    chunk = SimpleNamespace(data=b"hello")
+    chunk.HasField = Mock(return_value=True)
+    chunk.metadata = _meta()
+    grpc_client.stub.Get.return_value = [chunk]
+    data, metadata = grpc_client.get("k")
+    assert data == b"hello"
+    assert metadata.content_type == "text/plain"
+
+
+def test_grpc_get_error(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.Get.side_effect = _internal()
+    with pytest.raises(ServerError):
+        grpc_client.get("k")
+
+
+def test_grpc_get_not_found(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.Get.side_effect = _not_found()
+    with pytest.raises(ObjectNotFoundError):
+        grpc_client.get("k")
+
+
+# =====================================================================
+# delete
+# =====================================================================
+
+
+def test_grpc_delete_success(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.Delete.return_value = Mock(success=True, message="deleted")
+    result = grpc_client.delete("k")
+    assert result.success is True
+
+
+def test_grpc_delete_error(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.Delete.side_effect = _internal()
+    with pytest.raises(ServerError):
+        grpc_client.delete("k")
+
+
+def test_grpc_delete_not_found(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.Delete.side_effect = _not_found()
+    with pytest.raises(ObjectNotFoundError):
+        grpc_client.delete("k")
+
+
+# =====================================================================
+# list
+# =====================================================================
+
+
+def test_grpc_list_success(grpc_client: GrpcClient) -> None:
+    obj1 = SimpleNamespace(key="k1", metadata=_meta())
+    obj2 = SimpleNamespace(key="k2", metadata=_meta())
+    grpc_client.stub.List.return_value = SimpleNamespace(
+        objects=[obj1, obj2],
+        common_prefixes=["p/"],
+        next_token="",
+        truncated=True,
+    )
+    result = grpc_client.list(prefix="p", max_results=10)
+    assert [o.key for o in result.objects] == ["k1", "k2"]
+    assert result.truncated is True
+
+
+def test_grpc_list_error(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.List.side_effect = _internal()
+    with pytest.raises(ServerError):
+        grpc_client.list()
+
+
+# =====================================================================
+# exists
+# =====================================================================
+
+
+def test_grpc_exists_success(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.Exists.return_value = SimpleNamespace(exists=True)
+    assert grpc_client.exists("k").exists is True
+
+
+def test_grpc_exists_error(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.Exists.side_effect = _internal()
+    with pytest.raises(ServerError):
+        grpc_client.exists("k")
+
+
+def test_grpc_exists_not_found(grpc_client: GrpcClient) -> None:
+    # NOT_FOUND propagates through _handle_grpc_error as ObjectNotFoundError.
+    grpc_client.stub.Exists.side_effect = _not_found()
+    with pytest.raises(ObjectNotFoundError):
+        grpc_client.exists("k")
+
+
+# =====================================================================
+# get_metadata
+# =====================================================================
+
+
+def test_grpc_get_metadata_success(grpc_client: GrpcClient) -> None:
+    resp = SimpleNamespace(success=True, metadata=_meta(custom={"foo": "bar"}))
+    resp.HasField = Mock(return_value=True)
+    grpc_client.stub.GetMetadata.return_value = resp
+    metadata = grpc_client.get_metadata("k")
+    assert metadata.custom == {"foo": "bar"}
+
+
+def test_grpc_get_metadata_error(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.GetMetadata.side_effect = _internal()
+    with pytest.raises(ServerError):
+        grpc_client.get_metadata("k")
+
+
+def test_grpc_get_metadata_not_found(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.GetMetadata.side_effect = _not_found()
+    with pytest.raises(ObjectNotFoundError):
+        grpc_client.get_metadata("k")
+
+
+# =====================================================================
+# update_metadata
+# =====================================================================
+
+
+def test_grpc_update_metadata_success(grpc_client: GrpcClient) -> None:
+    from objstore.models import Metadata
+
+    grpc_client.stub.UpdateMetadata.return_value = Mock(success=True, message="ok")
+    result = grpc_client.update_metadata("k", Metadata(custom={"foo": "bar"}))
+    assert result.success is True
+
+
+def test_grpc_update_metadata_error(grpc_client: GrpcClient) -> None:
+    from objstore.models import Metadata
+
+    grpc_client.stub.UpdateMetadata.side_effect = _internal()
+    with pytest.raises(ServerError):
+        grpc_client.update_metadata("k", Metadata())
+
+
+def test_grpc_update_metadata_not_found(grpc_client: GrpcClient) -> None:
+    from objstore.models import Metadata
+
+    grpc_client.stub.UpdateMetadata.side_effect = _not_found()
+    with pytest.raises(ObjectNotFoundError):
+        grpc_client.update_metadata("k", Metadata())
+
+
+# =====================================================================
+# health
+# =====================================================================
+
+
+def test_grpc_health_success(grpc_client: GrpcClient) -> None:
+    from objstore.models import HealthStatus
+
+    grpc_client.stub.Health.return_value = SimpleNamespace(status=1, message="ok")
+    result = grpc_client.health()
+    assert result.status == HealthStatus.SERVING
+
+
+def test_grpc_health_error(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.Health.side_effect = _internal()
+    with pytest.raises(ServerError):
+        grpc_client.health()
+
+
+# =====================================================================
+# archive
+# =====================================================================
+
+
+def test_grpc_archive_success(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.Archive.return_value = Mock(success=True, message="archived")
+    result = grpc_client.archive("k", "s3", {"bucket": "b"})
+    assert result.success is True
+
+
+def test_grpc_archive_error(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.Archive.side_effect = _internal()
+    with pytest.raises(ServerError):
+        grpc_client.archive("k", "s3", {})
+
+
+# =====================================================================
+# add_policy
+# =====================================================================
+
+
+def _lifecycle_policy():
+    from objstore.models import LifecyclePolicy
+
+    return LifecyclePolicy(
+        id="p1", prefix="x/", retention_seconds=10, action="delete"
+    )
+
+
+def test_grpc_add_policy_success(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.AddPolicy.return_value = Mock(success=True, message="added")
+    result = grpc_client.add_policy(_lifecycle_policy())
+    assert result.success is True
+
+
+def test_grpc_add_policy_error(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.AddPolicy.side_effect = _internal()
+    with pytest.raises(ServerError):
+        grpc_client.add_policy(_lifecycle_policy())
+
+
+# =====================================================================
+# remove_policy
+# =====================================================================
+
+
+def test_grpc_remove_policy_success(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.RemovePolicy.return_value = Mock(success=True, message="removed")
+    result = grpc_client.remove_policy("p1")
+    assert result.success is True
+
+
+def test_grpc_remove_policy_error(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.RemovePolicy.side_effect = _internal()
+    with pytest.raises(ServerError):
+        grpc_client.remove_policy("p1")
+
+
+def test_grpc_remove_policy_not_found(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.RemovePolicy.side_effect = _not_found()
+    with pytest.raises(ObjectNotFoundError):
+        grpc_client.remove_policy("p1")
+
+
+# =====================================================================
+# get_policies
+# =====================================================================
+
+
+def test_grpc_get_policies_success(grpc_client: GrpcClient) -> None:
+    proto_policy = SimpleNamespace(
+        id="p1",
+        prefix="x/",
+        retention_seconds=10,
+        action="delete",
+        destination_type="",
+        destination_settings={},
+    )
+    grpc_client.stub.GetPolicies.return_value = SimpleNamespace(
+        policies=[proto_policy], success=True, message="ok"
+    )
+    result = grpc_client.get_policies()
+    assert result.success is True
+    assert len(result.policies) == 1
+
+
+def test_grpc_get_policies_error(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.GetPolicies.side_effect = _internal()
+    with pytest.raises(ServerError):
+        grpc_client.get_policies()
+
+
+# =====================================================================
+# apply_policies
+# =====================================================================
+
+
+def test_grpc_apply_policies_success(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.ApplyPolicies.return_value = SimpleNamespace(
+        success=True, policies_count=2, objects_processed=5, message="ok"
+    )
+    result = grpc_client.apply_policies()
+    assert result.success is True
+    assert result.policies_count == 2
+
+
+def test_grpc_apply_policies_error(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.ApplyPolicies.side_effect = _internal()
+    with pytest.raises(ServerError):
+        grpc_client.apply_policies()
+
+
+# =====================================================================
+# add_replication_policy
+# =====================================================================
+
+
+def _replication_policy():
+    from objstore.models import ReplicationPolicy
+
+    return ReplicationPolicy(
+        id="r1",
+        source_backend="local",
+        destination_backend="s3",
+        check_interval_seconds=30,
+    )
+
+
+def test_grpc_add_replication_policy_success(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.AddReplicationPolicy.return_value = Mock(
+        success=True, message="added"
+    )
+    result = grpc_client.add_replication_policy(_replication_policy())
+    assert result.success is True
+
+
+def test_grpc_add_replication_policy_error(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.AddReplicationPolicy.side_effect = _internal()
+    with pytest.raises(ServerError):
+        grpc_client.add_replication_policy(_replication_policy())
+
+
+# =====================================================================
+# remove_replication_policy
+# =====================================================================
+
+
+def test_grpc_remove_replication_policy_success(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.RemoveReplicationPolicy.return_value = Mock(
+        success=True, message="removed"
+    )
+    result = grpc_client.remove_replication_policy("r1")
+    assert result.success is True
+
+
+def test_grpc_remove_replication_policy_error(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.RemoveReplicationPolicy.side_effect = _internal()
+    with pytest.raises(ServerError):
+        grpc_client.remove_replication_policy("r1")
+
+
+def test_grpc_remove_replication_policy_not_found(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.RemoveReplicationPolicy.side_effect = _not_found()
+    with pytest.raises(ObjectNotFoundError):
+        grpc_client.remove_replication_policy("r1")
+
+
+# =====================================================================
+# get_replication_policies
+# =====================================================================
+
+
+def _proto_repl_policy():
+    return SimpleNamespace(
+        id="r1",
+        source_backend="local",
+        source_settings={},
+        source_prefix="",
+        destination_backend="s3",
+        destination_settings={},
+        check_interval_seconds=30,
+        enabled=True,
+    )
+
+
+def test_grpc_get_replication_policies_success(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.GetReplicationPolicies.return_value = SimpleNamespace(
+        policies=[_proto_repl_policy()]
+    )
+    result = grpc_client.get_replication_policies()
+    assert len(result.policies) == 1
+
+
+def test_grpc_get_replication_policies_error(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.GetReplicationPolicies.side_effect = _internal()
+    with pytest.raises(ServerError):
+        grpc_client.get_replication_policies()
+
+
+# =====================================================================
+# get_replication_policy
+# =====================================================================
+
+
+def test_grpc_get_replication_policy_success(grpc_client: GrpcClient) -> None:
+    resp = SimpleNamespace(success=True, policy=_proto_repl_policy())
+    resp.HasField = Mock(return_value=True)
+    grpc_client.stub.GetReplicationPolicy.return_value = resp
+    policy = grpc_client.get_replication_policy("r1")
+    assert policy.id == "r1"
+
+
+def test_grpc_get_replication_policy_error(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.GetReplicationPolicy.side_effect = _internal()
+    with pytest.raises(ServerError):
+        grpc_client.get_replication_policy("r1")
+
+
+def test_grpc_get_replication_policy_not_found(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.GetReplicationPolicy.side_effect = _not_found()
+    with pytest.raises(ObjectNotFoundError):
+        grpc_client.get_replication_policy("r1")
+
+
+# =====================================================================
+# trigger_replication
+# =====================================================================
+
+
+def _trigger_opts():
+    from objstore.models import TriggerReplicationOptions
+
+    return TriggerReplicationOptions(policy_id="r1")
+
+
+def test_grpc_trigger_replication_success(grpc_client: GrpcClient) -> None:
+    result_proto = SimpleNamespace(
+        policy_id="r1",
+        synced=10,
+        deleted=1,
+        failed=0,
+        bytes_total=100,
+        duration_ms=50,
+        errors=[],
+    )
+    resp = SimpleNamespace(success=True, result=result_proto, message="ok")
+    resp.HasField = Mock(return_value=True)
+    grpc_client.stub.TriggerReplication.return_value = resp
+    result = grpc_client.trigger_replication(_trigger_opts())
+    assert result.success is True
+    assert result.result.synced == 10
+
+
+def test_grpc_trigger_replication_error(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.TriggerReplication.side_effect = _internal()
+    with pytest.raises(ServerError):
+        grpc_client.trigger_replication(_trigger_opts())
+
+
+# =====================================================================
+# get_replication_status
+# =====================================================================
+
+
+def _proto_status():
+    s = SimpleNamespace(
+        policy_id="r1",
+        source_backend="local",
+        destination_backend="s3",
+        enabled=True,
+        total_objects_synced=5,
+        total_objects_deleted=0,
+        total_bytes_synced=100,
+        total_errors=0,
+        average_sync_duration_ms=10,
+        sync_count=2,
+    )
+    s.HasField = Mock(return_value=False)
+    return s
+
+
+def test_grpc_get_replication_status_success(grpc_client: GrpcClient) -> None:
+    resp = SimpleNamespace(success=True, status=_proto_status(), message="ok")
+    resp.HasField = Mock(return_value=True)
+    grpc_client.stub.GetReplicationStatus.return_value = resp
+    result = grpc_client.get_replication_status("r1")
+    assert result.success is True
+    assert result.status.total_objects_synced == 5
+
+
+def test_grpc_get_replication_status_error(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.GetReplicationStatus.side_effect = _internal()
+    with pytest.raises(ServerError):
+        grpc_client.get_replication_status("r1")
+
+
+def test_grpc_get_replication_status_not_found(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.GetReplicationStatus.side_effect = _not_found()
+    with pytest.raises(ObjectNotFoundError):
+        grpc_client.get_replication_status("r1")
+
+
+# =====================================================================
+# metadata_round_trip
+# =====================================================================
+
+
+def test_grpc_metadata_round_trip(grpc_client: GrpcClient) -> None:
+    """Custom metadata + content_type/encoding travel in proto message fields.
+
+    update_metadata sends a Metadata proto built from the model; get_metadata
+    parses a Metadata proto back. Assert all three pieces survive.
+    """
+    from objstore.models import Metadata
+
+    sent = Metadata(
+        content_type="application/json",
+        content_encoding="gzip",
+        custom={"author": "alice", "team": "infra"},
+    )
+
+    captured = {}
+
+    def _update(request, timeout=None):
+        captured["proto"] = request.metadata
+        return Mock(success=True, message="ok")
+
+    grpc_client.stub.UpdateMetadata.side_effect = _update
+    grpc_client.update_metadata("k", sent)
+
+    # The proto built by the client carries content_type/encoding and custom.
+    proto = captured["proto"]
+    assert proto.content_type == "application/json"
+    assert proto.content_encoding == "gzip"
+    assert dict(proto.custom) == {"author": "alice", "team": "infra"}
+
+    # And get_metadata parses an equivalent proto back into the model.
+    resp = SimpleNamespace(success=True, metadata=_meta(
+        content_type="application/json",
+        content_encoding="gzip",
+        custom={"author": "alice", "team": "infra"},
+    ))
+    resp.HasField = Mock(return_value=True)
+    grpc_client.stub.GetMetadata.return_value = resp
+    got = grpc_client.get_metadata("k")
+    assert got.content_type == "application/json"
+    assert got.content_encoding == "gzip"
+    assert got.custom == {"author": "alice", "team": "infra"}
+
+
+# =====================================================================
+# validation_empty_key
+# =====================================================================
+
+
+def test_grpc_validation_empty_key(grpc_client: GrpcClient) -> None:
+    """An empty key is rejected by the server as INVALID_ARGUMENT -> error."""
+    grpc_client.stub.Get.side_effect = _rpc_error(
+        grpc.StatusCode.INVALID_ARGUMENT, "key must not be empty"
+    )
+    with pytest.raises(ObjectStoreError):
+        grpc_client.get("")
+
+
+# =====================================================================
+# construction / lifecycle / error mapping
+# =====================================================================
+
+
+def test_grpc_import_without_protos() -> None:
+    """Without generated protos the constructor raises a helpful ImportError."""
+    from objstore.grpc_client import GRPC_AVAILABLE
+
+    if not GRPC_AVAILABLE:
+        with pytest.raises(ImportError, match="gRPC support requires proto files"):
+            GrpcClient()
+    else:  # pragma: no cover - depends on environment
+        client = GrpcClient(host="localhost", port=50051)
+        assert client.host == "localhost"
+
+
+def test_grpc_close(grpc_client: GrpcClient) -> None:
+    grpc_client.close()
+    grpc_client.channel.close.assert_called_once()
+
+
+def test_grpc_error_mapping_unavailable(grpc_client: GrpcClient) -> None:
+    from objstore.exceptions import ConnectionError as ObjConnectionError
+
+    grpc_client.stub.Get.side_effect = _rpc_error(
+        grpc.StatusCode.UNAVAILABLE, "down"
+    )
+    with pytest.raises(ObjConnectionError):
+        grpc_client.get("k")
+
+
+def test_grpc_error_mapping_deadline(grpc_client: GrpcClient) -> None:
+    from objstore.exceptions import TimeoutError as ObjTimeoutError
+
+    grpc_client.stub.Get.side_effect = _rpc_error(
+        grpc.StatusCode.DEADLINE_EXCEEDED, "slow"
+    )
+    with pytest.raises(ObjTimeoutError):
+        grpc_client.get("k")
+
+
+def test_grpc_error_mapping_generic(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.Get.side_effect = _rpc_error(
+        grpc.StatusCode.PERMISSION_DENIED, "nope"
+    )
+    with pytest.raises(ObjectStoreError):
+        grpc_client.get("k")
+
+
+# =====================================================================
+# streaming + metadata-conversion coverage extras
+# =====================================================================
+
+
+def test_grpc_get_stream_success(grpc_client: GrpcClient) -> None:
+    """get_stream yields the data field of each streamed GetResponse chunk."""
+    c1 = SimpleNamespace(data=b"ab")
+    c2 = SimpleNamespace(data=b"cd")
+    grpc_client.stub.Get.return_value = [c1, c2]
+    chunks = list(grpc_client.get_stream("k"))
+    assert b"".join(chunks) == b"abcd"
+
+
+def test_grpc_get_stream_error(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.Get.side_effect = _internal()
+    with pytest.raises(ServerError):
+        list(grpc_client.get_stream("k"))
+
+
+def test_grpc_get_stream_not_found(grpc_client: GrpcClient) -> None:
+    grpc_client.stub.Get.side_effect = _not_found()
+    with pytest.raises(ObjectNotFoundError):
+        list(grpc_client.get_stream("k"))
+
+
+def test_grpc_proto_to_metadata_with_timestamp(grpc_client: GrpcClient) -> None:
+    """A Metadata proto with last_modified set is parsed into a datetime."""
+    from datetime import datetime
+
+    ts = SimpleNamespace(seconds=1609459200)  # 2021-01-01T00:00:00Z
+    proto = SimpleNamespace(
+        content_type="text/plain", content_encoding="gzip", size=5,
+        etag="e1", custom={"k": "v"}, last_modified=ts,
+    )
+    proto.HasField = Mock(return_value=True)
+    metadata = grpc_client._proto_to_metadata(proto)
+    assert metadata.content_encoding == "gzip"
+    assert metadata.custom == {"k": "v"}
+    assert metadata.last_modified == datetime.fromtimestamp(ts.seconds)
+
+
+def test_grpc_get_returns_metadata_from_stream(grpc_client: GrpcClient) -> None:
+    """The metadata carried on a streamed chunk is parsed and returned."""
+    chunk = SimpleNamespace(data=b"hello")
+    chunk.HasField = Mock(return_value=True)
+    chunk.metadata = _meta(content_type="application/json", etag="e9")
+    grpc_client.stub.Get.return_value = [chunk]
+    data, metadata = grpc_client.get("k")
+    assert data == b"hello"
+    assert metadata.content_type == "application/json"
+    assert metadata.etag == "e9"
+
+
+def test_grpc_replication_status_with_last_sync_time(grpc_client: GrpcClient) -> None:
+    """get_replication_status parses a status whose last_sync_time is set."""
+    from datetime import datetime
+
+    ts = SimpleNamespace(seconds=1609459200)
+    status = SimpleNamespace(
+        policy_id="r1", source_backend="local", destination_backend="s3",
+        enabled=True, total_objects_synced=5, total_objects_deleted=0,
+        total_bytes_synced=100, total_errors=0, average_sync_duration_ms=10,
+        sync_count=2, last_sync_time=ts,
+    )
+    status.HasField = Mock(return_value=True)
+    resp = SimpleNamespace(success=True, status=status, message="ok")
+    resp.HasField = Mock(return_value=True)
+    grpc_client.stub.GetReplicationStatus.return_value = resp
+    result = grpc_client.get_replication_status("r1")
+    assert result.status.last_sync_time == datetime.fromtimestamp(ts.seconds)

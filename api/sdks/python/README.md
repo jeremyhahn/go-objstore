@@ -606,6 +606,11 @@ AGPL-3.0 - See LICENSE file for details
 
 ## Changelog
 
+### 0.2.0
+
+- Go toolchain updated to 1.26.3
+- API parity across all SDKs
+
 ### 0.1.0 (2025-11-23)
 
 - Initial release

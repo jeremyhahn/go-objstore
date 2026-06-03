@@ -175,7 +175,9 @@ mod tests {
     fn test_metadata_serialization() {
         let mut metadata = Metadata::default();
         metadata.content_type = Some("application/json".to_string());
-        metadata.custom.insert("key".to_string(), "value".to_string());
+        metadata
+            .custom
+            .insert("key".to_string(), "value".to_string());
 
         let json = serde_json::to_string(&metadata).unwrap();
         let deserialized: Metadata = serde_json::from_str(&json).unwrap();

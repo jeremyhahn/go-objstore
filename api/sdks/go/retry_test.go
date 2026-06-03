@@ -259,3 +259,52 @@ func TestCalculateBackoff_Jitter(t *testing.T) {
 	// (there's a small chance this could fail if random produces same values)
 	assert.Greater(t, len(backoffs), 1)
 }
+
+func TestRetryWrapper_PreCancelledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	config := &RetryConfig{
+		Enabled:        true,
+		MaxRetries:     3,
+		InitialBackoff: 10 * time.Millisecond,
+	}
+
+	callCount := 0
+	_, err := retryWrapper(ctx, config, func() (string, error) {
+		callCount++
+		return "", ErrConnectionFailed
+	})
+
+	// The context is already cancelled, so the loop returns ctx.Err()
+	// before ever invoking the operation (lastErr is still nil).
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, 0, callCount)
+}
+
+func TestRetryWrapper_ContextCancelledAfterFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	config := &RetryConfig{
+		Enabled:        true,
+		MaxRetries:     5,
+		InitialBackoff: 200 * time.Millisecond,
+		MaxBackoff:     time.Second,
+	}
+
+	callCount := 0
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		cancel()
+	}()
+
+	_, err := retryWrapper(ctx, config, func() (string, error) {
+		callCount++
+		return "", ErrConnectionFailed
+	})
+
+	// The first call fails, then cancellation interrupts the backoff wait,
+	// returning the last operation error.
+	assert.ErrorIs(t, err, ErrConnectionFailed)
+	assert.GreaterOrEqual(t, callCount, 1)
+}

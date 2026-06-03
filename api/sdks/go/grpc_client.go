@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 	"time"
 
 	objstorepb "github.com/jeremyhahn/go-objstore/api/proto"
@@ -26,9 +27,10 @@ import (
 
 // GRPCClient implements the Client interface using gRPC protocol.
 type GRPCClient struct {
-	conn   *grpc.ClientConn
-	client objstorepb.ObjectStoreClient
-	config *ClientConfig
+	conn      *grpc.ClientConn
+	client    objstorepb.ObjectStoreClient
+	config    *ClientConfig
+	closeOnce sync.Once
 }
 
 // newGRPCClient creates a new gRPC client.
@@ -606,12 +608,15 @@ func (c *GRPCClient) GetReplicationStatus(ctx context.Context, policyID string) 
 	})
 }
 
-// Close closes the gRPC connection.
+// Close closes the gRPC connection.  Idempotent: subsequent calls return nil.
 func (c *GRPCClient) Close() error {
-	if c.conn != nil {
-		return c.conn.Close()
-	}
-	return nil
+	var err error
+	c.closeOnce.Do(func() {
+		if c.conn != nil {
+			err = c.conn.Close()
+		}
+	})
+	return err
 }
 
 // buildTLSConfig creates a TLS configuration from the client config.

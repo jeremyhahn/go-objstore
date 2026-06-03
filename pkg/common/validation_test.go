@@ -269,6 +269,48 @@ func TestValidateMetadata(t *testing.T) {
 			errMsg:  "cannot have more than",
 		},
 		{
+			name:     "carriage return in value",
+			metadata: map[string]string{"key": "value\rinjected"},
+			wantErr:  true,
+			errMsg:   "control characters",
+		},
+		{
+			name:     "newline in value",
+			metadata: map[string]string{"key": "value\ninjected"},
+			wantErr:  true,
+			errMsg:   "control characters",
+		},
+		{
+			name:     "crlf in value",
+			metadata: map[string]string{"key": "value\r\nX-Injected: 1"},
+			wantErr:  true,
+			errMsg:   "control characters",
+		},
+		{
+			name:     "tab in value",
+			metadata: map[string]string{"key": "value\tmore"},
+			wantErr:  true,
+			errMsg:   "control characters",
+		},
+		{
+			name:     "del control char in value",
+			metadata: map[string]string{"key": "value\x7f"},
+			wantErr:  true,
+			errMsg:   "control characters",
+		},
+		{
+			name:     "carriage return in key",
+			metadata: map[string]string{"key\rname": "value"},
+			wantErr:  true,
+			errMsg:   "control characters",
+		},
+		{
+			name:     "newline in key",
+			metadata: map[string]string{"key\nname": "value"},
+			wantErr:  true,
+			errMsg:   "control characters",
+		},
+		{
 			name: "at max entries",
 			metadata: func() map[string]string {
 				m := make(map[string]string)

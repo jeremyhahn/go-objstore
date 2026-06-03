@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using FluentAssertions;
@@ -6,21 +7,28 @@ using ObjStore.SDK.Clients;
 using ObjStore.SDK.Exceptions;
 using ObjStore.SDK.Models;
 using Moq;
-using Moq.Protected;
 using Xunit;
 
 namespace ObjStore.SDK.Tests.Unit;
 
+/// <summary>
+/// Canonical QUIC/HTTP3 client unit tests. Same matrix as REST: success + error for all 19 ops,
+/// not_found for the 9 listed ops, plus metadata_round_trip and validation_empty_key.
+/// Transport is a mocked HttpMessageHandler. The QUIC wire scheme differs from REST: custom
+/// metadata travels as one X-Meta-&lt;key&gt; header per entry and is read back from HEAD response headers.
+/// For the _error cases a transport failure is raised; the implementation surfaces it as
+/// OperationFailedException (Put) or HttpRequestException (the rest) — never a silent zero.
+/// </summary>
 public class QuicClientTests : IDisposable
 {
-    private readonly Mock<HttpMessageHandler> _mockHandler;
+    private readonly Mock<HttpMessageHandler> _handler;
     private readonly HttpClient _httpClient;
     private readonly QuicClient _client;
 
     public QuicClientTests()
     {
-        _mockHandler = new Mock<HttpMessageHandler>();
-        _httpClient = new HttpClient(_mockHandler.Object)
+        _handler = new Mock<HttpMessageHandler>();
+        _httpClient = new HttpClient(_handler.Object)
         {
             BaseAddress = new Uri("https://localhost:4433"),
             DefaultRequestVersion = HttpVersion.Version30,
@@ -29,905 +37,593 @@ public class QuicClientTests : IDisposable
         _client = new QuicClient(_httpClient);
     }
 
-    #region Constructor Tests
-
-    [Fact]
-    public void Constructor_WithNullHttpClient_ThrowsArgumentNullException()
+    private QuicClient ErrorClient()
     {
-        // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => new QuicClient((HttpClient)null!));
+        var handler = new Mock<HttpMessageHandler>();
+        handler.SetupThrow();
+        var http = new HttpClient(handler.Object) { BaseAddress = new Uri("https://localhost:4433") };
+        return new QuicClient(http);
     }
 
-    [Fact]
-    public void Constructor_WithValidUrl_CreatesClient()
-    {
-        // Arrange & Act
-        using var client = new QuicClient("https://localhost:4433");
-
-        // Assert
-        client.Should().NotBeNull();
-    }
-
-    #endregion
-
-    #region PutAsync Tests
+    // ---------------------------------------------------------------- put
 
     [Fact]
-    public async Task PutAsync_WithNullKey_ThrowsArgumentNullException()
+    public async Task Quic_Put_Success()
     {
-        // Act & Assert
-        await Assert.ThrowsAsync<ArgumentNullException>(() => _client.PutAsync(null!, new byte[] { 1, 2, 3 }));
-    }
-
-    [Fact]
-    public async Task PutAsync_WithNullData_ThrowsArgumentNullException()
-    {
-        // Act & Assert
-        await Assert.ThrowsAsync<ArgumentNullException>(() => _client.PutAsync("test-key", null!));
-    }
-
-    [Fact]
-    public async Task PutAsync_ShouldUploadObject_Successfully()
-    {
-        // Arrange
-        var key = "test/file.txt";
-        var data = Encoding.UTF8.GetBytes("test content");
-        var responseJson = JsonSerializer.Serialize(new { data = new { etag = "\"test-etag\"" } });
-
-        _mockHandler.Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.Is<HttpRequestMessage>(req =>
-                    req.Method == HttpMethod.Put &&
-                    req.RequestUri!.ToString().Contains(Uri.EscapeDataString(key))),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new HttpResponseMessage
+        _handler.SetupResponse(
+            req => req.Method == HttpMethod.Put,
+            () =>
             {
-                StatusCode = HttpStatusCode.Created,
-                Content = new StringContent(responseJson, Encoding.UTF8, "application/json")
+                var r = new HttpResponseMessage { StatusCode = HttpStatusCode.Created };
+                r.Headers.ETag = new EntityTagHeaderValue("\"etag-1\"");
+                return r;
             });
 
-        // Act
-        var etag = await _client.PutAsync(key, data);
-
-        // Assert
-        etag.Should().Be("\"test-etag\"");
-    }
-
-    #endregion
-
-    #region GetAsync Tests
-
-    [Fact]
-    public async Task GetAsync_WithNullKey_ThrowsArgumentNullException()
-    {
-        // Act & Assert
-        await Assert.ThrowsAsync<ArgumentNullException>(() => _client.GetAsync(null!));
+        (await _client.PutAsync("k", Encoding.UTF8.GetBytes("data"))).Should().Be("\"etag-1\"");
     }
 
     [Fact]
-    public async Task GetAsync_ShouldRetrieveObject_Successfully()
+    public async Task Quic_Put_Error()
     {
-        // Arrange
-        var key = "test/file.txt";
-        var expectedData = Encoding.UTF8.GetBytes("test content");
+        await Assert.ThrowsAsync<OperationFailedException>(() => ErrorClient().PutAsync("k", new byte[] { 1 }));
+    }
 
-        var response = new HttpResponseMessage
-        {
-            StatusCode = HttpStatusCode.OK,
-            Content = new ByteArrayContent(expectedData)
-        };
-        response.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/plain");
-        response.Headers.ETag = new System.Net.Http.Headers.EntityTagHeaderValue("\"test-etag\"");
+    // ---------------------------------------------------------------- get
 
-        _mockHandler.Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.Is<HttpRequestMessage>(req =>
-                    req.Method == HttpMethod.Get &&
-                    req.RequestUri!.ToString().Contains(Uri.EscapeDataString(key))),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(response);
+    [Fact]
+    public async Task Quic_Get_Success()
+    {
+        var data = Encoding.UTF8.GetBytes("hello");
+        _handler.SetupResponse(
+            req => req.Method == HttpMethod.Get,
+            () =>
+            {
+                var r = new HttpResponseMessage { StatusCode = HttpStatusCode.OK, Content = new ByteArrayContent(data) };
+                r.Content.Headers.ContentType = new MediaTypeHeaderValue("text/plain");
+                return r;
+            });
 
-        // Act
-        var (data, metadata) = await _client.GetAsync(key);
+        var (body, metadata) = await _client.GetAsync("k");
 
-        // Assert
-        data.Should().BeEquivalentTo(expectedData);
-        metadata.Should().NotBeNull();
+        body.Should().BeEquivalentTo(data);
         metadata!.ContentType.Should().Be("text/plain");
-        metadata.ETag.Should().Be("\"test-etag\"");
-    }
-
-    #endregion
-
-    #region DeleteAsync Tests
-
-    [Fact]
-    public async Task DeleteAsync_WithNullKey_ThrowsArgumentNullException()
-    {
-        // Act & Assert
-        await Assert.ThrowsAsync<ArgumentNullException>(() => _client.DeleteAsync(null!));
     }
 
     [Fact]
-    public async Task DeleteAsync_ShouldDeleteObject_Successfully()
+    public async Task Quic_Get_Error()
     {
-        // Arrange
-        var key = "test/file.txt";
+        await Assert.ThrowsAsync<HttpRequestException>(() => ErrorClient().GetAsync("k"));
+    }
 
-        _mockHandler.Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.Is<HttpRequestMessage>(req =>
-                    req.Method == HttpMethod.Delete &&
-                    req.RequestUri!.ToString().Contains(Uri.EscapeDataString(key))),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new HttpResponseMessage
+    [Fact]
+    public async Task Quic_Get_NotFound()
+    {
+        _handler.SetupStatus(req => req.Method == HttpMethod.Get, HttpStatusCode.NotFound);
+
+        await Assert.ThrowsAsync<ObjectNotFoundException>(() => _client.GetAsync("missing"));
+    }
+
+    [Fact]
+    public async Task Quic_Get_ParsesCustomMetadata()
+    {
+        // GET must collect X-Meta-<key> response headers into Custom, same as GetMetadata.
+        _handler.SetupResponse(
+            req => req.Method == HttpMethod.Get,
+            () =>
             {
-                StatusCode = HttpStatusCode.OK
+                var r = new HttpResponseMessage { StatusCode = HttpStatusCode.OK, Content = new ByteArrayContent(Encoding.UTF8.GetBytes("body")) };
+                r.Content.Headers.ContentType = new MediaTypeHeaderValue("text/plain");
+                r.Headers.TryAddWithoutValidation("X-Meta-author", "alice");
+                r.Headers.TryAddWithoutValidation("X-Meta-team", "core");
+                return r;
             });
 
-        // Act
-        var result = await _client.DeleteAsync(key);
+        var (_, metadata) = await _client.GetAsync("k");
 
-        // Assert
-        result.Should().BeTrue();
+        metadata!.Custom!["author"].Should().Be("alice");
+        metadata.Custom["team"].Should().Be("core");
     }
 
-    #endregion
-
-    #region ListAsync Tests
+    // ---------------------------------------------------------------- delete
 
     [Fact]
-    public async Task ListAsync_ShouldReturnObjects_Successfully()
+    public async Task Quic_Delete_Success()
     {
-        // Arrange
-        var prefix = "test/";
-        var responseData = new ListObjectsResponse
+        _handler.SetupStatus(req => req.Method == HttpMethod.Delete, HttpStatusCode.OK);
+
+        (await _client.DeleteAsync("k")).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Quic_Delete_Error()
+    {
+        await Assert.ThrowsAsync<HttpRequestException>(() => ErrorClient().DeleteAsync("k"));
+    }
+
+    [Fact]
+    public async Task Quic_Delete_NotFound()
+    {
+        _handler.SetupStatus(req => req.Method == HttpMethod.Delete, HttpStatusCode.NotFound);
+
+        (await _client.DeleteAsync("missing")).Should().BeFalse();
+    }
+
+    // ---------------------------------------------------------------- list
+
+    [Fact]
+    public async Task Quic_List_Success()
+    {
+        var json = JsonSerializer.Serialize(new ListObjectsResponse
         {
-            Objects = new List<ObjectInfo>
-            {
-                new() { Key = "test/file1.txt", Metadata = new ObjectMetadata { Size = 100 } },
-                new() { Key = "test/file2.txt", Metadata = new ObjectMetadata { Size = 200 } }
-            },
-            Truncated = false
-        };
+            Objects = new List<ObjectInfo> { new() { Key = "a" } }
+        });
+        _handler.SetupJson(req => req.Method == HttpMethod.Get, json);
 
-        var responseContent = JsonSerializer.Serialize(responseData);
+        (await _client.ListAsync("p/")).Objects.Should().ContainSingle();
+    }
 
-        _mockHandler.Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.Is<HttpRequestMessage>(req =>
-                    req.Method == HttpMethod.Get &&
-                    req.RequestUri!.ToString().Contains("prefix=")),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new HttpResponseMessage
+    [Fact]
+    public async Task Quic_List_Error()
+    {
+        await Assert.ThrowsAsync<HttpRequestException>(() => ErrorClient().ListAsync("p"));
+    }
+
+    // ---------------------------------------------------------------- exists
+
+    [Fact]
+    public async Task Quic_Exists_Success()
+    {
+        _handler.SetupStatus(req => req.Method == HttpMethod.Head, HttpStatusCode.OK);
+
+        (await _client.ExistsAsync("k")).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Quic_Exists_Error()
+    {
+        await Assert.ThrowsAsync<HttpRequestException>(() => ErrorClient().ExistsAsync("k"));
+    }
+
+    [Fact]
+    public async Task Quic_Exists_NotFound()
+    {
+        _handler.SetupStatus(req => req.Method == HttpMethod.Head, HttpStatusCode.NotFound);
+
+        (await _client.ExistsAsync("missing")).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Quic_Exists_ServerError_Throws()
+    {
+        // A 5xx must surface as an error, never a silent false (only 404 maps to false).
+        _handler.SetupStatus(req => req.Method == HttpMethod.Head, HttpStatusCode.InternalServerError);
+
+        await Assert.ThrowsAsync<OperationFailedException>(() => _client.ExistsAsync("boom"));
+    }
+
+    // ---------------------------------------------------------------- get_metadata
+
+    [Fact]
+    public async Task Quic_GetMetadata_Success()
+    {
+        _handler.SetupResponse(
+            req => req.Method == HttpMethod.Head,
+            () =>
             {
-                StatusCode = HttpStatusCode.OK,
-                Content = new StringContent(responseContent, Encoding.UTF8, "application/json")
+                var r = new HttpResponseMessage { StatusCode = HttpStatusCode.OK, Content = new ByteArrayContent(Array.Empty<byte>()) };
+                r.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+                r.Headers.TryAddWithoutValidation("X-Meta-author", "alice");
+                return r;
             });
 
-        // Act
-        var result = await _client.ListAsync(prefix);
+        var metadata = await _client.GetMetadataAsync("k");
 
-        // Assert
-        result.Should().NotBeNull();
-        result.Objects.Should().HaveCount(2);
-        result.Objects[0].Key.Should().Be("test/file1.txt");
-    }
-
-    #endregion
-
-    #region ExistsAsync Tests
-
-    [Fact]
-    public async Task ExistsAsync_WithNullKey_ThrowsArgumentNullException()
-    {
-        // Act & Assert
-        await Assert.ThrowsAsync<ArgumentNullException>(() => _client.ExistsAsync(null!));
+        metadata!.ContentType.Should().Be("application/json");
+        metadata.Custom!["author"].Should().Be("alice");
     }
 
     [Fact]
-    public async Task ExistsAsync_ShouldReturnTrue_WhenObjectExists()
+    public async Task Quic_GetMetadata_Error()
     {
-        // Arrange
-        var key = "test/file.txt";
-
-        _mockHandler.Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.Is<HttpRequestMessage>(req =>
-                    req.Method == HttpMethod.Head &&
-                    req.RequestUri!.ToString().Contains(Uri.EscapeDataString(key))),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new HttpResponseMessage
-            {
-                StatusCode = HttpStatusCode.OK
-            });
-
-        // Act
-        var exists = await _client.ExistsAsync(key);
-
-        // Assert
-        exists.Should().BeTrue();
+        await Assert.ThrowsAsync<HttpRequestException>(() => ErrorClient().GetMetadataAsync("k"));
     }
 
     [Fact]
-    public async Task ExistsAsync_ShouldReturnFalse_WhenObjectDoesNotExist()
+    public async Task Quic_GetMetadata_NotFound()
     {
-        // Arrange
-        var key = "test/nonexistent.txt";
+        _handler.SetupStatus(req => req.Method == HttpMethod.Head, HttpStatusCode.NotFound);
 
-        _mockHandler.Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.Is<HttpRequestMessage>(req =>
-                    req.Method == HttpMethod.Head),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new HttpResponseMessage
-            {
-                StatusCode = HttpStatusCode.NotFound
-            });
-
-        // Act
-        var exists = await _client.ExistsAsync(key);
-
-        // Assert
-        exists.Should().BeFalse();
+        (await _client.GetMetadataAsync("missing")).Should().BeNull();
     }
 
-    #endregion
-
-    #region GetMetadataAsync Tests
+    // ---------------------------------------------------------------- update_metadata
 
     [Fact]
-    public async Task GetMetadataAsync_WithNullKey_ThrowsArgumentNullException()
+    public async Task Quic_UpdateMetadata_Success()
     {
-        // Act & Assert
-        await Assert.ThrowsAsync<ArgumentNullException>(() => _client.GetMetadataAsync(null!));
-    }
+        _handler.SetupStatus(req => req.Method == HttpMethod.Patch, HttpStatusCode.OK);
 
-    #endregion
-
-    #region UpdateMetadataAsync Tests
-
-    [Fact]
-    public async Task UpdateMetadataAsync_WithNullKey_ThrowsArgumentNullException()
-    {
-        // Arrange
-        var metadata = new ObjectMetadata { ContentType = "text/plain" };
-
-        // Act & Assert
-        await Assert.ThrowsAsync<ArgumentNullException>(() => _client.UpdateMetadataAsync(null!, metadata));
+        (await _client.UpdateMetadataAsync("k", new ObjectMetadata { ContentType = "text/plain" })).Should().BeTrue();
     }
 
     [Fact]
-    public async Task UpdateMetadataAsync_WithNullMetadata_ThrowsArgumentNullException()
+    public async Task Quic_UpdateMetadata_Error()
     {
-        // Act & Assert
-        await Assert.ThrowsAsync<ArgumentNullException>(() => _client.UpdateMetadataAsync("test-key", null!));
+        await Assert.ThrowsAsync<HttpRequestException>(
+            () => ErrorClient().UpdateMetadataAsync("k", new ObjectMetadata()));
     }
 
     [Fact]
-    public async Task UpdateMetadataAsync_ShouldUpdateMetadata_Successfully()
+    public async Task Quic_UpdateMetadata_NotFound()
     {
-        // Arrange
-        var key = "test/file.txt";
-        var metadata = new ObjectMetadata
+        _handler.SetupStatus(req => req.Method == HttpMethod.Patch, HttpStatusCode.NotFound);
+
+        await Assert.ThrowsAsync<ObjectNotFoundException>(
+            () => _client.UpdateMetadataAsync("missing", new ObjectMetadata()));
+    }
+
+    // ---------------------------------------------------------------- health
+
+    [Fact]
+    public async Task Quic_Health_Success()
+    {
+        _handler.SetupJson(
+            req => req.RequestUri!.ToString().Contains("/health"),
+            JsonSerializer.Serialize(new { status = "healthy", version = "1.0.0" }));
+
+        (await _client.HealthAsync()).Status.Should().Be(HealthStatus.Serving);
+    }
+
+    [Fact]
+    public async Task Quic_Health_Error()
+    {
+        await Assert.ThrowsAsync<HttpRequestException>(() => ErrorClient().HealthAsync());
+    }
+
+    // ---------------------------------------------------------------- archive
+
+    [Fact]
+    public async Task Quic_Archive_Success()
+    {
+        _handler.SetupStatus(
+            req => req.Method == HttpMethod.Post && req.RequestUri!.ToString().Contains("/archive"),
+            HttpStatusCode.OK);
+
+        (await _client.ArchiveAsync("k", "glacier")).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Quic_Archive_Error()
+    {
+        await Assert.ThrowsAsync<HttpRequestException>(() => ErrorClient().ArchiveAsync("k", "glacier"));
+    }
+
+    // ---------------------------------------------------------------- add_policy
+
+    [Fact]
+    public async Task Quic_AddPolicy_Success()
+    {
+        _handler.SetupStatus(
+            req => req.Method == HttpMethod.Post && req.RequestUri!.ToString().EndsWith("/policies"),
+            HttpStatusCode.Created);
+
+        (await _client.AddPolicyAsync(new LifecyclePolicy { Id = "p1" })).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Quic_AddPolicy_Error()
+    {
+        await Assert.ThrowsAsync<HttpRequestException>(
+            () => ErrorClient().AddPolicyAsync(new LifecyclePolicy { Id = "p1" }));
+    }
+
+    // ---------------------------------------------------------------- remove_policy
+
+    [Fact]
+    public async Task Quic_RemovePolicy_Success()
+    {
+        _handler.SetupStatus(
+            req => req.Method == HttpMethod.Delete && req.RequestUri!.ToString().Contains("/policies/"),
+            HttpStatusCode.OK);
+
+        (await _client.RemovePolicyAsync("p1")).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Quic_RemovePolicy_Error()
+    {
+        await Assert.ThrowsAsync<HttpRequestException>(() => ErrorClient().RemovePolicyAsync("p1"));
+    }
+
+    [Fact]
+    public async Task Quic_RemovePolicy_NotFound()
+    {
+        _handler.SetupStatus(
+            req => req.Method == HttpMethod.Delete && req.RequestUri!.ToString().Contains("/policies/"),
+            HttpStatusCode.NotFound);
+
+        (await _client.RemovePolicyAsync("missing")).Should().BeFalse();
+    }
+
+    // ---------------------------------------------------------------- get_policies
+
+    [Fact]
+    public async Task Quic_GetPolicies_Success()
+    {
+        var json = JsonSerializer.Serialize(new
         {
-            ContentType = "application/json",
-            Custom = new Dictionary<string, string> { ["author"] = "test" }
-        };
+            policies = new[] { new { id = "p1", prefix = "x/", action = "delete", retention_seconds = 60 } }
+        });
+        _handler.SetupJson(req => req.Method == HttpMethod.Get && req.RequestUri!.ToString().EndsWith("/policies"), json);
 
-        _mockHandler.Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.Is<HttpRequestMessage>(req =>
-                    req.Method == HttpMethod.Put &&
-                    req.RequestUri!.ToString().Contains("/metadata")),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new HttpResponseMessage
-            {
-                StatusCode = HttpStatusCode.OK
-            });
-
-        // Act
-        var result = await _client.UpdateMetadataAsync(key, metadata);
-
-        // Assert
-        result.Should().BeTrue();
-    }
-
-    #endregion
-
-    #region HealthAsync Tests
-
-    [Fact]
-    public async Task HealthAsync_ShouldReturnHealthy_WhenServiceIsUp()
-    {
-        // Arrange
-        var responseData = new Dictionary<string, string> { { "status", "healthy" }, { "version", "1.0.0" } };
-        var responseContent = JsonSerializer.Serialize(responseData);
-
-        _mockHandler.Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.Is<HttpRequestMessage>(req =>
-                    req.Method == HttpMethod.Get &&
-                    req.RequestUri!.ToString().Contains("/health")),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new HttpResponseMessage
-            {
-                StatusCode = HttpStatusCode.OK,
-                Content = new StringContent(responseContent, Encoding.UTF8, "application/json")
-            });
-
-        // Act
-        var health = await _client.HealthAsync();
-
-        // Assert
-        health.Should().NotBeNull();
-        health.Status.Should().Be(HealthStatus.Serving);
-    }
-
-    [Fact]
-    public async Task HealthAsync_ShouldReturnNotServing_WhenServiceIsDown()
-    {
-        // Arrange
-        _mockHandler.Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.Is<HttpRequestMessage>(req =>
-                    req.Method == HttpMethod.Get &&
-                    req.RequestUri!.ToString().Contains("/health")),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new HttpResponseMessage
-            {
-                StatusCode = HttpStatusCode.ServiceUnavailable
-            });
-
-        // Act
-        var health = await _client.HealthAsync();
-
-        // Assert
-        health.Status.Should().Be(HealthStatus.NotServing);
-    }
-
-    #endregion
-
-    #region ArchiveAsync Tests
-
-    [Fact]
-    public async Task ArchiveAsync_WithNullKey_ThrowsArgumentNullException()
-    {
-        // Act & Assert
-        await Assert.ThrowsAsync<ArgumentNullException>(() => _client.ArchiveAsync(null!, "glacier"));
-    }
-
-    [Fact]
-    public async Task ArchiveAsync_WithNullDestinationType_ThrowsArgumentNullException()
-    {
-        // Act & Assert
-        await Assert.ThrowsAsync<ArgumentNullException>(() => _client.ArchiveAsync("test-key", null!));
-    }
-
-    [Fact]
-    public async Task ArchiveAsync_ShouldArchive_Successfully()
-    {
-        // Arrange
-        var key = "test/file.txt";
-
-        _mockHandler.Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.Is<HttpRequestMessage>(req =>
-                    req.Method == HttpMethod.Post &&
-                    req.RequestUri!.ToString().Contains("/archive")),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new HttpResponseMessage
-            {
-                StatusCode = HttpStatusCode.OK
-            });
-
-        // Act
-        var result = await _client.ArchiveAsync(key, "glacier");
-
-        // Assert
-        result.Should().BeTrue();
-    }
-
-    #endregion
-
-    #region AddPolicyAsync Tests
-
-    [Fact]
-    public async Task AddPolicyAsync_WithNullPolicy_ThrowsArgumentNullException()
-    {
-        // Act & Assert
-        await Assert.ThrowsAsync<ArgumentNullException>(() => _client.AddPolicyAsync(null!));
-    }
-
-    [Fact]
-    public async Task AddPolicyAsync_ShouldAddPolicy_Successfully()
-    {
-        // Arrange
-        var policy = new LifecyclePolicy
-        {
-            Id = "test-policy",
-            Prefix = "archive/",
-            RetentionSeconds = 86400,
-            Action = "delete"
-        };
-
-        _mockHandler.Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.Is<HttpRequestMessage>(req =>
-                    req.Method == HttpMethod.Post &&
-                    req.RequestUri!.ToString().Contains("/policies")),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new HttpResponseMessage
-            {
-                StatusCode = HttpStatusCode.Created
-            });
-
-        // Act
-        var result = await _client.AddPolicyAsync(policy);
-
-        // Assert
-        result.Should().BeTrue();
-    }
-
-    #endregion
-
-    #region RemovePolicyAsync Tests
-
-    [Fact]
-    public async Task RemovePolicyAsync_WithNullId_ThrowsArgumentNullException()
-    {
-        // Act & Assert
-        await Assert.ThrowsAsync<ArgumentNullException>(() => _client.RemovePolicyAsync(null!));
-    }
-
-    [Fact]
-    public async Task RemovePolicyAsync_ShouldRemovePolicy_Successfully()
-    {
-        // Arrange
-        var policyId = "test-policy";
-
-        _mockHandler.Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.Is<HttpRequestMessage>(req =>
-                    req.Method == HttpMethod.Delete &&
-                    req.RequestUri!.ToString().Contains($"/policies/{policyId}")),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new HttpResponseMessage
-            {
-                StatusCode = HttpStatusCode.OK
-            });
-
-        // Act
-        var result = await _client.RemovePolicyAsync(policyId);
-
-        // Assert
-        result.Should().BeTrue();
-    }
-
-    #endregion
-
-    #region GetPoliciesAsync Tests
-
-    [Fact]
-    public async Task GetPoliciesAsync_ShouldReturnPolicies_Successfully()
-    {
-        // Arrange
-        var policies = new List<LifecyclePolicy>
-        {
-            new() { Id = "policy-1", Prefix = "test/", Action = "delete", RetentionSeconds = 86400 }
-        };
-        var responseData = new { policies };
-        var responseContent = JsonSerializer.Serialize(responseData);
-
-        _mockHandler.Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.Is<HttpRequestMessage>(req =>
-                    req.Method == HttpMethod.Get &&
-                    req.RequestUri!.ToString().Contains("/policies")),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new HttpResponseMessage
-            {
-                StatusCode = HttpStatusCode.OK,
-                Content = new StringContent(responseContent, Encoding.UTF8, "application/json")
-            });
-
-        // Act
         var result = await _client.GetPoliciesAsync();
 
-        // Assert
-        result.Should().NotBeNull();
-        result.Should().HaveCount(1);
-        result[0].Id.Should().Be("policy-1");
+        result.Should().ContainSingle();
+        result[0].Id.Should().Be("p1");
     }
 
-    #endregion
+    [Fact]
+    public async Task Quic_GetPolicies_Error()
+    {
+        await Assert.ThrowsAsync<HttpRequestException>(() => ErrorClient().GetPoliciesAsync());
+    }
 
-    #region ApplyPoliciesAsync Tests
+    // ---------------------------------------------------------------- apply_policies
 
     [Fact]
-    public async Task ApplyPoliciesAsync_ShouldApplyPolicies_Successfully()
+    public async Task Quic_ApplyPolicies_Success()
     {
-        // Arrange
-        var responseData = new { policies_count = 2, objects_processed = 10 };
-        var responseContent = JsonSerializer.Serialize(responseData);
+        _handler.SetupJson(
+            req => req.Method == HttpMethod.Post && req.RequestUri!.ToString().Contains("/policies/apply"),
+            JsonSerializer.Serialize(new { policies_count = 2, objects_processed = 5 }));
 
-        _mockHandler.Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.Is<HttpRequestMessage>(req =>
-                    req.Method == HttpMethod.Post &&
-                    req.RequestUri!.ToString().Contains("/policies/apply")),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new HttpResponseMessage
-            {
-                StatusCode = HttpStatusCode.OK,
-                Content = new StringContent(responseContent, Encoding.UTF8, "application/json")
-            });
+        var (success, count, processed) = await _client.ApplyPoliciesAsync();
 
-        // Act
-        var (success, policiesCount, objectsProcessed) = await _client.ApplyPoliciesAsync();
-
-        // Assert
         success.Should().BeTrue();
-        policiesCount.Should().Be(2);
-        objectsProcessed.Should().Be(10);
-    }
-
-    #endregion
-
-    #region AddReplicationPolicyAsync Tests
-
-    [Fact]
-    public async Task AddReplicationPolicyAsync_WithNullPolicy_ThrowsArgumentNullException()
-    {
-        // Act & Assert
-        await Assert.ThrowsAsync<ArgumentNullException>(() => _client.AddReplicationPolicyAsync(null!));
+        count.Should().Be(2);
+        processed.Should().Be(5);
     }
 
     [Fact]
-    public async Task AddReplicationPolicyAsync_ShouldAddPolicy_Successfully()
+    public async Task Quic_ApplyPolicies_Error()
     {
-        // Arrange
-        var policy = new ReplicationPolicy
+        await Assert.ThrowsAsync<HttpRequestException>(() => ErrorClient().ApplyPoliciesAsync());
+    }
+
+    // ---------------------------------------------------------------- add_replication_policy
+
+    [Fact]
+    public async Task Quic_AddReplicationPolicy_Success()
+    {
+        _handler.SetupStatus(
+            req => req.Method == HttpMethod.Post && req.RequestUri!.ToString().Contains("/replication/policies"),
+            HttpStatusCode.Created);
+
+        (await _client.AddReplicationPolicyAsync(new ReplicationPolicy { Id = "r1" })).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Quic_AddReplicationPolicy_Error()
+    {
+        await Assert.ThrowsAsync<HttpRequestException>(
+            () => ErrorClient().AddReplicationPolicyAsync(new ReplicationPolicy { Id = "r1" }));
+    }
+
+    // ---------------------------------------------------------------- remove_replication_policy
+
+    [Fact]
+    public async Task Quic_RemoveReplicationPolicy_Success()
+    {
+        _handler.SetupStatus(
+            req => req.Method == HttpMethod.Delete && req.RequestUri!.ToString().Contains("/replication/policies/"),
+            HttpStatusCode.OK);
+
+        (await _client.RemoveReplicationPolicyAsync("r1")).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Quic_RemoveReplicationPolicy_Error()
+    {
+        await Assert.ThrowsAsync<HttpRequestException>(() => ErrorClient().RemoveReplicationPolicyAsync("r1"));
+    }
+
+    [Fact]
+    public async Task Quic_RemoveReplicationPolicy_NotFound()
+    {
+        _handler.SetupStatus(
+            req => req.Method == HttpMethod.Delete && req.RequestUri!.ToString().Contains("/replication/policies/"),
+            HttpStatusCode.NotFound);
+
+        (await _client.RemoveReplicationPolicyAsync("missing")).Should().BeFalse();
+    }
+
+    // ---------------------------------------------------------------- get_replication_policies
+
+    [Fact]
+    public async Task Quic_GetReplicationPolicies_Success()
+    {
+        var json = JsonSerializer.Serialize(new
         {
-            Id = "repl-1",
-            SourceBackend = "s3",
-            DestinationBackend = "gcs",
-            CheckIntervalSeconds = 300,
-            Enabled = true
-        };
+            policies = new[] { new { id = "r1", source_backend = "s3", destination_backend = "gcs", enabled = true } }
+        });
+        _handler.SetupJson(
+            req => req.Method == HttpMethod.Get && req.RequestUri!.ToString().EndsWith("/replication/policies"),
+            json);
 
-        _mockHandler.Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.Is<HttpRequestMessage>(req =>
-                    req.Method == HttpMethod.Post &&
-                    req.RequestUri!.ToString().Contains("/replication/policies")),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new HttpResponseMessage
-            {
-                StatusCode = HttpStatusCode.Created
-            });
-
-        // Act
-        var result = await _client.AddReplicationPolicyAsync(policy);
-
-        // Assert
-        result.Should().BeTrue();
-    }
-
-    #endregion
-
-    #region RemoveReplicationPolicyAsync Tests
-
-    [Fact]
-    public async Task RemoveReplicationPolicyAsync_WithNullId_ThrowsArgumentNullException()
-    {
-        // Act & Assert
-        await Assert.ThrowsAsync<ArgumentNullException>(() => _client.RemoveReplicationPolicyAsync(null!));
-    }
-
-    [Fact]
-    public async Task RemoveReplicationPolicyAsync_ShouldRemovePolicy_Successfully()
-    {
-        // Arrange
-        var policyId = "repl-1";
-
-        _mockHandler.Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.Is<HttpRequestMessage>(req =>
-                    req.Method == HttpMethod.Delete &&
-                    req.RequestUri!.ToString().Contains($"/replication/policies/{policyId}")),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new HttpResponseMessage
-            {
-                StatusCode = HttpStatusCode.OK
-            });
-
-        // Act
-        var result = await _client.RemoveReplicationPolicyAsync(policyId);
-
-        // Assert
-        result.Should().BeTrue();
-    }
-
-    #endregion
-
-    #region GetReplicationPoliciesAsync Tests
-
-    [Fact]
-    public async Task GetReplicationPoliciesAsync_ShouldReturnPolicies_Successfully()
-    {
-        // Arrange
-        var policies = new List<ReplicationPolicy>
-        {
-            new() { Id = "repl-1", SourceBackend = "s3", DestinationBackend = "gcs", Enabled = true }
-        };
-        var responseData = new { policies };
-        var responseContent = JsonSerializer.Serialize(responseData);
-
-        _mockHandler.Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.Is<HttpRequestMessage>(req =>
-                    req.Method == HttpMethod.Get &&
-                    req.RequestUri!.ToString().Contains("/replication/policies") &&
-                    !req.RequestUri!.ToString().Contains("/replication/policies/")),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new HttpResponseMessage
-            {
-                StatusCode = HttpStatusCode.OK,
-                Content = new StringContent(responseContent, Encoding.UTF8, "application/json")
-            });
-
-        // Act
         var result = await _client.GetReplicationPoliciesAsync();
 
-        // Assert
-        result.Should().NotBeNull();
-        result.Should().HaveCount(1);
-        result[0].Id.Should().Be("repl-1");
-    }
-
-    #endregion
-
-    #region GetReplicationPolicyAsync Tests
-
-    [Fact]
-    public async Task GetReplicationPolicyAsync_WithNullId_ThrowsArgumentNullException()
-    {
-        // Act & Assert
-        await Assert.ThrowsAsync<ArgumentNullException>(() => _client.GetReplicationPolicyAsync(null!));
+        result.Should().ContainSingle();
+        result[0].Id.Should().Be("r1");
     }
 
     [Fact]
-    public async Task GetReplicationPolicyAsync_ShouldReturnPolicy_Successfully()
+    public async Task Quic_GetReplicationPolicies_Error()
     {
-        // Arrange
-        var policy = new ReplicationPolicy
+        await Assert.ThrowsAsync<HttpRequestException>(() => ErrorClient().GetReplicationPoliciesAsync());
+    }
+
+    // ---------------------------------------------------------------- get_replication_policy
+
+    [Fact]
+    public async Task Quic_GetReplicationPolicy_Success()
+    {
+        var json = JsonSerializer.Serialize(new ReplicationPolicy { Id = "r1", SourceBackend = "s3" });
+        _handler.SetupJson(
+            req => req.Method == HttpMethod.Get && req.RequestUri!.ToString().Contains("/replication/policies/r1"),
+            json);
+
+        (await _client.GetReplicationPolicyAsync("r1"))!.Id.Should().Be("r1");
+    }
+
+    [Fact]
+    public async Task Quic_GetReplicationPolicy_Error()
+    {
+        await Assert.ThrowsAsync<HttpRequestException>(() => ErrorClient().GetReplicationPolicyAsync("r1"));
+    }
+
+    [Fact]
+    public async Task Quic_GetReplicationPolicy_NotFound()
+    {
+        _handler.SetupStatus(
+            req => req.RequestUri!.ToString().Contains("/replication/policies/"),
+            HttpStatusCode.NotFound);
+
+        (await _client.GetReplicationPolicyAsync("missing")).Should().BeNull();
+    }
+
+    // ---------------------------------------------------------------- trigger_replication
+
+    [Fact]
+    public async Task Quic_TriggerReplication_Success()
+    {
+        var json = JsonSerializer.Serialize(new
         {
-            Id = "repl-1",
-            SourceBackend = "s3",
-            DestinationBackend = "gcs",
-            Enabled = true
-        };
-        var responseData = new { policy };
-        var responseContent = JsonSerializer.Serialize(responseData);
-
-        _mockHandler.Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.Is<HttpRequestMessage>(req =>
-                    req.Method == HttpMethod.Get &&
-                    req.RequestUri!.ToString().Contains("/replication/policies/repl-1")),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new HttpResponseMessage
+            success = true,
+            message = "replication triggered",
+            result = new
             {
-                StatusCode = HttpStatusCode.OK,
-                Content = new StringContent(responseContent, Encoding.UTF8, "application/json")
-            });
+                policy_id = "r1",
+                synced = 2,
+                deleted = 0,
+                failed = 0,
+                bytes_total = 512L,
+                duration = "300ms"
+            }
+        });
+        _handler.SetupJson(
+            req => req.Method == HttpMethod.Post && req.RequestUri!.ToString().Contains("/replication/trigger"),
+            json);
 
-        // Act
-        var result = await _client.GetReplicationPolicyAsync("repl-1");
+        var result = await _client.TriggerReplicationAsync("r1");
 
-        // Assert
-        result.Should().NotBeNull();
-        result!.Id.Should().Be("repl-1");
-        result.SourceBackend.Should().Be("s3");
+        result.Success.Should().BeTrue();
+        result.SyncResult.Should().NotBeNull();
+        result.SyncResult!.PolicyId.Should().Be("r1");
+        result.SyncResult.Synced.Should().Be(2);
+        result.SyncResult.Deleted.Should().Be(0);
+        result.SyncResult.Failed.Should().Be(0);
+        result.SyncResult.BytesTotal.Should().Be(512);
+        result.SyncResult.DurationMs.Should().Be(300);
     }
 
     [Fact]
-    public async Task GetReplicationPolicyAsync_ShouldReturnNull_WhenNotFound()
+    public async Task Quic_TriggerReplication_Error()
     {
-        // Arrange
-        _mockHandler.Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.Is<HttpRequestMessage>(req =>
-                    req.Method == HttpMethod.Get &&
-                    req.RequestUri!.ToString().Contains("/replication/policies/")),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new HttpResponseMessage
-            {
-                StatusCode = HttpStatusCode.NotFound
-            });
-
-        // Act
-        var result = await _client.GetReplicationPolicyAsync("nonexistent");
-
-        // Assert
-        result.Should().BeNull();
+        await Assert.ThrowsAsync<HttpRequestException>(() => ErrorClient().TriggerReplicationAsync("r1"));
     }
 
-    #endregion
-
-    #region TriggerReplicationAsync Tests
+    // ---------------------------------------------------------------- get_replication_status
 
     [Fact]
-    public async Task TriggerReplicationAsync_ShouldTrigger_Successfully()
+    public async Task Quic_GetReplicationStatus_Success()
     {
-        // Arrange
-        _mockHandler.Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.Is<HttpRequestMessage>(req =>
-                    req.Method == HttpMethod.Post &&
-                    req.RequestUri!.ToString().Contains("/replication/trigger")),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new HttpResponseMessage
-            {
-                StatusCode = HttpStatusCode.OK
-            });
+        var json = JsonSerializer.Serialize(new ReplicationStatus { PolicyId = "r1", TotalObjectsSynced = 7 });
+        _handler.SetupJson(req => req.RequestUri!.ToString().Contains("/replication/status/r1"), json);
 
-        // Act
-        var result = await _client.TriggerReplicationAsync("repl-1", true, 8);
+        var result = await _client.GetReplicationStatusAsync("r1");
 
-        // Assert
-        result.Should().BeTrue();
+        result!.PolicyId.Should().Be("r1");
+        result.TotalObjectsSynced.Should().Be(7);
     }
 
     [Fact]
-    public async Task TriggerReplicationAsync_ShouldTriggerAll_WhenNoPolicy()
+    public async Task Quic_GetReplicationStatus_Error()
     {
-        // Arrange
-        _mockHandler.Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.Is<HttpRequestMessage>(req =>
-                    req.Method == HttpMethod.Post &&
-                    req.RequestUri!.ToString().Contains("/replication/trigger")),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new HttpResponseMessage
-            {
-                StatusCode = HttpStatusCode.OK
-            });
-
-        // Act
-        var result = await _client.TriggerReplicationAsync();
-
-        // Assert
-        result.Should().BeTrue();
-    }
-
-    #endregion
-
-    #region GetReplicationStatusAsync Tests
-
-    [Fact]
-    public async Task GetReplicationStatusAsync_WithNullId_ThrowsArgumentNullException()
-    {
-        // Act & Assert
-        await Assert.ThrowsAsync<ArgumentNullException>(() => _client.GetReplicationStatusAsync(null!));
+        await Assert.ThrowsAsync<HttpRequestException>(() => ErrorClient().GetReplicationStatusAsync("r1"));
     }
 
     [Fact]
-    public async Task GetReplicationStatusAsync_ShouldReturnStatus_Successfully()
+    public async Task Quic_GetReplicationStatus_NotFound()
     {
-        // Arrange
-        var status = new ReplicationStatus
+        _handler.SetupStatus(
+            req => req.RequestUri!.ToString().Contains("/replication/status/"),
+            HttpStatusCode.NotFound);
+
+        (await _client.GetReplicationStatusAsync("missing")).Should().BeNull();
+    }
+
+    // ---------------------------------------------------------------- cross-cutting
+
+    [Fact]
+    public async Task Quic_Metadata_RoundTrip()
+    {
+        var meta = new ObjectMetadata
         {
-            PolicyId = "repl-1",
-            SourceBackend = "s3",
-            DestinationBackend = "gcs",
-            TotalObjectsSynced = 100,
-            TotalBytesSynced = 1048576,
-            Enabled = true
+            ContentType = "application/json",
+            ContentEncoding = "gzip",
+            Custom = new Dictionary<string, string> { ["author"] = "alice", ["team"] = "core" }
         };
-        var responseData = new { status };
-        var responseContent = JsonSerializer.Serialize(responseData);
 
-        _mockHandler.Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.Is<HttpRequestMessage>(req =>
-                    req.Method == HttpMethod.Get &&
-                    req.RequestUri!.ToString().Contains("/replication/status/repl-1")),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new HttpResponseMessage
+        // PUT: assert wire scheme — Content-Type, Content-Encoding, one X-Meta-<key> per custom entry.
+        HttpRequestMessage? putReq = null;
+        _handler.SetupCapture(
+            req => req.Method == HttpMethod.Put,
+            req => putReq = req,
+            () =>
             {
-                StatusCode = HttpStatusCode.OK,
-                Content = new StringContent(responseContent, Encoding.UTF8, "application/json")
+                var r = new HttpResponseMessage { StatusCode = HttpStatusCode.Created };
+                r.Headers.ETag = new EntityTagHeaderValue("\"rt\"");
+                return r;
             });
 
-        // Act
-        var result = await _client.GetReplicationStatusAsync("repl-1");
+        await _client.PutAsync("k", Encoding.UTF8.GetBytes("body"), meta);
 
-        // Assert
-        result.Should().NotBeNull();
-        result!.PolicyId.Should().Be("repl-1");
-        result.TotalObjectsSynced.Should().Be(100);
-        result.TotalBytesSynced.Should().Be(1048576);
-    }
+        putReq!.Content!.Headers.ContentType!.MediaType.Should().Be("application/json");
+        putReq.Content.Headers.ContentEncoding.Should().Contain("gzip");
+        putReq.Headers.GetValues("X-Meta-author").First().Should().Be("alice");
+        putReq.Headers.GetValues("X-Meta-team").First().Should().Be("core");
 
-    [Fact]
-    public async Task GetReplicationStatusAsync_ShouldReturnNull_WhenNotFound()
-    {
-        // Arrange
-        _mockHandler.Protected()
-            .Setup<Task<HttpResponseMessage>>(
-                "SendAsync",
-                ItExpr.Is<HttpRequestMessage>(req =>
-                    req.Method == HttpMethod.Get &&
-                    req.RequestUri!.ToString().Contains("/replication/status/")),
-                ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(new HttpResponseMessage
+        // Metadata read back via HEAD response headers.
+        _handler.SetupResponse(
+            req => req.Method == HttpMethod.Head,
+            () =>
             {
-                StatusCode = HttpStatusCode.NotFound
+                var r = new HttpResponseMessage { StatusCode = HttpStatusCode.OK, Content = new ByteArrayContent(Array.Empty<byte>()) };
+                r.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+                r.Content.Headers.ContentEncoding.Add("gzip");
+                r.Headers.TryAddWithoutValidation("X-Meta-author", "alice");
+                r.Headers.TryAddWithoutValidation("X-Meta-team", "core");
+                return r;
             });
 
-        // Act
-        var result = await _client.GetReplicationStatusAsync("nonexistent");
-
-        // Assert
-        result.Should().BeNull();
+        var headMeta = await _client.GetMetadataAsync("k");
+        headMeta!.ContentType.Should().Be("application/json");
+        headMeta.ContentEncoding.Should().Be("gzip");
+        headMeta.Custom!["author"].Should().Be("alice");
+        headMeta.Custom["team"].Should().Be("core");
     }
-
-    #endregion
-
-    #region PutWithMetadataAsync Tests
 
     [Fact]
-    public async Task PutWithMetadataAsync_WithNullMetadata_ThrowsArgumentNullException()
+    public async Task Quic_Validation_EmptyKey()
     {
-        // Act & Assert
-        await Assert.ThrowsAsync<ArgumentNullException>(() =>
-            _client.PutWithMetadataAsync("test-key", new byte[] { 1, 2, 3 }, null!));
+        await Assert.ThrowsAsync<ArgumentNullException>(() => _client.PutAsync(null!, new byte[] { 1 }));
+        await Assert.ThrowsAsync<ArgumentNullException>(() => _client.GetAsync(null!));
+        await Assert.ThrowsAsync<ArgumentNullException>(() => _client.PutAsync("k", null!));
     }
-
-    #endregion
-
-    #region Dispose Tests
-
-    [Fact]
-    public void Dispose_CanBeCalledMultipleTimes()
-    {
-        // Arrange
-        using var client = new QuicClient("https://localhost:4433");
-
-        // Act & Assert - should not throw
-        client.Dispose();
-        client.Dispose();
-    }
-
-    #endregion
 
     public void Dispose()
     {
-        _client?.Dispose();
-        _httpClient?.Dispose();
+        _client.Dispose();
+        _httpClient.Dispose();
     }
 }

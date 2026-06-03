@@ -19,7 +19,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -87,10 +86,10 @@ func TestAddPolicy_ArchiveMissingDestinationType(t *testing.T) {
 	router.POST("/policies", handler.AddPolicy)
 
 	requestBody := AddPolicyRequest{
-		ID:        "policy1",
-		Prefix:    "logs/",
-		Retention: 24 * time.Hour,
-		Action:    "archive",
+		ID:               "policy1",
+		Prefix:           "logs/",
+		RetentionSeconds: 86400,
+		Action:           "archive",
 		// Missing DestinationType
 	}
 
@@ -117,7 +116,7 @@ func TestAddPolicy_ArchiveInvalidDestinationType(t *testing.T) {
 	requestBody := AddPolicyRequest{
 		ID:                  "policy1",
 		Prefix:              "logs/",
-		Retention:           24 * time.Hour,
+		RetentionSeconds:    86400,
 		Action:              "archive",
 		DestinationType:     "invalid-type",
 		DestinationSettings: map[string]string{"path": "/tmp/test"},
