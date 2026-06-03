@@ -17,10 +17,24 @@ package azure
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
+
+	"github.com/Azure/azure-storage-blob-go/azblob"
 )
+
+// mapNotFound translates an Azure BlobNotFound storage error into an error
+// wrapping common.ErrKeyNotFound; all other errors are returned unchanged.
+func mapNotFound(err error, key string) error {
+	var stgErr azblob.StorageError
+	if errors.As(err, &stgErr) && stgErr.ServiceCode() == azblob.ServiceCodeBlobNotFound {
+		return fmt.Errorf("%w: %s", common.ErrKeyNotFound, key)
+	}
+	return err
+}
 
 // PutWithContext stores an object in the backend with context support.
 func (a *Azure) PutWithContext(ctx context.Context, key string, data io.Reader) error {
@@ -28,45 +42,98 @@ func (a *Azure) PutWithContext(ctx context.Context, key string, data io.Reader) 
 }
 
 // PutWithMetadata stores an object with associated metadata.
-// Note: Azure metadata support requires extending the ContainerAPI interface.
-// For now, this delegates to the standard Put method.
 func (a *Azure) PutWithMetadata(ctx context.Context, key string, data io.Reader, metadata *common.Metadata) error {
+	if err := common.ValidateKey(key); err != nil {
+		return err
+	}
 	blob := a.container.NewBlockBlob(key)
 	return blob.UploadFromReader(ctx, data)
 }
 
 // GetWithContext retrieves an object from the backend with context support.
 func (a *Azure) GetWithContext(ctx context.Context, key string) (io.ReadCloser, error) {
+	if err := common.ValidateKey(key); err != nil {
+		return nil, err
+	}
 	blob := a.container.NewBlockBlob(key)
 	return blob.NewReader(ctx)
 }
 
 // GetMetadata retrieves only the metadata for an object.
-// Note: This is a stub implementation. Full implementation requires Azure SDK extensions.
+// Callers are guaranteed a non-nil *common.Metadata on success.
+// A missing blob yields an error wrapping common.ErrKeyNotFound.
 func (a *Azure) GetMetadata(ctx context.Context, key string) (*common.Metadata, error) {
-	// Stub: return nil to indicate metadata not implemented for Azure wrapper
-	return nil, nil
+	if err := common.ValidateKey(key); err != nil {
+		return nil, err
+	}
+	blob := a.container.NewBlockBlob(key)
+	props, err := blob.GetProperties(ctx)
+	if err != nil {
+		return nil, mapNotFound(err, key)
+	}
+	metadata := &common.Metadata{
+		ContentType:     props.ContentType,
+		ContentEncoding: props.ContentEncoding,
+		Size:            props.Size,
+		LastModified:    props.LastModified,
+		ETag:            props.ETag,
+	}
+	if len(props.Metadata) > 0 {
+		metadata.Custom = make(map[string]string, len(props.Metadata))
+		for k, v := range props.Metadata {
+			metadata.Custom[k] = v
+		}
+	}
+	return metadata, nil
 }
 
 // UpdateMetadata updates the metadata for an existing object.
-// Note: This is a stub implementation. Full implementation requires Azure SDK extensions.
+// Matching the local and S3 backends, the object's metadata is replaced
+// rather than merged: custom metadata and HTTP headers not present in the
+// supplied metadata are cleared. A missing blob yields an error wrapping
+// common.ErrKeyNotFound.
 func (a *Azure) UpdateMetadata(ctx context.Context, key string, metadata *common.Metadata) error {
-	// Stub: no-op for now
+	if err := common.ValidateKey(key); err != nil {
+		return err
+	}
+	if metadata == nil {
+		metadata = &common.Metadata{}
+	}
+	blob := a.container.NewBlockBlob(key)
+	if err := blob.SetMetadata(ctx, metadata.Custom); err != nil {
+		return mapNotFound(err, key)
+	}
+	headers := azblob.BlobHTTPHeaders{
+		ContentType:     metadata.ContentType,
+		ContentEncoding: metadata.ContentEncoding,
+	}
+	if err := blob.SetHTTPHeaders(ctx, headers); err != nil {
+		return mapNotFound(err, key)
+	}
 	return nil
 }
 
 // DeleteWithContext removes an object from the backend with context support.
 func (a *Azure) DeleteWithContext(ctx context.Context, key string) error {
+	if err := common.ValidateKey(key); err != nil {
+		return err
+	}
 	blob := a.container.NewBlockBlob(key)
 	return blob.Delete(ctx)
 }
 
 // Exists checks if an object exists in the backend.
+// Returns false,nil only for a BlobNotFound condition; propagates all other errors.
 func (a *Azure) Exists(ctx context.Context, key string) (bool, error) {
+	if err := common.ValidateKey(key); err != nil {
+		return false, err
+	}
 	blob := a.container.NewBlockBlob(key)
-	err := blob.GetProperties(ctx)
-	if err != nil {
-		return false, nil
+	if _, err := blob.GetProperties(ctx); err != nil {
+		if errors.Is(mapNotFound(err, key), common.ErrKeyNotFound) {
+			return false, nil
+		}
+		return false, err
 	}
 	return true, nil
 }

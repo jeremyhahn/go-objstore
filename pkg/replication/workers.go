@@ -46,6 +46,7 @@ type WorkerPool struct {
 
 	// Shutdown tracking
 	shuttingDown atomic.Bool
+	closeOnce    sync.Once // guards close(workQueue) and close(resultQueue)
 
 	// Metrics tracking
 	objectsProcessed atomic.Int64
@@ -70,7 +71,10 @@ func NewWorkerPool(config WorkerPoolConfig) *WorkerPool {
 		config.QueueSize = 100 // Default queue size
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// cancel is retained in the returned WorkerPool's cancel field and invoked
+	// by Shutdown; the worker goroutines that consume ctx are launched later by
+	// Start, so gosec cannot see the context being consumed here.
+	ctx, cancel := context.WithCancel(context.Background()) //nolint:gosec // cancel retained in struct, invoked in Shutdown
 
 	return &WorkerPool{
 		workerCount: config.WorkerCount,
@@ -134,12 +138,18 @@ func (wp *WorkerPool) worker(id int, processor func(context.Context, WorkItem) W
 }
 
 // Submit adds a work item to the queue.
-// Returns an error if the pool has been shut down.
+// Returns an error if the pool has been shut down or the context is cancelled.
+// It is safe to call concurrently with Shutdown.
 func (wp *WorkerPool) Submit(item WorkItem) error {
 	if wp.shuttingDown.Load() {
 		return ErrWorkerPoolShutdown
 	}
 
+	// Use a select with ctx.Done so we never send on a closed channel:
+	// - ctx is cancelled by Shutdown only after workers have drained and wg.Wait() returns,
+	//   but shuttingDown is set before close(workQueue), so most callers exit above.
+	// - The ctx.Done arm covers the narrow race window between the shuttingDown check
+	//   and the channel send.
 	select {
 	case <-wp.ctx.Done():
 		return ErrWorkerPoolCancelled
@@ -154,24 +164,28 @@ func (wp *WorkerPool) Results() <-chan WorkResult {
 }
 
 // Shutdown performs a graceful shutdown of the worker pool.
-// It closes the work queue and waits for all workers to finish.
+// It is safe to call multiple times; subsequent calls are no-ops.
 func (wp *WorkerPool) Shutdown() {
 	wp.logger.Info(wp.ctx, "Shutting down worker pool",
 		adapters.Field{Key: "workers", Value: wp.workerCount})
 
-	// Set shutdown flag to prevent new submissions
+	// Set shutdown flag to prevent new submissions before closing the queue.
 	wp.shuttingDown.Store(true)
 
-	// Close work queue to signal no more work
-	close(wp.workQueue)
+	wp.closeOnce.Do(func() {
+		// Close work queue to signal workers that no more items will arrive.
+		close(wp.workQueue)
 
-	// Wait for all workers to finish processing queued items
-	wp.wg.Wait()
+		// Wait for all workers to finish processing queued items.
+		wp.wg.Wait()
 
-	// Close result queue
-	close(wp.resultQueue)
+		// Close result queue only after all workers have exited.
+		close(wp.resultQueue)
+	})
 
-	// Cancel context after workers are done
+	// Cancel context last, so any in-flight Submit call that passed the
+	// shuttingDown check but hasn't sent yet will see ctx.Done. cancel is
+	// idempotent, so invoking it on every Shutdown call is safe.
 	wp.cancel()
 
 	wp.logger.Info(wp.ctx, "Worker pool shutdown complete",

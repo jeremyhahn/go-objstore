@@ -1,9 +1,10 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
-using ObjStore.SDK.Exceptions;
-using ObjStore.SDK.Models;
 using Microsoft.Extensions.Logging;
+using ObjStore.SDK.Exceptions;
+using ObjStore.SDK.Internal;
+using ObjStore.SDK.Models;
 
 namespace ObjStore.SDK.Clients;
 
@@ -16,6 +17,9 @@ public class QuicClient : IObjectStoreClient
     private readonly bool _disposeHttpClient;
     private readonly ILogger<QuicClient>? _logger;
     private readonly JsonSerializerOptions _jsonOptions;
+    private readonly string? _token;
+    private readonly IDictionary<string, string>? _extraHeaders;
+    private readonly string? _tenantId;
     private bool _disposed;
 
     /// <summary>
@@ -25,8 +29,11 @@ public class QuicClient : IObjectStoreClient
     /// </summary>
     /// <param name="baseUrl">The base URL of the object store service</param>
     /// <param name="logger">Optional logger instance</param>
-    public QuicClient(string baseUrl, ILogger<QuicClient>? logger = null)
-        : this(CreateHttpClient(baseUrl), logger, disposeHttpClient: true)
+    /// <param name="token">Optional bearer token for Authorization header</param>
+    /// <param name="headers">Optional additional HTTP headers</param>
+    /// <param name="tenantId">Optional tenant ID for X-Tenant-ID header</param>
+    public QuicClient(string baseUrl, ILogger<QuicClient>? logger = null, string? token = null, IDictionary<string, string>? headers = null, string? tenantId = null)
+        : this(CreateHttpClient(baseUrl), logger, disposeHttpClient: true, token, headers, tenantId)
     {
         _logger?.LogInformation("QuicClient initialized with HTTP/3 support for {BaseUrl}", baseUrl);
     }
@@ -38,15 +45,18 @@ public class QuicClient : IObjectStoreClient
     /// <param name="httpClient">The HttpClient instance to use</param>
     /// <param name="logger">Optional logger instance</param>
     public QuicClient(HttpClient httpClient, ILogger<QuicClient>? logger = null)
-        : this(httpClient, logger, disposeHttpClient: false)
+        : this(httpClient, logger, disposeHttpClient: false, null, null, null)
     {
     }
 
-    private QuicClient(HttpClient httpClient, ILogger<QuicClient>? logger, bool disposeHttpClient)
+    private QuicClient(HttpClient httpClient, ILogger<QuicClient>? logger, bool disposeHttpClient, string? token, IDictionary<string, string>? extraHeaders, string? tenantId)
     {
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _logger = logger;
         _disposeHttpClient = disposeHttpClient;
+        _token = token;
+        _extraHeaders = extraHeaders;
+        _tenantId = tenantId;
         _jsonOptions = new JsonSerializerOptions
         {
             PropertyNameCaseInsensitive = true
@@ -59,6 +69,12 @@ public class QuicClient : IObjectStoreClient
             _httpClient.DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrHigher;
         }
     }
+
+    /// <summary>
+    /// Applies auth headers (Authorization, X-Tenant-ID, and any extra headers) to the request.
+    /// </summary>
+    private void ApplyAuthHeaders(HttpRequestMessage request) =>
+        AuthHeaders.Apply(request, _token, _tenantId, _extraHeaders);
 
     private static HttpClient CreateHttpClient(string baseUrl)
     {
@@ -98,7 +114,7 @@ public class QuicClient : IObjectStoreClient
                 content.Headers.ContentEncoding.Add(metadata.ContentEncoding);
             }
 
-            var request = new HttpRequestMessage(HttpMethod.Put, $"/objects/{Uri.EscapeDataString(key)}")
+            using var request = new HttpRequestMessage(HttpMethod.Put, $"/objects/{Uri.EscapeDataString(key)}")
             {
                 Content = content,
                 Version = HttpVersion.Version30,
@@ -113,8 +129,10 @@ public class QuicClient : IObjectStoreClient
                 }
             }
 
-            var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
-            response.EnsureSuccessStatusCode();
+            ApplyAuthHeaders(request);
+
+            using var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            await HttpErrorMapper.EnsureSuccessAsync(response, "Put", key, cancellationToken).ConfigureAwait(false);
 
             _logger?.LogDebug("PUT request used HTTP version: {Version}", response.Version);
 
@@ -142,26 +160,76 @@ public class QuicClient : IObjectStoreClient
         return PutAsync(key, data, metadata, cancellationToken);
     }
 
+    public async Task<string?> PutStreamAsync(string key, Stream data, ObjectMetadata? metadata = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        ArgumentNullException.ThrowIfNull(data);
+
+        _logger?.LogDebug("Putting object stream with key: {Key} via HTTP/3", key);
+
+        try
+        {
+            // NonDisposingStream keeps ownership of the caller's stream with the
+            // caller; StreamContent would otherwise dispose it with the request.
+            using var content = new StreamContent(new NonDisposingStream(data));
+
+            if (metadata?.ContentType != null)
+                content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(metadata.ContentType);
+            if (!string.IsNullOrEmpty(metadata?.ContentEncoding))
+                content.Headers.ContentEncoding.Add(metadata.ContentEncoding);
+
+            using var request = new HttpRequestMessage(HttpMethod.Put, $"/objects/{Uri.EscapeDataString(key)}")
+            {
+                Content = content,
+                Version = HttpVersion.Version30,
+                VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
+            };
+
+            if (metadata?.Custom != null)
+            {
+                foreach (var kvp in metadata.Custom)
+                    request.Headers.TryAddWithoutValidation($"X-Meta-{kvp.Key}", kvp.Value);
+            }
+
+            ApplyAuthHeaders(request);
+
+            using var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            await HttpErrorMapper.EnsureSuccessAsync(response, "PutStream", key, cancellationToken).ConfigureAwait(false);
+
+            if (response.Headers.ETag != null)
+                return response.Headers.ETag.Tag;
+            if (response.Headers.TryGetValues("ETag", out var etagValues))
+                return etagValues.FirstOrDefault();
+            return null;
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new OperationFailedException("PutStream", $"Failed to put object stream with key '{key}' via HTTP/3", ex);
+        }
+    }
+
     public async Task<(byte[] Data, ObjectMetadata? Metadata)> GetAsync(string key, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(key);
 
         _logger?.LogDebug("Getting object with key: {Key} via HTTP/3", key);
 
-        var request = new HttpRequestMessage(HttpMethod.Get, $"/objects/{Uri.EscapeDataString(key)}")
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/objects/{Uri.EscapeDataString(key)}")
         {
             Version = HttpVersion.Version30,
             VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
         };
 
-        var response = await _httpClient.SendAsync(request, cancellationToken);
+        ApplyAuthHeaders(request);
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
 
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
             throw new ObjectNotFoundException(key);
         }
 
-        response.EnsureSuccessStatusCode();
+        await HttpErrorMapper.EnsureSuccessAsync(response, "Get", key, cancellationToken).ConfigureAwait(false);
 
         _logger?.LogDebug("GET request used HTTP version: {Version}", response.Version);
 
@@ -196,19 +264,74 @@ public class QuicClient : IObjectStoreClient
         return (data, metadata);
     }
 
+    public async Task<(Stream Data, ObjectMetadata? Metadata)> GetStreamAsync(string key, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+
+        _logger?.LogDebug("Getting object stream with key: {Key} via HTTP/3", key);
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/objects/{Uri.EscapeDataString(key)}")
+        {
+            Version = HttpVersion.Version30,
+            VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
+        };
+
+        ApplyAuthHeaders(request);
+
+        var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (response.StatusCode == HttpStatusCode.NotFound)
+                throw new ObjectNotFoundException(key);
+
+            await HttpErrorMapper.EnsureSuccessAsync(response, "GetStream", key, cancellationToken).ConfigureAwait(false);
+
+            var metadata = new ObjectMetadata
+            {
+                ContentType = response.Content.Headers.ContentType?.MediaType,
+                Size = response.Content.Headers.ContentLength ?? 0,
+                ETag = response.Headers.ETag?.Tag
+            };
+
+            if (response.Content.Headers.LastModified.HasValue)
+                metadata.LastModified = response.Content.Headers.LastModified.Value.DateTime;
+
+            var custom = new Dictionary<string, string>();
+            foreach (var header in response.Headers)
+            {
+                if (header.Key.StartsWith("X-Meta-", StringComparison.OrdinalIgnoreCase))
+                    custom[header.Key.Substring("X-Meta-".Length)] = string.Join(",", header.Value);
+            }
+            if (custom.Count > 0)
+                metadata.Custom = custom;
+
+            var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+            // The wrapper owns the response: disposing the returned stream
+            // disposes the response too.
+            return (new ResponseOwningStream(stream, response), metadata);
+        }
+        catch
+        {
+            response.Dispose();
+            throw;
+        }
+    }
+
     public async Task<bool> DeleteAsync(string key, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(key);
 
         _logger?.LogDebug("Deleting object with key: {Key} via HTTP/3", key);
 
-        var request = new HttpRequestMessage(HttpMethod.Delete, $"/objects/{Uri.EscapeDataString(key)}")
+        using var request = new HttpRequestMessage(HttpMethod.Delete, $"/objects/{Uri.EscapeDataString(key)}")
         {
             Version = HttpVersion.Version30,
             VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
         };
 
-        var response = await _httpClient.SendAsync(request, cancellationToken);
+        ApplyAuthHeaders(request);
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
         _logger?.LogDebug("DELETE request used HTTP version: {Version}", response.Version);
 
         return response.IsSuccessStatusCode;
@@ -230,14 +353,16 @@ public class QuicClient : IObjectStoreClient
 
         var query = queryParams.Count > 0 ? "?" + string.Join("&", queryParams) : "";
 
-        var request = new HttpRequestMessage(HttpMethod.Get, $"/objects{query}")
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/objects{query}")
         {
             Version = HttpVersion.Version30,
             VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
         };
 
-        var response = await _httpClient.SendAsync(request, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        ApplyAuthHeaders(request);
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
+        await HttpErrorMapper.EnsureSuccessAsync(response, "List", cancellationToken: cancellationToken).ConfigureAwait(false);
 
         _logger?.LogDebug("LIST request used HTTP version: {Version}", response.Version);
 
@@ -251,13 +376,15 @@ public class QuicClient : IObjectStoreClient
 
         _logger?.LogDebug("Checking existence of object with key: {Key} via HTTP/3", key);
 
-        var request = new HttpRequestMessage(HttpMethod.Head, $"/objects/{Uri.EscapeDataString(key)}")
+        using var request = new HttpRequestMessage(HttpMethod.Head, $"/objects/{Uri.EscapeDataString(key)}")
         {
             Version = HttpVersion.Version30,
             VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
         };
 
-        var response = await _httpClient.SendAsync(request, cancellationToken);
+        ApplyAuthHeaders(request);
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
         _logger?.LogDebug("HEAD request used HTTP version: {Version}", response.Version);
 
         if (response.StatusCode == HttpStatusCode.NotFound)
@@ -265,13 +392,7 @@ public class QuicClient : IObjectStoreClient
             return false;
         }
 
-        if (!response.IsSuccessStatusCode)
-        {
-            throw new OperationFailedException(
-                "Exists",
-                $"Failed to check existence of object with key '{key}' via HTTP/3",
-                (int)response.StatusCode);
-        }
+        await HttpErrorMapper.EnsureSuccessAsync(response, "Exists", key, cancellationToken).ConfigureAwait(false);
 
         return true;
     }
@@ -284,13 +405,15 @@ public class QuicClient : IObjectStoreClient
 
         // The QUIC server exposes metadata via HEAD /objects/{key}; there is no
         // dedicated /metadata route. Metadata is carried in the response headers.
-        var request = new HttpRequestMessage(HttpMethod.Head, $"/objects/{Uri.EscapeDataString(key)}")
+        using var request = new HttpRequestMessage(HttpMethod.Head, $"/objects/{Uri.EscapeDataString(key)}")
         {
             Version = HttpVersion.Version30,
             VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
         };
 
-        var response = await _httpClient.SendAsync(request, cancellationToken);
+        ApplyAuthHeaders(request);
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode)
             return null;
 
@@ -341,14 +464,16 @@ public class QuicClient : IObjectStoreClient
             custom = metadata.Custom
         };
 
-        var request = new HttpRequestMessage(HttpMethod.Patch, $"/objects/{Uri.EscapeDataString(key)}")
+        using var request = new HttpRequestMessage(HttpMethod.Patch, $"/objects/{Uri.EscapeDataString(key)}")
         {
             Content = JsonContent.Create(requestData, options: _jsonOptions),
             Version = HttpVersion.Version30,
             VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
         };
 
-        var response = await _httpClient.SendAsync(request, cancellationToken);
+        ApplyAuthHeaders(request);
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
 
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
@@ -364,13 +489,15 @@ public class QuicClient : IObjectStoreClient
 
         var query = !string.IsNullOrEmpty(service) ? $"?service={Uri.EscapeDataString(service)}" : "";
 
-        var request = new HttpRequestMessage(HttpMethod.Get, $"/health{query}")
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/health{query}")
         {
             Version = HttpVersion.Version30,
             VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
         };
 
-        var response = await _httpClient.SendAsync(request, cancellationToken);
+        ApplyAuthHeaders(request);
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
 
         if (!response.IsSuccessStatusCode)
         {
@@ -405,14 +532,16 @@ public class QuicClient : IObjectStoreClient
             destination_settings = destinationSettings
         };
 
-        var request = new HttpRequestMessage(HttpMethod.Post, "/archive")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/archive")
         {
             Content = JsonContent.Create(requestData, options: _jsonOptions),
             Version = HttpVersion.Version30,
             VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
         };
 
-        var response = await _httpClient.SendAsync(request, cancellationToken);
+        ApplyAuthHeaders(request);
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
         return response.IsSuccessStatusCode;
     }
 
@@ -422,14 +551,16 @@ public class QuicClient : IObjectStoreClient
 
         _logger?.LogDebug("Adding lifecycle policy: {PolicyId} via HTTP/3", policy.Id);
 
-        var request = new HttpRequestMessage(HttpMethod.Post, "/policies")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/policies")
         {
             Content = JsonContent.Create(policy, options: _jsonOptions),
             Version = HttpVersion.Version30,
             VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
         };
 
-        var response = await _httpClient.SendAsync(request, cancellationToken);
+        ApplyAuthHeaders(request);
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
         return response.IsSuccessStatusCode;
     }
 
@@ -439,13 +570,15 @@ public class QuicClient : IObjectStoreClient
 
         _logger?.LogDebug("Removing lifecycle policy: {PolicyId} via HTTP/3", id);
 
-        var request = new HttpRequestMessage(HttpMethod.Delete, $"/policies/{Uri.EscapeDataString(id)}")
+        using var request = new HttpRequestMessage(HttpMethod.Delete, $"/policies/{Uri.EscapeDataString(id)}")
         {
             Version = HttpVersion.Version30,
             VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
         };
 
-        var response = await _httpClient.SendAsync(request, cancellationToken);
+        ApplyAuthHeaders(request);
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
         return response.IsSuccessStatusCode;
     }
 
@@ -455,13 +588,15 @@ public class QuicClient : IObjectStoreClient
 
         var query = !string.IsNullOrEmpty(prefix) ? $"?prefix={Uri.EscapeDataString(prefix)}" : "";
 
-        var request = new HttpRequestMessage(HttpMethod.Get, $"/policies{query}")
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/policies{query}")
         {
             Version = HttpVersion.Version30,
             VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
         };
 
-        var response = await _httpClient.SendAsync(request, cancellationToken);
+        ApplyAuthHeaders(request);
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
 
         if (!response.IsSuccessStatusCode)
             return new List<LifecyclePolicy>();
@@ -474,13 +609,15 @@ public class QuicClient : IObjectStoreClient
     {
         _logger?.LogDebug("Applying lifecycle policies via HTTP/3");
 
-        var request = new HttpRequestMessage(HttpMethod.Post, "/policies/apply")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/policies/apply")
         {
             Version = HttpVersion.Version30,
             VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
         };
 
-        var response = await _httpClient.SendAsync(request, cancellationToken);
+        ApplyAuthHeaders(request);
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode)
             return (false, 0, 0);
 
@@ -517,14 +654,16 @@ public class QuicClient : IObjectStoreClient
             encryption = policy.Encryption
         };
 
-        var request = new HttpRequestMessage(HttpMethod.Post, "/replication/policies")
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/replication/policies")
         {
             Content = JsonContent.Create(requestData, options: _jsonOptions),
             Version = HttpVersion.Version30,
             VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
         };
 
-        var response = await _httpClient.SendAsync(request, cancellationToken);
+        ApplyAuthHeaders(request);
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
         return response.IsSuccessStatusCode;
     }
 
@@ -534,13 +673,15 @@ public class QuicClient : IObjectStoreClient
 
         _logger?.LogDebug("Removing replication policy: {PolicyId} via HTTP/3", id);
 
-        var request = new HttpRequestMessage(HttpMethod.Delete, $"/replication/policies/{Uri.EscapeDataString(id)}")
+        using var request = new HttpRequestMessage(HttpMethod.Delete, $"/replication/policies/{Uri.EscapeDataString(id)}")
         {
             Version = HttpVersion.Version30,
             VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
         };
 
-        var response = await _httpClient.SendAsync(request, cancellationToken);
+        ApplyAuthHeaders(request);
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
         return response.IsSuccessStatusCode;
     }
 
@@ -548,13 +689,15 @@ public class QuicClient : IObjectStoreClient
     {
         _logger?.LogDebug("Getting replication policies via HTTP/3");
 
-        var request = new HttpRequestMessage(HttpMethod.Get, "/replication/policies")
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/replication/policies")
         {
             Version = HttpVersion.Version30,
             VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
         };
 
-        var response = await _httpClient.SendAsync(request, cancellationToken);
+        ApplyAuthHeaders(request);
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode)
             return new List<ReplicationPolicy>();
 
@@ -568,13 +711,15 @@ public class QuicClient : IObjectStoreClient
 
         _logger?.LogDebug("Getting replication policy: {PolicyId} via HTTP/3", id);
 
-        var request = new HttpRequestMessage(HttpMethod.Get, $"/replication/policies/{Uri.EscapeDataString(id)}")
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/replication/policies/{Uri.EscapeDataString(id)}")
         {
             Version = HttpVersion.Version30,
             VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
         };
 
-        var response = await _httpClient.SendAsync(request, cancellationToken);
+        ApplyAuthHeaders(request);
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode)
             return null;
 
@@ -590,13 +735,15 @@ public class QuicClient : IObjectStoreClient
         // The QUIC server takes policy_id as a QUERY param (empty = sync all), not a JSON body.
         var query = !string.IsNullOrEmpty(policyId) ? $"?policy_id={Uri.EscapeDataString(policyId)}" : "";
 
-        var request = new HttpRequestMessage(HttpMethod.Post, $"/replication/trigger{query}")
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/replication/trigger{query}")
         {
             Version = HttpVersion.Version30,
             VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
         };
 
-        var response = await _httpClient.SendAsync(request, cancellationToken);
+        ApplyAuthHeaders(request);
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
 
         if (!response.IsSuccessStatusCode)
             return new TriggerReplicationResult { Success = false };
@@ -683,13 +830,15 @@ public class QuicClient : IObjectStoreClient
 
         _logger?.LogDebug("Getting replication status for policy: {PolicyId} via HTTP/3", id);
 
-        var request = new HttpRequestMessage(HttpMethod.Get, $"/replication/status/{Uri.EscapeDataString(id)}")
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/replication/status/{Uri.EscapeDataString(id)}")
         {
             Version = HttpVersion.Version30,
             VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
         };
 
-        var response = await _httpClient.SendAsync(request, cancellationToken);
+        ApplyAuthHeaders(request);
+
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode)
             return null;
 

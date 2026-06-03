@@ -21,8 +21,10 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
+	"github.com/jeremyhahn/go-objstore/pkg/server/metrics"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
@@ -161,6 +163,8 @@ func MetricsUnaryInterceptor(collector *MetricsCollector) grpc.UnaryServerInterc
 		} else {
 			collector.successfulRequests.Add(1)
 		}
+
+		metrics.Default.RecordRequest(metrics.TransportGRPC, status.Code(err).String(), duration)
 
 		return resp, err
 	}
@@ -301,15 +305,16 @@ func AuthenticationUnaryInterceptor(authenticator adapters.Authenticator, logger
 		// Try metadata-based authentication first
 		principal, err := authenticator.AuthenticateGRPC(ctx, md)
 
-		// If metadata auth fails, try mTLS authentication
+		// If metadata auth fails, try mTLS authentication via peer TLS credentials.
 		if err != nil {
 			if p, ok := peer.FromContext(ctx); ok && p.AuthInfo != nil {
-				// Try to get TLS info for mTLS authentication
-				if _, ok := p.AuthInfo.(interface{ State() any }); ok {
-					// This is a simplified approach - in production, you'd need proper type assertion
+				if tlsInfo, ok := p.AuthInfo.(credentials.TLSInfo); ok {
 					logger.Debug(ctx, "Attempting mTLS authentication",
 						adapters.Field{Key: fieldMethod, Value: info.FullMethod},
 					)
+					// Pass the real connection state so authenticators see
+					// VerifiedChains alongside PeerCertificates.
+					principal, err = authenticator.AuthenticateMTLS(ctx, &tlsInfo.State)
 				}
 			}
 		}
@@ -322,8 +327,11 @@ func AuthenticationUnaryInterceptor(authenticator adapters.Authenticator, logger
 			return nil, status.Error(codes.Unauthenticated, "authentication failed")
 		}
 
-		// Add principal to context for downstream handlers
+		// Add principal to context for downstream handlers.
+		// Store under both the local typed key (used by gRPC authorization/handlers)
+		// and the shared adapters key (used by the audit interceptor).
 		ctx = context.WithValue(ctx, principalContextKey, *principal)
+		ctx = context.WithValue(ctx, adapters.PrincipalContextKey{}, principal)
 
 		return handler(ctx, req)
 	}
@@ -348,12 +356,17 @@ func AuthenticationStreamInterceptor(authenticator adapters.Authenticator, logge
 		// Try metadata-based authentication first
 		principal, err := authenticator.AuthenticateGRPC(ctx, md)
 
-		// If metadata auth fails, try mTLS authentication
+		// If metadata auth fails, try mTLS authentication via peer TLS credentials.
 		if err != nil {
 			if p, ok := peer.FromContext(ctx); ok && p.AuthInfo != nil {
-				logger.Debug(ctx, "Attempting mTLS authentication for stream",
-					adapters.Field{Key: fieldMethod, Value: info.FullMethod},
-				)
+				if tlsInfo, ok := p.AuthInfo.(credentials.TLSInfo); ok {
+					logger.Debug(ctx, "Attempting mTLS authentication for stream",
+						adapters.Field{Key: fieldMethod, Value: info.FullMethod},
+					)
+					// Pass the real connection state so authenticators see
+					// VerifiedChains alongside PeerCertificates.
+					principal, err = authenticator.AuthenticateMTLS(ctx, &tlsInfo.State)
+				}
 			}
 		}
 
@@ -365,8 +378,11 @@ func AuthenticationStreamInterceptor(authenticator adapters.Authenticator, logge
 			return status.Error(codes.Unauthenticated, "authentication failed")
 		}
 
-		// Add principal to context for downstream handlers
+		// Add principal to context for downstream handlers.
+		// Store under both the local typed key (used by gRPC authorization/handlers)
+		// and the shared adapters key (used by the audit interceptor).
 		ctx = context.WithValue(ctx, principalContextKey, *principal)
+		ctx = context.WithValue(ctx, adapters.PrincipalContextKey{}, principal)
 
 		// Create a wrapped server stream with the updated context
 		wrappedStream := &wrappedServerStream{

@@ -17,11 +17,18 @@ module ObjectStore
       # @param port [Integer] Server port
       # @param use_ssl [Boolean] Whether to use HTTPS
       # @param timeout [Integer] Request timeout in seconds
-      def initialize(host: "localhost", port: 8080, use_ssl: false, timeout: 30)
+      # @param token [String, nil] Bearer token for Authorization header
+      # @param headers [Hash] Additional HTTP headers to send on every request
+      # @param tenant_id [String, nil] Tenant identifier sent as X-Tenant-ID header
+      def initialize(host: "localhost", port: 8080, use_ssl: false, timeout: 30,
+                     token: nil, headers: {}, tenant_id: nil)
         @host = host
         @port = port
         @use_ssl = use_ssl
         @timeout = timeout
+        @token = token
+        @extra_headers = headers || {}
+        @tenant_id = tenant_id
         @connection = build_connection
       end
 
@@ -176,7 +183,8 @@ module ObjectStore
         response = @connection.delete("/objects/#{encode_key(key)}")
 
         handle_response(response) do |body|
-          Models::DeleteResponse.new(success: true, message: body["message"])
+          message = body.is_a?(Hash) ? body["message"] : nil
+          Models::DeleteResponse.new(success: true, message: message || "Object deleted successfully")
         end
       end
 
@@ -429,6 +437,10 @@ module ObjectStore
           conn.adapter Faraday.default_adapter
           conn.options.timeout = @timeout
           # Note: open_timeout removed for compatibility with different Faraday versions
+
+          conn.headers["Authorization"] = "Bearer #{@token}" if @token
+          conn.headers["X-Tenant-ID"] = @tenant_id if @tenant_id
+          @extra_headers.each { |k, v| conn.headers[k.to_s] = v.to_s }
         end
       end
 
@@ -450,22 +462,38 @@ module ObjectStore
 
       def handle_response(response)
         case response.status
-        when 200, 201
-          body = parse_body(response)
+        when 200, 201, 204
+          # 204 No Content carries no body; present an empty hash so callers
+          # can use body["..."] uniformly. Other statuses keep the parsed body
+          # verbatim (get yields raw object bytes).
+          body = response.status == 204 ? {} : parse_body(response)
           yield(body)
         when 404
           raise ObjectStore::NotFoundError, "Resource not found"
         when 400
-          body = parse_body(response)
-          raise ObjectStore::ValidationError, body["message"] || "Bad request"
+          raise ObjectStore::ValidationError, error_message(response, "Bad request")
+        when 401
+          raise ObjectStore::AuthenticationError, error_message(response, "Unauthenticated")
+        when 403
+          raise ObjectStore::AuthorizationError, error_message(response, "Forbidden")
+        when 409
+          raise ObjectStore::AlreadyExistsError, error_message(response, "Already exists")
         when 413
           raise ObjectStore::ValidationError, "Request entity too large"
+        when 429
+          raise ObjectStore::RateLimitError, error_message(response, "Rate limited")
         when 500..599
-          body = parse_body(response)
-          raise ObjectStore::ServerError, body["message"] || "Server error"
+          raise ObjectStore::ServerError, error_message(response, "Server error")
         else
           raise ObjectStore::Error, "Unexpected response: #{response.status}"
         end
+      end
+
+      # Extract the server-provided error message from a response body,
+      # falling back to a generic default when the body is absent or not JSON.
+      def error_message(response, fallback)
+        body = parse_body(response)
+        (body.is_a?(Hash) && body["message"]) || fallback
       end
 
       def parse_body(response)

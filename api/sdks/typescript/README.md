@@ -92,13 +92,23 @@ const data = await client.get({ key: 'data.json' });
 
 ### QUIC/HTTP3 Client
 
+> **WARNING — not a real HTTP/3 (QUIC) transport.**
+> Node.js has no native HTTP/3 support, so `QuicClient` speaks plain
+> HTTP/1.1 over TCP (via `fetch`) to an HTTPS endpoint. It does **not**
+> implement HTTP/3 and **cannot** connect to the bundled go-objstore QUIC
+> server, which listens on UDP and accepts HTTP/3 only. Use it only
+> against a proxy/gateway that terminates HTTP/3 and forwards to an
+> HTTP/1.1 upstream, or against a server that also exposes the same
+> routes over regular HTTPS. The QUIC integration tests are permanently
+> skipped for this reason; `QuicClient` is covered by unit tests.
+
 ```typescript
 import { ObjectStoreClient } from '@go-objstore/client';
 
 const client = new ObjectStoreClient({
   protocol: 'quic',
   quic: {
-    address: 'localhost:8443',
+    address: 'localhost:4433', // server default QUIC port
     secure: true,
   },
 });
@@ -107,6 +117,106 @@ const client = new ObjectStoreClient({
 await client.put({
   key: 'test.txt',
   data: Buffer.from('Hello QUIC!'),
+});
+```
+
+### MCP (Model Context Protocol) Client
+
+The MCP transport uses HTTP POST JSON-RPC 2.0 to the server base URL (path `/`):
+
+```typescript
+import { ObjectStoreClient, McpClient } from '@go-objstore/client';
+
+// Via the unified factory:
+const client = new ObjectStoreClient({
+  protocol: 'mcp',
+  mcp: {
+    baseUrl: 'http://localhost:8081',
+    token: process.env.OBJSTORE_TOKEN,   // adds Authorization: Bearer <token>
+    tenantId: process.env.TENANT_ID,     // adds X-Tenant-ID header
+    timeout: 15000,
+  },
+});
+
+// Or directly:
+const mcp = new McpClient({ baseUrl: 'http://localhost:8081' });
+await mcp.put({ key: 'hello.txt', data: Buffer.from('Hello MCP!') });
+```
+
+### Unix Domain Socket Client
+
+The Unix client speaks newline-delimited JSON-RPC 2.0 over a Unix domain socket
+(`pkg/server/unix`). Authentication is handled server-side via peer credentials;
+no credential is sent by the client. The client keeps one persistent connection
+open, serializing requests over it, and reconnects automatically after the
+server closes an idle connection (~30s idle deadline).
+
+```typescript
+import { ObjectStoreClient, UnixClient } from '@go-objstore/client';
+
+// Via the unified factory:
+const client = new ObjectStoreClient({
+  protocol: 'unix',
+  unix: { socketPath: '/tmp/objstore.sock', timeout: 10000 },
+});
+
+// Or directly:
+const unix = new UnixClient({ socketPath: '/run/objstore.sock' });
+await unix.put({ key: 'hello.txt', data: Buffer.from('Hello Unix!') });
+```
+
+## Transport Summary
+
+| Protocol | Class | Config key | Auth |
+|---|---|---|---|
+| REST/HTTP | `RestClient` | `rest` | `token`, `tenantId`, `headers` |
+| gRPC | `GrpcClient` | `grpc` | `token`, `tenantId`, `headers` (gRPC metadata) |
+| QUIC/HTTP3 | `QuicClient` | `quic` | `token`, `tenantId`, `headers` |
+| MCP HTTP | `McpClient` | `mcp` | `token`, `tenantId`, `headers` |
+| Unix socket | `UnixClient` | `unix` | server-side peercred only |
+
+## Streaming
+
+`RestClient`, `GrpcClient`, and `QuicClient` expose `getStream(key)` and
+`putStream(key, stream)` for large objects:
+
+```typescript
+import { RestClient } from '@go-objstore/client';
+import { Readable } from 'stream';
+
+const client = new RestClient({ baseUrl: 'http://localhost:8080' });
+
+// Download without buffering the whole response:
+const readable = await client.getStream('large-file.bin');
+readable.pipe(process.stdout);
+
+// Upload from a Node.js Readable or AsyncIterable:
+async function* chunks(): AsyncIterable<Buffer> {
+  yield Buffer.from('part1');
+  yield Buffer.from('part2');
+}
+await client.putStream('large-file.bin', Readable.from(chunks()));
+```
+
+## App-layer Auth
+
+All HTTP-based clients (REST, QUIC, MCP) and the gRPC client accept optional
+`token`, `tenantId`, and `headers` fields in their config:
+
+```typescript
+// REST
+const client = new RestClient({
+  baseUrl: 'http://localhost:8080',
+  token: 'my-bearer-token',       // Authorization: Bearer my-bearer-token
+  tenantId: 'tenant-123',         // X-Tenant-ID: tenant-123
+  headers: { 'X-Trace-ID': 'r1' }, // arbitrary extra headers
+});
+
+// gRPC (forwarded as gRPC metadata on every call)
+const grpc = new GrpcClient({
+  address: 'localhost:50051',
+  token: 'my-bearer-token',
+  tenantId: 'tenant-123',
 });
 ```
 
@@ -504,7 +614,7 @@ AGPL-3.0 - See LICENSE file for details
 
 ### 0.2.0
 
-- Go toolchain updated to 1.26.3
+- Go toolchain updated to 1.26.4
 - API parity across all SDKs
 
 ### 0.1.0 (Initial Release)

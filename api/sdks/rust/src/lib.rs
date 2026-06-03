@@ -1,15 +1,19 @@
 //! # go-objstore Rust SDK
 //!
 //! A comprehensive Rust SDK for the go-objstore library, providing unified access
-//! to object storage operations via multiple protocols: REST, gRPC, and QUIC/HTTP3.
+//! to object storage operations via multiple protocols: REST, gRPC, QUIC/HTTP3,
+//! MCP (HTTP JSON-RPC 2.0), and Unix-domain sockets (JSON-RPC 2.0).
 //!
 //! ## Features
 //!
-//! - **Multi-protocol support**: REST, gRPC, and QUIC/HTTP3
+//! - **Multi-protocol support**: REST, gRPC, QUIC/HTTP3, MCP, and Unix socket
 //! - **Async/await**: Built on Tokio for efficient async operations
 //! - **Type-safe**: Strong typing with comprehensive error handling
 //! - **Unified interface**: Common trait for all protocols
-//! - **Advanced features**: Lifecycle policies, replication, archiving (gRPC)
+//! - **App-layer auth**: Optional `Authorization: Bearer`, `X-Tenant-ID`, and
+//!   arbitrary extra headers injected by [`AuthConfig`]
+//! - **Streaming**: `get_stream` / `put_stream` on REST, gRPC, and QUIC clients
+//! - **Advanced features**: Lifecycle policies, replication, archiving
 //!
 //! ## Quick Start
 //!
@@ -84,24 +88,63 @@
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! ### MCP Client (HTTP JSON-RPC 2.0)
+//!
+//! ```no_run
+//! use go_objstore::{McpClient, AuthConfig};
+//! use bytes::Bytes;
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let client = McpClient::new("http://localhost:8081")?;
+//! // With auth:
+//! let auth_client = McpClient::new_with_auth(
+//!     "http://localhost:8081",
+//!     AuthConfig { token: Some("mytoken".to_string()), ..Default::default() },
+//! )?;
+//! let resp = client.put("k", Bytes::from("v"), None).await?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ### Unix-Socket Client (JSON-RPC 2.0)
+//!
+//! ```no_run
+//! use go_objstore::UnixClient;
+//! use bytes::Bytes;
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let client = UnixClient::new("/var/run/objstore.sock")?;
+//! let resp = client.put("k", Bytes::from("v"), None).await?;
+//! # Ok(())
+//! # }
+//! ```
 
+pub mod auth;
 pub mod client;
 pub mod duration;
 pub mod error;
 pub mod grpc_client;
+pub(crate) mod jsonrpc;
+pub mod mcp_client;
 pub mod quic_client;
 pub mod rest_client;
+pub mod streaming;
 pub mod types;
+pub mod unix_client;
 
 // Re-export main types for convenience
+pub use auth::AuthConfig;
 pub use client::{ObjectStore, ObjectStoreClient};
 pub use error::{Error, Result};
 pub use types::*;
 
 // Re-export individual clients
 pub use grpc_client::GrpcClient;
+pub use mcp_client::McpClient;
 pub use quic_client::{QuicClient, TlsVerification};
 pub use rest_client::RestClient;
+pub use unix_client::UnixClient;
 
 #[cfg(test)]
 mod tests {

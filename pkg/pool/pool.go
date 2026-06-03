@@ -49,8 +49,9 @@ type Hint struct {
 }
 
 // Strategy decides which Storage to return from a pool's candidates.
-// Implementations: RoundRobinStrategy (production), LeastUtilizationStrategy
-// (stub returning ErrStrategyNotImplemented for now).
+// Implementations: RoundRobinStrategy (rotate through candidates) and
+// LeastUtilizationStrategy (pick the candidate with the lowest
+// cumulative assigned load).
 //
 // Strategies must be safe for concurrent use across multiple goroutines
 // and across multiple pools sharing the same instance.

@@ -12,8 +12,8 @@ setup(
     packages=find_packages(exclude=["tests", "tests.*"]),
     python_requires=">=3.9",
     install_requires=[
-        "requests>=2.32.4",
-        "urllib3>=2.5.0",
+        "requests>=2.33.0",
+        "urllib3>=2.7.0",
         "certifi>=2024.7.4",
         "idna>=3.7",
         "grpcio>=1.71.2",
@@ -26,11 +26,11 @@ setup(
     ],
     extras_require={
         "dev": [
-            "pytest>=7.4.3",
+            "pytest>=9.0.3",
             "pytest-cov>=4.1.0",
             "pytest-asyncio>=0.23.2",
             "pytest-mock>=3.12.0",
-            "black>=23.12.0",
+            "black>=26.5.1",
             "flake8>=7.0.0",
             "mypy>=1.8.0",
             "isort>=5.13.2",

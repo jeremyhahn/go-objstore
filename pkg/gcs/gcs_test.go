@@ -35,7 +35,7 @@ var (
 	errReadError            = errors.New("read error")
 	errDelErr               = errors.New("del err")
 	errAttrsError           = errors.New("attrs error")
-	errObjectNotExist       = errors.New("object doesn't exist")
+	errObjectNotExist       = storage.ErrObjectNotExist
 	errCloseError           = errors.New("close error")
 	errWriteError           = errors.New("write error")
 	errClientCreationFailed = errors.New("client creation failed")
@@ -222,22 +222,96 @@ func TestGCS_RemovePolicy(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	// Note: GCS RemovePolicy currently returns nil (limitation of GCS API)
-	err = g.RemovePolicy("policy1")
+	// GCS lifecycle rules carry no IDs; GetPolicies synthesizes "rule-<index>" IDs.
+	policies, err := g.GetPolicies()
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(policies) != 1 {
+		t.Fatalf("expected 1 policy, got %d", len(policies))
+	}
+
+	err = g.RemovePolicy(policies[0].ID)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	// Policies should still exist since RemovePolicy doesn't actually remove them
-	// This is a known limitation of the GCS implementation
+	policies, err = g.GetPolicies()
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(policies) != 0 {
+		t.Fatalf("expected 0 policies after removal, got %d", len(policies))
+	}
+}
+
+func TestGCS_RemovePolicy_RemovesOnlyMatchingRule(t *testing.T) {
+	g := newMockGCS()
+
+	policy1 := common.LifecyclePolicy{
+		ID:        "policy1",
+		Prefix:    "logs/",
+		Retention: 24 * time.Hour,
+		Action:    "delete",
+	}
+	policy2 := common.LifecyclePolicy{
+		ID:        "policy2",
+		Prefix:    "archive/",
+		Retention: 30 * 24 * time.Hour,
+		Action:    "archive",
+	}
+	if err := g.AddPolicy(policy1); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if err := g.AddPolicy(policy2); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	// Remove the first rule ("rule-0" == logs/ delete rule).
+	if err := g.RemovePolicy("rule-0"); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	policies, err := g.GetPolicies()
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(policies) != 1 {
+		t.Fatalf("expected 1 policy remaining, got %d", len(policies))
+	}
+	if policies[0].Prefix != "archive/" {
+		t.Fatalf("expected the archive/ rule to remain, got prefix %q", policies[0].Prefix)
+	}
+	if policies[0].Action != "archive" {
+		t.Fatalf("expected the archive rule to remain, got action %q", policies[0].Action)
+	}
 }
 
 func TestGCS_RemovePolicy_NonExistent(t *testing.T) {
 	g := newMockGCS()
 
 	err := g.RemovePolicy("nonexistent")
-	if err != nil {
-		t.Fatalf("expected no error for removing non-existent policy, got %v", err)
+	if !errors.Is(err, common.ErrPolicyNotFound) {
+		t.Fatalf("expected ErrPolicyNotFound, got %v", err)
+	}
+}
+
+func TestGCS_RemovePolicy_IndexOutOfRange(t *testing.T) {
+	g := newMockGCS()
+
+	policy := common.LifecyclePolicy{
+		ID:        "policy1",
+		Prefix:    "logs/",
+		Retention: 24 * time.Hour,
+		Action:    "delete",
+	}
+	if err := g.AddPolicy(policy); err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	err := g.RemovePolicy("rule-5")
+	if !errors.Is(err, common.ErrPolicyNotFound) {
+		t.Fatalf("expected ErrPolicyNotFound, got %v", err)
 	}
 }
 
@@ -288,6 +362,8 @@ type fakeObj struct {
 	closeErr  bool
 	deleteErr bool
 	attrsErr  bool
+	updateErr bool
+	updated   *storage.ObjectAttrsToUpdate
 }
 
 func (f *fakeObj) NewWriter(ctx context.Context) io.WriteCloser {
@@ -319,6 +395,17 @@ func (f *fakeObj) Attrs(ctx context.Context) (*storage.ObjectAttrs, error) {
 	if f.data == nil {
 		return nil, errObjectNotExist
 	}
+	return &storage.ObjectAttrs{Name: "test", Size: int64(len(f.data))}, nil
+}
+
+func (f *fakeObj) Update(ctx context.Context, uattrs storage.ObjectAttrsToUpdate) (*storage.ObjectAttrs, error) {
+	if f.updateErr {
+		return nil, errAttrsError
+	}
+	if f.data == nil {
+		return nil, errObjectNotExist
+	}
+	f.updated = &uattrs
 	return &storage.ObjectAttrs{Name: "test", Size: int64(len(f.data))}, nil
 }
 

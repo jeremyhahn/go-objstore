@@ -18,16 +18,20 @@ import (
 	"crypto/tls"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
+	"time"
 
+	"github.com/jeremyhahn/go-objstore/pkg/audit"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	grpcserver "github.com/jeremyhahn/go-objstore/pkg/server/grpc"
 	mcpserver "github.com/jeremyhahn/go-objstore/pkg/server/mcp"
+	"github.com/jeremyhahn/go-objstore/pkg/server/middleware"
 	quicserver "github.com/jeremyhahn/go-objstore/pkg/server/quic"
 	restserver "github.com/jeremyhahn/go-objstore/pkg/server/rest"
 	unixserver "github.com/jeremyhahn/go-objstore/pkg/server/unix"
@@ -50,6 +54,7 @@ func main() {
 
 	// REST server flags
 	restPort := flag.Int("rest-port", 8080, "REST server port")
+	metricsPublic := flag.Bool("metrics-public", false, "Expose /metrics without authorization")
 
 	// QUIC server flags
 	quicAddr := flag.String("quic-addr", ":4433", "QUIC server address")
@@ -64,7 +69,25 @@ func main() {
 	// Unix socket server flags
 	unixSocket := flag.String("unix-socket", "/var/run/objstore.sock", "Unix socket path")
 
+	// Cross-transport middleware flags
+	rateLimit := flag.Bool("rate-limit", false, "Enable rate limiting on all transports")
+	rateLimitRPS := flag.Float64("rate-limit-rps", 100, "Rate limit requests per second")
+	rateLimitBurst := flag.Int("rate-limit-burst", 200, "Rate limit burst size")
+	rateLimitPerClient := flag.Bool("rate-limit-per-client", false, "Rate limit per client instead of globally")
+	enableAudit := flag.Bool("audit", true, "Enable audit logging on all transports")
+
 	flag.Parse()
+
+	// Shared middleware configuration applied to every enabled transport.
+	rateLimitConfig := &middleware.RateLimitConfig{
+		RequestsPerSecond: *rateLimitRPS,
+		Burst:             *rateLimitBurst,
+		PerIP:             *rateLimitPerClient,
+	}
+	var auditLogger audit.AuditLogger
+	if *enableAudit {
+		auditLogger = audit.NewDefaultAuditLogger()
+	}
 
 	// Create storage backend
 	settings := make(map[string]string)
@@ -72,7 +95,8 @@ func main() {
 
 	storage, err := factory.NewStorage(*backend, settings)
 	if err != nil {
-		log.Fatalf("Failed to create storage backend: %v", err)
+		slog.Error("Failed to create storage backend", "error", err)
+		os.Exit(1)
 	}
 
 	// Initialize the objstore facade
@@ -80,7 +104,8 @@ func main() {
 		Backends:       map[string]common.Storage{"default": storage},
 		DefaultBackend: "default",
 	}); err != nil {
-		log.Fatalf("Failed to initialize objstore facade: %v", err)
+		slog.Error("Failed to initialize objstore facade", "error", err)
+		os.Exit(1)
 	}
 
 	// Enable replication on the default backend so the replication API
@@ -91,193 +116,227 @@ func main() {
 		PolicyFilePath:  replicationPolicyPath,
 		RunInBackground: false,
 	}); err != nil {
-		log.Printf("Warning: Failed to enable replication: %v", err)
+		slog.Warn("Failed to enable replication", "error", err)
 	} else {
-		log.Printf("Replication enabled with policy file: %s", replicationPolicyPath)
+		slog.Info("Replication enabled", "policy_file", replicationPolicyPath)
 	}
 
-	// Enhanced startup logging
-	log.Println("============================================================")
-	log.Println("  Object Storage Server")
-	log.Println("============================================================")
-	log.Printf("Storage Backend: %s", *backend)
+	// Startup logging
+	slog.Info("Object Storage Server starting", "backend", *backend)
 	if *backend == "local" {
-		log.Printf("Storage Location: %s", *basePath)
-		log.Printf("  → Objects will be stored at: %s", *basePath)
+		slog.Info("Local storage location", "path", *basePath)
 	}
-	log.Printf("Enabled Services:")
 	if *enableGRPC {
-		log.Printf("  ✓ gRPC Server: %s", *grpcAddr)
+		slog.Info("Service enabled", "service", "grpc", "addr", *grpcAddr)
 	}
 	if *enableREST {
-		log.Printf("  ✓ REST API: http://0.0.0.0:%d", *restPort)
+		slog.Info("Service enabled", "service", "rest", "addr", fmt.Sprintf("0.0.0.0:%d", *restPort))
 	}
 	if *enableQUIC {
 		if *quicSelfSigned || (*quicTLSCert != "" && *quicTLSKey != "") {
-			log.Printf("  ✓ QUIC/HTTP3: %s", *quicAddr)
+			slog.Info("Service enabled", "service", "quic", "addr", *quicAddr)
 		} else {
-			log.Printf("  ⨯ QUIC/HTTP3: Disabled (no TLS configuration)")
+			slog.Warn("QUIC/HTTP3 disabled: no TLS configuration")
 		}
 	}
 	if *enableMCP {
-		log.Printf("  ✓ MCP Server: %s mode on %s", *mcpMode, *mcpAddr)
+		slog.Info("Service enabled", "service", "mcp", "mode", *mcpMode, "addr", *mcpAddr)
 	}
 	if *enableUnix {
-		log.Printf("  ✓ Unix Socket: %s", *unixSocket)
+		slog.Info("Service enabled", "service", "unix", "socket", *unixSocket)
 	}
-	log.Println("============================================================")
-	log.Printf("Initialized %s storage backend", *backend)
 
 	// Channel for errors
 	errChan := make(chan error, 5)
 
+	// Capture server references for graceful shutdown. Servers are constructed
+	// synchronously here, before their goroutines start, so the shutdown path
+	// below reads these variables without racing the transport goroutines.
+	var grpcSrv *grpcserver.Server
+	var restSrv *restserver.Server
+	var quicSrv *quicserver.Server
+	var mcpCancel context.CancelFunc
+	var unixCancel context.CancelFunc
+
+	// wg tracks the transport goroutines, which run only the blocking
+	// Start/Serve calls.
+	var wg sync.WaitGroup
+
 	// Start gRPC Server
 	if *enableGRPC {
-		go func() {
-			opts := []grpcserver.ServerOption{
-				grpcserver.WithAddress(*grpcAddr),
-			}
+		opts := []grpcserver.ServerOption{
+			grpcserver.WithAddress(*grpcAddr),
+		}
+		if *rateLimit {
+			opts = append(opts, grpcserver.WithRateLimit(true, rateLimitConfig))
+		}
 
-			server, err := grpcserver.NewServer(opts...)
-			if err != nil {
-				errChan <- fmt.Errorf("failed to create gRPC server: %w", err)
-				return
-			}
-
-			log.Printf("Starting gRPC server on %s", *grpcAddr)
-			if err := server.Start(); err != nil {
-				errChan <- fmt.Errorf("gRPC server error: %w", err)
-			}
-		}()
+		server, err := grpcserver.NewServer(opts...)
+		if err != nil {
+			errChan <- fmt.Errorf("failed to create gRPC server: %w", err)
+		} else {
+			grpcSrv = server
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				slog.Info("Starting gRPC server", "addr", *grpcAddr)
+				if err := server.Start(); err != nil {
+					errChan <- fmt.Errorf("gRPC server error: %w", err)
+				}
+			}()
+		}
 	}
 
 	// Start REST Server
 	if *enableREST {
-		go func() {
-			config := restserver.DefaultServerConfig()
-			config.Port = *restPort
+		config := restserver.DefaultServerConfig()
+		config.Port = *restPort
+		config.MetricsPublic = *metricsPublic
+		config.EnableRateLimit = *rateLimit
+		config.RateLimitConfig = rateLimitConfig
+		config.EnableAudit = *enableAudit
+		if auditLogger != nil {
+			config.AuditLogger = auditLogger
+		}
 
-			server, err := restserver.NewServer(storage, config)
-			if err != nil {
-				errChan <- fmt.Errorf("failed to create REST server: %w", err)
-				return
-			}
-
-			log.Printf("Starting REST server on %s:%d", config.Host, config.Port)
-			if err := server.Start(); err != nil {
-				errChan <- fmt.Errorf("REST server error: %w", err)
-			}
-		}()
+		server, err := restserver.NewServer(storage, config)
+		if err != nil {
+			errChan <- fmt.Errorf("failed to create REST server: %w", err)
+		} else {
+			restSrv = server
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				slog.Info("Starting REST server", "host", config.Host, "port", config.Port)
+				if err := server.Start(); err != nil {
+					errChan <- fmt.Errorf("REST server error: %w", err)
+				}
+			}()
+		}
 	}
 
 	// Start QUIC Server
 	if *enableQUIC {
-		go func() {
-			// Configure TLS
-			var tlsConfig *tls.Config
-			var err error
-			switch {
-			case *quicSelfSigned:
-				log.Println("WARNING: Using self-signed certificate for QUIC. DO NOT USE IN PRODUCTION!")
-				tlsConfig, err = quicserver.GenerateSelfSignedCert()
-				if err != nil {
-					errChan <- fmt.Errorf("failed to generate self-signed certificate: %w", err)
-					return
-				}
-			case *quicTLSCert != "" && *quicTLSKey != "":
-				tlsConfig, err = quicserver.NewTLSConfig(*quicTLSCert, *quicTLSKey)
-				if err != nil {
-					errChan <- fmt.Errorf("failed to load TLS configuration: %w", err)
-					return
-				}
-			default:
-				log.Println("QUIC server requires TLS. Use --quic-tls-cert and --quic-tls-key, or --quic-self-signed for testing")
-				return
+		// Configure TLS
+		var tlsConfig *tls.Config
+		var tlsErr error
+		switch {
+		case *quicSelfSigned:
+			slog.Warn("Using self-signed certificate for QUIC. DO NOT USE IN PRODUCTION!")
+			tlsConfig, tlsErr = quicserver.GenerateSelfSignedCert()
+			if tlsErr != nil {
+				errChan <- fmt.Errorf("failed to generate self-signed certificate: %w", tlsErr)
 			}
+		case *quicTLSCert != "" && *quicTLSKey != "":
+			tlsConfig, tlsErr = quicserver.NewTLSConfig(*quicTLSCert, *quicTLSKey)
+			if tlsErr != nil {
+				errChan <- fmt.Errorf("failed to load TLS configuration: %w", tlsErr)
+			}
+		default:
+			slog.Warn("QUIC server requires TLS. Use --quic-tls-cert and --quic-tls-key, or --quic-self-signed for testing")
+		}
 
+		if tlsConfig != nil {
 			// Create server options
 			opts := quicserver.DefaultOptions().
 				WithAddr(*quicAddr).
 				WithTLSConfig(tlsConfig)
+			if *rateLimit {
+				opts = opts.WithRateLimit(rateLimitConfig)
+			}
+			if *enableAudit {
+				opts = opts.WithAudit(auditLogger)
+			}
 
 			server, err := quicserver.New(opts)
 			if err != nil {
 				errChan <- fmt.Errorf("failed to create QUIC server: %w", err)
-				return
+			} else {
+				quicSrv = server
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					slog.Info("Starting QUIC server", "addr", *quicAddr)
+					if err := server.Start(); err != nil {
+						errChan <- fmt.Errorf("QUIC server error: %w", err)
+					}
+				}()
 			}
-
-			log.Printf("Starting QUIC server on %s", *quicAddr)
-			if err := server.Start(); err != nil {
-				errChan <- fmt.Errorf("QUIC server error: %w", err)
-			}
-		}()
+		}
 	}
 
 	// Start MCP Server
 	if *enableMCP {
-		go func() {
-			// Configure MCP server
-			var serverMode mcpserver.ServerMode
-			switch *mcpMode {
-			case "stdio":
-				serverMode = mcpserver.ModeStdio
-			case "http":
-				serverMode = mcpserver.ModeHTTP
-			default:
-				log.Printf("Invalid MCP mode: %s (must be 'stdio' or 'http')", *mcpMode)
-				return
-			}
+		// Configure MCP server
+		var serverMode mcpserver.ServerMode
+		validMode := true
+		switch *mcpMode {
+		case "stdio":
+			serverMode = mcpserver.ModeStdio
+		case "http":
+			serverMode = mcpserver.ModeHTTP
+		default:
+			slog.Error("Invalid MCP mode (must be 'stdio' or 'http')", "mode", *mcpMode)
+			validMode = false
+		}
 
+		if validMode {
 			config := &mcpserver.ServerConfig{
-				Mode:        serverMode,
-				HTTPAddress: *mcpAddr,
+				Mode:            serverMode,
+				HTTPAddress:     *mcpAddr,
+				EnableRateLimit: *rateLimit,
+				RateLimitConfig: rateLimitConfig,
+				EnableAudit:     *enableAudit,
+				AuditLogger:     auditLogger,
 			}
 
 			server, err := mcpserver.NewServer(config)
 			if err != nil {
 				errChan <- fmt.Errorf("failed to create MCP server: %w", err)
-				return
+			} else {
+				ctx, cancel := context.WithCancel(context.Background())
+				mcpCancel = cancel
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					slog.Info("Starting MCP server", "mode", *mcpMode)
+					if *mcpMode == "http" {
+						slog.Info("MCP server listening", "addr", *mcpAddr)
+					}
+					if err := server.Start(ctx); err != nil {
+						errChan <- fmt.Errorf("MCP server error: %w", err)
+					}
+				}()
 			}
-
-			log.Printf("Starting MCP server in %s mode", *mcpMode)
-			if *mcpMode == "http" {
-				log.Printf("MCP server listening on %s", *mcpAddr)
-			}
-
-			// Create context that cancels on shutdown signal
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-
-			if err := server.Start(ctx); err != nil {
-				errChan <- fmt.Errorf("MCP server error: %w", err)
-			}
-		}()
+		}
 	}
 
 	// Start Unix Socket Server
 	if *enableUnix {
-		go func() {
-			config := &unixserver.ServerConfig{
-				SocketPath: *unixSocket,
-				Backend:    "default",
-			}
+		config := &unixserver.ServerConfig{
+			SocketPath:      *unixSocket,
+			Backend:         "default",
+			EnableRateLimit: *rateLimit,
+			RateLimitConfig: rateLimitConfig,
+			EnableAudit:     *enableAudit,
+			AuditLogger:     auditLogger,
+		}
 
-			server, err := unixserver.NewServer(config)
-			if err != nil {
-				errChan <- fmt.Errorf("failed to create Unix socket server: %w", err)
-				return
-			}
-
-			log.Printf("Starting Unix socket server on %s", *unixSocket)
-
-			// Create context that cancels on shutdown signal
+		server, err := unixserver.NewServer(config)
+		if err != nil {
+			errChan <- fmt.Errorf("failed to create Unix socket server: %w", err)
+		} else {
 			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-
-			if err := server.Start(ctx); err != nil {
-				errChan <- fmt.Errorf("Unix socket server error: %w", err)
-			}
-		}()
+			unixCancel = cancel
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				slog.Info("Starting Unix socket server", "socket", *unixSocket)
+				if err := server.Start(ctx); err != nil {
+					errChan <- fmt.Errorf("Unix socket server error: %w", err)
+				}
+			}()
+		}
 	}
 
 	// Wait for interrupt signal or error
@@ -286,11 +345,75 @@ func main() {
 
 	select {
 	case err := <-errChan:
-		log.Printf("Server error: %v", err)
+		slog.Error("Server error", "error", err)
 	case sig := <-sigChan:
-		log.Printf("Received signal: %v", sig)
+		slog.Info("Received signal", "signal", sig.String())
 	}
 
-	fmt.Println("\nShutting down servers...")
-	fmt.Println("Servers stopped")
+	slog.Info("Shutting down servers")
+
+	// Bounded shutdown context.
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
+
+	// Stop gRPC (GracefulStop is context-unaware; run in goroutine with deadline).
+	if grpcSrv != nil {
+		done := make(chan struct{})
+		go func() {
+			grpcSrv.Stop()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-shutdownCtx.Done():
+			grpcSrv.ForceStop()
+		}
+	}
+
+	// Stop REST.
+	if restSrv != nil {
+		if err := restSrv.Shutdown(shutdownCtx); err != nil {
+			slog.Error("REST server shutdown error", "error", err)
+		}
+	}
+
+	// Stop QUIC.
+	if quicSrv != nil {
+		if err := quicSrv.Stop(shutdownCtx); err != nil {
+			slog.Error("QUIC server shutdown error", "error", err)
+		}
+	}
+
+	// Cancel MCP context (startHTTP calls server.Shutdown on ctx.Done).
+	if mcpCancel != nil {
+		mcpCancel()
+	}
+
+	// Cancel Unix context (Start returns after Shutdown on ctx.Done).
+	if unixCancel != nil {
+		unixCancel()
+	}
+
+	// Wait for all transport goroutines to exit before cleaning up. The wait
+	// is bounded by the shutdown context: MCP stdio mode only returns when
+	// stdin closes, so a stuck transport must not prevent process exit.
+	waitDone := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(waitDone)
+	}()
+	select {
+	case <-waitDone:
+	case <-shutdownCtx.Done():
+		slog.Warn("Timed out waiting for servers to stop")
+	}
+
+	// Remove Unix socket file if it still exists.
+	if *enableUnix {
+		if err := os.Remove(*unixSocket); err != nil && !os.IsNotExist(err) {
+			slog.Error("Failed to remove Unix socket", "error", err)
+		}
+	}
+
+	slog.Info("Servers stopped")
 }

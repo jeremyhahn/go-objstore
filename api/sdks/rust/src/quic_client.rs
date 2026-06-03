@@ -1,5 +1,5 @@
 use crate::duration::parse_go_duration_ms;
-use crate::error::{Error, Result};
+use crate::error::{error_from_http_status, Error, Result};
 use crate::rest_client::replication_policy_to_rest_json;
 use crate::types::*;
 use bytes::{Buf, Bytes};
@@ -200,10 +200,11 @@ impl QuicClient {
                 etag,
             })
         } else {
-            Err(Error::OperationFailed(format!(
-                "Failed to put object: {}",
-                response.status()
-            )))
+            Err(error_from_http_status(
+                response.status().as_u16(),
+                Some(key),
+                format!("Failed to put object: {}", response.status()),
+            ))
         }
     }
 
@@ -240,15 +241,12 @@ impl QuicClient {
             .await
             .map_err(|e| Error::H3(e.to_string()))?;
 
-        if response.status() == StatusCode::NOT_FOUND {
-            return Err(Error::NotFound(key.to_string()));
-        }
-
         if !response.status().is_success() {
-            return Err(Error::OperationFailed(format!(
-                "Failed to get object: {}",
-                response.status()
-            )));
+            return Err(error_from_http_status(
+                response.status().as_u16(),
+                Some(key),
+                format!("Failed to get object: {}", response.status()),
+            ));
         }
 
         let mut metadata = metadata_from_headers(response.headers());
@@ -306,20 +304,17 @@ impl QuicClient {
             .await
             .map_err(|e| Error::H3(e.to_string()))?;
 
-        if response.status() == StatusCode::NOT_FOUND {
-            return Err(Error::NotFound(key.to_string()));
-        }
-
         if response.status().is_success() {
             Ok(DeleteResponse {
                 success: true,
                 message: None,
             })
         } else {
-            Err(Error::OperationFailed(format!(
-                "Failed to delete object: {}",
-                response.status()
-            )))
+            Err(error_from_http_status(
+                response.status().as_u16(),
+                Some(key),
+                format!("Failed to delete object: {}", response.status()),
+            ))
         }
     }
 
@@ -361,10 +356,11 @@ impl QuicClient {
         }
 
         if !response.status().is_success() {
-            return Err(Error::OperationFailed(format!(
-                "Failed to check object existence: {}",
-                response.status()
-            )));
+            return Err(error_from_http_status(
+                response.status().as_u16(),
+                Some(key),
+                format!("Failed to check object existence: {}", response.status()),
+            ));
         }
 
         Ok(true)
@@ -424,10 +420,11 @@ impl QuicClient {
             .map_err(|e| Error::H3(e.to_string()))?;
 
         if !response.status().is_success() {
-            return Err(Error::OperationFailed(format!(
-                "Failed to list objects: {}",
-                response.status()
-            )));
+            return Err(error_from_http_status(
+                response.status().as_u16(),
+                None,
+                format!("Failed to list objects: {}", response.status()),
+            ));
         }
 
         let mut data = Vec::new();
@@ -522,15 +519,12 @@ impl QuicClient {
             .await
             .map_err(|e| Error::H3(e.to_string()))?;
 
-        if response.status() == StatusCode::NOT_FOUND {
-            return Err(Error::NotFound(key.to_string()));
-        }
-
         if !response.status().is_success() {
-            return Err(Error::OperationFailed(format!(
-                "Failed to get metadata: {}",
-                response.status()
-            )));
+            return Err(error_from_http_status(
+                response.status().as_u16(),
+                Some(key),
+                format!("Failed to get metadata: {}", response.status()),
+            ));
         }
 
         Ok(metadata_from_headers(response.headers()))
@@ -596,15 +590,12 @@ impl QuicClient {
             .await
             .map_err(|e| Error::H3(e.to_string()))?;
 
-        if response.status() == StatusCode::NOT_FOUND {
-            return Err(Error::NotFound(key.to_string()));
-        }
-
         if !response.status().is_success() {
-            return Err(Error::OperationFailed(format!(
-                "Failed to update metadata: {}",
-                response.status()
-            )));
+            return Err(error_from_http_status(
+                response.status().as_u16(),
+                Some(key),
+                format!("Failed to update metadata: {}", response.status()),
+            ));
         }
 
         Ok(())
@@ -733,10 +724,11 @@ impl QuicClient {
         if status.is_success() {
             Ok(())
         } else {
-            Err(Error::OperationFailed(format!(
-                "Failed to archive object: {}",
-                status
-            )))
+            Err(error_from_http_status(
+                status.as_u16(),
+                Some(key),
+                format!("Failed to archive object: {}", status),
+            ))
         }
     }
 
@@ -764,10 +756,11 @@ impl QuicClient {
         if status.is_success() {
             Ok(())
         } else {
-            Err(Error::OperationFailed(format!(
-                "Failed to add policy: {}",
-                status
-            )))
+            Err(error_from_http_status(
+                status.as_u16(),
+                None,
+                format!("Failed to add policy: {}", status),
+            ))
         }
     }
 
@@ -779,10 +772,11 @@ impl QuicClient {
         if status.is_success() {
             Ok(())
         } else {
-            Err(Error::OperationFailed(format!(
-                "Failed to remove policy: {}",
-                status
-            )))
+            Err(error_from_http_status(
+                status.as_u16(),
+                Some(id),
+                format!("Failed to remove policy: {}", status),
+            ))
         }
     }
 
@@ -796,10 +790,11 @@ impl QuicClient {
         let (status, data) = self.request_json(Method::GET, &path, None).await?;
 
         if !status.is_success() {
-            return Err(Error::OperationFailed(format!(
-                "Failed to get policies: {}",
-                status
-            )));
+            return Err(error_from_http_status(
+                status.as_u16(),
+                None,
+                format!("Failed to get policies: {}", status),
+            ));
         }
 
         #[derive(Deserialize)]
@@ -845,10 +840,11 @@ impl QuicClient {
             .await?;
 
         if !status.is_success() {
-            return Err(Error::OperationFailed(format!(
-                "Failed to apply policies: {}",
-                status
-            )));
+            return Err(error_from_http_status(
+                status.as_u16(),
+                None,
+                format!("Failed to apply policies: {}", status),
+            ));
         }
 
         #[derive(Deserialize)]
@@ -878,10 +874,11 @@ impl QuicClient {
         if status.is_success() {
             Ok(())
         } else {
-            Err(Error::OperationFailed(format!(
-                "Failed to add replication policy: {}",
-                status
-            )))
+            Err(error_from_http_status(
+                status.as_u16(),
+                Some(&policy.id),
+                format!("Failed to add replication policy: {}", status),
+            ))
         }
     }
 
@@ -893,10 +890,11 @@ impl QuicClient {
         if status.is_success() {
             Ok(())
         } else {
-            Err(Error::OperationFailed(format!(
-                "Failed to remove replication policy: {}",
-                status
-            )))
+            Err(error_from_http_status(
+                status.as_u16(),
+                Some(id),
+                format!("Failed to remove replication policy: {}", status),
+            ))
         }
     }
 
@@ -907,10 +905,11 @@ impl QuicClient {
             .await?;
 
         if !status.is_success() {
-            return Err(Error::OperationFailed(format!(
-                "Failed to get replication policies: {}",
-                status
-            )));
+            return Err(error_from_http_status(
+                status.as_u16(),
+                None,
+                format!("Failed to get replication policies: {}", status),
+            ));
         }
 
         #[derive(Deserialize)]
@@ -932,14 +931,12 @@ impl QuicClient {
         let path = format!("/replication/policies/{}", urlencoding::encode(id));
         let (status, data) = self.request_json(Method::GET, &path, None).await?;
 
-        if status == StatusCode::NOT_FOUND {
-            return Err(Error::NotFound(id.to_string()));
-        }
         if !status.is_success() {
-            return Err(Error::OperationFailed(format!(
-                "Failed to get replication policy: {}",
-                status
-            )));
+            return Err(error_from_http_status(
+                status.as_u16(),
+                Some(id),
+                format!("Failed to get replication policy: {}", status),
+            ));
         }
 
         let parsed: QuicReplicationPolicy = serde_json::from_slice(&data)?;
@@ -964,10 +961,11 @@ impl QuicClient {
         let (status, data) = self.request_json(Method::POST, &path, None).await?;
 
         if !status.is_success() {
-            return Err(Error::OperationFailed(format!(
-                "Failed to trigger replication: {}",
-                status
-            )));
+            return Err(error_from_http_status(
+                status.as_u16(),
+                policy_id.as_deref(),
+                format!("Failed to trigger replication: {}", status),
+            ));
         }
 
         #[derive(Deserialize)]
@@ -988,14 +986,12 @@ impl QuicClient {
         let path = format!("/replication/status/{}", urlencoding::encode(id));
         let (status, data) = self.request_json(Method::GET, &path, None).await?;
 
-        if status == StatusCode::NOT_FOUND {
-            return Err(Error::NotFound(id.to_string()));
-        }
         if !status.is_success() {
-            return Err(Error::OperationFailed(format!(
-                "Failed to get replication status: {}",
-                status
-            )));
+            return Err(error_from_http_status(
+                status.as_u16(),
+                Some(id),
+                format!("Failed to get replication status: {}", status),
+            ));
         }
 
         let parsed: QuicReplicationStatus = serde_json::from_slice(&data)?;
@@ -1794,9 +1790,10 @@ mod tests {
             destination_type: None,
             destination_settings: HashMap::new(),
         };
+        // 400 maps to InvalidArgument per the canonical table.
         assert!(matches!(
             client.add_policy(policy).await.unwrap_err(),
-            Error::OperationFailed(_)
+            Error::InvalidArgument(_)
         ));
     }
 
@@ -1821,12 +1818,12 @@ mod tests {
 
     #[tokio::test]
     async fn quic_remove_policy_not_found() {
-        // Impl maps 404 here to OperationFailed (no NotFound special-casing).
+        // 404 maps to NotFound per the canonical table.
         let server = one("DELETE /policies/p2", MockResponse::new(404)).await;
         let client = server.client().await;
         assert!(matches!(
             client.remove_policy("p2").await.unwrap_err(),
-            Error::OperationFailed(_)
+            Error::NotFound(_)
         ));
     }
 
@@ -1902,12 +1899,13 @@ mod tests {
     async fn quic_add_replication_policy_error() {
         let server = one("POST /replication/policies", MockResponse::new(409)).await;
         let client = server.client().await;
+        // 409 maps to AlreadyExists per the canonical table.
         assert!(matches!(
             client
                 .add_replication_policy(sample_replication_policy())
                 .await
                 .unwrap_err(),
-            Error::OperationFailed(_)
+            Error::AlreadyExists(_)
         ));
     }
 
@@ -1943,7 +1941,7 @@ mod tests {
 
     #[tokio::test]
     async fn quic_remove_replication_policy_not_found() {
-        // Impl maps 404 here to OperationFailed (no NotFound special-casing).
+        // 404 maps to NotFound per the canonical table.
         let server = one(
             "DELETE /replication/policies/missing",
             MockResponse::new(404),
@@ -1955,7 +1953,7 @@ mod tests {
                 .remove_replication_policy("missing")
                 .await
                 .unwrap_err(),
-            Error::OperationFailed(_)
+            Error::NotFound(_)
         ));
     }
 
@@ -2184,6 +2182,29 @@ mod tests {
             client.get("").await.unwrap_err(),
             Error::NotFound(_)
         ));
+    }
+
+    #[tokio::test]
+    async fn quic_http_status_canonical_mapping() {
+        // Every row of the canonical HTTP status table, asserted over the
+        // mocked transport: 400 InvalidArgument, 401 Unauthenticated,
+        // 403 Forbidden, 404 NotFound, 409 AlreadyExists, 429 RateLimited,
+        // 5xx OperationFailed.
+        let cases: [(u16, fn(&Error) -> bool); 7] = [
+            (400, |e| matches!(e, Error::InvalidArgument(_))),
+            (401, |e| matches!(e, Error::Unauthenticated(_))),
+            (403, |e| matches!(e, Error::Forbidden(_))),
+            (404, |e| matches!(e, Error::NotFound(_))),
+            (409, |e| matches!(e, Error::AlreadyExists(_))),
+            (429, |e| matches!(e, Error::RateLimited(_))),
+            (500, |e| matches!(e, Error::OperationFailed(_))),
+        ];
+        for (status, check) in cases {
+            let server = one("GET /objects/k", MockResponse::new(status)).await;
+            let client = server.client().await;
+            let err = client.get("k").await.unwrap_err();
+            assert!(check(&err), "HTTP {} mapped to {:?}", status, err);
+        }
     }
 
     #[tokio::test]

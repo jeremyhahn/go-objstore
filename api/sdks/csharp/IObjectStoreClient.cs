@@ -18,9 +18,19 @@ public interface IObjectStoreClient : IDisposable
     Task<string?> PutWithMetadataAsync(string key, byte[] data, ObjectMetadata metadata, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Stores an object from a stream. The stream is read to completion; ownership remains with the caller.
+    /// </summary>
+    Task<string?> PutStreamAsync(string key, Stream data, ObjectMetadata? metadata = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Retrieves an object from the backend
     /// </summary>
     Task<(byte[] Data, ObjectMetadata? Metadata)> GetAsync(string key, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Retrieves an object as a readable stream. The caller is responsible for disposing the stream.
+    /// </summary>
+    Task<(Stream Data, ObjectMetadata? Metadata)> GetStreamAsync(string key, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Removes an object from the backend

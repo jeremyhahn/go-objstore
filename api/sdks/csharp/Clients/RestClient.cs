@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using ObjStore.SDK.Exceptions;
+using ObjStore.SDK.Internal;
 using ObjStore.SDK.Models;
 using Microsoft.Extensions.Logging;
 
@@ -15,6 +16,9 @@ public class RestClient : IObjectStoreClient
     private readonly bool _disposeHttpClient;
     private readonly ILogger<RestClient>? _logger;
     private readonly JsonSerializerOptions _jsonOptions;
+    private readonly string? _token;
+    private readonly IDictionary<string, string>? _extraHeaders;
+    private readonly string? _tenantId;
     private bool _disposed;
 
     /// <summary>
@@ -24,8 +28,11 @@ public class RestClient : IObjectStoreClient
     /// </summary>
     /// <param name="baseUrl">The base URL of the object store service</param>
     /// <param name="logger">Optional logger instance</param>
-    public RestClient(string baseUrl, ILogger<RestClient>? logger = null)
-        : this(new HttpClient { BaseAddress = new Uri(baseUrl) }, logger, disposeHttpClient: true)
+    /// <param name="token">Optional bearer token for Authorization header</param>
+    /// <param name="headers">Optional additional HTTP headers</param>
+    /// <param name="tenantId">Optional tenant ID for X-Tenant-ID header</param>
+    public RestClient(string baseUrl, ILogger<RestClient>? logger = null, string? token = null, IDictionary<string, string>? headers = null, string? tenantId = null)
+        : this(new HttpClient { BaseAddress = new Uri(baseUrl) }, logger, disposeHttpClient: true, token, headers, tenantId)
     {
     }
 
@@ -36,20 +43,29 @@ public class RestClient : IObjectStoreClient
     /// <param name="httpClient">The HttpClient instance to use</param>
     /// <param name="logger">Optional logger instance</param>
     public RestClient(HttpClient httpClient, ILogger<RestClient>? logger = null)
-        : this(httpClient, logger, disposeHttpClient: false)
+        : this(httpClient, logger, disposeHttpClient: false, null, null, null)
     {
     }
 
-    private RestClient(HttpClient httpClient, ILogger<RestClient>? logger, bool disposeHttpClient)
+    private RestClient(HttpClient httpClient, ILogger<RestClient>? logger, bool disposeHttpClient, string? token, IDictionary<string, string>? extraHeaders, string? tenantId)
     {
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _logger = logger;
         _disposeHttpClient = disposeHttpClient;
+        _token = token;
+        _extraHeaders = extraHeaders;
+        _tenantId = tenantId;
         _jsonOptions = new JsonSerializerOptions
         {
             PropertyNameCaseInsensitive = true
         };
     }
+
+    /// <summary>
+    /// Applies auth headers (Authorization, X-Tenant-ID, and any extra headers) to the request.
+    /// </summary>
+    private void ApplyAuthHeaders(HttpRequestMessage request) =>
+        AuthHeaders.Apply(request, _token, _tenantId, _extraHeaders);
 
     public async Task<string?> PutAsync(string key, byte[] data, ObjectMetadata? metadata = null, CancellationToken cancellationToken = default)
     {
@@ -87,8 +103,10 @@ public class RestClient : IObjectStoreClient
                 request.Headers.TryAddWithoutValidation("X-Object-Metadata", customJson);
             }
 
+            ApplyAuthHeaders(request);
+
             var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
-            response.EnsureSuccessStatusCode();
+            await HttpErrorMapper.EnsureSuccessAsync(response, "Put", key, cancellationToken).ConfigureAwait(false);
 
             // ETag is returned in the response header, not the body
             if (response.Headers.ETag != null)
@@ -113,6 +131,55 @@ public class RestClient : IObjectStoreClient
         return PutAsync(key, data, metadata, cancellationToken);
     }
 
+    public async Task<string?> PutStreamAsync(string key, Stream data, ObjectMetadata? metadata = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        ArgumentNullException.ThrowIfNull(data);
+
+        _logger?.LogDebug("Putting object stream with key: {Key}", key);
+
+        try
+        {
+            // NonDisposingStream keeps ownership of the caller's stream with the
+            // caller; StreamContent would otherwise dispose it with the request.
+            using var content = new StreamContent(new NonDisposingStream(data));
+
+            var contentType = !string.IsNullOrEmpty(metadata?.ContentType)
+                ? metadata!.ContentType!
+                : "application/octet-stream";
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
+
+            if (!string.IsNullOrEmpty(metadata?.ContentEncoding))
+                content.Headers.ContentEncoding.Add(metadata!.ContentEncoding!);
+
+            using var request = new HttpRequestMessage(HttpMethod.Put, $"/objects/{Uri.EscapeDataString(key)}")
+            {
+                Content = content
+            };
+
+            if (metadata?.Custom is { Count: > 0 })
+            {
+                var customJson = JsonSerializer.Serialize(metadata.Custom, _jsonOptions);
+                request.Headers.TryAddWithoutValidation("X-Object-Metadata", customJson);
+            }
+
+            ApplyAuthHeaders(request);
+
+            using var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            await HttpErrorMapper.EnsureSuccessAsync(response, "PutStream", key, cancellationToken).ConfigureAwait(false);
+
+            if (response.Headers.ETag != null)
+                return response.Headers.ETag.Tag;
+            if (response.Headers.TryGetValues("ETag", out var etagValues))
+                return etagValues.FirstOrDefault();
+            return null;
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new OperationFailedException("PutStream", $"Failed to put object stream with key '{key}'", ex);
+        }
+    }
+
     public async Task<(byte[] Data, ObjectMetadata? Metadata)> GetAsync(string key, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(key);
@@ -121,14 +188,16 @@ public class RestClient : IObjectStoreClient
 
         try
         {
-            var response = await _httpClient.GetAsync($"/objects/{Uri.EscapeDataString(key)}", cancellationToken).ConfigureAwait(false);
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"/objects/{Uri.EscapeDataString(key)}");
+            ApplyAuthHeaders(request);
+            using var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
 
             if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
                 throw new ObjectNotFoundException(key);
             }
 
-            response.EnsureSuccessStatusCode();
+            await HttpErrorMapper.EnsureSuccessAsync(response, "Get", key, cancellationToken).ConfigureAwait(false);
 
             var data = await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
 
@@ -167,6 +236,65 @@ public class RestClient : IObjectStoreClient
         }
     }
 
+    public async Task<(Stream Data, ObjectMetadata? Metadata)> GetStreamAsync(string key, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+
+        _logger?.LogDebug("Getting object stream with key: {Key}", key);
+
+        HttpResponseMessage? response = null;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"/objects/{Uri.EscapeDataString(key)}");
+            ApplyAuthHeaders(request);
+
+            // ResponseHeadersRead lets the caller stream the body without buffering it first.
+            response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+                throw new ObjectNotFoundException(key);
+
+            await HttpErrorMapper.EnsureSuccessAsync(response, "GetStream", key, cancellationToken).ConfigureAwait(false);
+
+            var metadata = new ObjectMetadata
+            {
+                ContentType = response.Content.Headers.ContentType?.MediaType,
+                ContentEncoding = response.Content.Headers.ContentEncoding.FirstOrDefault(),
+                Size = response.Content.Headers.ContentLength ?? 0,
+                ETag = response.Headers.ETag?.Tag
+            };
+
+            if (response.Content.Headers.LastModified.HasValue)
+                metadata.LastModified = response.Content.Headers.LastModified.Value.DateTime;
+
+            if (response.Headers.TryGetValues("X-Object-Metadata", out var customValues))
+            {
+                var customJson = customValues.FirstOrDefault();
+                if (!string.IsNullOrEmpty(customJson))
+                    metadata.Custom = JsonSerializer.Deserialize<Dictionary<string, string>>(customJson, _jsonOptions);
+            }
+
+            var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+            // The wrapper owns the response from here: disposing the returned
+            // stream disposes the response too.
+            var owned = new ResponseOwningStream(stream, response);
+            response = null;
+            return (owned, metadata);
+        }
+        catch (ObjectNotFoundException)
+        {
+            throw;
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new OperationFailedException("GetStream", $"Failed to get object stream with key '{key}'", ex);
+        }
+        finally
+        {
+            response?.Dispose();
+        }
+    }
+
     public async Task<bool> DeleteAsync(string key, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(key);
@@ -175,7 +303,9 @@ public class RestClient : IObjectStoreClient
 
         try
         {
-            var response = await _httpClient.DeleteAsync($"/objects/{Uri.EscapeDataString(key)}", cancellationToken).ConfigureAwait(false);
+            using var request = new HttpRequestMessage(HttpMethod.Delete, $"/objects/{Uri.EscapeDataString(key)}");
+            ApplyAuthHeaders(request);
+            using var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
             return response.IsSuccessStatusCode;
         }
         catch (HttpRequestException ex)
@@ -201,8 +331,10 @@ public class RestClient : IObjectStoreClient
                 queryParams.Add($"token={Uri.EscapeDataString(continueFrom)}");
 
             var query = queryParams.Count > 0 ? "?" + string.Join("&", queryParams) : "";
-            var response = await _httpClient.GetAsync($"/objects{query}", cancellationToken).ConfigureAwait(false);
-            response.EnsureSuccessStatusCode();
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"/objects{query}");
+            ApplyAuthHeaders(request);
+            var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            await HttpErrorMapper.EnsureSuccessAsync(response, "List", cancellationToken: cancellationToken).ConfigureAwait(false);
 
             return await response.Content.ReadFromJsonAsync<ListObjectsResponse>(_jsonOptions, cancellationToken).ConfigureAwait(false)
                 ?? new ListObjectsResponse();
@@ -222,6 +354,7 @@ public class RestClient : IObjectStoreClient
         try
         {
             var request = new HttpRequestMessage(HttpMethod.Head, $"/objects/{Uri.EscapeDataString(key)}");
+            ApplyAuthHeaders(request);
             var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
 
             if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
@@ -229,13 +362,7 @@ public class RestClient : IObjectStoreClient
                 return false;
             }
 
-            if (!response.IsSuccessStatusCode)
-            {
-                throw new OperationFailedException(
-                    "Exists",
-                    $"Failed to check existence of object with key '{key}'",
-                    (int)response.StatusCode);
-            }
+            await HttpErrorMapper.EnsureSuccessAsync(response, "Exists", key, cancellationToken).ConfigureAwait(false);
 
             return true;
         }
@@ -253,7 +380,9 @@ public class RestClient : IObjectStoreClient
 
         try
         {
-            var response = await _httpClient.GetAsync($"/metadata/{Uri.EscapeDataString(key)}", cancellationToken).ConfigureAwait(false);
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"/metadata/{Uri.EscapeDataString(key)}");
+            ApplyAuthHeaders(request);
+            var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
                 return null;
 
@@ -301,7 +430,12 @@ public class RestClient : IObjectStoreClient
 
         try
         {
-            var response = await _httpClient.PutAsJsonAsync($"/metadata/{Uri.EscapeDataString(key)}", metadata, _jsonOptions, cancellationToken).ConfigureAwait(false);
+            using var request = new HttpRequestMessage(HttpMethod.Put, $"/metadata/{Uri.EscapeDataString(key)}")
+            {
+                Content = JsonContent.Create(metadata, options: _jsonOptions)
+            };
+            ApplyAuthHeaders(request);
+            var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
 
             if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
@@ -327,7 +461,9 @@ public class RestClient : IObjectStoreClient
         try
         {
             var query = !string.IsNullOrEmpty(service) ? $"?service={Uri.EscapeDataString(service)}" : "";
-            var response = await _httpClient.GetAsync($"/health{query}", cancellationToken).ConfigureAwait(false);
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"/health{query}");
+            ApplyAuthHeaders(request);
+            var response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -362,14 +498,19 @@ public class RestClient : IObjectStoreClient
 
         try
         {
-            var request = new
+            var requestBody = new
             {
                 key,
                 destination_type = destinationType,
                 destination_settings = destinationSettings
             };
 
-            var response = await _httpClient.PostAsJsonAsync("/archive", request, _jsonOptions, cancellationToken).ConfigureAwait(false);
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/archive")
+            {
+                Content = JsonContent.Create(requestBody, options: _jsonOptions)
+            };
+            ApplyAuthHeaders(httpRequest);
+            var response = await _httpClient.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
             return response.IsSuccessStatusCode;
         }
         catch (HttpRequestException ex)
@@ -386,7 +527,12 @@ public class RestClient : IObjectStoreClient
 
         try
         {
-            var response = await _httpClient.PostAsJsonAsync("/policies", policy, _jsonOptions, cancellationToken).ConfigureAwait(false);
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/policies")
+            {
+                Content = JsonContent.Create(policy, options: _jsonOptions)
+            };
+            ApplyAuthHeaders(httpRequest);
+            var response = await _httpClient.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
             return response.IsSuccessStatusCode;
         }
         catch (HttpRequestException ex)
@@ -403,7 +549,9 @@ public class RestClient : IObjectStoreClient
 
         try
         {
-            var response = await _httpClient.DeleteAsync($"/policies/{Uri.EscapeDataString(id)}", cancellationToken).ConfigureAwait(false);
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Delete, $"/policies/{Uri.EscapeDataString(id)}");
+            ApplyAuthHeaders(httpRequest);
+            var response = await _httpClient.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
             return response.IsSuccessStatusCode;
         }
         catch (HttpRequestException ex)
@@ -419,7 +567,9 @@ public class RestClient : IObjectStoreClient
         try
         {
             var query = !string.IsNullOrEmpty(prefix) ? $"?prefix={Uri.EscapeDataString(prefix)}" : "";
-            var response = await _httpClient.GetAsync($"/policies{query}", cancellationToken).ConfigureAwait(false);
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Get, $"/policies{query}");
+            ApplyAuthHeaders(httpRequest);
+            var response = await _httpClient.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
 
             if (!response.IsSuccessStatusCode)
                 return new List<LifecyclePolicy>();
@@ -457,7 +607,9 @@ public class RestClient : IObjectStoreClient
 
         try
         {
-            var response = await _httpClient.PostAsync("/policies/apply", null, cancellationToken).ConfigureAwait(false);
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/policies/apply");
+            ApplyAuthHeaders(httpRequest);
+            var response = await _httpClient.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
                 return (false, 0, 0);
 
@@ -485,7 +637,12 @@ public class RestClient : IObjectStoreClient
 
         try
         {
-            var response = await _httpClient.PostAsJsonAsync("/replication/policies", policy, _jsonOptions, cancellationToken).ConfigureAwait(false);
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/replication/policies")
+            {
+                Content = JsonContent.Create(policy, options: _jsonOptions)
+            };
+            ApplyAuthHeaders(httpRequest);
+            var response = await _httpClient.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
             return response.IsSuccessStatusCode;
         }
         catch (HttpRequestException ex)
@@ -502,7 +659,9 @@ public class RestClient : IObjectStoreClient
 
         try
         {
-            var response = await _httpClient.DeleteAsync($"/replication/policies/{Uri.EscapeDataString(id)}", cancellationToken).ConfigureAwait(false);
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Delete, $"/replication/policies/{Uri.EscapeDataString(id)}");
+            ApplyAuthHeaders(httpRequest);
+            var response = await _httpClient.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
             return response.IsSuccessStatusCode;
         }
         catch (HttpRequestException ex)
@@ -517,7 +676,9 @@ public class RestClient : IObjectStoreClient
 
         try
         {
-            var response = await _httpClient.GetAsync("/replication/policies", cancellationToken).ConfigureAwait(false);
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Get, "/replication/policies");
+            ApplyAuthHeaders(httpRequest);
+            var response = await _httpClient.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
                 return new List<ReplicationPolicy>();
 
@@ -559,7 +720,9 @@ public class RestClient : IObjectStoreClient
 
         try
         {
-            var response = await _httpClient.GetAsync($"/replication/policies/{Uri.EscapeDataString(id)}", cancellationToken).ConfigureAwait(false);
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Get, $"/replication/policies/{Uri.EscapeDataString(id)}");
+            ApplyAuthHeaders(httpRequest);
+            var response = await _httpClient.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
             if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
                 throw new PolicyNotFoundException(id, "replication policy");
@@ -587,14 +750,19 @@ public class RestClient : IObjectStoreClient
 
         try
         {
-            var request = new
+            var requestBody = new
             {
                 policy_id = policyId,
                 parallel,
                 worker_count = workerCount
             };
 
-            var response = await _httpClient.PostAsJsonAsync("/replication/trigger", request, _jsonOptions, cancellationToken).ConfigureAwait(false);
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/replication/trigger")
+            {
+                Content = JsonContent.Create(requestBody, options: _jsonOptions)
+            };
+            ApplyAuthHeaders(httpRequest);
+            var response = await _httpClient.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
 
             if (!response.IsSuccessStatusCode)
                 return new TriggerReplicationResult { Success = false };
@@ -693,7 +861,9 @@ public class RestClient : IObjectStoreClient
 
         try
         {
-            var response = await _httpClient.GetAsync($"/replication/status/{Uri.EscapeDataString(id)}", cancellationToken).ConfigureAwait(false);
+            using var httpRequest = new HttpRequestMessage(HttpMethod.Get, $"/replication/status/{Uri.EscapeDataString(id)}");
+            ApplyAuthHeaders(httpRequest);
+            var response = await _httpClient.SendAsync(httpRequest, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
                 return null;
 

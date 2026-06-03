@@ -347,7 +347,8 @@ func TestRESTDeleteObject(t *testing.T) {
 		require.NoError(t, err)
 		defer delResp.Body.Close()
 
-		assert.Equal(t, http.StatusOK, delResp.StatusCode)
+		// DELETE returns 204 No Content per the OpenAPI contract.
+		assert.Equal(t, http.StatusNoContent, delResp.StatusCode)
 
 		// Verify deletion
 		getResp, err := restClient.Get(restServerAddr + "/objects/" + key)

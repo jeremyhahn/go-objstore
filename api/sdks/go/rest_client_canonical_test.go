@@ -81,6 +81,13 @@ func TestRESTClientCanonical(t *testing.T) {
 	})
 
 	t.Run("rest_delete_success", func(t *testing.T) {
+		// The server returns 204 No Content for DELETE.
+		c := restStatus(t, http.StatusNoContent)
+		assert.NoError(t, c.Delete(ctx, "k"))
+	})
+
+	t.Run("rest_delete_tolerates_200", func(t *testing.T) {
+		// Older servers returned 200 + JSON body.
 		c := restStatus(t, http.StatusOK)
 		assert.NoError(t, c.Delete(ctx, "k"))
 	})
@@ -337,6 +344,42 @@ func TestRESTClientCanonical(t *testing.T) {
 	})
 	t.Run("rest_remove_replication_policy_not_found", func(t *testing.T) {
 		assert.ErrorIs(t, restStatus(t, http.StatusNotFound).RemoveReplicationPolicy(ctx, "r1"), ErrObjectNotFound)
+	})
+
+	// --------------------------------------------------- canonical sentinels
+
+	t.Run("rest_error_sentinel_mapping", func(t *testing.T) {
+		// Every row of the canonical HTTP status table must surface as the
+		// matching SDK sentinel via errors.Is.
+		cases := []struct {
+			status   int
+			sentinel error
+		}{
+			{http.StatusBadRequest, ErrInvalidArgument},
+			{http.StatusUnauthorized, ErrUnauthenticated},
+			{http.StatusForbidden, ErrPermissionDenied},
+			{http.StatusNotFound, ErrObjectNotFound},
+			{http.StatusConflict, ErrAlreadyExists},
+			{http.StatusTooManyRequests, ErrRateLimited},
+		}
+		for _, tc := range cases {
+			_, err := restStatus(t, tc.status).Get(ctx, "k")
+			assert.ErrorIs(t, err, tc.sentinel, "GET status %d", tc.status)
+
+			_, err = restStatus(t, tc.status).Put(ctx, "k", []byte("d"), nil)
+			assert.ErrorIs(t, err, tc.sentinel, "PUT status %d", tc.status)
+		}
+
+		// Rate limiting keeps the retryable temporary-failure contract.
+		_, err := restStatus(t, http.StatusTooManyRequests).Get(ctx, "k")
+		assert.ErrorIs(t, err, ErrTemporaryFailure)
+
+		// 5xx stays a plain server error with no sentinel attached.
+		_, err = restStatus(t, http.StatusInternalServerError).Get(ctx, "k")
+		require.Error(t, err)
+		for _, tc := range cases {
+			assert.NotErrorIs(t, err, tc.sentinel)
+		}
 	})
 
 	// --------------------------------------------------------- cross-cutting

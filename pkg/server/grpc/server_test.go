@@ -169,6 +169,12 @@ func (e *notFoundError) Error() string {
 	return "not found"
 }
 
+// Unwrap wraps the canonical sentinel, mirroring real backends, so
+// common.Classify maps the mock error to CodeNotFound.
+func (e *notFoundError) Unwrap() error {
+	return common.ErrKeyNotFound
+}
+
 // Test Server Creation
 func TestNewServer(t *testing.T) {
 	storage := newMockStorage()

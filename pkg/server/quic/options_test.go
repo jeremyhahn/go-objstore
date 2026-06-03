@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
+	"github.com/jeremyhahn/go-objstore/pkg/server/middleware"
 
 	"github.com/quic-go/quic-go"
 )
@@ -196,6 +197,41 @@ func TestOptionsBuilderPattern(t *testing.T) {
 
 	if !opts.EnableDatagrams {
 		t.Error("Expected datagrams to be enabled")
+	}
+}
+
+// TestOptionsMiddlewareBuilders exercises the middleware-related option
+// setters (request ID, rate limit, audit).
+func TestOptionsMiddlewareBuilders(t *testing.T) {
+	rlConfig := &middleware.RateLimitConfig{RequestsPerSecond: 5, Burst: 10}
+
+	opts := DefaultOptions().
+		WithRequestID(false).
+		WithRateLimit(rlConfig).
+		WithAudit(nil).
+		WithAuthorizer(adapters.NewNoOpAuthorizer()).
+		WithAllowedOrigins("https://example.com")
+
+	if opts.EnableRequestID {
+		t.Error("Expected request ID to be disabled")
+	}
+	if !opts.EnableRateLimit || opts.RateLimitConfig != rlConfig {
+		t.Error("Expected rate limit to be enabled with the given config")
+	}
+	if !opts.EnableAudit || opts.AuditLogger == nil {
+		t.Error("Expected audit to be enabled with a default logger")
+	}
+	if opts.Authorizer == nil {
+		t.Error("Expected authorizer to be set")
+	}
+	if len(opts.AllowedOrigins) != 1 || opts.AllowedOrigins[0] != "https://example.com" {
+		t.Errorf("Expected allowed origins to be set, got %v", opts.AllowedOrigins)
+	}
+
+	// A nil rate-limit config keeps the existing default.
+	opts2 := DefaultOptions().WithRateLimit(nil)
+	if !opts2.EnableRateLimit || opts2.RateLimitConfig == nil {
+		t.Error("Expected rate limit enabled with default config")
 	}
 }
 

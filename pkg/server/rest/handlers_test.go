@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -90,7 +89,7 @@ func (m *MockStorage) Get(key string) (io.ReadCloser, error) {
 func (m *MockStorage) GetWithContext(ctx context.Context, key string) (io.ReadCloser, error) {
 	obj, exists := m.objects[key]
 	if !exists {
-		return nil, errors.New("object not found")
+		return nil, common.ErrKeyNotFound
 	}
 	return io.NopCloser(bytes.NewReader(obj.data)), nil
 }
@@ -98,14 +97,14 @@ func (m *MockStorage) GetWithContext(ctx context.Context, key string) (io.ReadCl
 func (m *MockStorage) GetMetadata(ctx context.Context, key string) (*common.Metadata, error) {
 	metadata, exists := m.metadata[key]
 	if !exists {
-		return nil, errors.New("object not found")
+		return nil, common.ErrMetadataNotFound
 	}
 	return metadata, nil
 }
 
 func (m *MockStorage) UpdateMetadata(ctx context.Context, key string, metadata *common.Metadata) error {
 	if _, exists := m.metadata[key]; !exists {
-		return errors.New("object not found")
+		return common.ErrKeyNotFound
 	}
 	m.metadata[key] = metadata
 	if obj, exists := m.objects[key]; exists {
@@ -120,7 +119,7 @@ func (m *MockStorage) Delete(key string) error {
 
 func (m *MockStorage) DeleteWithContext(ctx context.Context, key string) error {
 	if _, exists := m.objects[key]; !exists {
-		return errors.New("object not found")
+		return common.ErrKeyNotFound
 	}
 	delete(m.objects, key)
 	delete(m.metadata, key)
@@ -403,7 +402,7 @@ func TestDeleteObject(t *testing.T) {
 		{
 			name:           "delete existing object",
 			key:            "test.txt",
-			wantStatusCode: http.StatusOK,
+			wantStatusCode: http.StatusNoContent,
 		},
 		{
 			name:           "delete non-existent object",
@@ -424,6 +423,9 @@ func TestDeleteObject(t *testing.T) {
 
 			if w.Code != tt.wantStatusCode {
 				t.Errorf("DeleteObject() status = %v, want %v", w.Code, tt.wantStatusCode)
+			}
+			if tt.wantStatusCode == http.StatusNoContent && w.Body.Len() != 0 {
+				t.Errorf("DeleteObject() 204 response must have an empty body, got %q", w.Body.String())
 			}
 		})
 	}

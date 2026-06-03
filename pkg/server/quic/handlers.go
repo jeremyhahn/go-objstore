@@ -19,8 +19,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,6 +30,8 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
+	servererrors "github.com/jeremyhahn/go-objstore/pkg/server/errors"
+	"github.com/jeremyhahn/go-objstore/pkg/server/metrics"
 )
 
 // Constants
@@ -146,6 +150,30 @@ func originAllowed(origin string, allowedOrigins []string) bool {
 // ServeHTTP handles HTTP/3 requests and routes them to appropriate handlers.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
+	// Wrap the writer so we can record the response status for metrics.
+	rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+	w = rw
+	defer func() {
+		if rec := recover(); rec != nil {
+			slog.ErrorContext(r.Context(), "[QUIC] Panic recovered",
+				slog.Any("panic", rec),
+				slog.String(fieldPath, r.URL.Path),
+				slog.String(fieldMethod, r.Method),
+			)
+			if !rw.wroteHeader {
+				http.Error(w, "internal server error", http.StatusInternalServerError)
+				metrics.Default.RecordRequest(metrics.TransportQUIC, strconv.Itoa(http.StatusInternalServerError), time.Since(start))
+				return
+			}
+			// Headers already sent: a 500 cannot be delivered, so record the
+			// failure and abort the stream rather than letting the client take
+			// a truncated body for a complete 2xx response.
+			rw.statusCode = http.StatusInternalServerError
+			metrics.Default.RecordRequest(metrics.TransportQUIC, strconv.Itoa(rw.statusCode), time.Since(start))
+			panic(http.ErrAbortHandler)
+		}
+		metrics.Default.RecordRequest(metrics.TransportQUIC, strconv.Itoa(rw.statusCode), time.Since(start))
+	}()
 
 	// Set CORS headers for cross-origin requests
 	h.setCORSHeaders(w, r)
@@ -198,11 +226,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Create a response writer wrapper to capture status code
-	rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+	// rw (declared at the top of ServeHTTP) wraps w and captures the status
+	// code for logging and metrics.
 
 	// Route based on path
 	switch {
+	case strings.HasPrefix(r.URL.Path, "/metadata/"):
+		h.handleGetMetadata(rw, r)
+	case strings.HasPrefix(r.URL.Path, "/exists/"):
+		h.handleExistsHead(rw, r)
 	case strings.HasPrefix(r.URL.Path, "/objects/"):
 		h.handleObject(rw, r)
 	case r.URL.Path == "/objects":
@@ -250,12 +282,34 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // responseWriter wraps http.ResponseWriter to capture the status code
 type responseWriter struct {
 	http.ResponseWriter
-	statusCode int
+	statusCode  int
+	wroteHeader bool
 }
 
 func (rw *responseWriter) WriteHeader(code int) {
 	rw.statusCode = code
+	rw.wroteHeader = true
 	rw.ResponseWriter.WriteHeader(code)
+}
+
+func (rw *responseWriter) Write(b []byte) (int, error) {
+	// An implicit 200 is sent on the first Write without WriteHeader.
+	rw.wroteHeader = true
+	return rw.ResponseWriter.Write(b)
+}
+
+// writeBackendError classifies a backend error through the shared taxonomy
+// (common.Classify) and writes the matching HTTP status, so QUIC reports the
+// same class of failure as the other transports. When the request context has
+// already expired, the context error takes precedence so backend errors that
+// do not wrap it still map to the canonical timeout (504) or cancellation
+// (499) status instead of masquerading as another failure class.
+func writeBackendError(ctx context.Context, w http.ResponseWriter, err error) {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		err = ctxErr
+	}
+	code, message := servererrors.HTTPStatus(err)
+	http.Error(w, message, code)
 }
 
 // handleHealth handles health check requests.
@@ -340,11 +394,7 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request, key string) 
 	// Store the object using facade
 	err := objstore.PutWithMetadata(ctx, h.keyRef(key), limitedReader, metadata)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
-		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+		writeBackendError(ctx, w, err)
 		return
 	}
 
@@ -365,7 +415,11 @@ func (h *Handler) handleGet(w http.ResponseWriter, r *http.Request, key string) 
 
 	// Get object metadata first using facade
 	info, err := objstore.GetMetadata(ctx, h.keyRef(key))
-	if err != nil || info == nil {
+	if err != nil {
+		writeBackendError(ctx, w, err)
+		return
+	}
+	if info == nil {
 		http.Error(w, "object not found", http.StatusNotFound)
 		return
 	}
@@ -373,11 +427,7 @@ func (h *Handler) handleGet(w http.ResponseWriter, r *http.Request, key string) 
 	// Get object data using facade
 	reader, err := objstore.GetWithContext(ctx, h.keyRef(key))
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
-		http.Error(w, "object not found", http.StatusNotFound)
+		writeBackendError(ctx, w, err)
 		return
 	}
 	defer func() { _ = reader.Close() }()
@@ -419,11 +469,7 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request, key strin
 	// Delete the object using facade
 	err := objstore.DeleteWithContext(ctx, h.keyRef(key))
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
-		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+		writeBackendError(ctx, w, err)
 		return
 	}
 
@@ -437,7 +483,11 @@ func (h *Handler) handleHead(w http.ResponseWriter, r *http.Request, key string)
 
 	// Get object metadata using facade
 	info, err := objstore.GetMetadata(ctx, h.keyRef(key))
-	if err != nil || info == nil {
+	if err != nil {
+		writeBackendError(ctx, w, err)
+		return
+	}
+	if info == nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
@@ -463,6 +513,95 @@ func (h *Handler) handleHead(w http.ResponseWriter, r *http.Request, key string)
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// metadataResponse mirrors the REST ObjectResponse JSON shape so that QUIC
+// metadata consumers receive the same schema as REST/gRPC/MCP/Unix.
+type metadataResponse struct {
+	Key         string            `json:"key"`
+	Size        int64             `json:"size"`
+	Modified    string            `json:"modified,omitempty"`
+	ETag        string            `json:"etag,omitempty"`
+	ContentType string            `json:"content_type,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
+}
+
+// handleExistsHead handles HEAD /exists/<key> requests. Per the OpenAPI
+// contract (and matching the REST route) existence is signaled by the status
+// code alone: 200 when present, 404 when absent, no body. The legacy
+// GET /objects/<key>?exists= query variant is preserved in handleObject.
+func (h *Handler) handleExistsHead(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	key := strings.TrimPrefix(r.URL.Path, "/exists/")
+	if key == "" {
+		http.Error(w, "key is required", http.StatusBadRequest)
+		return
+	}
+
+	exists, err := objstore.Exists(r.Context(), h.keyRef(key))
+	if err != nil {
+		writeBackendError(r.Context(), w, err)
+		return
+	}
+
+	if !exists {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// handleGetMetadata handles GET /metadata/<key> requests, returning object
+// metadata as a JSON body. This mirrors the REST GET /metadata/*key route,
+// keeping the existing HEAD /objects/<key> behavior unchanged.
+func (h *Handler) handleGetMetadata(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	key := strings.TrimPrefix(r.URL.Path, "/metadata/")
+	key = path.Clean(key)
+	if key == "" || key == "." {
+		http.Error(w, "key is required", http.StatusBadRequest)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), h.readTimeout)
+	defer cancel()
+
+	info, err := objstore.GetMetadata(ctx, h.keyRef(key))
+	if err != nil {
+		writeBackendError(ctx, w, err)
+		return
+	}
+	if info == nil {
+		http.Error(w, "object not found", http.StatusNotFound)
+		return
+	}
+
+	resp := metadataResponse{
+		Key:         key,
+		Size:        info.Size,
+		ETag:        info.ETag,
+		ContentType: info.ContentType,
+	}
+	if !info.LastModified.IsZero() {
+		resp.Modified = info.LastModified.Format("2006-01-02T15:04:05Z07:00")
+	}
+	if len(info.Custom) > 0 {
+		resp.Metadata = info.Custom
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		h.logger.Error(r.Context(), "failed to encode metadata response", adapters.Field{Key: fieldError, Value: err.Error()})
+	}
 }
 
 // handleList handles GET requests to list objects.
@@ -494,11 +633,7 @@ func (h *Handler) handleList(w http.ResponseWriter, r *http.Request) {
 	// List objects using facade
 	result, err := objstore.ListWithOptions(ctx, h.backend, options)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
-		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+		writeBackendError(ctx, w, err)
 		return
 	}
 
@@ -532,11 +667,7 @@ func (h *Handler) handleExists(w http.ResponseWriter, r *http.Request, key strin
 	// Check existence using facade
 	exists, err := objstore.Exists(ctx, h.keyRef(key))
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
-		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+		writeBackendError(ctx, w, err)
 		return
 	}
 
@@ -562,7 +693,7 @@ func (h *Handler) handleUpdateMetadata(w http.ResponseWriter, r *http.Request, k
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, common.SanitizeErrorMessage(err), http.StatusBadRequest)
 		return
 	}
 
@@ -576,11 +707,7 @@ func (h *Handler) handleUpdateMetadata(w http.ResponseWriter, r *http.Request, k
 	// Update metadata using facade
 	err := objstore.UpdateMetadata(ctx, h.keyRef(key), metadata)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
-		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+		writeBackendError(ctx, w, err)
 		return
 	}
 
@@ -612,7 +739,7 @@ func (h *Handler) handleArchive(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, common.SanitizeErrorMessage(err), http.StatusBadRequest)
 		return
 	}
 
@@ -629,18 +756,14 @@ func (h *Handler) handleArchive(w http.ResponseWriter, r *http.Request) {
 	// Create archiver from factory
 	archiver, err := createArchiver(req.DestinationType, req.DestinationSettings)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, common.SanitizeErrorMessage(err), http.StatusBadRequest)
 		return
 	}
 
 	// Archive the object using facade
 	err = objstore.Archive(h.keyRef(req.Key), archiver)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
-		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+		writeBackendError(ctx, w, err)
 		return
 	}
 
@@ -677,11 +800,7 @@ func (h *Handler) handleGetPolicies(w http.ResponseWriter, r *http.Request) {
 	// Get policies using facade
 	policies, err := objstore.GetPolicies(h.backend)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
-		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+		writeBackendError(ctx, w, err)
 		return
 	}
 
@@ -732,7 +851,7 @@ func (h *Handler) handleAddPolicy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, common.SanitizeErrorMessage(err), http.StatusBadRequest)
 		return
 	}
 
@@ -773,7 +892,7 @@ func (h *Handler) handleAddPolicy(w http.ResponseWriter, r *http.Request) {
 
 		archiver, err := createArchiver(req.DestinationType, req.DestinationSettings)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			http.Error(w, common.SanitizeErrorMessage(err), http.StatusBadRequest)
 			return
 		}
 		policy.Destination = archiver
@@ -782,15 +901,8 @@ func (h *Handler) handleAddPolicy(w http.ResponseWriter, r *http.Request) {
 	// Add policy using facade
 	err := objstore.AddPolicy(h.backend, policy)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
-		if err.Error() == "policy already exists" {
-			http.Error(w, "policy already exists", http.StatusConflict)
-			return
-		}
-		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+		// Classify maps "policy already exists" to 409 Conflict.
+		writeBackendError(ctx, w, err)
 		return
 	}
 
@@ -824,15 +936,11 @@ func (h *Handler) handlePolicyByID(w http.ResponseWriter, r *http.Request) {
 	// Remove policy using facade
 	err := objstore.RemovePolicy(h.backend, id)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
 		if errors.Is(err, common.ErrPolicyNotFound) {
 			http.Error(w, "policy not found", http.StatusNotFound)
 			return
 		}
-		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+		writeBackendError(ctx, w, err)
 		return
 	}
 
@@ -859,11 +967,7 @@ func (h *Handler) handleApplyPolicies(w http.ResponseWriter, r *http.Request) {
 	// Get policies using facade
 	policies, err := objstore.GetPolicies(h.backend)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
-		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+		writeBackendError(ctx, w, err)
 		return
 	}
 
@@ -888,11 +992,7 @@ func (h *Handler) handleApplyPolicies(w http.ResponseWriter, r *http.Request) {
 	// List objects using facade
 	result, err := objstore.ListWithOptions(ctx, h.backend, opts)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
-		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+		writeBackendError(ctx, w, err)
 		return
 	}
 
@@ -959,6 +1059,9 @@ func deriveActionResource(r *http.Request) (action, resource string) {
 	method := r.Method
 
 	switch {
+	case strings.HasPrefix(urlPath, "/metadata/"):
+		key := path.Clean(strings.TrimPrefix(urlPath, "/metadata/"))
+		return adapters.ActionRead, key
 	case strings.HasPrefix(urlPath, "/replication"):
 		return adapters.ActionAdmin, adapters.ResourceReplication
 	case strings.HasPrefix(urlPath, "/policies"):

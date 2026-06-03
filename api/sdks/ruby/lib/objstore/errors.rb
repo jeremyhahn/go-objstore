@@ -6,4 +6,8 @@ module ObjectStore
   class ServerError < Error; end
   class TimeoutError < Error; end
   class ProtocolError < Error; end
+  class AuthenticationError < Error; end
+  class AuthorizationError < Error; end
+  class AlreadyExistsError < Error; end
+  class RateLimitError < Error; end
 end

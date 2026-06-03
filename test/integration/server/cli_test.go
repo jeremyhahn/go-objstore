@@ -35,12 +35,12 @@ var (
 
 // CLI test configuration
 type cliTestConfig struct {
-	name           string
-	serverFlag     string
-	protocolFlag   string
-	description    string
-	skipArchive    bool // Skip archive tests for protocols that don't support it yet
-	skipPolicies   bool // Skip policy tests if not supported
+	name         string
+	serverFlag   string
+	protocolFlag string
+	description  string
+	skipArchive  bool // Skip archive tests for protocols that don't support it yet
+	skipPolicies bool // Skip policy tests if not supported
 }
 
 var cliConfigs = []cliTestConfig{
@@ -64,15 +64,17 @@ var cliConfigs = []cliTestConfig{
 	},
 }
 
+// cliBinaryPath is where the test-runner container builds the objstore CLI
+// (see the test service command in docker-compose.yml).
+const cliBinaryPath = "/usr/local/bin/objstore"
+
 // runCLI executes the objstore CLI command
 func runCLI(args ...string) (string, string, error) {
-	// Find the objstore binary (built during Docker image creation)
-	cliBinary := "/usr/local/bin/objstore"
-	if _, err := os.Stat(cliBinary); os.IsNotExist(err) {
-		return "", "", fmt.Errorf("%w at %s", errCLIBinaryNotFound, cliBinary)
+	if _, err := os.Stat(cliBinaryPath); os.IsNotExist(err) {
+		return "", "", fmt.Errorf("%w at %s", errCLIBinaryNotFound, cliBinaryPath)
 	}
 
-	cmd := exec.Command(cliBinary, args...)
+	cmd := exec.Command(cliBinaryPath, args...)
 	cmd.Dir = "/app"
 
 	stdout, err := cmd.Output()
@@ -209,19 +211,19 @@ func testCLIExists(t *testing.T, cfg cliTestConfig) {
 		require.NoError(t, err, "exists command should succeed")
 		assert.Contains(t, strings.ToLower(stdout), "exists", "output should indicate object exists")
 
-		// Test exists for non-existing object
+		// Test exists for non-existing object. Per the CLI contract the
+		// command exits 1 when the object is missing (shell-script friendly,
+		// like `test -e`), printing "exists: false".
 		stdout, stderr, err = runCLI(
 			"--server", cfg.serverFlag,
 			"--server-protocol", cfg.protocolFlag,
 			"exists", "nonexistent/key.txt",
 		)
 
-		if err != nil {
-			t.Logf("EXISTS (non-existent) stdout: %s", stdout)
-			t.Logf("EXISTS (non-existent) stderr: %s", stderr)
-		}
-		require.NoError(t, err, "exists command should succeed even for non-existent objects")
-		assert.Contains(t, strings.ToLower(stdout), "not", "output should indicate object doesn't exist")
+		t.Logf("EXISTS (non-existent) stdout: %s", stdout)
+		t.Logf("EXISTS (non-existent) stderr: %s", stderr)
+		require.Error(t, err, "exists must exit non-zero for a missing object")
+		assert.Contains(t, strings.ToLower(stdout), "exists: false", "output should indicate object doesn't exist")
 	})
 }
 
@@ -318,15 +320,17 @@ func testCLIDelete(t *testing.T, cfg cliTestConfig) {
 		}
 		require.NoError(t, err, "delete command should succeed")
 
-		// Verify deletion
+		// Verify deletion. The exists command exits 1 for missing objects per
+		// the CLI contract.
 		stdout, stderr, err = runCLI(
 			"--server", cfg.serverFlag,
 			"--server-protocol", cfg.protocolFlag,
 			"exists", key,
 		)
 
-		require.NoError(t, err, "exists command should succeed")
-		assert.Contains(t, strings.ToLower(stdout), "not", "object should not exist after deletion")
+		t.Logf("EXISTS (after delete) stdout: %s stderr: %s", stdout, stderr)
+		require.Error(t, err, "exists must exit non-zero after deletion")
+		assert.Contains(t, strings.ToLower(stdout), "exists: false", "object should not exist after deletion")
 	})
 }
 
@@ -353,7 +357,9 @@ func testCLIArchive(t *testing.T, cfg cliTestConfig) {
 		)
 		require.NoError(t, err, "put should succeed")
 
-		// Archive to local destination
+		// Archive to the server's local archive mount. Every server in the
+		// compose environment mounts an archive volume at /tmp/archive
+		// (ARCHIVE_PATH), so archiving must succeed.
 		stdout, stderr, err := runCLI(
 			"--server", cfg.serverFlag,
 			"--server-protocol", cfg.protocolFlag,
@@ -364,9 +370,10 @@ func testCLIArchive(t *testing.T, cfg cliTestConfig) {
 		if err != nil {
 			t.Logf("ARCHIVE stdout: %s", stdout)
 			t.Logf("ARCHIVE stderr: %s", stderr)
-			// Archive may fail if destination not configured - log but don't fail
-			t.Logf("Archive command failed (may be expected): %v", err)
 		}
+		require.NoError(t, err, "archive command should succeed")
+		assert.Contains(t, strings.ToLower(stdout), "successfully archived",
+			"archive output should report success")
 	})
 }
 
@@ -478,7 +485,7 @@ func TestCLIStdin(t *testing.T) {
 		key := "cli-test/stdin/test.txt"
 		content := "content from stdin"
 
-		cmd := exec.Command("/app/bin/objstore",
+		cmd := exec.Command(cliBinaryPath,
 			"--server", cfg.serverFlag,
 			"--server-protocol", cfg.protocolFlag,
 			"put", "-", key,

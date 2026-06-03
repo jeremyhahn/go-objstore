@@ -152,7 +152,7 @@ func (h *Handler) PutObject(c *gin.Context) {
 		_ = auditLogger.LogObjectMutation(c.Request.Context(), audit.EventObjectCreated,
 			userID, principal, h.backend, key, c.ClientIP(), requestID, 0,
 			audit.ResultFailure, err)
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -254,7 +254,7 @@ func (h *Handler) DeleteObject(c *gin.Context) {
 	// Check if object exists using facade
 	exists, err := objstore.Exists(c.Request.Context(), h.keyRef(key))
 	if err != nil {
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -275,7 +275,7 @@ func (h *Handler) DeleteObject(c *gin.Context) {
 		_ = auditLogger.LogObjectMutation(c.Request.Context(), audit.EventObjectDeleted,
 			userID, principal, h.backend, key, c.ClientIP(), requestID, 0,
 			audit.ResultFailure, err)
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -283,7 +283,8 @@ func (h *Handler) DeleteObject(c *gin.Context) {
 		userID, principal, h.backend, key, c.ClientIP(), requestID, 0,
 		audit.ResultSuccess, nil)
 
-	RespondWithSuccess(c, http.StatusOK, "object deleted successfully", gin.H{keyField: key})
+	// 204 No Content per the OpenAPI contract for DELETE.
+	c.Status(http.StatusNoContent)
 }
 
 // HeadObject checks if an object exists
@@ -302,7 +303,7 @@ func (h *Handler) HeadObject(c *gin.Context) {
 	// Check if object exists using facade
 	exists, err := objstore.Exists(c.Request.Context(), h.keyRef(key))
 	if err != nil {
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -369,7 +370,7 @@ func (h *Handler) ListObjects(c *gin.Context) {
 	// List using facade
 	result, err := objstore.ListWithOptions(c.Request.Context(), h.backend, opts)
 	if err != nil {
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -391,7 +392,7 @@ func (h *Handler) GetObjectMetadata(c *gin.Context) {
 
 	metadata, err := objstore.GetMetadata(c.Request.Context(), h.keyRef(key))
 	if err != nil {
-		RespondWithError(c, http.StatusNotFound, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -419,7 +420,7 @@ func (h *Handler) UpdateObjectMetadata(c *gin.Context) {
 	// Check if object exists using facade
 	exists, err := objstore.Exists(c.Request.Context(), h.keyRef(key))
 	if err != nil {
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -438,7 +439,7 @@ func (h *Handler) UpdateObjectMetadata(c *gin.Context) {
 	// Update metadata using facade
 	err = objstore.UpdateMetadata(c.Request.Context(), h.keyRef(key), &metadata)
 	if err != nil {
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -496,7 +497,7 @@ func (h *Handler) Archive(c *gin.Context) {
 		_ = auditLogger.LogObjectMutation(c.Request.Context(), audit.EventObjectArchived,
 			userID, principal, h.backend, req.Key, c.ClientIP(), requestID, 0,
 			audit.ResultFailure, err)
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -558,11 +559,8 @@ func (h *Handler) AddPolicy(c *gin.Context) {
 	// Add policy using facade
 	err := objstore.AddPolicy(h.backend, policy)
 	if err != nil {
-		if err.Error() == "policy already exists" {
-			RespondWithError(c, http.StatusConflict, common.SanitizeErrorMessage(err))
-			return
-		}
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		// Classify maps "policy already exists" to 409 Conflict.
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -591,7 +589,7 @@ func (h *Handler) RemovePolicy(c *gin.Context) {
 			RespondWithError(c, http.StatusNotFound, common.SanitizeErrorMessage(err))
 			return
 		}
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -607,7 +605,7 @@ func (h *Handler) GetPolicies(c *gin.Context) {
 	// Get policies using facade
 	policies, err := objstore.GetPolicies(h.backend)
 	if err != nil {
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -637,14 +635,18 @@ func (h *Handler) ExistsObject(c *gin.Context) {
 	// Check existence using facade
 	exists, err := objstore.Exists(c.Request.Context(), h.keyRef(key))
 	if err != nil {
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		keyField: key,
-		"exists": exists,
-	})
+	// Per the OpenAPI contract this HEAD endpoint signals existence via the
+	// status code alone: 200 when present, 404 when absent. A JSON body is
+	// useless on HEAD responses (clients cannot read it).
+	if !exists {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	c.Status(http.StatusOK)
 }
 
 // ApplyPolicies handles POST /api/v1/policies/apply - executes all lifecycle policies.
@@ -654,7 +656,7 @@ func (h *Handler) ApplyPolicies(c *gin.Context) {
 	// Get policies using facade
 	policies, err := objstore.GetPolicies(h.backend)
 	if err != nil {
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -674,7 +676,7 @@ func (h *Handler) ApplyPolicies(c *gin.Context) {
 	}
 	result, err := objstore.ListWithOptions(ctx, h.backend, opts)
 	if err != nil {
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -723,10 +725,17 @@ func (h *Handler) ApplyPolicies(c *gin.Context) {
 
 // Helper functions
 
-// extractPrincipal extracts the principal information from the Gin context
+// extractPrincipal extracts the principal information from the Gin context.
+// AuthenticationMiddleware stores *adapters.Principal; accept both pointer and
+// value forms for robustness.
 func extractPrincipal(c *gin.Context) (principal string, userID string) {
 	if principalValue, exists := c.Get("principal"); exists {
-		if p, ok := principalValue.(adapters.Principal); ok {
+		switch p := principalValue.(type) {
+		case *adapters.Principal:
+			if p != nil {
+				return p.Name, p.ID
+			}
+		case adapters.Principal:
 			return p.Name, p.ID
 		}
 	}

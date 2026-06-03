@@ -16,6 +16,7 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"strings"
@@ -66,7 +67,7 @@ func (r *ToolRegistry) RegisterDefaultTools() {
 				},
 				"data": map[string]any{
 					schemaType:        schemaString,
-					schemaDescription: "The content to store (string or base64 encoded)",
+					schemaDescription: "The content to store, base64-encoded (use standard base64 encoding; raw strings are rejected)",
 				},
 				"metadata": map[string]any{
 					schemaType:        schemaObject,
@@ -93,7 +94,7 @@ func (r *ToolRegistry) RegisterDefaultTools() {
 
 	r.tools["objstore_get"] = Tool{
 		Name:        "objstore_get",
-		Description: "Download an object from the object store. Retrieves data by key.",
+		Description: "Download an object from the object store. Retrieves data by key. Returns the object content base64-encoded in the data field.",
 		InputSchema: map[string]any{
 			schemaType: schemaObject,
 			schemaProperties: map[string]any{
@@ -409,7 +410,14 @@ func (e *ToolExecutor) executePut(ctx context.Context, args map[string]any) (str
 		return "", ErrMissingParameter
 	}
 
-	reader := strings.NewReader(data)
+	// Object data travels base64-encoded inside the JSON-RPC payload so the
+	// transport is binary-safe.
+	decoded, err := base64.StdEncoding.DecodeString(data)
+	if err != nil {
+		return "", ErrInvalidBase64Data
+	}
+
+	reader := bytes.NewReader(decoded)
 
 	// Check for metadata
 	var metadata *common.Metadata
@@ -435,7 +443,6 @@ func (e *ToolExecutor) executePut(ctx context.Context, args map[string]any) (str
 	}
 
 	// Store the object using facade
-	var err error
 	if metadata != nil {
 		err = objstore.PutWithMetadata(ctx, e.keyRef(key), reader, metadata)
 	} else {
@@ -449,7 +456,7 @@ func (e *ToolExecutor) executePut(ctx context.Context, args map[string]any) (str
 	result := map[string]any{
 		fieldSuccess: true,
 		fieldKey:     key,
-		"size":       len(data),
+		"size":       len(decoded),
 	}
 
 	jsonResult, _ := json.MarshalIndent(result, "", "  ")
@@ -480,7 +487,7 @@ func (e *ToolExecutor) executeGet(ctx context.Context, args map[string]any) (str
 		fieldSuccess: true,
 		fieldKey:     key,
 		"size":       size,
-		"data":       buf.String(),
+		"data":       base64.StdEncoding.EncodeToString(buf.Bytes()),
 	}
 
 	jsonResult, _ := json.MarshalIndent(result, "", "  ")

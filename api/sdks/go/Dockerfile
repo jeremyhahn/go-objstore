@@ -1,8 +1,8 @@
 # Dockerfile for Go SDK testing
 # Context must be the repository ROOT (the go.mod `replace` directive points the
 # parent module at ../../../, so the whole repo must be in the build context).
-# Image must satisfy the parent module's go directive (>= 1.26.3).
-FROM golang:1.26.3-alpine
+# Image must satisfy the parent module's go directive (>= 1.26.4).
+FROM golang:1.26.4-alpine
 
 # Build tools for CGO (race detector needs a C toolchain)
 RUN apk add --no-cache git make curl bash gcc musl-dev

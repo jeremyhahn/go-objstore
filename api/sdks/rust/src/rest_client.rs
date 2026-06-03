@@ -1,5 +1,5 @@
 use crate::duration::parse_go_duration_ms;
-use crate::error::{Error, Result};
+use crate::error::{error_from_http_status, Error, Result};
 use crate::types::*;
 use bytes::Bytes;
 use reqwest::{Client, StatusCode};
@@ -59,12 +59,6 @@ struct RestListResponse {
 }
 
 #[derive(Debug, Deserialize)]
-struct RestSuccessResponse {
-    #[allow(dead_code)]
-    message: String,
-}
-
-#[derive(Debug, Deserialize)]
 struct RestHealthResponse {
     status: String,
     version: Option<String>,
@@ -88,6 +82,19 @@ impl RestClient {
         data: Bytes,
         metadata: Option<Metadata>,
     ) -> Result<PutResponse> {
+        self.put_body(key, data.into(), metadata).await
+    }
+
+    /// Put an object using an arbitrary request body (buffered or streamed).
+    ///
+    /// Shared by [`put`](Self::put) and the streaming `put_stream` extension;
+    /// a streaming body is sent with chunked transfer encoding.
+    pub(crate) async fn put_body(
+        &self,
+        key: &str,
+        body: reqwest::Body,
+        metadata: Option<Metadata>,
+    ) -> Result<PutResponse> {
         let url = format!("{}/objects/{}", self.base_url, urlencoding::encode(key));
 
         let mut request = self.client.put(&url);
@@ -101,7 +108,7 @@ impl RestClient {
             }
         }
 
-        request = request.body(data);
+        request = request.body(body);
 
         let response = request.send().await?;
 
@@ -118,10 +125,11 @@ impl RestClient {
                 etag,
             })
         } else {
-            Err(Error::OperationFailed(format!(
-                "Failed to put object: {}",
-                response.status()
-            )))
+            Err(error_from_http_status(
+                response.status().as_u16(),
+                Some(key),
+                format!("Failed to put object: {}", response.status()),
+            ))
         }
     }
 
@@ -131,15 +139,12 @@ impl RestClient {
 
         let response = self.client.get(&url).send().await?;
 
-        if response.status() == StatusCode::NOT_FOUND {
-            return Err(Error::NotFound(key.to_string()));
-        }
-
         if !response.status().is_success() {
-            return Err(Error::OperationFailed(format!(
-                "Failed to get object: {}",
-                response.status()
-            )));
+            return Err(error_from_http_status(
+                response.status().as_u16(),
+                Some(key),
+                format!("Failed to get object: {}", response.status()),
+            ));
         }
 
         let metadata = metadata_from_headers(response.headers());
@@ -155,20 +160,17 @@ impl RestClient {
 
         let response = self.client.delete(&url).send().await?;
 
-        if response.status() == StatusCode::NOT_FOUND {
-            return Err(Error::NotFound(key.to_string()));
-        }
-
         if response.status().is_success() {
             Ok(DeleteResponse {
                 success: true,
                 message: None,
             })
         } else {
-            Err(Error::OperationFailed(format!(
-                "Failed to delete object: {}",
-                response.status()
-            )))
+            Err(error_from_http_status(
+                response.status().as_u16(),
+                Some(key),
+                format!("Failed to delete object: {}", response.status()),
+            ))
         }
     }
 
@@ -201,10 +203,11 @@ impl RestClient {
         let response = self.client.get(&url).send().await?;
 
         if !response.status().is_success() {
-            return Err(Error::OperationFailed(format!(
-                "Failed to list objects: {}",
-                response.status()
-            )));
+            return Err(error_from_http_status(
+                response.status().as_u16(),
+                None,
+                format!("Failed to list objects: {}", response.status()),
+            ));
         }
 
         let rest_response: RestListResponse = response.json().await?;
@@ -246,10 +249,11 @@ impl RestClient {
         }
 
         if !response.status().is_success() {
-            return Err(Error::OperationFailed(format!(
-                "Failed to check object existence: {}",
-                response.status()
-            )));
+            return Err(error_from_http_status(
+                response.status().as_u16(),
+                Some(key),
+                format!("Failed to check object existence: {}", response.status()),
+            ));
         }
 
         Ok(true)
@@ -261,15 +265,12 @@ impl RestClient {
 
         let response = self.client.get(&url).send().await?;
 
-        if response.status() == StatusCode::NOT_FOUND {
-            return Err(Error::NotFound(key.to_string()));
-        }
-
         if !response.status().is_success() {
-            return Err(Error::OperationFailed(format!(
-                "Failed to get metadata: {}",
-                response.status()
-            )));
+            return Err(error_from_http_status(
+                response.status().as_u16(),
+                Some(key),
+                format!("Failed to get metadata: {}", response.status()),
+            ));
         }
 
         // The metadata endpoint returns a JSON body (ObjectResponse) whose
@@ -310,15 +311,12 @@ impl RestClient {
 
         let response = self.client.put(&url).json(&rest_metadata).send().await?;
 
-        if response.status() == StatusCode::NOT_FOUND {
-            return Err(Error::NotFound(key.to_string()));
-        }
-
         if !response.status().is_success() {
-            return Err(Error::OperationFailed(format!(
-                "Failed to update metadata: {}",
-                response.status()
-            )));
+            return Err(error_from_http_status(
+                response.status().as_u16(),
+                Some(key),
+                format!("Failed to update metadata: {}", response.status()),
+            ));
         }
 
         Ok(())
@@ -331,10 +329,11 @@ impl RestClient {
         let response = self.client.get(&url).send().await?;
 
         if !response.status().is_success() {
-            return Err(Error::OperationFailed(format!(
-                "Health check failed: {}",
-                response.status()
-            )));
+            return Err(error_from_http_status(
+                response.status().as_u16(),
+                None,
+                format!("Health check failed: {}", response.status()),
+            ));
         }
 
         let health: RestHealthResponse = response.json().await?;
@@ -368,10 +367,11 @@ impl RestClient {
         if response.status().is_success() {
             Ok(())
         } else {
-            Err(Error::OperationFailed(format!(
-                "Failed to archive object: {}",
-                response.status()
-            )))
+            Err(error_from_http_status(
+                response.status().as_u16(),
+                Some(key),
+                format!("Failed to archive object: {}", response.status()),
+            ))
         }
     }
 
@@ -397,10 +397,11 @@ impl RestClient {
         if response.status().is_success() {
             Ok(())
         } else {
-            Err(Error::OperationFailed(format!(
-                "Failed to add policy: {}",
-                response.status()
-            )))
+            Err(error_from_http_status(
+                response.status().as_u16(),
+                None,
+                format!("Failed to add policy: {}", response.status()),
+            ))
         }
     }
 
@@ -413,10 +414,11 @@ impl RestClient {
         if response.status().is_success() {
             Ok(())
         } else {
-            Err(Error::OperationFailed(format!(
-                "Failed to remove policy: {}",
-                response.status()
-            )))
+            Err(error_from_http_status(
+                response.status().as_u16(),
+                Some(id),
+                format!("Failed to remove policy: {}", response.status()),
+            ))
         }
     }
 
@@ -430,10 +432,11 @@ impl RestClient {
         let response = self.client.get(&url).send().await?;
 
         if !response.status().is_success() {
-            return Err(Error::OperationFailed(format!(
-                "Failed to get policies: {}",
-                response.status()
-            )));
+            return Err(error_from_http_status(
+                response.status().as_u16(),
+                None,
+                format!("Failed to get policies: {}", response.status()),
+            ));
         }
 
         #[derive(Deserialize)]
@@ -480,10 +483,11 @@ impl RestClient {
         let response = self.client.post(&url).send().await?;
 
         if !response.status().is_success() {
-            return Err(Error::OperationFailed(format!(
-                "Failed to apply policies: {}",
-                response.status()
-            )));
+            return Err(error_from_http_status(
+                response.status().as_u16(),
+                None,
+                format!("Failed to apply policies: {}", response.status()),
+            ));
         }
 
         #[derive(Deserialize)]
@@ -509,10 +513,11 @@ impl RestClient {
         if response.status().is_success() {
             Ok(())
         } else {
-            Err(Error::OperationFailed(format!(
-                "Failed to add replication policy: {}",
-                response.status()
-            )))
+            Err(error_from_http_status(
+                response.status().as_u16(),
+                Some(&policy.id),
+                format!("Failed to add replication policy: {}", response.status()),
+            ))
         }
     }
 
@@ -529,10 +534,11 @@ impl RestClient {
         if response.status().is_success() {
             Ok(())
         } else {
-            Err(Error::OperationFailed(format!(
-                "Failed to remove replication policy: {}",
-                response.status()
-            )))
+            Err(error_from_http_status(
+                response.status().as_u16(),
+                Some(id),
+                format!("Failed to remove replication policy: {}", response.status()),
+            ))
         }
     }
 
@@ -543,10 +549,11 @@ impl RestClient {
         let response = self.client.get(&url).send().await?;
 
         if !response.status().is_success() {
-            return Err(Error::OperationFailed(format!(
-                "Failed to get replication policies: {}",
-                response.status()
-            )));
+            return Err(error_from_http_status(
+                response.status().as_u16(),
+                None,
+                format!("Failed to get replication policies: {}", response.status()),
+            ));
         }
 
         #[derive(Deserialize)]
@@ -573,15 +580,12 @@ impl RestClient {
 
         let response = self.client.get(&url).send().await?;
 
-        if response.status() == StatusCode::NOT_FOUND {
-            return Err(Error::NotFound(id.to_string()));
-        }
-
         if !response.status().is_success() {
-            return Err(Error::OperationFailed(format!(
-                "Failed to get replication policy: {}",
-                response.status()
-            )));
+            return Err(error_from_http_status(
+                response.status().as_u16(),
+                Some(id),
+                format!("Failed to get replication policy: {}", response.status()),
+            ));
         }
 
         let parsed: RestReplicationPolicy = response.json().await?;
@@ -608,10 +612,11 @@ impl RestClient {
         let response = self.client.post(&url).json(&body).send().await?;
 
         if !response.status().is_success() {
-            return Err(Error::OperationFailed(format!(
-                "Failed to trigger replication: {}",
-                response.status()
-            )));
+            return Err(error_from_http_status(
+                response.status().as_u16(),
+                policy_id.as_deref(),
+                format!("Failed to trigger replication: {}", response.status()),
+            ));
         }
 
         #[derive(Deserialize)]
@@ -637,15 +642,12 @@ impl RestClient {
 
         let response = self.client.get(&url).send().await?;
 
-        if response.status() == StatusCode::NOT_FOUND {
-            return Err(Error::NotFound(id.to_string()));
-        }
-
         if !response.status().is_success() {
-            return Err(Error::OperationFailed(format!(
-                "Failed to get replication status: {}",
-                response.status()
-            )));
+            return Err(error_from_http_status(
+                response.status().as_u16(),
+                Some(id),
+                format!("Failed to get replication status: {}", response.status()),
+            ));
         }
 
         let parsed: RestReplicationStatus = response.json().await?;
@@ -659,6 +661,24 @@ impl RestClient {
     pub async fn close(&self) -> Result<()> {
         Ok(())
     }
+
+    /// Return a reference to the base URL (used by the streaming extension).
+    pub(crate) fn base_url_ref(&self) -> &str {
+        &self.base_url
+    }
+
+    /// Return a reference to the underlying HTTP client (used by the streaming extension).
+    pub(crate) fn http_client_ref(&self) -> &reqwest::Client {
+        &self.client
+    }
+}
+
+/// Expose `metadata_from_headers` for the streaming module without making it
+/// part of the public API.
+pub(crate) fn metadata_from_headers_pub(
+    headers: &reqwest::header::HeaderMap,
+) -> crate::types::Metadata {
+    metadata_from_headers(headers)
 }
 
 /// Wire representation of a replication policy returned by the REST server.
@@ -1247,9 +1267,7 @@ mod tests {
         let mock = server
             .mock("GET", "/metadata/k")
             .with_status(200)
-            .with_body(
-                r#"{"key":"k","size":42,"content_type":"text/plain","metadata":{"k":"v"}}"#,
-            )
+            .with_body(r#"{"key":"k","size":42,"content_type":"text/plain","metadata":{"k":"v"}}"#)
             .create_async()
             .await;
         let client = RestClient::new(server.url()).unwrap();
@@ -1460,7 +1478,8 @@ mod tests {
         let client = RestClient::new(server.url()).unwrap();
         let err = client.add_policy(policy).await.unwrap_err();
         mock.assert_async().await;
-        assert!(matches!(err, Error::OperationFailed(_)));
+        // 400 maps to InvalidArgument per the canonical table.
+        assert!(matches!(err, Error::InvalidArgument(_)));
     }
 
     // ---- remove_policy ----
@@ -1494,7 +1513,7 @@ mod tests {
 
     #[tokio::test]
     async fn rest_remove_policy_not_found() {
-        // Impl maps 404 here to OperationFailed (no NotFound special-casing).
+        // 404 maps to NotFound per the canonical table.
         let mut server = Server::new_async().await;
         let mock = server
             .mock("DELETE", "/policies/p1")
@@ -1504,7 +1523,7 @@ mod tests {
         let client = RestClient::new(server.url()).unwrap();
         let err = client.remove_policy("p1").await.unwrap_err();
         mock.assert_async().await;
-        assert!(matches!(err, Error::OperationFailed(_)));
+        assert!(matches!(err, Error::NotFound(_)));
     }
 
     // ---- get_policies ----
@@ -1612,7 +1631,8 @@ mod tests {
             .await
             .unwrap_err();
         mock.assert_async().await;
-        assert!(matches!(err, Error::OperationFailed(_)));
+        // 409 maps to AlreadyExists per the canonical table.
+        assert!(matches!(err, Error::AlreadyExists(_)));
     }
 
     // ---- remove_replication_policy ----
@@ -1649,7 +1669,7 @@ mod tests {
 
     #[tokio::test]
     async fn rest_remove_replication_policy_not_found() {
-        // Impl maps 404 here to OperationFailed (no NotFound special-casing).
+        // 404 maps to NotFound per the canonical table.
         let mut server = Server::new_async().await;
         let mock = server
             .mock("DELETE", "/replication/policies/missing")
@@ -1662,7 +1682,7 @@ mod tests {
             .await
             .unwrap_err();
         mock.assert_async().await;
-        assert!(matches!(err, Error::OperationFailed(_)));
+        assert!(matches!(err, Error::NotFound(_)));
     }
 
     // ---- get_replication_policies ----
@@ -1920,7 +1940,10 @@ mod tests {
             head.content_type.as_deref(),
             Some("application/octet-stream")
         );
-        assert_eq!(head.size, 7, "size must come from JSON body, not Content-Length");
+        assert_eq!(
+            head.size, 7,
+            "size must come from JSON body, not Content-Length"
+        );
         assert_eq!(head.custom.get("owner").map(String::as_str), Some("dave"));
 
         put.assert_async().await;
@@ -1943,6 +1966,35 @@ mod tests {
         let err = client.get("").await.unwrap_err();
         mock.assert_async().await;
         assert!(matches!(err, Error::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn rest_http_status_canonical_mapping() {
+        // Every row of the canonical HTTP status table, asserted over the
+        // mocked transport: 400 InvalidArgument, 401 Unauthenticated,
+        // 403 Forbidden, 404 NotFound, 409 AlreadyExists, 429 RateLimited,
+        // 5xx OperationFailed.
+        let cases: [(usize, fn(&Error) -> bool); 7] = [
+            (400, |e| matches!(e, Error::InvalidArgument(_))),
+            (401, |e| matches!(e, Error::Unauthenticated(_))),
+            (403, |e| matches!(e, Error::Forbidden(_))),
+            (404, |e| matches!(e, Error::NotFound(_))),
+            (409, |e| matches!(e, Error::AlreadyExists(_))),
+            (429, |e| matches!(e, Error::RateLimited(_))),
+            (500, |e| matches!(e, Error::OperationFailed(_))),
+        ];
+        for (status, check) in cases {
+            let mut server = Server::new_async().await;
+            let mock = server
+                .mock("GET", "/objects/k")
+                .with_status(status)
+                .create_async()
+                .await;
+            let client = RestClient::new(server.url()).unwrap();
+            let err = client.get("k").await.unwrap_err();
+            mock.assert_async().await;
+            assert!(check(&err), "HTTP {} mapped to {:?}", status, err);
+        }
     }
 
     #[tokio::test]

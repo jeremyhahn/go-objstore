@@ -21,29 +21,48 @@ module ObjectStore
   class Client
     attr_reader :protocol, :client
 
-    VALID_PROTOCOLS = %i[rest grpc quic].freeze
+    VALID_PROTOCOLS = %i[rest grpc quic mcp unix].freeze
 
     # Initialize a new ObjectStore client
     #
-    # @param protocol [Symbol] The protocol to use (:rest, :grpc, or :quic)
-    # @param host [String] The server hostname
-    # @param port [Integer, nil] The server port (defaults based on protocol if nil)
+    # @param protocol [Symbol] The protocol to use (:rest, :grpc, :quic, :mcp, or :unix)
+    # @param host [String] The server hostname (unused for :unix)
+    # @param port [Integer, nil] The server port (defaults based on protocol if nil; unused for :unix)
     # @param use_ssl [Boolean] Whether to use SSL/TLS
     # @param timeout [Integer] Request timeout in seconds
+    # @param token [String, nil] Bearer token for Authorization header (REST, QUIC, MCP only)
+    # @param headers [Hash] Additional HTTP/gRPC headers to send on every request
+    # @param tenant_id [String, nil] Tenant identifier sent as X-Tenant-ID / x-tenant-id header
+    # @param socket_path [String] Unix socket path (only used when protocol is :unix)
     #
     # @raise [ArgumentError] if protocol is not one of VALID_PROTOCOLS
     #
-    # @example
-    #   client = ObjectStore::Client.new(protocol: :rest, host: "localhost", port: 8080)
-    def initialize(protocol: :rest, host: "localhost", port: nil, use_ssl: false, timeout: 30)
+    # @example REST with auth
+    #   client = ObjectStore::Client.new(protocol: :rest, host: "localhost", port: 8080,
+    #                                    token: "my-token", tenant_id: "acme")
+    #
+    # @example Unix socket
+    #   client = ObjectStore::Client.new(protocol: :unix, socket_path: "/run/objstore.sock")
+    #
+    # @example MCP
+    #   client = ObjectStore::Client.new(protocol: :mcp, host: "localhost", port: 8081)
+    def initialize(protocol: :rest, host: "localhost", port: nil, use_ssl: false, timeout: 30,
+                   token: nil, headers: {}, tenant_id: nil, socket_path: "/tmp/objstore.sock")
       @protocol = protocol.to_sym
 
       unless VALID_PROTOCOLS.include?(@protocol)
         raise ArgumentError, "Invalid protocol: #{protocol}. Must be one of: #{VALID_PROTOCOLS.join(', ')}"
       end
 
+      @host = host
+      @use_ssl = use_ssl
+      @timeout = timeout
+      @token = token
+      @headers = headers || {}
+      @tenant_id = tenant_id
+      @socket_path = socket_path
       @port = port || default_port_for_protocol(@protocol)
-      @client = create_client(host, @port, use_ssl, timeout)
+      @client = create_client(@host, @port, @use_ssl, @timeout)
     end
 
     # Object operations
@@ -491,7 +510,7 @@ module ObjectStore
 
     # Switch protocol at runtime
     #
-    # @param protocol [Symbol] The new protocol to use (:rest, :grpc, or :quic)
+    # @param protocol [Symbol] The new protocol to use (:rest, :grpc, :quic, :mcp, or :unix)
     # @param port [Integer, nil] Optional port override
     #
     # @return [Symbol] The new protocol
@@ -500,7 +519,8 @@ module ObjectStore
     #
     # @example
     #   client.switch_protocol(:grpc)
-    #   client.switch_protocol(:rest, port: 8081)
+    #   client.switch_protocol(:mcp, port: 8081)
+    #   client.switch_protocol(:unix)
     def switch_protocol(protocol, port: nil)
       @protocol = protocol.to_sym
 
@@ -508,8 +528,11 @@ module ObjectStore
         raise ArgumentError, "Invalid protocol: #{protocol}. Must be one of: #{VALID_PROTOCOLS.join(', ')}"
       end
 
+      current_host = @client.respond_to?(:host) ? @client.host : @host
+      current_ssl = @client.respond_to?(:use_ssl) ? @client.use_ssl : @use_ssl
+      current_timeout = @client.respond_to?(:timeout) ? @client.timeout : @timeout
       new_port = port || default_port_for_protocol(@protocol)
-      @client = create_client(@client.host, new_port, @client.use_ssl, @client.timeout)
+      @client = create_client(current_host, new_port, current_ssl, current_timeout)
       @protocol
     end
 
@@ -535,13 +558,18 @@ module ObjectStore
     private
 
     def create_client(host, port, use_ssl, timeout)
+      auth_opts = { token: @token, headers: @headers, tenant_id: @tenant_id }
       case @protocol
       when :rest
-        Clients::RestClient.new(host: host, port: port, use_ssl: use_ssl, timeout: timeout)
+        Clients::RestClient.new(host: host, port: port, use_ssl: use_ssl, timeout: timeout, **auth_opts)
       when :grpc
-        Clients::GrpcClient.new(host: host, port: port, use_ssl: use_ssl, timeout: timeout)
+        Clients::GrpcClient.new(host: host, port: port, use_ssl: use_ssl, timeout: timeout, **auth_opts)
       when :quic
-        Clients::QuicClient.new(host: host, port: port, use_ssl: use_ssl, timeout: timeout)
+        Clients::QuicClient.new(host: host, port: port, use_ssl: use_ssl, timeout: timeout, **auth_opts)
+      when :mcp
+        Clients::McpClient.new(host: host, port: port, use_ssl: use_ssl, timeout: timeout, **auth_opts)
+      when :unix
+        Clients::UnixClient.new(socket_path: @socket_path, timeout: timeout)
       end
     end
 
@@ -553,6 +581,10 @@ module ObjectStore
         50051
       when :quic
         4433
+      when :mcp
+        8081
+      when :unix
+        nil
       end
     end
 

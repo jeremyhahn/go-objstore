@@ -515,6 +515,7 @@ func TestGRPCClientCanonical(t *testing.T) {
 		_, err := c.Get(ctx, "k")
 		require.Error(t, err)
 		assert.Equal(t, codes.NotFound, status.Code(err))
+		assert.ErrorIs(t, err, ErrObjectNotFound)
 	})
 	t.Run("grpc_delete_not_found", func(t *testing.T) {
 		c, mc := newGRPCMock()
@@ -522,6 +523,7 @@ func TestGRPCClientCanonical(t *testing.T) {
 		err := c.Delete(ctx, "k")
 		require.Error(t, err)
 		assert.Equal(t, codes.NotFound, status.Code(err))
+		assert.ErrorIs(t, err, ErrObjectNotFound)
 	})
 	t.Run("grpc_exists_not_found", func(t *testing.T) {
 		c, mc := newGRPCMock()
@@ -536,6 +538,7 @@ func TestGRPCClientCanonical(t *testing.T) {
 		_, err := c.GetMetadata(ctx, "k")
 		require.Error(t, err)
 		assert.Equal(t, codes.NotFound, status.Code(err))
+		assert.ErrorIs(t, err, ErrObjectNotFound)
 	})
 	t.Run("grpc_update_metadata_not_found", func(t *testing.T) {
 		c, mc := newGRPCMock()
@@ -543,6 +546,7 @@ func TestGRPCClientCanonical(t *testing.T) {
 		err := c.UpdateMetadata(ctx, "k", &Metadata{})
 		require.Error(t, err)
 		assert.Equal(t, codes.NotFound, status.Code(err))
+		assert.ErrorIs(t, err, ErrObjectNotFound)
 	})
 	t.Run("grpc_remove_policy_not_found", func(t *testing.T) {
 		c, mc := newGRPCMock()
@@ -550,6 +554,7 @@ func TestGRPCClientCanonical(t *testing.T) {
 		err := c.RemovePolicy(ctx, "p1")
 		require.Error(t, err)
 		assert.Equal(t, codes.NotFound, status.Code(err))
+		assert.ErrorIs(t, err, ErrObjectNotFound)
 	})
 	t.Run("grpc_get_replication_policy_not_found", func(t *testing.T) {
 		c, mc := newGRPCMock()
@@ -557,6 +562,7 @@ func TestGRPCClientCanonical(t *testing.T) {
 		_, err := c.GetReplicationPolicy(ctx, "r1")
 		require.Error(t, err)
 		assert.Equal(t, codes.NotFound, status.Code(err))
+		assert.ErrorIs(t, err, ErrObjectNotFound)
 	})
 	t.Run("grpc_get_replication_status_not_found", func(t *testing.T) {
 		c, mc := newGRPCMock()
@@ -564,6 +570,7 @@ func TestGRPCClientCanonical(t *testing.T) {
 		_, err := c.GetReplicationStatus(ctx, "r1")
 		require.Error(t, err)
 		assert.Equal(t, codes.NotFound, status.Code(err))
+		assert.ErrorIs(t, err, ErrObjectNotFound)
 	})
 	t.Run("grpc_remove_replication_policy_not_found", func(t *testing.T) {
 		c, mc := newGRPCMock()
@@ -571,6 +578,47 @@ func TestGRPCClientCanonical(t *testing.T) {
 		err := c.RemoveReplicationPolicy(ctx, "r1")
 		require.Error(t, err)
 		assert.Equal(t, codes.NotFound, status.Code(err))
+		assert.ErrorIs(t, err, ErrObjectNotFound)
+	})
+
+	// --------------------------------------------------- canonical sentinels
+
+	t.Run("grpc_error_sentinel_mapping", func(t *testing.T) {
+		// Every row of the canonical gRPC code table must surface as the
+		// matching SDK sentinel via errors.Is, with the status code preserved.
+		cases := []struct {
+			code     codes.Code
+			sentinel error
+		}{
+			{codes.InvalidArgument, ErrInvalidArgument},
+			{codes.Unauthenticated, ErrUnauthenticated},
+			{codes.PermissionDenied, ErrPermissionDenied},
+			{codes.NotFound, ErrObjectNotFound},
+			{codes.AlreadyExists, ErrAlreadyExists},
+			{codes.ResourceExhausted, ErrRateLimited},
+		}
+		for _, tc := range cases {
+			c, mc := newGRPCMock()
+			mc.On("Delete", ctx, mock.Anything).Return(nil, status.Error(tc.code, tc.code.String()))
+			err := c.Delete(ctx, "k")
+			require.Error(t, err, "code %s", tc.code)
+			assert.Equal(t, tc.code, status.Code(err))
+			assert.ErrorIs(t, err, tc.sentinel, "code %s", tc.code)
+		}
+
+		// Rate limiting keeps the retryable temporary-failure contract.
+		c, mc := newGRPCMock()
+		mc.On("Delete", ctx, mock.Anything).Return(nil, status.Error(codes.ResourceExhausted, "throttled"))
+		assert.ErrorIs(t, c.Delete(ctx, "k"), ErrTemporaryFailure)
+
+		// Internal stays a plain server error with no sentinel attached.
+		c, mc = newGRPCMock()
+		mc.On("Delete", ctx, mock.Anything).Return(nil, grpcServerErr())
+		err := c.Delete(ctx, "k")
+		require.Error(t, err)
+		for _, tc := range cases {
+			assert.NotErrorIs(t, err, tc.sentinel)
+		}
 	})
 
 	// --------------------------------------------------------- cross-cutting

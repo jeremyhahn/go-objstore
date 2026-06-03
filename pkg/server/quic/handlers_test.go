@@ -546,9 +546,9 @@ func TestHandlerArchiveNonexistentKey(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
-	// Should fail with 500 since the key doesn't exist
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("Expected status 500, got %d", w.Code)
+	// The shared taxonomy classifies missing objects as 404.
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Expected status 404, got %d", w.Code)
 	}
 }
 
@@ -896,8 +896,9 @@ func TestHandlerUpdateMetadataNonexistentKey(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("Expected status 500, got %d", w.Code)
+	// The shared taxonomy classifies missing objects as 404.
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Expected status 404, got %d", w.Code)
 	}
 }
 
@@ -1236,11 +1237,6 @@ func TestHandlerArchiveMethodNotAllowed(t *testing.T) {
 
 func TestHandlerExistsError(t *testing.T) {
 	handler, storage := setupTestHandler(t)
-
-	// Create a mock storage that returns an error
-	type errorStorage struct {
-		common.Storage
-	}
 
 	// Test with a key that triggers some edge case
 	req := httptest.NewRequest(http.MethodGet, "/objects/../../etc/passwd?exists=true", nil)
@@ -2029,7 +2025,7 @@ func TestHandlerListStorageError(t *testing.T) {
 
 func TestHandlerDeleteStorageError(t *testing.T) {
 	mockStorage := newMockErrorStorage()
-	mockStorage.deleteError = errors.New("permission denied")
+	mockStorage.deleteError = errors.New("disk failure")
 
 	initTestFacade(t, mockStorage)
 	logger := adapters.NewNoOpLogger()
@@ -2045,5 +2041,125 @@ func TestHandlerDeleteStorageError(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("Expected status 500 for storage error, got %d", w.Code)
+	}
+}
+
+// TestHandlerDeletePermissionDenied verifies that backend permission errors
+// surface as 403 via the shared taxonomy.
+func TestHandlerDeletePermissionDenied(t *testing.T) {
+	mockStorage := newMockErrorStorage()
+	mockStorage.deleteError = fmt.Errorf("delete denied: %w", common.ErrPermissionDenied)
+
+	initTestFacade(t, mockStorage)
+	logger := adapters.NewNoOpLogger()
+	auth := adapters.NewNoOpAuthenticator()
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth, nil, nil)
+	if err != nil {
+		t.Fatalf("Failed to create handler: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodDelete, "/objects/test-key", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("Expected status 403 for permission error, got %d", w.Code)
+	}
+}
+
+// TestHandlerGetMetadataBackendUnavailable verifies that a backend outage
+// surfaces as 503 via the shared taxonomy instead of a blanket 404.
+func TestHandlerGetMetadataBackendUnavailable(t *testing.T) {
+	mockStorage := newMockErrorStorage()
+	mockStorage.getMetadataError = fmt.Errorf("backend down: %w", common.ErrUnavailable)
+
+	initTestFacade(t, mockStorage)
+	logger := adapters.NewNoOpLogger()
+	auth := adapters.NewNoOpAuthenticator()
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth, nil, nil)
+	if err != nil {
+		t.Fatalf("Failed to create handler: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/metadata/test-key", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("Expected status 503 for unavailable backend, got %d", w.Code)
+	}
+}
+
+// TestHandlerGetMetadataDeadlineExceeded verifies that a backend timeout
+// surfaces as 504 via the shared taxonomy, matching the REST transport.
+func TestHandlerGetMetadataDeadlineExceeded(t *testing.T) {
+	mockStorage := newMockErrorStorage()
+	mockStorage.getMetadataError = fmt.Errorf("backend timed out: %w", context.DeadlineExceeded)
+
+	initTestFacade(t, mockStorage)
+	logger := adapters.NewNoOpLogger()
+	auth := adapters.NewNoOpAuthenticator()
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth, nil, nil)
+	if err != nil {
+		t.Fatalf("Failed to create handler: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/metadata/test-key", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusGatewayTimeout {
+		t.Errorf("Expected status 504 for backend timeout, got %d", w.Code)
+	}
+}
+
+// TestHandlerGetMetadataNotFound verifies that a missing object still maps
+// to 404 through the shared taxonomy.
+func TestHandlerGetMetadataNotFound(t *testing.T) {
+	mockStorage := newMockErrorStorage()
+
+	initTestFacade(t, mockStorage)
+	logger := adapters.NewNoOpLogger()
+	auth := adapters.NewNoOpAuthenticator()
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth, nil, nil)
+	if err != nil {
+		t.Fatalf("Failed to create handler: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/metadata/missing-key", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("Expected status 404 for missing object, got %d", w.Code)
+	}
+}
+
+// TestHandlerPutExpiredDeadlineReturns504 verifies that when the request
+// deadline has expired, the context error takes precedence inside
+// writeBackendError so QUIC reports 504 like the other transports, even if
+// the backend error itself does not wrap context.DeadlineExceeded.
+func TestHandlerPutExpiredDeadlineReturns504(t *testing.T) {
+	mockStorage := newMockErrorStorage()
+	mockStorage.putError = errors.New("write aborted")
+
+	initTestFacade(t, mockStorage)
+	logger := adapters.NewNoOpLogger()
+	auth := adapters.NewNoOpAuthenticator()
+	handler, err := NewHandler("", 100*1024*1024, 30*time.Second, 30*time.Second, logger, auth, nil, nil)
+	if err != nil {
+		t.Fatalf("Failed to create handler: %v", err)
+	}
+
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+
+	req := httptest.NewRequest(http.MethodPut, "/objects/test-key", bytes.NewReader([]byte("data")))
+	req = req.WithContext(ctx)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusGatewayTimeout {
+		t.Errorf("Expected status 504 for expired request deadline, got %d", w.Code)
 	}
 }

@@ -11,7 +11,7 @@
     <Authors>Go-ObjStore Contributors</Authors>
     <Company>Go-ObjStore</Company>
     <Product>Go-ObjStore C# SDK</Product>
-    <Description>C# SDK for go-objstore with REST, gRPC, and QUIC/HTTP3 support</Description>
+    <Description>C# SDK for go-objstore with REST, gRPC, QUIC/HTTP3, MCP, and Unix domain socket support</Description>
     <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>

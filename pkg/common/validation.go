@@ -55,6 +55,11 @@ func (e *ValidationError) Error() string {
 	return fmt.Sprintf("validation error: %s", e.Message)
 }
 
+// Unwrap reports validation failures as ErrInvalidArgument so Classify maps
+// them (and any error wrapping them) to CodeInvalidArgument on every
+// transport.
+func (e *ValidationError) Unwrap() error { return ErrInvalidArgument }
+
 // ValidateKey validates an object key for security issues
 // Returns error if the key:
 // - Is empty

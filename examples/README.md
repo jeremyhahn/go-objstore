@@ -184,7 +184,7 @@ storage.AddPolicy(archivePolicy)
 
 ### Prerequisites
 
-- Go 1.26.3 or higher
+- Go 1.26.4 or higher
 - For S3 examples: MinIO (optional)
 - For C examples: GCC compiler
 

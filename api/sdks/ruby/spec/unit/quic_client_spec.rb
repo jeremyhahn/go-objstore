@@ -75,6 +75,14 @@ RSpec.describe ObjectStore::Clients::QuicClient do
 
   describe "delete" do
     it "quic_delete_success" do
+      # The server returns 204 No Content with an empty body.
+      stub_request(:delete, "#{base}/objects/k").to_return(status: 204)
+      res = client.delete("k")
+      expect(res.success).to be(true)
+      expect(res.message).to eq("Object deleted successfully")
+    end
+
+    it "quic_delete_tolerates_legacy_200" do
       stub_request(:delete, "#{base}/objects/k")
         .to_return(status: 200, body: { message: "deleted" }.to_json, headers: json)
       expect(client.delete("k").success).to be(true)
@@ -337,6 +345,24 @@ RSpec.describe ObjectStore::Clients::QuicClient do
     it "quic_get_replication_status_error" do
       stub_error(:get, "/replication/status/r1")
       expect { client.get_replication_status("r1") }.to raise_error(ObjectStore::ServerError)
+    end
+  end
+
+  describe "HTTP status code mapping" do
+    {
+      400 => ObjectStore::ValidationError,
+      401 => ObjectStore::AuthenticationError,
+      403 => ObjectStore::AuthorizationError,
+      404 => ObjectStore::NotFoundError,
+      409 => ObjectStore::AlreadyExistsError,
+      429 => ObjectStore::RateLimitError,
+      500 => ObjectStore::ServerError,
+      503 => ObjectStore::ServerError
+    }.each do |status, error_class|
+      it "quic_status_#{status}_raises_#{error_class.name.split('::').last}" do
+        stub_error(:put, "/objects/k", status: status)
+        expect { client.put("k", "data") }.to raise_error(error_class)
+      end
     end
   end
 

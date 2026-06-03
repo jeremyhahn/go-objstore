@@ -43,10 +43,6 @@ func (m *mockChangeLog) getEvents() []ChangeEvent {
 	return m.events
 }
 
-func (m *mockChangeLog) clear() {
-	m.events = make([]ChangeEvent, 0)
-}
-
 func TestSetChangeLog(t *testing.T) {
 	tmpDir := t.TempDir()
 

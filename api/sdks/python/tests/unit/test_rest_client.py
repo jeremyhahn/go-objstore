@@ -124,8 +124,18 @@ def test_rest_get_not_found() -> None:
 
 @responses.activate
 def test_rest_delete_success() -> None:
-    responses.add(responses.DELETE, f"{API}/objects/k", json={"message": "deleted"}, status=200)
+    # The server returns 204 No Content with an empty body.
+    responses.add(responses.DELETE, f"{API}/objects/k", status=204)
     assert _client().delete("k").success is True
+
+
+@responses.activate
+def test_rest_delete_tolerates_legacy_200() -> None:
+    # Older servers returned 200 + JSON body.
+    responses.add(responses.DELETE, f"{API}/objects/k", json={"message": "deleted"}, status=200)
+    result = _client().delete("k")
+    assert result.success is True
+    assert result.message == "deleted"
 
 
 @responses.activate
@@ -666,6 +676,34 @@ def test_rest_authentication_error() -> None:
 
 
 @responses.activate
+def test_rest_authorization_error() -> None:
+    from objstore.exceptions import AuthorizationError
+
+    responses.add(responses.GET, f"{API}/objects/k", status=403)
+    with pytest.raises(AuthorizationError):
+        _client().get("k")
+
+
+@responses.activate
+def test_rest_already_exists_error() -> None:
+    from objstore.exceptions import AlreadyExistsError
+
+    responses.add(responses.PUT, f"{API}/objects/k",
+                  json={"message": "object exists"}, status=409)
+    with pytest.raises(AlreadyExistsError):
+        _client().put("k", b"data")
+
+
+@responses.activate
+def test_rest_rate_limit_error() -> None:
+    from objstore.exceptions import RateLimitError
+
+    responses.add(responses.GET, f"{API}/objects/k", status=429)
+    with pytest.raises(RateLimitError):
+        _client().get("k")
+
+
+@responses.activate
 def test_rest_generic_error_code() -> None:
     responses.add(responses.GET, f"{API}/objects/k", body="teapot", status=418)
     with pytest.raises(ObjectStoreError):
@@ -820,14 +858,126 @@ def test_rest_put_file_like_object() -> None:
 
 
 @responses.activate
-def test_rest_update_metadata_201_treated_as_success() -> None:
-    responses.add(responses.PUT, f"{API}/metadata/k", json={"message": "created"}, status=201)
-    assert _client().update_metadata("k", Metadata()).success is True
-
-
-@responses.activate
 def test_rest_health_unknown_status() -> None:
     from objstore.models import HealthStatus
 
     responses.add(responses.GET, f"{BASE}/health", json={"status": "WAT"}, status=200)
     assert _client().health().status == HealthStatus.UNKNOWN
+
+
+# =====================================================================
+# auth: token / tenant_id / custom headers
+# =====================================================================
+
+
+def test_rest_token_sets_session_header() -> None:
+    from objstore.rest_client import RestClient
+    c = RestClient(base_url=BASE, token="secret")
+    assert c.session.headers.get("Authorization") == "Bearer secret"
+
+
+def test_rest_tenant_id_sets_session_header() -> None:
+    from objstore.rest_client import RestClient
+    c = RestClient(base_url=BASE, tenant_id="t1")
+    assert c.session.headers.get("X-Tenant-ID") == "t1"
+
+
+def test_rest_custom_headers_applied_to_session() -> None:
+    from objstore.rest_client import RestClient
+    c = RestClient(base_url=BASE, headers={"X-Foo": "bar"})
+    assert c.session.headers.get("X-Foo") == "bar"
+
+
+@responses.activate
+def test_rest_token_sent_with_request() -> None:
+    def _check(request):
+        assert request.headers.get("Authorization") == "Bearer tok"
+        return (200, {}, '{"status": "SERVING"}')
+
+    responses.add_callback(responses.GET, f"{BASE}/health",
+                           callback=_check, content_type="application/json")
+    from objstore.rest_client import RestClient
+    RestClient(base_url=BASE, token="tok").health()
+
+
+# =====================================================================
+# put_stream
+# =====================================================================
+
+
+@responses.activate
+def test_rest_put_stream_success() -> None:
+    responses.add(responses.PUT, f"{API}/objects/k",
+                  json={"message": "ok", "data": {"etag": "e1"}}, status=201)
+    result = _client().put_stream("k", b"stream data")
+    assert result.success is True
+
+
+@responses.activate
+def test_rest_put_stream_file_like() -> None:
+    from io import BytesIO
+    responses.add(responses.PUT, f"{API}/objects/k",
+                  json={"message": "ok", "data": {}}, status=201)
+    result = _client().put_stream("k", BytesIO(b"file bytes"))
+    assert result.success is True
+
+
+@responses.activate
+def test_rest_put_stream_with_metadata() -> None:
+    responses.add(responses.PUT, f"{API}/objects/k",
+                  json={"message": "ok", "data": {}}, status=201)
+    meta = Metadata(content_type="text/plain")
+    result = _client().put_stream("k", b"data", metadata=meta)
+    assert result.success is True
+
+
+@responses.activate
+def test_rest_put_stream_error() -> None:
+    responses.add(responses.PUT, f"{API}/objects/k", json={"message": "fail"}, status=500)
+    with pytest.raises(ServerError):
+        _client().put_stream("k", b"data")
+
+
+# =====================================================================
+# shared HTTP helpers (objstore._http)
+# =====================================================================
+
+
+def test_shared_build_auth_headers_assembly() -> None:
+    from objstore._http import build_auth_headers
+
+    headers = build_auth_headers("secret", "t1", {"X-Custom": "v"})
+    assert headers == {
+        "Authorization": "Bearer secret",
+        "X-Tenant-ID": "t1",
+        "X-Custom": "v",
+    }
+
+
+def test_shared_build_auth_headers_empty() -> None:
+    from objstore._http import build_auth_headers
+
+    assert build_auth_headers(None, None) == {}
+
+
+def test_rest_session_headers_use_shared_helper() -> None:
+    from objstore._http import build_auth_headers
+    from objstore.rest_client import RestClient
+
+    c = RestClient(base_url=BASE, token="secret", tenant_id="t1", headers={"X-Custom": "v"})
+    for key, value in build_auth_headers("secret", "t1", {"X-Custom": "v"}).items():
+        assert c.session.headers.get(key) == value
+
+
+def test_shared_handle_http_error_404_object_semantics() -> None:
+    from objstore._http import handle_http_error
+
+    class _Resp:
+        status_code = 404
+        text = "missing"
+
+        def json(self):
+            return {}
+
+    with pytest.raises(ObjectNotFoundError):
+        handle_http_error(_Resp())

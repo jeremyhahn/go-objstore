@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
+	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/server/middleware"
 	"github.com/quic-go/quic-go"
 )
 
@@ -81,6 +83,21 @@ type Options struct {
 	// without credentials. When set to a specific allowlist, only those origins
 	// are echoed back and credentials are permitted.
 	AllowedOrigins []string
+
+	// EnableRequestID enables X-Request-ID handling (default: true).
+	EnableRequestID bool
+
+	// EnableRateLimit enables rate limiting (default: false).
+	EnableRateLimit bool
+
+	// RateLimitConfig is the rate limiting configuration.
+	RateLimitConfig *middleware.RateLimitConfig
+
+	// EnableAudit enables audit logging (default: false).
+	EnableAudit bool
+
+	// AuditLogger is the audit logger used when EnableAudit is set.
+	AuditLogger audit.AuditLogger
 }
 
 // DefaultOptions returns a new Options instance with sensible defaults.
@@ -94,6 +111,8 @@ func DefaultOptions() *Options {
 		MaxBiStreams:       100,
 		MaxUniStreams:      100,
 		EnableDatagrams:    false,
+		EnableRequestID:    true,
+		RateLimitConfig:    middleware.DefaultRateLimitConfig(),
 		Logger:             adapters.NewDefaultLogger(),
 		Authenticator:      adapters.NewNoOpAuthenticator(),
 		Authorizer:         adapters.NewNoOpAuthorizer(),
@@ -245,5 +264,32 @@ func (o *Options) WithBackend(backend string) *Options {
 // When empty (or set to ["*"]), all origins are allowed without credentials.
 func (o *Options) WithAllowedOrigins(origins ...string) *Options {
 	o.AllowedOrigins = origins
+	return o
+}
+
+// WithRequestID enables or disables X-Request-ID handling.
+func (o *Options) WithRequestID(enabled bool) *Options {
+	o.EnableRequestID = enabled
+	return o
+}
+
+// WithRateLimit enables rate limiting with the given configuration. A nil
+// config uses the defaults.
+func (o *Options) WithRateLimit(config *middleware.RateLimitConfig) *Options {
+	o.EnableRateLimit = true
+	if config != nil {
+		o.RateLimitConfig = config
+	}
+	return o
+}
+
+// WithAudit enables audit logging with the given logger. A nil logger uses
+// the default audit logger.
+func (o *Options) WithAudit(auditLogger audit.AuditLogger) *Options {
+	o.EnableAudit = true
+	if auditLogger == nil {
+		auditLogger = audit.NewDefaultAuditLogger()
+	}
+	o.AuditLogger = auditLogger
 	return o
 }

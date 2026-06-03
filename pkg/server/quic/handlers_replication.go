@@ -48,26 +48,18 @@ func (h *Handler) handleGetReplicationPolicies(w http.ResponseWriter, r *http.Re
 	// Get replication manager from facade
 	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
 		if errors.Is(err, common.ErrReplicationNotSupported) {
 			http.Error(w, "replication not supported by this storage backend", http.StatusInternalServerError)
-		} else {
-			http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+			return
 		}
+		writeBackendError(ctx, w, err)
 		return
 	}
 
 	// Get all policies
 	policies, err := repMgr.GetPolicies()
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
-		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+		writeBackendError(ctx, w, err)
 		return
 	}
 
@@ -178,31 +170,19 @@ func (h *Handler) handleAddReplicationPolicy(w http.ResponseWriter, r *http.Requ
 	// Get replication manager from facade
 	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
 		if errors.Is(err, common.ErrReplicationNotSupported) {
 			http.Error(w, "replication not supported by this storage backend", http.StatusInternalServerError)
-		} else {
-			http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+			return
 		}
+		writeBackendError(ctx, w, err)
 		return
 	}
 
 	// Add policy
 	err = repMgr.AddPolicy(policy)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
-		// Check for duplicate policy error
-		if err.Error() == "policy already exists" {
-			http.Error(w, common.SanitizeErrorMessage(err), http.StatusConflict)
-			return
-		}
-		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+		// Classify maps "policy already exists" to 409 Conflict.
+		writeBackendError(ctx, w, err)
 		return
 	}
 
@@ -244,30 +224,22 @@ func (h *Handler) handleGetReplicationPolicy(w http.ResponseWriter, r *http.Requ
 	// Get replication manager from facade
 	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
 		if errors.Is(err, common.ErrReplicationNotSupported) {
 			http.Error(w, "replication not supported by this storage backend", http.StatusInternalServerError)
-		} else {
-			http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+			return
 		}
+		writeBackendError(ctx, w, err)
 		return
 	}
 
 	// Get policy
 	policy, err := repMgr.GetPolicy(id)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
 		if errors.Is(err, common.ErrPolicyNotFound) {
 			http.Error(w, "policy not found", http.StatusNotFound)
 			return
 		}
-		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+		writeBackendError(ctx, w, err)
 		return
 	}
 
@@ -308,30 +280,22 @@ func (h *Handler) handleDeleteReplicationPolicy(w http.ResponseWriter, r *http.R
 	// Get replication manager from facade
 	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
 		if errors.Is(err, common.ErrReplicationNotSupported) {
 			http.Error(w, "replication not supported by this storage backend", http.StatusInternalServerError)
-		} else {
-			http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+			return
 		}
+		writeBackendError(ctx, w, err)
 		return
 	}
 
 	// Remove policy
 	err = repMgr.RemovePolicy(id)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
 		if errors.Is(err, common.ErrPolicyNotFound) {
 			http.Error(w, "policy not found", http.StatusNotFound)
 			return
 		}
-		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+		writeBackendError(ctx, w, err)
 		return
 	}
 
@@ -364,15 +328,11 @@ func (h *Handler) handleTriggerReplication(w http.ResponseWriter, r *http.Reques
 	// Get replication manager from facade
 	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
 		if errors.Is(err, common.ErrReplicationNotSupported) {
 			http.Error(w, "replication not supported by this storage backend", http.StatusInternalServerError)
-		} else {
-			http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+			return
 		}
+		writeBackendError(ctx, w, err)
 		return
 	}
 
@@ -395,15 +355,11 @@ func (h *Handler) handleTriggerReplication(w http.ResponseWriter, r *http.Reques
 	}
 
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
 		if errors.Is(err, common.ErrPolicyNotFound) {
 			http.Error(w, "policy not found", http.StatusNotFound)
 			return
 		}
-		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+		writeBackendError(ctx, w, err)
 		return
 	}
 
@@ -443,15 +399,11 @@ func (h *Handler) handleGetReplicationStatus(w http.ResponseWriter, r *http.Requ
 	// Get replication manager from facade
 	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
 		if errors.Is(err, common.ErrReplicationNotSupported) {
 			http.Error(w, "replication not supported by this storage backend", http.StatusInternalServerError)
-		} else {
-			http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+			return
 		}
+		writeBackendError(ctx, w, err)
 		return
 	}
 
@@ -465,15 +417,11 @@ func (h *Handler) handleGetReplicationStatus(w http.ResponseWriter, r *http.Requ
 	}
 	replicationStatus, err := statusProvider.GetReplicationStatus(id)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
 		if errors.Is(err, common.ErrPolicyNotFound) {
 			http.Error(w, "policy not found", http.StatusNotFound)
 			return
 		}
-		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+		writeBackendError(ctx, w, err)
 		return
 	}
 

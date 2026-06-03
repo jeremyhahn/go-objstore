@@ -16,12 +16,16 @@ package mcp
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
+	"github.com/jeremyhahn/go-objstore/pkg/server/jsonrpc"
+	"github.com/jeremyhahn/go-objstore/pkg/server/middleware"
+	"github.com/sourcegraph/jsonrpc2"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -113,4 +117,55 @@ func TestMCPAuthorizationEnforced(t *testing.T) {
 			t.Errorf("objstore_add_policy should be forbidden for reader, got %d", code)
 		}
 	})
+}
+
+// TestMCPStdioRateLimit verifies stdio requests are rejected with the shared
+// rate-limited code once the bucket is exhausted.
+func TestMCPStdioRateLimit(t *testing.T) {
+	storage := NewMockStorage()
+	server := createTestServer(t, storage, ModeStdio)
+	server.config.EnableRateLimit = true
+	server.config.RateLimitConfig = &middleware.RateLimitConfig{RequestsPerSecond: 1, Burst: 1}
+	server.rateLimiter = middleware.NewRateLimiter(server.config.RateLimitConfig, server.config.Logger)
+	defer server.rateLimiter.Stop()
+	handler := NewRPCHandler(server)
+
+	req := &jsonrpc2.Request{Method: "ping"}
+
+	if _, err := handler.Handle(context.Background(), nil, req); err != nil {
+		t.Fatalf("first request should pass: %v", err)
+	}
+
+	_, err := handler.Handle(context.Background(), nil, req)
+	rpcErr, ok := err.(*jsonrpc2.Error)
+	if !ok || rpcErr.Code != jsonrpc.CodeRateLimited {
+		t.Errorf("second request should be rate limited with %d, got %v", jsonrpc.CodeRateLimited, err)
+	}
+}
+
+// TestMCPStdioAuthzDenialUsesForbiddenCode verifies that stdio-mode
+// authorization denials surface as the implementation-defined forbidden code
+// (-32001), not as a malformed-request error (-32600).
+func TestMCPStdioAuthzDenialUsesForbiddenCode(t *testing.T) {
+	storage := NewMockStorage()
+	server := createTestServer(t, storage, ModeStdio)
+	server.config.EnforceStdioAuthz = true
+	// Deny everything: RBAC map with no role grants.
+	server.config.Authorizer = adapters.NewRBACAuthorizer(map[string][]string{})
+	handler := NewRPCHandler(server)
+
+	params := json.RawMessage(`{"name":"objstore_put","arguments":{"key":"k1","data":"hello"}}`)
+	req := &jsonrpc2.Request{Method: methodToolsCall, Params: &params}
+
+	_, err := handler.Handle(context.Background(), nil, req)
+	if err == nil {
+		t.Fatal("expected authorization denial")
+	}
+	rpcErr, ok := err.(*jsonrpc2.Error)
+	if !ok {
+		t.Fatalf("expected *jsonrpc2.Error, got %T: %v", err, err)
+	}
+	if rpcErr.Code != ErrCodeForbidden {
+		t.Errorf("authz denial code = %d, want %d (ErrCodeForbidden)", rpcErr.Code, ErrCodeForbidden)
+	}
 }

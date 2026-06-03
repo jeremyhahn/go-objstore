@@ -49,6 +49,42 @@ class AuthenticationError(ObjectStoreError):
         super().__init__(message, status_code=401)
 
 
+class AuthorizationError(ObjectStoreError):
+    """Raised when the caller is authenticated but not permitted."""
+
+    def __init__(self, message: str = "Access denied") -> None:
+        """Initialize AuthorizationError.
+
+        Args:
+            message: Error message
+        """
+        super().__init__(message, status_code=403)
+
+
+class AlreadyExistsError(ObjectStoreError):
+    """Raised when an object or resource already exists."""
+
+    def __init__(self, message: str = "Already exists") -> None:
+        """Initialize AlreadyExistsError.
+
+        Args:
+            message: Error message
+        """
+        super().__init__(message, status_code=409)
+
+
+class RateLimitError(ObjectStoreError):
+    """Raised when the server rejects a request due to rate limiting."""
+
+    def __init__(self, message: str = "Rate limit exceeded") -> None:
+        """Initialize RateLimitError.
+
+        Args:
+            message: Error message
+        """
+        super().__init__(message, status_code=429)
+
+
 class ValidationError(ObjectStoreError):
     """Raised when request validation fails."""
 

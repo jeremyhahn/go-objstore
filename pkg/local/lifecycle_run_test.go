@@ -15,6 +15,7 @@ package local
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -56,8 +57,10 @@ func TestLifecycle_Run_DeletesOldFiles(t *testing.T) {
 
 	// speed up interval and run
 	memManager.interval = 10 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan struct{})
-	go func() { memManager.Run(ll); close(done) }()
+	go func() { memManager.Run(ctx, ll); close(done) }()
 
 	// wait a bit and verify deletion
 	time.Sleep(50 * time.Millisecond)

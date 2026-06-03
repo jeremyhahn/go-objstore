@@ -32,7 +32,6 @@ import (
 // ErrorOnValidateStorage - storage that fails metadata validation
 type ErrorOnValidateStorage struct {
 	*MockStorage
-	shouldFailValidation bool
 }
 
 // Test PutObject multipart with metadata validation failure

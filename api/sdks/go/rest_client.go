@@ -100,6 +100,7 @@ func (c *RESTClient) Put(ctx context.Context, key string, data []byte, metadata 
 			req.Header.Set("X-Object-Metadata", string(customJSON))
 		}
 	}
+	c.applyAuthHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -108,7 +109,7 @@ func (c *RESTClient) Put(ctx context.Context, key string, data []byte, metadata 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("PUT failed with status %d", resp.StatusCode)
+		return nil, httpStatusError("PUT", resp.StatusCode)
 	}
 
 	var result struct {
@@ -148,6 +149,7 @@ func (c *RESTClient) Get(ctx context.Context, key string) (*GetResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	c.applyAuthHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -155,12 +157,8 @@ func (c *RESTClient) Get(ctx context.Context, key string) (*GetResult, error) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, ErrObjectNotFound
-	}
-
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET failed with status %d", resp.StatusCode)
+		return nil, httpStatusError("GET", resp.StatusCode)
 	}
 
 	data, err := io.ReadAll(resp.Body)
@@ -209,6 +207,7 @@ func (c *RESTClient) Delete(ctx context.Context, key string) error {
 	if err != nil {
 		return err
 	}
+	c.applyAuthHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -216,12 +215,9 @@ func (c *RESTClient) Delete(ctx context.Context, key string) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return ErrObjectNotFound
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("DELETE failed with status %d", resp.StatusCode)
+	// The server returns 204 No Content; tolerate 200 from older servers.
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		return httpStatusError("DELETE", resp.StatusCode)
 	}
 
 	return nil
@@ -257,6 +253,7 @@ func (c *RESTClient) List(ctx context.Context, opts *ListOptions) (*ListResult, 
 	if err != nil {
 		return nil, err
 	}
+	c.applyAuthHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -265,7 +262,7 @@ func (c *RESTClient) List(ctx context.Context, opts *ListOptions) (*ListResult, 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("LIST failed with status %d", resp.StatusCode)
+		return nil, httpStatusError("LIST", resp.StatusCode)
 	}
 
 	var result struct {
@@ -314,6 +311,7 @@ func (c *RESTClient) Exists(ctx context.Context, key string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	c.applyAuthHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -326,7 +324,7 @@ func (c *RESTClient) Exists(ctx context.Context, key string) (bool, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return false, fmt.Errorf("HEAD failed with status %d", resp.StatusCode)
+		return false, httpStatusError("HEAD", resp.StatusCode)
 	}
 
 	return true, nil
@@ -340,6 +338,7 @@ func (c *RESTClient) GetMetadata(ctx context.Context, key string) (*Metadata, er
 	if err != nil {
 		return nil, err
 	}
+	c.applyAuthHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -347,12 +346,8 @@ func (c *RESTClient) GetMetadata(ctx context.Context, key string) (*Metadata, er
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, ErrObjectNotFound
-	}
-
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET metadata failed with status %d", resp.StatusCode)
+		return nil, httpStatusError("GET metadata", resp.StatusCode)
 	}
 
 	// Parse metadata from headers
@@ -400,6 +395,7 @@ func (c *RESTClient) UpdateMetadata(ctx context.Context, key string, metadata *M
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	c.applyAuthHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -407,12 +403,8 @@ func (c *RESTClient) UpdateMetadata(ctx context.Context, key string, metadata *M
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return ErrObjectNotFound
-	}
-
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("UPDATE metadata failed with status %d", resp.StatusCode)
+		return httpStatusError("UPDATE metadata", resp.StatusCode)
 	}
 
 	return nil
@@ -426,6 +418,7 @@ func (c *RESTClient) Health(ctx context.Context) (*HealthStatus, error) {
 	if err != nil {
 		return nil, err
 	}
+	c.applyAuthHeaders(req)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -463,7 +456,7 @@ func (c *RESTClient) Archive(ctx context.Context, key string, destinationType st
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("ARCHIVE failed with status %d", resp.StatusCode)
+		return httpStatusError("ARCHIVE", resp.StatusCode)
 	}
 
 	return nil
@@ -495,7 +488,7 @@ func (c *RESTClient) AddPolicy(ctx context.Context, policy *LifecyclePolicy) err
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("ADD policy failed with status %d", resp.StatusCode)
+		return httpStatusError("ADD policy", resp.StatusCode)
 	}
 
 	return nil
@@ -511,12 +504,8 @@ func (c *RESTClient) RemovePolicy(ctx context.Context, policyID string) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return ErrObjectNotFound
-	}
-
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("REMOVE policy failed with status %d", resp.StatusCode)
+		return httpStatusError("REMOVE policy", resp.StatusCode)
 	}
 
 	return nil
@@ -538,7 +527,7 @@ func (c *RESTClient) GetPolicies(ctx context.Context, prefix string) ([]*Lifecyc
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET policies failed with status %d", resp.StatusCode)
+		return nil, httpStatusError("GET policies", resp.StatusCode)
 	}
 
 	var result struct {
@@ -579,7 +568,7 @@ func (c *RESTClient) ApplyPolicies(ctx context.Context) (*ApplyPoliciesResult, e
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("APPLY policies failed with status %d", resp.StatusCode)
+		return nil, httpStatusError("APPLY policies", resp.StatusCode)
 	}
 
 	var result struct {
@@ -613,7 +602,7 @@ func (c *RESTClient) AddReplicationPolicy(ctx context.Context, policy *Replicati
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("ADD replication policy failed with status %d", resp.StatusCode)
+		return httpStatusError("ADD replication policy", resp.StatusCode)
 	}
 
 	return nil
@@ -629,12 +618,8 @@ func (c *RESTClient) RemoveReplicationPolicy(ctx context.Context, policyID strin
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return ErrObjectNotFound
-	}
-
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("REMOVE replication policy failed with status %d", resp.StatusCode)
+		return httpStatusError("REMOVE replication policy", resp.StatusCode)
 	}
 
 	return nil
@@ -649,7 +634,7 @@ func (c *RESTClient) GetReplicationPolicies(ctx context.Context) ([]*Replication
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET replication policies failed with status %d", resp.StatusCode)
+		return nil, httpStatusError("GET replication policies", resp.StatusCode)
 	}
 
 	var result struct {
@@ -679,12 +664,8 @@ func (c *RESTClient) GetReplicationPolicy(ctx context.Context, policyID string) 
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, ErrObjectNotFound
-	}
-
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET replication policy failed with status %d", resp.StatusCode)
+		return nil, httpStatusError("GET replication policy", resp.StatusCode)
 	}
 
 	var policy restReplicationPolicy
@@ -714,7 +695,7 @@ func (c *RESTClient) TriggerReplication(ctx context.Context, opts *TriggerReplic
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("TRIGGER replication failed with status %d", resp.StatusCode)
+		return nil, httpStatusError("TRIGGER replication", resp.StatusCode)
 	}
 
 	var result struct {
@@ -761,12 +742,8 @@ func (c *RESTClient) GetReplicationStatus(ctx context.Context, policyID string) 
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, ErrObjectNotFound
-	}
-
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET replication status failed with status %d", resp.StatusCode)
+		return nil, httpStatusError("GET replication status", resp.StatusCode)
 	}
 
 	var result struct {
@@ -817,6 +794,12 @@ func (c *RESTClient) Close() error {
 	return nil
 }
 
+// applyAuthHeaders adds Authorization, custom headers, and X-Tenant-ID to req
+// when they are configured.
+func (c *RESTClient) applyAuthHeaders(req *http.Request) {
+	applyAuthHeaders(req, c.config)
+}
+
 // doJSON performs an HTTP request with an optional JSON body and returns the response.
 // The caller is responsible for closing the response body.
 func (c *RESTClient) doJSON(ctx context.Context, method, reqURL string, body interface{}) (*http.Response, error) {
@@ -836,8 +819,42 @@ func (c *RESTClient) doJSON(ctx context.Context, method, reqURL string, body int
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	c.applyAuthHeaders(req)
 
 	return c.httpClient.Do(req)
+}
+
+// GetStream retrieves an object as a streaming io.ReadCloser.
+// The caller must close the returned reader when done.
+func (c *RESTClient) GetStream(ctx context.Context, key string) (io.ReadCloser, *Metadata, error) {
+	return httpGetStream(ctx, c.httpClient, c.baseURL, key, c.config, func(header http.Header) *Metadata {
+		metadata := &Metadata{
+			ContentType:     header.Get("Content-Type"),
+			ContentEncoding: header.Get("Content-Encoding"),
+			ETag:            header.Get("ETag"),
+		}
+		if cl := header.Get("Content-Length"); cl != "" {
+			if size, err := strconv.ParseInt(cl, 10, 64); err == nil {
+				metadata.Size = size
+			}
+		}
+		if lm := header.Get("Last-Modified"); lm != "" {
+			if t, err := http.ParseTime(lm); err == nil {
+				metadata.LastModified = t
+			}
+		}
+		return metadata
+	})
+}
+
+// PutStream stores an object from an io.Reader.
+// size is the Content-Length hint; pass -1 when unknown.
+func (c *RESTClient) PutStream(ctx context.Context, key string, r io.Reader, size int64, metadata *Metadata) (*PutResult, error) {
+	// REST carries custom metadata as a JSON object in X-Object-Metadata.
+	return httpPutStream(ctx, c.httpClient, c.baseURL, key, r, size, metadata, c.config, func(req *http.Request, custom map[string]string) {
+		customJSON, _ := json.Marshal(custom)
+		req.Header.Set("X-Object-Metadata", string(customJSON))
+	})
 }
 
 // metadataToJSON converts a Metadata value into the server's common.Metadata JSON shape.

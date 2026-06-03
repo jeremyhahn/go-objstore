@@ -40,6 +40,7 @@ type Local struct {
 	changeLog              ChangeLog
 	logger                 adapters.Logger
 	auditLog               audit.AuditLogger
+	lifecycleCancel        context.CancelFunc // stops the background lifecycle goroutine
 }
 
 // New creates a new Local storage backend.
@@ -109,7 +110,9 @@ func (l *Local) Configure(settings map[string]string) error {
 	if settings["runLifecycle"] == "true" {
 		// Only in-memory manager supports Run method
 		if memManager, ok := l.lifecycleManager.(*LifecycleManager); ok {
-			go memManager.Run(l)
+			ctx, cancel := context.WithCancel(context.Background())
+			l.lifecycleCancel = cancel
+			go memManager.Run(ctx, l)
 		}
 	}
 
@@ -150,6 +153,13 @@ func (lfs *localFileSystem) OpenFile(name string, flag int, perm os.FileMode) (c
 func (lfs *localFileSystem) Remove(name string) error {
 	fullPath := filepath.Join(lfs.basePath, name)
 	return os.Remove(fullPath)
+}
+
+func (lfs *localFileSystem) Rename(src, dst string) error {
+	return os.Rename(
+		filepath.Join(lfs.basePath, src),
+		filepath.Join(lfs.basePath, dst),
+	)
 }
 
 // localFile wraps os.File to implement common.LifecycleFile
@@ -378,6 +388,9 @@ func (l *Local) UpdateMetadata(ctx context.Context, key string, metadata *common
 	path := filepath.Join(l.path, key)
 	info, err := os.Stat(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%w: %s", common.ErrKeyNotFound, key)
+		}
 		return err
 	}
 
@@ -828,7 +841,16 @@ func writeFileAtomic(path string, mode os.FileMode, write func(io.Writer) error)
 	}
 	committed = true
 
-	return nil
+	// Fsync the parent directory so the rename is durable on the inode level.
+	d, err := os.Open(dir) // #nosec G304 -- dir is derived from a validated key path
+	if err != nil {
+		return err
+	}
+	if err := d.Sync(); err != nil {
+		_ = d.Close()
+		return err
+	}
+	return d.Close()
 }
 
 // formatBytes formats a byte count as a human-readable string
@@ -886,4 +908,12 @@ func (l *Local) GetLogger() adapters.Logger {
 // GetAuditLogger returns the configured audit logger.
 func (l *Local) GetAuditLogger() audit.AuditLogger {
 	return l.auditLog
+}
+
+// Close stops any background goroutines started by Configure (e.g. the lifecycle
+// ticker). It is safe to call multiple times.
+func (l *Local) Close() {
+	if l.lifecycleCancel != nil {
+		l.lifecycleCancel()
+	}
 }

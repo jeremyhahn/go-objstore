@@ -16,21 +16,25 @@ package quic
 import (
 	"context"
 	"net"
+	"net/http"
 	"sync"
 	"sync/atomic"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
+	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/server/middleware"
 	"github.com/quic-go/quic-go/http3"
 )
 
 // Server represents a QUIC/HTTP3 server for object storage.
 type Server struct {
-	opts    *Options
-	handler *Handler
-	server  *http3.Server
-	mu      sync.RWMutex
-	running atomic.Bool
-	addr    net.Addr
+	opts        *Options
+	handler     *Handler
+	server      *http3.Server
+	rateLimiter *middleware.RateLimiter
+	mu          sync.RWMutex
+	running     atomic.Bool
+	addr        net.Addr
 }
 
 // New creates a new QUIC server with the given options.
@@ -54,17 +58,34 @@ func New(opts *Options) (*Server, error) {
 		return nil, err
 	}
 
+	// Wrap the handler with the shared middleware stack. Order (outermost
+	// first): request ID → rate limit → audit → handler, matching the REST
+	// server's ordering.
+	var h http.Handler = handler
+	var rateLimiter *middleware.RateLimiter
+	if opts.EnableAudit && opts.AuditLogger != nil {
+		h = audit.AuditHTTPMiddleware(opts.AuditLogger)(h)
+	}
+	if opts.EnableRateLimit {
+		rateLimiter = middleware.NewRateLimiter(opts.RateLimitConfig, opts.Logger)
+		h = rateLimiter.HTTPMiddleware(h)
+	}
+	if opts.EnableRequestID {
+		h = middleware.RequestIDHTTPMiddleware(h)
+	}
+
 	server := &http3.Server{
 		Addr:       opts.Addr,
 		TLSConfig:  opts.TLSConfig,
 		QUICConfig: opts.QUICConfig,
-		Handler:    handler,
+		Handler:    h,
 	}
 
 	return &Server{
-		opts:    opts,
-		handler: handler,
-		server:  server,
+		opts:        opts,
+		handler:     handler,
+		server:      server,
+		rateLimiter: rateLimiter,
 	}, nil
 }
 
@@ -94,7 +115,7 @@ func (s *Server) Start() error {
 	// Mark server as running
 	s.running.Store(true)
 
-	s.opts.Logger.Info(context.TODO(), "Starting QUIC/HTTP3 server",
+	s.opts.Logger.Info(context.Background(), "Starting QUIC/HTTP3 server",
 		adapters.Field{Key: "address", Value: s.addr.String()},
 		adapters.Field{Key: "tls", Value: "required"},
 	)
@@ -104,7 +125,7 @@ func (s *Server) Start() error {
 		err := s.server.Serve(conn)
 		if err != nil && s.running.Load() {
 			// Only log error if server is supposed to be running
-			s.opts.Logger.Error(context.TODO(), "QUIC server error",
+			s.opts.Logger.Error(context.Background(), "QUIC server error",
 				adapters.Field{Key: fieldError, Value: err.Error()},
 			)
 		}
@@ -114,7 +135,9 @@ func (s *Server) Start() error {
 	return nil
 }
 
-// Stop gracefully stops the QUIC server.
+// Stop gracefully stops the QUIC server. It calls Shutdown(ctx) to allow
+// in-flight requests to drain; if the context expires before the drain
+// completes, it falls back to Close() for an immediate stop.
 func (s *Server) Stop(ctx context.Context) error {
 	if !s.running.Load() {
 		return ErrServerNotStarted
@@ -125,10 +148,19 @@ func (s *Server) Stop(ctx context.Context) error {
 
 	s.opts.Logger.Info(ctx, "Stopping QUIC/HTTP3 server")
 
-	// Close the server with context
-	err := s.server.Close()
+	if s.rateLimiter != nil {
+		s.rateLimiter.Stop()
+	}
+
+	err := s.server.Shutdown(ctx)
 	if err != nil {
-		return err
+		// Context expired or Shutdown failed; force-close.
+		_ = s.server.Close()
+		if ctx.Err() != nil {
+			s.opts.Logger.Warn(ctx, "QUIC/HTTP3 graceful shutdown timed out; forced close")
+		} else {
+			return err
+		}
 	}
 
 	s.opts.Logger.Info(ctx, "QUIC/HTTP3 server stopped")

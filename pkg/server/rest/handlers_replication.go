@@ -88,7 +88,7 @@ func (h *Handler) AddReplicationPolicy(c *gin.Context) {
 		if errors.Is(err, common.ErrReplicationNotSupported) {
 			RespondWithError(c, http.StatusInternalServerError, "replication not supported by this storage backend")
 		} else {
-			RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+			RespondWithBackendError(c, err)
 		}
 		return
 	}
@@ -106,11 +106,8 @@ func (h *Handler) AddReplicationPolicy(c *gin.Context) {
 			userID, principal, h.backend, req.ID, c.ClientIP(), requestID, 0,
 			audit.ResultFailure, err)
 
-		if err.Error() == "policy already exists" {
-			RespondWithError(c, http.StatusConflict, common.SanitizeErrorMessage(err))
-			return
-		}
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		// Classify maps "policy already exists" to 409 Conflict.
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -142,7 +139,7 @@ func (h *Handler) RemoveReplicationPolicy(c *gin.Context) {
 		if errors.Is(err, common.ErrReplicationNotSupported) {
 			RespondWithError(c, http.StatusInternalServerError, "replication not supported by this storage backend")
 		} else {
-			RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+			RespondWithBackendError(c, err)
 		}
 		return
 	}
@@ -164,7 +161,7 @@ func (h *Handler) RemoveReplicationPolicy(c *gin.Context) {
 			RespondWithError(c, http.StatusNotFound, common.SanitizeErrorMessage(err))
 			return
 		}
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -185,7 +182,7 @@ func (h *Handler) GetReplicationPolicies(c *gin.Context) {
 		if errors.Is(err, common.ErrReplicationNotSupported) {
 			RespondWithError(c, http.StatusInternalServerError, "replication not supported by this storage backend")
 		} else {
-			RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+			RespondWithBackendError(c, err)
 		}
 		return
 	}
@@ -193,7 +190,7 @@ func (h *Handler) GetReplicationPolicies(c *gin.Context) {
 	// Get all policies
 	policies, err := repMgr.GetPolicies()
 	if err != nil {
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -219,7 +216,7 @@ func (h *Handler) GetReplicationPolicy(c *gin.Context) {
 		if errors.Is(err, common.ErrReplicationNotSupported) {
 			RespondWithError(c, http.StatusInternalServerError, "replication not supported by this storage backend")
 		} else {
-			RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+			RespondWithBackendError(c, err)
 		}
 		return
 	}
@@ -231,7 +228,7 @@ func (h *Handler) GetReplicationPolicy(c *gin.Context) {
 			RespondWithError(c, http.StatusNotFound, common.SanitizeErrorMessage(err))
 			return
 		}
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -263,7 +260,7 @@ func (h *Handler) TriggerReplication(c *gin.Context) {
 		if errors.Is(err, common.ErrReplicationNotSupported) {
 			RespondWithError(c, http.StatusInternalServerError, "replication not supported by this storage backend")
 		} else {
-			RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+			RespondWithBackendError(c, err)
 		}
 		return
 	}
@@ -301,7 +298,7 @@ func (h *Handler) TriggerReplication(c *gin.Context) {
 			RespondWithError(c, http.StatusNotFound, common.SanitizeErrorMessage(err))
 			return
 		}
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -331,7 +328,7 @@ func (h *Handler) GetReplicationStatus(c *gin.Context) {
 		if errors.Is(err, common.ErrReplicationNotSupported) {
 			RespondWithError(c, http.StatusInternalServerError, "replication not supported by this storage backend")
 		} else {
-			RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+			RespondWithBackendError(c, err)
 		}
 		return
 	}
@@ -351,7 +348,7 @@ func (h *Handler) GetReplicationStatus(c *gin.Context) {
 			RespondWithError(c, http.StatusNotFound, common.SanitizeErrorMessage(err))
 			return
 		}
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 

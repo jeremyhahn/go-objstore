@@ -74,7 +74,7 @@ func (m *MockReplicationManager) AddPolicy(policy common.ReplicationPolicy) erro
 		return m.addPolicyErr
 	}
 	if _, exists := m.policies[policy.ID]; exists {
-		return errors.New("policy already exists")
+		return common.ErrAlreadyExists
 	}
 	m.policies[policy.ID] = policy
 	return nil

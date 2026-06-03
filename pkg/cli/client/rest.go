@@ -427,9 +427,30 @@ func (c *RESTClient) GetPolicies(ctx context.Context) ([]common.LifecyclePolicy,
 		return nil, fmt.Errorf("%w %d", ErrServerError, resp.StatusCode)
 	}
 
-	var policies []common.LifecyclePolicy
-	if err := json.NewDecoder(resp.Body).Decode(&policies); err != nil {
+	// The server wraps the list: {"policies": [...], "count": n} with
+	// retention expressed in seconds.
+	var wrapped struct {
+		Policies []struct {
+			ID               string `json:"id"`
+			Prefix           string `json:"prefix"`
+			RetentionSeconds int64  `json:"retention_seconds"`
+			Action           string `json:"action"`
+			DestinationType  string `json:"destination_type"`
+		} `json:"policies"`
+		Count int `json:"count"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&wrapped); err != nil {
 		return nil, err
+	}
+
+	policies := make([]common.LifecyclePolicy, 0, len(wrapped.Policies))
+	for _, p := range wrapped.Policies {
+		policies = append(policies, common.LifecyclePolicy{
+			ID:        p.ID,
+			Prefix:    p.Prefix,
+			Retention: time.Duration(p.RetentionSeconds) * time.Second,
+			Action:    p.Action,
+		})
 	}
 
 	return policies, nil

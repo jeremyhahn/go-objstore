@@ -35,16 +35,20 @@ describe('GrpcClient', () => {
   let client: GrpcClient;
   let mockServiceClient: any;
 
-  /** Make a unary stub method resolve with the given response. */
+  /** Make a unary stub method resolve with the given response.
+   *  Accepts both (req, callback) and (req, metadata, callback) call forms. */
   const unarySuccess = (method: string, response: any) => {
-    mockServiceClient[method].mockImplementation((_req: any, callback: any) => {
+    mockServiceClient[method].mockImplementation((_req: any, metaOrCb: any, maybeCb?: any) => {
+      const callback = typeof metaOrCb === 'function' ? metaOrCb : maybeCb;
       callback(null, response);
     });
   };
 
-  /** Make a unary stub method fail with the given gRPC status code. */
+  /** Make a unary stub method fail with the given gRPC status code.
+   *  Accepts both (req, callback) and (req, metadata, callback) call forms. */
   const unaryError = (method: string, code = 13, message = 'failed') => {
-    mockServiceClient[method].mockImplementation((_req: any, callback: any) => {
+    mockServiceClient[method].mockImplementation((_req: any, metaOrCb: any, maybeCb?: any) => {
+      const callback = typeof metaOrCb === 'function' ? metaOrCb : maybeCb;
       const error: any = new Error(message);
       error.code = code;
       error.details = message;
@@ -618,8 +622,9 @@ describe('GrpcClient', () => {
 
       // put: assert metadata travels in the proto message fields.
       let putReq: any;
-      mockServiceClient.put.mockImplementation((req: any, callback: any) => {
+      mockServiceClient.put.mockImplementation((req: any, metaOrCb: any, maybeCb?: any) => {
         putReq = req;
+        const callback = typeof metaOrCb === 'function' ? metaOrCb : maybeCb;
         callback(null, { success: true, message: 'stored', etag: '"e"' });
       });
       await client.put({ key: 'doc', data: Buffer.from('hello'), metadata });
@@ -677,6 +682,95 @@ describe('GrpcClient', () => {
     it('grpc_close', async () => {
       await expect(client.close()).resolves.toBeUndefined();
       expect(mockServiceClient.close).toHaveBeenCalled();
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // auth: callMeta forwarded to every RPC
+  // --------------------------------------------------------------------------
+  describe('auth', () => {
+    it('grpc_auth_metadata_forwarded', async () => {
+      // Re-create the client with token + tenantId so callMeta is populated.
+      // Capture the second arg (metadata) from the first unary call (put).
+      const authClient = new GrpcClient({
+        address: 'localhost:50051',
+        token: 'my-token',
+        tenantId: 'tenant-1',
+        headers: { 'x-custom': 'val' },
+      });
+
+      let capturedMeta: any;
+      mockServiceClient.put.mockImplementation((_req: any, meta: any, cb: any) => {
+        capturedMeta = meta;
+        cb(null, { success: true, message: 'ok', etag: '' });
+      });
+
+      await authClient.put({ key: 'k', data: Buffer.from('d') });
+
+      expect(capturedMeta).toBeDefined();
+      // grpc.Metadata stores values as arrays.
+      const auth = capturedMeta.get('authorization');
+      expect(auth[0]).toBe('Bearer my-token');
+      const tenant = capturedMeta.get('x-tenant-id');
+      expect(tenant[0]).toBe('tenant-1');
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // getStream
+  // --------------------------------------------------------------------------
+  describe('getStream', () => {
+    it('grpc_getStream_success', async () => {
+      const emitter = new EventEmitter();
+      mockServiceClient.get.mockImplementation(() => emitter);
+
+      const stream = client.getStream('stream-key');
+      const chunks: Buffer[] = [];
+      const done = new Promise<void>((resolve, reject) => {
+        stream.on('data', (chunk: Buffer) => chunks.push(chunk));
+        stream.on('end', resolve);
+        stream.on('error', reject);
+      });
+
+      setImmediate(() => {
+        emitter.emit('data', { data: Buffer.from('chunk1') });
+        emitter.emit('data', { data: Buffer.from('chunk2') });
+        emitter.emit('end');
+      });
+
+      await done;
+      expect(Buffer.concat(chunks).toString()).toBe('chunk1chunk2');
+    });
+
+    it('grpc_getStream_error', async () => {
+      const emitter = new EventEmitter();
+      mockServiceClient.get.mockImplementation(() => emitter);
+
+      const stream = client.getStream('bad-key');
+      const errorPromise = new Promise<Error>((resolve) => {
+        stream.on('error', resolve);
+      });
+
+      const grpcErr: any = new Error('not found');
+      grpcErr.code = 5;
+      grpcErr.details = 'not found';
+      setImmediate(() => emitter.emit('error', grpcErr));
+
+      const err = await errorPromise;
+      expect(err.message).toMatch(/Not found/);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // putStream
+  // --------------------------------------------------------------------------
+  describe('putStream', () => {
+    it('grpc_putStream_success', async () => {
+      unarySuccess('put', { success: true, message: 'ok', etag: '' });
+      const { Readable: NodeReadable } = require('stream');
+      const stream = NodeReadable.from([Buffer.from('hello'), Buffer.from(' world')]);
+      const resp = await client.putStream('stream-key', stream);
+      expect(resp.success).toBe(true);
     });
   });
 });

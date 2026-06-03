@@ -114,6 +114,17 @@ func (m *mockGCSObject) Attrs(ctx context.Context) (*storage.ObjectAttrs, error)
 	}, nil
 }
 
+func (m *mockGCSObject) Update(ctx context.Context, uattrs storage.ObjectAttrsToUpdate) (*storage.ObjectAttrs, error) {
+	data, ok := m.bucket.objects[m.name]
+	if !ok {
+		return nil, storage.ErrObjectNotExist
+	}
+	return &storage.ObjectAttrs{
+		Name: m.name,
+		Size: int64(len(data)),
+	}, nil
+}
+
 type mockGCSWriter struct {
 	bucket *mockGCSBucket
 	name   string

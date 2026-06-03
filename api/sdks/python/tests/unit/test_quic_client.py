@@ -21,10 +21,13 @@ import httpx
 import pytest
 
 from objstore.exceptions import (
+    AlreadyExistsError,
     AuthenticationError,
+    AuthorizationError,
     ConnectionError,
     ObjectNotFoundError,
     ObjectStoreError,
+    RateLimitError,
     ServerError,
     TimeoutError,
     ValidationError,
@@ -653,6 +656,27 @@ async def test_quic_authentication_error() -> None:
     client = _client()
     _mock(client, "get").return_value = _resp(401)
     with pytest.raises(AuthenticationError):
+        await client.get("k")
+
+
+async def test_quic_authorization_error() -> None:
+    client = _client()
+    _mock(client, "get").return_value = _resp(403)
+    with pytest.raises(AuthorizationError):
+        await client.get("k")
+
+
+async def test_quic_already_exists_error() -> None:
+    client = _client()
+    _mock(client, "put").return_value = _resp(409, json={"message": "object exists"})
+    with pytest.raises(AlreadyExistsError):
+        await client.put("k", b"data")
+
+
+async def test_quic_rate_limit_error() -> None:
+    client = _client()
+    _mock(client, "get").return_value = _resp(429)
+    with pytest.raises(RateLimitError):
         await client.get("k")
 
 

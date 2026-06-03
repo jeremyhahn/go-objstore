@@ -18,12 +18,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
+	"github.com/jeremyhahn/go-objstore/pkg/audit"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
+	"github.com/jeremyhahn/go-objstore/pkg/server/jsonrpc"
+	"github.com/jeremyhahn/go-objstore/pkg/server/metrics"
+	"github.com/jeremyhahn/go-objstore/pkg/server/middleware"
 )
 
 // ErrPeerCredUnsupported indicates that peer credentials could not be obtained
@@ -57,6 +64,14 @@ func DisablePeerCredentials() *bool { b := false; return &b }
 // authentication on (this is also the default when left unset).
 func EnablePeerCredentials() *bool { b := true; return &b }
 
+// defaultReadDeadline is applied to each scan iteration on a Unix socket
+// connection to prevent a slow or stalled client from holding the goroutine
+// indefinitely.
+const defaultReadDeadline = 30 * time.Second
+
+// defaultMaxConnections is the default limit for concurrent Unix connections.
+const defaultMaxConnections = 100
+
 // ServerConfig holds Unix socket server configuration
 type ServerConfig struct {
 	// SocketPath is the path to the Unix socket file
@@ -85,6 +100,15 @@ type ServerConfig struct {
 	// Authorizer is the pluggable authorization adapter (default: NoOpAuthorizer = allow-all).
 	Authorizer adapters.Authorizer
 
+	// MaxConnections is the maximum number of simultaneous connections the
+	// server will serve concurrently. Additional connections are accepted but
+	// block until a slot opens. Zero or negative values use the default (100).
+	MaxConnections int
+
+	// ReadDeadline is the per-request read deadline applied to each scan
+	// iteration. Zero uses the default (30 s).
+	ReadDeadline time.Duration
+
 	// UsePeerCredentials, when set, controls whether the request principal is
 	// derived from the connecting peer's OS credentials (SO_PEERCRED: uid/gid/pid)
 	// instead of the configured Authenticator.
@@ -107,6 +131,20 @@ type ServerConfig struct {
 	// If peer credentials cannot be extracted (non-Linux platforms, or a non-Unix
 	// connection), the server falls back to the configured Authenticator.
 	UsePeerCredentials *bool
+
+	// EnableRateLimit enables rate limiting (default: false). Requests are
+	// keyed by the peer's OS identity (uid) when peer credentials are
+	// available, otherwise a single shared bucket applies.
+	EnableRateLimit bool
+
+	// RateLimitConfig is the rate limiting configuration.
+	RateLimitConfig *middleware.RateLimitConfig
+
+	// EnableAudit enables audit logging (default: false).
+	EnableAudit bool
+
+	// AuditLogger is the audit logger used when EnableAudit is set.
+	AuditLogger audit.AuditLogger
 }
 
 // DefaultConfig returns default server configuration
@@ -117,17 +155,22 @@ func DefaultConfig() *ServerConfig {
 		Logger:            adapters.NewDefaultLogger(),
 		Authenticator:     adapters.NewNoOpAuthenticator(),
 		Authorizer:        adapters.NewNoOpAuthorizer(),
+		MaxConnections:    defaultMaxConnections,
+		ReadDeadline:      defaultReadDeadline,
 	}
 }
 
 // Server represents the Unix socket server
 type Server struct {
-	config   *ServerConfig
-	listener net.Listener
-	handler  *Handler
-	mu       sync.Mutex
-	closed   bool
-	wg       sync.WaitGroup
+	config       *ServerConfig
+	listener     net.Listener
+	handler      *Handler
+	rateLimiter  *middleware.RateLimiter
+	mu           sync.Mutex
+	closed       bool
+	wg           sync.WaitGroup
+	connSem      chan struct{} // semaphore bounding concurrent connections
+	readDeadline time.Duration
 	// usePeerCred is the resolved value of ServerConfig.UsePeerCredentials
 	// (nil/unset defaults to true).
 	usePeerCred bool
@@ -172,17 +215,59 @@ func NewServer(config *ServerConfig) (*Server, error) {
 		usePeerCred = *config.UsePeerCredentials
 	}
 
+	maxConns := config.MaxConnections
+	if maxConns <= 0 {
+		maxConns = defaultMaxConnections
+	}
+
+	readDeadline := config.ReadDeadline
+	if readDeadline <= 0 {
+		readDeadline = defaultReadDeadline
+	}
+
+	if config.EnableAudit && config.AuditLogger == nil {
+		config.AuditLogger = audit.NewDefaultAuditLogger()
+	}
+
+	var rateLimiter *middleware.RateLimiter
+	if config.EnableRateLimit {
+		rateLimiter = middleware.NewRateLimiter(config.RateLimitConfig, config.Logger)
+	}
+
 	return &Server{
-		config:      config,
-		handler:     handler,
-		usePeerCred: usePeerCred,
+		config:       config,
+		handler:      handler,
+		rateLimiter:  rateLimiter,
+		connSem:      make(chan struct{}, maxConns),
+		readDeadline: readDeadline,
+		usePeerCred:  usePeerCred,
 	}, nil
+}
+
+// removeStaleSocket removes the file at path only when it is a Unix domain
+// socket left over from a previous run. It returns nil when the path does not
+// exist. When the path exists but is not a socket it leaves the file untouched
+// and returns an error, so a misconfigured SocketPath never deletes an
+// unrelated file.
+func removeStaleSocket(path string) error {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if fi.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("%w: %s", ErrSocketPathNotSocket, path)
+	}
+	return os.Remove(path)
 }
 
 // Start starts the Unix socket server
 func (s *Server) Start(ctx context.Context) error {
-	// Remove existing socket if it exists
-	if err := os.Remove(s.config.SocketPath); err != nil && !os.IsNotExist(err) {
+	// Remove a stale socket from a previous run, refusing to delete anything
+	// that is not a socket.
+	if err := removeStaleSocket(s.config.SocketPath); err != nil {
 		return err
 	}
 
@@ -232,6 +317,11 @@ func (s *Server) acceptLoop(ctx context.Context) {
 			continue
 		}
 
+		// Acquire the concurrency slot BEFORE spawning the goroutine so
+		// MaxConnections bounds goroutines and file descriptors, not just
+		// concurrent processing. Excess connections queue in the kernel's
+		// accept backlog instead of accumulating one goroutine each.
+		s.connSem <- struct{}{}
 		s.wg.Add(1)
 		go s.handleConnection(ctx, conn)
 	}
@@ -239,6 +329,7 @@ func (s *Server) acceptLoop(ctx context.Context) {
 
 // handleConnection handles a single client connection
 func (s *Server) handleConnection(ctx context.Context, conn net.Conn) {
+	defer func() { <-s.connSem }()
 	defer s.wg.Done()
 	defer conn.Close()
 
@@ -268,7 +359,23 @@ func (s *Server) handleConnection(ctx context.Context, conn net.Conn) {
 	buf := make([]byte, maxScanTokenSize)
 	scanner.Buffer(buf, maxScanTokenSize)
 
+	// Set the initial read deadline before the first Scan so a client that
+	// connects and never sends a request cannot hold the goroutine forever.
+	if err := conn.SetReadDeadline(time.Now().Add(s.readDeadline)); err != nil {
+		s.config.Logger.Warn(ctx, "Failed to set read deadline",
+			adapters.Field{Key: fieldError, Value: err.Error()},
+		)
+	}
+
 	for scanner.Scan() {
+		// Refresh the read deadline after each request so a slow client
+		// cannot hold the goroutine indefinitely.
+		if err := conn.SetReadDeadline(time.Now().Add(s.readDeadline)); err != nil {
+			s.config.Logger.Warn(ctx, "Failed to set read deadline",
+				adapters.Field{Key: fieldError, Value: err.Error()},
+			)
+		}
+
 		line := scanner.Bytes()
 		if len(line) == 0 {
 			continue
@@ -301,31 +408,50 @@ func (s *Server) handleConnection(ctx context.Context, conn net.Conn) {
 }
 
 // processRequest processes a JSON-RPC request
-func (s *Server) processRequest(ctx context.Context, data []byte) *Response {
-	var req Request
-	if err := json.Unmarshal(data, &req); err != nil {
-		return &Response{
-			JSONRPC: jsonRPCVersion,
-			Error: &RPCError{
-				Code:    ErrCodeParseError,
-				Message: "invalid JSON",
-			},
-			ID: nil,
+func (s *Server) processRequest(ctx context.Context, data []byte) (resp *Response) {
+	// Every request carries a request ID for tracing; the unix transport has
+	// no header to receive one, so generate it here.
+	ctx, _ = middleware.EnsureRequestID(ctx)
+
+	start := time.Now()
+	method := ""
+	defer func() {
+		if rec := recover(); rec != nil {
+			slog.ErrorContext(ctx, "[Unix] Panic recovered", slog.Any("panic", rec))
+			resp = jsonrpc.NewError(nil, ErrCodeInternalError, "internal server error")
+		}
+		outcome := "ok"
+		var auditErr error
+		if resp != nil && resp.Error != nil {
+			outcome = "error"
+			auditErr = fmt.Errorf("%w: %s", ErrRequestFailed, resp.Error.Message)
+		}
+		metrics.Default.RecordRequest(metrics.TransportUnix, outcome, time.Since(start))
+		if s.config.EnableAudit && s.config.AuditLogger != nil && method != "" {
+			principal, _ := principalFromContext(ctx)
+			audit.LogRPC(ctx, s.config.AuditLogger, "unix", method, principal, start, auditErr)
+		}
+	}()
+
+	// Shared parse + version validation with the MCP transport.
+	req, parseErr := jsonrpc.ParseRequest(data)
+	if parseErr != nil {
+		return parseErr
+	}
+	method = req.Method
+
+	// Rate limit, keyed by the peer's OS identity when available.
+	if s.rateLimiter != nil {
+		key := "unix"
+		if principal, ok := principalFromContext(ctx); ok && principal != nil && principal.ID != "" {
+			key = principal.ID
+		}
+		if !s.rateLimiter.AllowKey(key) {
+			return jsonrpc.NewError(req.ID, jsonrpc.CodeRateLimited, "rate limit exceeded")
 		}
 	}
 
-	if req.JSONRPC != jsonRPCVersion {
-		return &Response{
-			JSONRPC: jsonRPCVersion,
-			Error: &RPCError{
-				Code:    ErrCodeInvalidRequest,
-				Message: "invalid JSON-RPC version",
-			},
-			ID: req.ID,
-		}
-	}
-
-	return s.handler.Handle(ctx, &req)
+	return s.handler.Handle(ctx, req)
 }
 
 // Shutdown gracefully shuts down the server
@@ -334,6 +460,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	s.closed = true
 	listener := s.listener
 	s.mu.Unlock()
+
+	if s.rateLimiter != nil {
+		s.rateLimiter.Stop()
+	}
 
 	s.config.Logger.Info(ctx, "Shutting down Unix socket server")
 
@@ -348,11 +478,15 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	// Wait for active connections to finish
 	s.wg.Wait()
 
-	// Remove socket file
-	if err := os.Remove(s.config.SocketPath); err != nil && !os.IsNotExist(err) {
-		s.config.Logger.Warn(ctx, "Failed to remove socket file",
-			adapters.Field{Key: fieldError, Value: err.Error()},
-		)
+	// Remove the socket file. Cleanup must not fail shutdown: only remove the
+	// path when it is still a socket (silently skip otherwise) and log any
+	// removal failure instead of returning it.
+	if fi, err := os.Lstat(s.config.SocketPath); err == nil && fi.Mode()&os.ModeSocket != 0 {
+		if err := os.Remove(s.config.SocketPath); err != nil {
+			s.config.Logger.Warn(ctx, "Failed to remove socket file",
+				adapters.Field{Key: fieldError, Value: err.Error()},
+			)
+		}
 	}
 
 	return nil

@@ -68,7 +68,8 @@ const PROTOCOLS: ProtocolEntry[] = [
     },
     skip: true,
     skipReason:
-      'TypeScript/Node.js: no native HTTP/3 transport. ' +
+      'TypeScript/Node.js: no native HTTP/3 transport, so QuicClient speaks ' +
+      'HTTP/1.1 over TCP and cannot reach the bundled QUIC server (UDP/HTTP3-only). ' +
       'The QuicClient uses an HTTP/fetch fallback that targets the REST endpoint, ' +
       'which would silently duplicate REST coverage under a false QUIC label. ' +
       'Integration parity is provided by REST + gRPC suites above. ' +

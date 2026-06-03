@@ -65,7 +65,7 @@ type RoundRobinStrategy struct {
 // the same strategy can't both see cursor=N.
 func (s *RoundRobinStrategy) Pick(ctx context.Context, candidates []common.Storage, hint Hint) (common.Storage, error) {
 	if s.State == nil {
-		return nil, &MissingStateStoreError{}
+		return nil, &MissingStateStoreError{Strategy: roundRobinStrategyName}
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err

@@ -66,7 +66,7 @@ func TestAuthenticationMiddlewareSuccess(t *testing.T) {
 		},
 	}
 
-	router.Use(AuthenticationMiddleware(authenticator, logger, auditLogger))
+	router.Use(AuthenticationMiddleware(authenticator, logger, auditLogger, false))
 	router.GET("/test", func(c *gin.Context) {
 		// Check that principal is set in context
 		principalVal, exists := c.Get("principal")
@@ -112,7 +112,7 @@ func TestAuthenticationMiddlewareFailed(t *testing.T) {
 		shouldFail: true,
 	}
 
-	router.Use(AuthenticationMiddleware(authenticator, logger, auditLogger))
+	router.Use(AuthenticationMiddleware(authenticator, logger, auditLogger, false))
 	router.GET("/test", func(c *gin.Context) {
 		t.Error("Handler should not be called after auth failure")
 		c.String(http.StatusOK, "OK")
@@ -140,7 +140,7 @@ func TestAuthenticationMiddlewareNilAuditLogger(t *testing.T) {
 		},
 	}
 
-	router.Use(AuthenticationMiddleware(authenticator, logger, nil))
+	router.Use(AuthenticationMiddleware(authenticator, logger, nil, false))
 	router.GET("/test", func(c *gin.Context) {
 		c.String(http.StatusOK, "OK")
 	})
@@ -163,7 +163,7 @@ func TestAuthenticationMiddlewareFailedNilAuditLogger(t *testing.T) {
 		shouldFail: true,
 	}
 
-	router.Use(AuthenticationMiddleware(authenticator, logger, nil))
+	router.Use(AuthenticationMiddleware(authenticator, logger, nil, false))
 	router.GET("/test", func(c *gin.Context) {
 		c.String(http.StatusOK, "OK")
 	})

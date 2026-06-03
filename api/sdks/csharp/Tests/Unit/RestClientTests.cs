@@ -589,6 +589,39 @@ public class RestClientTests : IDisposable
         (await _client.GetReplicationStatusAsync("missing")).Should().BeNull();
     }
 
+    // ---------------------------------------------------------------- HTTP error mapping
+
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest, typeof(ValidationException))]
+    [InlineData(HttpStatusCode.Unauthorized, typeof(AuthenticationException))]
+    [InlineData(HttpStatusCode.Forbidden, typeof(AuthorizationException))]
+    [InlineData(HttpStatusCode.NotFound, typeof(ObjectNotFoundException))]
+    [InlineData(HttpStatusCode.Conflict, typeof(AlreadyExistsException))]
+    [InlineData(HttpStatusCode.TooManyRequests, typeof(RateLimitException))]
+    [InlineData(HttpStatusCode.InternalServerError, typeof(OperationFailedException))]
+    public async Task Rest_Put_HttpStatus_MapsToCanonicalException(HttpStatusCode status, Type expected)
+    {
+        _handler.SetupStatus(req => req.Method == HttpMethod.Put, status);
+
+        var ex = await Record.ExceptionAsync(() => _client.PutAsync("k", new byte[] { 1 }));
+
+        ex.Should().BeOfType(expected);
+        ((ObjectStoreException)ex!).StatusCode.Should().Be((int)status);
+    }
+
+    [Fact]
+    public async Task Rest_HttpError_ExtractsServerErrorMessage()
+    {
+        // The server's {"error": "..."} body becomes the exception message.
+        _handler.SetupJson(
+            req => req.Method == HttpMethod.Put,
+            JsonSerializer.Serialize(new { error = "quota exceeded" }),
+            HttpStatusCode.TooManyRequests);
+
+        var ex = await Assert.ThrowsAsync<RateLimitException>(() => _client.PutAsync("k", new byte[] { 1 }));
+        ex.Message.Should().Contain("quota exceeded");
+    }
+
     // ---------------------------------------------------------------- cross-cutting
 
     [Fact]

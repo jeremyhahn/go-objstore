@@ -39,6 +39,7 @@ const (
 type FileSystem interface {
 	OpenFile(name string, flag int, perm os.FileMode) (ReplicationFile, error)
 	Remove(name string) error
+	Rename(src, dst string) error
 }
 
 // ReplicationFile represents a file in the replication storage filesystem.
@@ -62,6 +63,11 @@ func (fs *OSFileSystem) Remove(name string) error {
 	return os.Remove(name)
 }
 
+// Rename renames (moves) a file using os.Rename.
+func (fs *OSFileSystem) Rename(src, dst string) error {
+	return os.Rename(src, dst)
+}
+
 // PersistentReplicationManager manages replication policies with JSON persistence.
 type PersistentReplicationManager struct {
 	fs         FileSystem
@@ -82,6 +88,7 @@ type PersistentReplicationManager struct {
 
 	// Background processing control
 	stopChan chan struct{}
+	stopOnce sync.Once
 }
 
 // persistedPolicies is the structure used for JSON serialization.
@@ -548,13 +555,15 @@ func (prm *PersistentReplicationManager) Run(ctx context.Context) {
 	}
 }
 
-// Stop stops the background sync process.
+// Stop stops the background sync process. Safe to call multiple times.
 func (prm *PersistentReplicationManager) Stop() {
-	close(prm.stopChan)
+	prm.stopOnce.Do(func() { close(prm.stopChan) })
 }
 
-// save persists the current policies to storage.
+// save persists the current policies to storage atomically.
 // Must be called with mutex locked.
+// It writes to a sibling temp file, fsyncs it, then renames it over the policy
+// file so a crash between write and rename leaves the previous contents intact.
 func (prm *PersistentReplicationManager) save() error {
 	data := persistedPolicies{
 		Policies: prm.policies,
@@ -565,17 +574,33 @@ func (prm *PersistentReplicationManager) save() error {
 		return err
 	}
 
-	file, err := prm.fs.OpenFile(prm.policyFile, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+	tmpName := prm.policyFile + ".tmp"
+	tmp, err := prm.fs.OpenFile(tmpName, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = file.Close() }()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tmp.Close()
+			_ = prm.fs.Remove(tmpName)
+		}
+	}()
 
-	if _, err := file.Write(jsonData); err != nil {
+	if _, err := tmp.Write(jsonData); err != nil {
 		return err
 	}
-
-	return file.Sync()
+	if err := tmp.Sync(); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := prm.fs.Rename(tmpName, prm.policyFile); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 // load reads policies from storage.

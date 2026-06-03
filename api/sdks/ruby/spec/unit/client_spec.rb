@@ -22,10 +22,31 @@ RSpec.describe ObjectStore::Client do
       expect(described_class.new(protocol: :rest).client.port).to eq(8080)
       expect(described_class.new(protocol: :grpc).client.port).to eq(50_051)
       expect(described_class.new(protocol: :quic).client.port).to eq(4433)
+      expect(described_class.new(protocol: :mcp).client.port).to eq(8081)
+    end
+
+    it "unix protocol uses UnixClient (no port)" do
+      client = described_class.new(protocol: :unix)
+      expect(client.client).to be_a(ObjectStore::Clients::UnixClient)
     end
 
     it "accepts a custom port override" do
       expect(described_class.new(protocol: :rest, port: 9000).client.port).to eq(9000)
+    end
+
+    it "passes token to REST client" do
+      client = described_class.new(protocol: :rest, token: "tok")
+      expect(client.client.instance_variable_get(:@token)).to eq("tok")
+    end
+
+    it "passes tenant_id to REST client" do
+      client = described_class.new(protocol: :rest, tenant_id: "acme")
+      expect(client.client.instance_variable_get(:@tenant_id)).to eq("acme")
+    end
+
+    it "passes token to MCP client" do
+      client = described_class.new(protocol: :mcp, token: "tok")
+      expect(client.client.instance_variable_get(:@token)).to eq("tok")
     end
   end
 
@@ -33,7 +54,9 @@ RSpec.describe ObjectStore::Client do
     {
       rest: ObjectStore::Clients::RestClient,
       grpc: ObjectStore::Clients::GrpcClient,
-      quic: ObjectStore::Clients::QuicClient
+      quic: ObjectStore::Clients::QuicClient,
+      mcp: ObjectStore::Clients::McpClient,
+      unix: ObjectStore::Clients::UnixClient
     }.each do |protocol, klass|
       it "unified_delegates_#{protocol}" do
         client = described_class.new(protocol: protocol)
@@ -206,6 +229,21 @@ RSpec.describe ObjectStore::Client do
       client = described_class.new(protocol: :rest)
       client.switch_protocol(:grpc, port: 60_000)
       expect(client.client.port).to eq(60_000)
+    end
+
+    it "switches to mcp with default port" do
+      client = described_class.new(protocol: :rest)
+      client.switch_protocol(:mcp)
+      expect(client.protocol).to eq(:mcp)
+      expect(client.client).to be_a(ObjectStore::Clients::McpClient)
+      expect(client.client.port).to eq(8081)
+    end
+
+    it "switches to unix" do
+      client = described_class.new(protocol: :rest)
+      client.switch_protocol(:unix)
+      expect(client.protocol).to eq(:unix)
+      expect(client.client).to be_a(ObjectStore::Clients::UnixClient)
     end
 
     it "rejects switching to an invalid protocol" do

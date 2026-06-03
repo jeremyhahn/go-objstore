@@ -1,16 +1,33 @@
 # go-objstore Rust SDK
 
-A comprehensive Rust SDK for the [go-objstore](https://github.com/jeremyhahn/go-objstore) library, providing unified access to object storage operations via multiple protocols: REST, gRPC, and QUIC/HTTP3.
+A comprehensive Rust SDK for the [go-objstore](https://github.com/jeremyhahn/go-objstore) library, providing unified access to object storage operations via five protocols: REST, gRPC, QUIC/HTTP3, MCP (HTTP JSON-RPC 2.0), and Unix-domain sockets (JSON-RPC 2.0).
 
 ## Features
 
-- **Multi-protocol support**: REST, gRPC, and QUIC/HTTP3
+- **Multi-protocol support**: REST, gRPC, QUIC/HTTP3, MCP, and Unix socket
 - **Async/await**: Built on Tokio for efficient async operations
 - **Type-safe**: Strong typing with comprehensive error handling
 - **Unified interface**: Common trait for all protocols
-- **Advanced features**: Lifecycle policies, replication, archiving (gRPC)
-- **Well-tested**: 90%+ code coverage with unit and integration tests
+- **App-layer auth**: Optional `Authorization: Bearer`, `X-Tenant-ID`, and custom headers via `AuthConfig`
+- **Streaming**: `get_stream` / `put_stream` on REST, gRPC, and QUIC clients
+- **Advanced features**: Lifecycle policies, replication, archiving
+- **Well-tested**: 300+ tests covering all transports
 - **Production-ready**: Follows Rust best practices
+
+## Transport Comparison
+
+| Feature                         | REST | gRPC | QUIC/HTTP3 | MCP | Unix |
+|---------------------------------|------|------|------------|-----|------|
+| Put / Get / Delete              | yes  | yes  | yes        | yes | yes  |
+| List / Exists / Metadata        | yes  | yes  | yes        | yes | yes  |
+| Lifecycle policies              | yes  | yes  | yes        | yes | yes  |
+| Replication policies            | yes  | yes  | yes        | yes | yes  |
+| Archive                         | yes  | yes  | yes        | yes | yes  |
+| Streaming (get\_stream)         | yes  | yes  | yes        | no  | no   |
+| Bearer token auth               | yes  | yes  | yes        | yes | n/a  |
+| X-Tenant-ID                     | yes  | yes  | yes        | yes | n/a  |
+| TLS verification control        | no   | yes  | yes        | no  | n/a  |
+| Auth via peer credential (Unix) | n/a  | n/a  | n/a        | n/a | yes  |
 
 ## Installation
 
@@ -58,24 +75,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### REST Client
 
-The REST client uses HTTP/1.1 or HTTP/2 for communication:
-
 ```rust
 use go_objstore::ObjectStoreClient;
 
 let client = ObjectStoreClient::rest("http://localhost:8080")?;
 ```
 
-**Supported Operations:**
-- Put, Get, Delete
-- List objects with prefix filtering
-- Metadata operations (get, update)
-- Health check
-- Existence check
-
 ### gRPC Client
-
-The gRPC client provides full access to all go-objstore features:
 
 ```rust
 use go_objstore::ObjectStoreClient;
@@ -83,16 +89,7 @@ use go_objstore::ObjectStoreClient;
 let client = ObjectStoreClient::grpc("http://localhost:50051").await?;
 ```
 
-**Supported Operations:**
-- All REST operations
-- Lifecycle policies (add, remove, get, apply)
-- Replication policies (add, remove, get, trigger, status)
-- Archive operations
-- Streaming for large files
-
 ### QUIC/HTTP3 Client
-
-The QUIC client uses HTTP/3 over QUIC for low-latency operations:
 
 ```rust
 use go_objstore::ObjectStoreClient;
@@ -102,12 +99,63 @@ let addr: SocketAddr = "127.0.0.1:4433".parse()?;
 let client = ObjectStoreClient::quic(addr, "localhost").await?;
 ```
 
-**Supported Operations:**
-- Put, Get, Delete
-- Health check
-- Existence check
+### MCP Client (HTTP JSON-RPC 2.0)
 
-**Note:** QUIC requires the server to have HTTP3 enabled.
+The MCP client calls the go-objstore MCP server via HTTP POST, using the
+`tools/call` JSON-RPC 2.0 method.  All 19 `objstore_<op>` tool names are
+supported.  Binary data is base64-encoded in transit.
+
+```rust
+use go_objstore::{ObjectStoreClient, AuthConfig};
+
+// Without auth
+let client = ObjectStoreClient::mcp("http://localhost:8081")?;
+
+// With Bearer token and tenant
+let auth = AuthConfig {
+    token: Some("mytoken".to_string()),
+    tenant_id: Some("acme".to_string()),
+    ..Default::default()
+};
+let client = ObjectStoreClient::mcp_with_auth("http://localhost:8081", auth)?;
+```
+
+### Unix-Socket Client (JSON-RPC 2.0)
+
+The Unix client speaks newline-delimited JSON-RPC 2.0 over a Unix-domain
+socket.  Binary data is base64-encoded.  Authentication is handled by the
+server via peer credentials; the client sends no auth headers.
+
+```rust
+use go_objstore::ObjectStoreClient;
+
+let client = ObjectStoreClient::unix("/var/run/objstore.sock")?;
+```
+
+## Authentication (`AuthConfig`)
+
+Supply an `AuthConfig` to inject auth headers into REST, gRPC, QUIC, or MCP
+requests.  Unix connections ignore it (the server uses peer credentials).
+
+```rust
+use go_objstore::AuthConfig;
+use std::collections::HashMap;
+
+let auth = AuthConfig {
+    // Adds: Authorization: Bearer <token>
+    token: Some("my-bearer-token".to_string()),
+
+    // Adds: X-Tenant-ID: <tenant>
+    tenant_id: Some("acme".to_string()),
+
+    // Any additional headers
+    extra_headers: {
+        let mut h = HashMap::new();
+        h.insert("x-request-id".to_string(), "req-123".to_string());
+        h
+    },
+};
+```
 
 ## Usage Examples
 
@@ -451,6 +499,11 @@ async fn example() -> Result<()> {
     match client.get("nonexistent.txt").await {
         Ok((data, _)) => println!("Got data: {} bytes", data.len()),
         Err(Error::NotFound(key)) => println!("Object not found: {}", key),
+        Err(Error::Forbidden(msg)) => println!("Forbidden: {}", msg),
+        Err(Error::Unauthenticated(msg)) => println!("Unauthenticated: {}", msg),
+        Err(Error::AlreadyExists(key)) => println!("Already exists: {}", key),
+        Err(Error::RateLimited(msg)) => println!("Rate limited: {}", msg),
+        Err(Error::InvalidArgument(msg)) => println!("Invalid argument: {}", msg),
         Err(Error::Http(e)) => println!("HTTP error: {}", e),
         Err(e) => println!("Other error: {}", e),
     }
@@ -459,12 +512,28 @@ async fn example() -> Result<()> {
 }
 ```
 
+Server-side failures map to the same `Error` variant on every transport
+(canonical across all go-objstore SDKs):
+
+| Error variant     | HTTP (REST/QUIC) | JSON-RPC (MCP/Unix) | gRPC                |
+| ----------------- | ---------------- | ------------------- | ------------------- |
+| `InvalidArgument` | 400              | -32602              | `InvalidArgument`   |
+| `Unauthenticated` | 401              | -32002              | `Unauthenticated`   |
+| `Forbidden`       | 403              | -32001              | `PermissionDenied`  |
+| `NotFound`        | 404              | -32004              | `NotFound`          |
+| `AlreadyExists`   | 409              | -32005              | `AlreadyExists`     |
+| `RateLimited`     | 429              | -32029              | `ResourceExhausted` |
+| `OperationFailed` | other failures   | other codes         | --                  |
+
+gRPC codes without a dedicated variant surface as `Error::GrpcStatus` with
+the original `tonic::Status` preserved.
+
 ## Development
 
 ### Prerequisites
 
 - Rust 1.70 or later
-- Go 1.26.3 or later (for running the server)
+- Go 1.26.4 or later (for running the server)
 - protoc (Protocol Buffers compiler)
 
 ### Setup
@@ -537,7 +606,7 @@ Contributions are welcome! Please:
 
 ### v0.2.0
 
-- Go toolchain updated to 1.26.3
+- Go toolchain updated to 1.26.4
 - API parity across all SDKs
 
 ### v0.1.2 (2025-11-23)

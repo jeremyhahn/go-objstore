@@ -354,6 +354,25 @@ RSpec.describe ObjectStore::Clients::GrpcClient do
     end
   end
 
+  describe "gRPC status code mapping" do
+    {
+      "INVALID_ARGUMENT" => ObjectStore::ValidationError,
+      "UNAUTHENTICATED" => ObjectStore::AuthenticationError,
+      "PERMISSION_DENIED" => ObjectStore::AuthorizationError,
+      "NOT_FOUND" => ObjectStore::NotFoundError,
+      "ALREADY_EXISTS" => ObjectStore::AlreadyExistsError,
+      "RESOURCE_EXHAUSTED" => ObjectStore::RateLimitError,
+      "DEADLINE_EXCEEDED" => ObjectStore::TimeoutError,
+      "UNIMPLEMENTED" => ObjectStore::ServerError
+    }.each do |status_name, error_class|
+      it "grpc_status_#{status_name.downcase}_raises_#{error_class.name.split('::').last}" do
+        code = GRPC::Core::StatusCodes.const_get(status_name)
+        allow(stub).to receive(:put).and_raise(bad_status(code))
+        expect { client.put("k", "data") }.to raise_error(error_class)
+      end
+    end
+  end
+
   describe "cross-cutting" do
     it "grpc_metadata_round_trip" do
       custom = { "owner" => "alice" }

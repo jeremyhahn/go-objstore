@@ -14,6 +14,7 @@
 package local
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -70,19 +71,26 @@ func (lm *LifecycleManager) GetPolicies() ([]common.LifecyclePolicy, error) {
 	return policies, nil
 }
 
-// Run runs the lifecycle manager.
-func (lm *LifecycleManager) Run(storage *Local) {
+// Run runs the lifecycle manager until ctx is cancelled.
+// Process is invoked once per interval tick; the goroutine exits cleanly when
+// the context is done.
+func (lm *LifecycleManager) Run(ctx context.Context, storage *Local) {
+	ticker := time.NewTicker(lm.interval)
+	defer ticker.Stop()
 	for {
-		lm.Process(storage)
-		time.Sleep(lm.interval)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			lm.Process(storage)
+		}
 	}
 }
 
 // Process runs a single pass applying lifecycle policies to the storage.
 func (lm *LifecycleManager) Process(storage *Local) {
-	lm.mutex.RLock()
+	// GetPolicies acquires RLock internally and returns a copy; no outer lock needed.
 	policies, _ := lm.GetPolicies()
-	lm.mutex.RUnlock()
 
 	for _, policy := range policies {
 		walkFn := func(path string, info os.FileInfo, err error) error {

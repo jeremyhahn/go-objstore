@@ -42,7 +42,7 @@ func TestAuthenticationMiddlewareConcurrentNoBadLoggerRace(t *testing.T) {
 	// Build the engine once — the middleware closure is shared across all requests,
 	// which is exactly the scenario that triggered the race before the fix.
 	engine := gin.New()
-	engine.Use(AuthenticationMiddleware(authenticator, logger, nil))
+	engine.Use(AuthenticationMiddleware(authenticator, logger, nil, false))
 	engine.GET("/probe", func(c *gin.Context) {
 		c.Status(http.StatusOK)
 	})

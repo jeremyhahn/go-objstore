@@ -1,3 +1,4 @@
+import { Readable } from 'stream';
 import axios, { AxiosHeaders, AxiosInstance, AxiosError } from 'axios';
 import {
   ClientConfig,
@@ -45,18 +46,35 @@ import {
   replicationModeToString,
   stringToReplicationMode,
 } from '../types';
+import {
+  ObjectNotFoundError,
+  AuthenticationError,
+  AuthorizationError,
+  ValidationError,
+  AlreadyExistsError,
+  RateLimitError,
+  ServerError,
+  ConnectionError,
+} from '../errors';
 
 export class RestClient implements IObjectStoreClient {
   private client: AxiosInstance;
 
   constructor(config: ClientConfig) {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...config.headers,
+    };
+    if (config.token) {
+      headers['Authorization'] = `Bearer ${config.token}`;
+    }
+    if (config.tenantId) {
+      headers['X-Tenant-ID'] = config.tenantId;
+    }
     this.client = axios.create({
       baseURL: config.baseUrl,
       timeout: config.timeout || 30000,
-      headers: {
-        'Content-Type': 'application/json',
-        ...config.headers,
-      },
+      headers,
     });
   }
 
@@ -126,9 +144,11 @@ export class RestClient implements IObjectStoreClient {
   async delete(request: DeleteRequest): Promise<DeleteResponse> {
     try {
       const response = await this.client.delete(`/objects/${encodeURIComponent(request.key)}`);
+      // The server returns 204 No Content (empty body); tolerate 200 + JSON
+      // from older servers.
       return {
         success: true,
-        message: response.data.message,
+        message: response.data?.message ?? 'Object deleted successfully',
       };
     } catch (error) {
       return this.handleError(error);
@@ -490,6 +510,48 @@ export class RestClient implements IObjectStoreClient {
     }
   }
 
+  /**
+   * Stream an object from the backend. Returns a Node.js Readable so large
+   * objects need not be fully buffered in memory.
+   */
+  async getStream(key: string): Promise<Readable> {
+    try {
+      const response = await this.client.get(`/objects/${encodeURIComponent(key)}`, {
+        responseType: 'stream',
+      });
+      return response.data as Readable;
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  /**
+   * Upload a Readable stream or AsyncIterable as an object. The caller is
+   * responsible for setting metadata via a preceding updateMetadata call when
+   * needed, since headers cannot be derived from the stream itself.
+   */
+  async putStream(key: string, stream: Readable | AsyncIterable<Buffer>): Promise<PutResponse> {
+    try {
+      const readable = stream instanceof Readable ? stream : Readable.from(stream);
+      const response = await this.client.put(
+        `/objects/${encodeURIComponent(key)}`,
+        readable,
+        {
+          headers: { 'Content-Type': 'application/octet-stream' },
+          maxBodyLength: Infinity,
+          maxContentLength: Infinity,
+        }
+      );
+      return {
+        success: true,
+        message: response.data.message,
+        etag: response.headers.etag || response.headers.ETag,
+      };
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
   async close(): Promise<void> {
     // Nothing to close for REST client
     return Promise.resolve();
@@ -571,15 +633,38 @@ export class RestClient implements IObjectStoreClient {
     }
   }
 
+  // handleError converts an HTTP error response into the matching typed SDK
+  // error, preserving the status code and server-provided message. Failures
+  // without an HTTP response (DNS, refused connection, timeout, ...) are
+  // surfaced as ConnectionError.
   private handleError(error: unknown): never {
     if (axios.isAxiosError(error)) {
       const axiosError = error as AxiosError;
+      if (!axiosError.response) {
+        throw new ConnectionError(`REST connection error: ${axiosError.message}`);
+      }
       const message =
-        (axiosError.response?.data as any)?.message ||
-        (axiosError.response?.data as any)?.error ||
+        (axiosError.response.data as any)?.message ||
+        (axiosError.response.data as any)?.error ||
         axiosError.message;
-      const status = axiosError.response?.status || 500;
-      throw new Error(`REST API error (${status}): ${message}`);
+      const status = axiosError.response.status;
+      const detail = `REST API error (${status}): ${message}`;
+      switch (status) {
+        case 400:
+          throw new ValidationError(detail);
+        case 401:
+          throw new AuthenticationError(detail);
+        case 403:
+          throw new AuthorizationError(detail);
+        case 404:
+          throw new ObjectNotFoundError(detail);
+        case 409:
+          throw new AlreadyExistsError(detail);
+        case 429:
+          throw new RateLimitError(detail);
+        default:
+          throw new ServerError(detail, status);
+      }
     }
     throw error;
   }

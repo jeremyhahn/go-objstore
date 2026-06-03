@@ -7,7 +7,7 @@ A comprehensive Go client SDK for [go-objstore](https://github.com/jeremyhahn/go
 
 ## Features
 
-- **Multi-Protocol Support**: REST, gRPC, and QUIC/HTTP3
+- **Multi-Protocol Support**: REST, gRPC, QUIC/HTTP3, MCP (JSON-RPC 2.0 over HTTP), and Unix domain socket
 - **Unified Interface**: Single API across all protocols
 - **Full Feature Coverage**: All object storage operations including:
   - Object CRUD operations (Put, Get, Delete, List)
@@ -16,6 +16,8 @@ A comprehensive Go client SDK for [go-objstore](https://github.com/jeremyhahn/go
   - Replication policies
   - Archive operations
   - Health checks
+- **Streaming**: `GetStream` / `PutStream` on REST, QUIC, and gRPC clients via the `Streamer` interface
+- **App-layer Auth**: Pass `Token`, `TenantID`, and custom `Headers` through `ClientConfig`; the SDK transmits them without performing any auth logic
 - **Retry Logic with Exponential Backoff**: Configurable retry behavior for transient failures
 - **Input Validation**: Automatic validation of parameters before making requests
 - **Robust Error Handling**: Consistent error wrapping with sentinel errors for easy error checking
@@ -121,6 +123,50 @@ config := &objstore.ClientConfig{
 client, err := objstore.NewClient(config)
 if err != nil {
     log.Fatalf("Failed to create client: %v", err)
+}
+defer client.Close()
+```
+
+### MCP Client (JSON-RPC 2.0 over HTTP)
+
+The MCP client speaks the Model Context Protocol transport: HTTP POST to `/`
+with `{"jsonrpc":"2.0","method":"tools/call","params":{"name":"objstore_<op>","arguments":{...}}}`.
+
+```go
+config := &objstore.ClientConfig{
+    Protocol:       objstore.ProtocolMCP,
+    Address:        "localhost:8090",
+    RequestTimeout: 30 * time.Second,
+    // Optional auth fields (see App-layer Auth section):
+    Token:    "my-bearer-token",
+    TenantID: "tenant-acme",
+}
+
+client, err := objstore.NewClient(config)
+if err != nil {
+    log.Fatalf("Failed to create MCP client: %v", err)
+}
+defer client.Close()
+```
+
+### Unix Socket Client
+
+The Unix client sends newline-delimited JSON-RPC 2.0 messages over a Unix
+domain socket.  `Address` is the filesystem path to the socket file.
+Authentication is handled server-side via OS peercred; the client dials without
+any credential.
+
+```go
+config := &objstore.ClientConfig{
+    Protocol:          objstore.ProtocolUnix,
+    Address:           "/var/run/objstore/objstore.sock",
+    ConnectionTimeout: 5 * time.Second,
+    RequestTimeout:    30 * time.Second,
+}
+
+client, err := objstore.NewClient(config)
+if err != nil {
+    log.Fatalf("Failed to create Unix client: %v", err)
 }
 defer client.Close()
 ```
@@ -323,16 +369,18 @@ if health.Status == "SERVING" {
 
 ## Error Handling
 
-The SDK provides typed errors for common scenarios:
+The SDK provides typed sentinel errors for common scenarios. Server errors
+are wrapped, so always check them with `errors.Is`:
 
 ```go
 result, err := client.Get(ctx, "nonexistent-key")
 if err != nil {
-    if err == objstore.ErrObjectNotFound {
+    switch {
+    case errors.Is(err, objstore.ErrObjectNotFound):
         fmt.Println("Object does not exist")
-    } else if err == objstore.ErrConnectionFailed {
+    case errors.Is(err, objstore.ErrConnectionFailed):
         fmt.Println("Failed to connect to server")
-    } else {
+    default:
         log.Fatalf("Unexpected error: %v", err)
     }
 }
@@ -353,6 +401,25 @@ Available error constants:
 - `ErrInvalidMetadata` - Metadata cannot be nil for operations requiring it
 - `ErrTimeout` - Operation timeout (retryable)
 - `ErrTemporaryFailure` - Temporary failure (retryable)
+- `ErrInvalidArgument` - Server rejected the request as malformed
+- `ErrUnauthenticated` - Request lacks valid credentials
+- `ErrPermissionDenied` - Caller is not authorized for the operation
+- `ErrAlreadyExists` - Resource being created already exists
+- `ErrRateLimited` - Server throttled the request (retryable; also matches `ErrTemporaryFailure`)
+
+Server-side failures map to the same sentinels on every transport:
+
+| Sentinel              | HTTP (REST/QUIC/MCP) | gRPC                | JSON-RPC (unix/MCP) |
+| --------------------- | -------------------- | ------------------- | ------------------- |
+| `ErrInvalidArgument`  | 400                  | `InvalidArgument`   | `-32602`            |
+| `ErrUnauthenticated`  | 401                  | `Unauthenticated`   | `-32002`            |
+| `ErrPermissionDenied` | 403                  | `PermissionDenied`  | `-32001`            |
+| `ErrObjectNotFound`   | 404                  | `NotFound`          | `-32004`            |
+| `ErrAlreadyExists`    | 409                  | `AlreadyExists`     | `-32005`            |
+| `ErrRateLimited`      | 429                  | `ResourceExhausted` | `-32029`            |
+
+Any other failure (5xx and unmapped codes) surfaces as a plain server error
+with no sentinel attached.
 
 ## Testing
 
@@ -410,21 +477,70 @@ make install-tools
 make clean
 ```
 
+## Streaming
+
+REST, QUIC, and gRPC clients implement the optional `Streamer` interface,
+which avoids buffering the entire object body in memory.  Use a type assertion
+to obtain it:
+
+```go
+if streamer, ok := client.(objstore.Streamer); ok {
+    rc, meta, err := streamer.GetStream(ctx, "large-file.bin")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer rc.Close()
+    // stream rc into an io.Writer, e.g. os.Stdout or a file
+
+    pr, pw := io.Pipe()
+    go func() {
+        defer pw.Close()
+        // write content to pw
+    }()
+    result, err := streamer.PutStream(ctx, "large-file.bin", pr, -1, nil)
+}
+```
+
+MCP and Unix clients buffer internally (the protocols do not stream natively).
+
+## App-layer Auth
+
+Set `Token`, `TenantID`, and/or `Headers` in `ClientConfig`.  The SDK
+transmits the values on every request without performing any auth logic itself.
+
+| Field | REST / QUIC / MCP | gRPC | Unix |
+|-------|------------------|------|------|
+| `Token` | `Authorization: Bearer <token>` header | `authorization` metadata | ignored (OS peercred) |
+| `TenantID` | `X-Tenant-ID` header | `x-tenant-id` metadata | ignored |
+| `Headers` | added verbatim | added as metadata keys | ignored |
+
+```go
+config := &objstore.ClientConfig{
+    Protocol: objstore.ProtocolREST,
+    Address:  "localhost:8080",
+    Token:    "my-service-token",
+    TenantID: "tenant-42",
+    Headers:  map[string]string{"X-Correlation-ID": "req-001"},
+}
+```
+
 ## Protocol Comparison
 
-| Feature | gRPC | REST | QUIC |
-|---------|------|------|------|
-| Object CRUD | ✅ | ✅ | ✅ |
-| Metadata | ✅ | ✅ | ✅ |
-| Lifecycle Policies | ✅ | ❌ | ✅ |
-| Replication | ✅ | ❌ | ✅ |
-| Archive | ✅ | ❌ | ✅ |
-| Streaming | ✅ | ❌ | ✅ |
-| HTTP/2 | ✅ | ❌ | ❌ |
-| HTTP/3 | ❌ | ❌ | ✅ |
-| Binary Protocol | ✅ | ❌ | ✅ |
+| Feature | gRPC | REST | QUIC | MCP | Unix |
+|---------|------|------|------|-----|------|
+| Object CRUD | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Metadata | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Lifecycle Policies | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Replication | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Archive | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Streaming (GetStream/PutStream) | ✅ | ✅ | ✅ | ❌ (buffered) | ❌ (buffered) |
+| App-layer Auth (Token/TenantID) | ✅ | ✅ | ✅ | ✅ | ❌ (peercred) |
+| TLS | ✅ | ✅ | ✅ (required) | ✅ | ❌ |
+| HTTP/2 | ✅ | ❌ | ❌ | ❌ | ❌ |
+| HTTP/3 | ❌ | ❌ | ✅ | ❌ | ❌ |
+| Unix socket | ❌ | ❌ | ❌ | ❌ | ✅ |
 
-**Recommendation**: Use gRPC for maximum feature support and performance. Use REST for simple use cases and broad compatibility. Use QUIC for low-latency scenarios and mobile networks.
+**Recommendation**: Use gRPC for maximum feature support and performance. Use REST for simple use cases and broad compatibility. Use QUIC for low-latency scenarios and mobile networks. Use MCP for AI-agent tool integrations. Use Unix socket for high-speed local inter-process communication.
 
 ## Retry Configuration
 
@@ -490,8 +606,8 @@ The retry logic automatically handles:
 
 ### ClientConfig Fields
 
-- `Protocol`: Protocol to use (REST, gRPC, QUIC)
-- `Address`: Server address (host:port)
+- `Protocol`: Protocol to use (REST, gRPC, QUIC, MCP, Unix)
+- `Address`: Server address (host:port) or Unix socket path for ProtocolUnix
 - `UseTLS`: Enable TLS encryption
 - `CertFile`: Path to client certificate
 - `KeyFile`: Path to client private key
@@ -503,6 +619,9 @@ The retry logic automatically handles:
 - `MaxSendMsgSize`: Maximum send message size (gRPC)
 - `MaxStreams`: Maximum concurrent streams (QUIC)
 - `Retry`: Retry configuration (optional, disabled by default)
+- `Token`: Bearer token sent as `Authorization: Bearer <token>` (REST/QUIC/MCP) or `authorization` metadata (gRPC); ignored by Unix client
+- `TenantID`: Sent as `X-Tenant-ID` header (REST/QUIC/MCP) or `x-tenant-id` metadata (gRPC); ignored by Unix client
+- `Headers`: Additional HTTP headers (REST/QUIC/MCP) or gRPC metadata key-value pairs; ignored by Unix client
 
 ### RetryConfig Fields
 
@@ -535,7 +654,7 @@ This SDK is dual-licensed:
 
 ### 0.2.0
 
-- Go toolchain updated to 1.26.3
+- Go toolchain updated to 1.26.4
 - API parity across all SDKs
 
 ### 0.1.0

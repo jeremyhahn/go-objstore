@@ -302,20 +302,31 @@ export interface GetReplicationStatusResponse {
   message?: string;
 }
 
-export interface ClientConfig {
-  baseUrl: string;
-  timeout?: number;
+/**
+ * App-layer auth fields shared by all HTTP-based transports (REST, QUIC, MCP).
+ * - token: when set, sent as Authorization: Bearer <token>
+ * - headers: arbitrary headers merged into every request
+ * - tenantId: when set, sent as X-Tenant-ID header
+ */
+export interface AuthConfig {
+  token?: string;
   headers?: Record<string, string>;
+  tenantId?: string;
 }
 
-export interface GrpcClientConfig {
+export interface ClientConfig extends AuthConfig {
+  baseUrl: string;
+  timeout?: number;
+}
+
+export interface GrpcClientConfig extends AuthConfig {
   address: string;
   secure?: boolean;
   credentials?: grpc.ChannelCredentials;
   options?: grpc.ClientOptions;
 }
 
-export interface QuicClientConfig {
+export interface QuicClientConfig extends AuthConfig {
   address: string;
   secure?: boolean;
   certificates?: {
@@ -325,13 +336,34 @@ export interface QuicClientConfig {
   };
 }
 
-export type ProtocolType = 'rest' | 'grpc' | 'quic';
+/**
+ * Configuration for the MCP (Model Context Protocol) HTTP transport.
+ * The server accepts HTTP POST JSON-RPC 2.0 requests at its base URL path "/".
+ */
+export interface McpClientConfig extends AuthConfig {
+  baseUrl: string;
+  timeout?: number;
+}
+
+/**
+ * Configuration for the Unix domain socket transport.
+ * The server speaks newline-delimited JSON-RPC 2.0 over the socket.
+ * Authentication is handled server-side via peercred; no client credential needed.
+ */
+export interface UnixClientConfig {
+  socketPath: string;
+  timeout?: number;
+}
+
+export type ProtocolType = 'rest' | 'grpc' | 'quic' | 'mcp' | 'unix';
 
 export interface ObjectStoreClientConfig {
   protocol: ProtocolType;
   rest?: ClientConfig;
   grpc?: GrpcClientConfig;
   quic?: QuicClientConfig;
+  mcp?: McpClientConfig;
+  unix?: UnixClientConfig;
 }
 
 export interface IObjectStoreClient {

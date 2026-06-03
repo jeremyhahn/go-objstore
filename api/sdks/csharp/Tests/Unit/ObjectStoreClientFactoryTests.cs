@@ -61,6 +61,34 @@ public class ObjectStoreClientFactoryTests
     }
 
     [Fact]
+    public void Unified_Delegates_Mcp()
+    {
+        using var client = ObjectStoreClientFactory.Create("http://localhost:8081", Protocol.MCP);
+        client.Should().BeOfType<McpClient>();
+    }
+
+    [Fact]
+    public void Unified_Delegates_Unix()
+    {
+        using var client = ObjectStoreClientFactory.Create("/tmp/objstore.sock", Protocol.Unix);
+        client.Should().BeOfType<UnixClient>();
+    }
+
+    [Fact]
+    public void Unified_CreateMcpClient_ReturnsMcp()
+    {
+        using var client = ObjectStoreClientFactory.CreateMcpClient("http://localhost:8081");
+        client.Should().BeOfType<McpClient>();
+    }
+
+    [Fact]
+    public void Unified_CreateUnixClient_ReturnsUnix()
+    {
+        using var client = ObjectStoreClientFactory.CreateUnixClient("/tmp/objstore.sock");
+        client.Should().BeOfType<UnixClient>();
+    }
+
+    [Fact]
     public void Unified_NullBaseUrl_Throws()
     {
         Assert.Throws<ArgumentNullException>(() => ObjectStoreClientFactory.Create(null!, Protocol.REST));
@@ -107,6 +135,22 @@ public class ObjectStoreClientFactoryTests
     public void Unified_Close_Quic()
     {
         var client = ObjectStoreClientFactory.Create("https://localhost:8443", Protocol.QUIC);
+        client.Dispose();
+        client.Dispose(); // idempotent
+    }
+
+    [Fact]
+    public void Unified_Close_Mcp()
+    {
+        var client = ObjectStoreClientFactory.Create("http://localhost:8081", Protocol.MCP);
+        client.Dispose();
+        client.Dispose(); // idempotent
+    }
+
+    [Fact]
+    public void Unified_Close_Unix()
+    {
+        var client = ObjectStoreClientFactory.Create("/tmp/objstore.sock", Protocol.Unix);
         client.Dispose();
         client.Dispose(); // idempotent
     }
