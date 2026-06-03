@@ -718,7 +718,7 @@ For issues and questions:
 
 ### 0.2.0
 
-- Go toolchain updated to 1.26.3
+- Go toolchain updated to 1.26.4
 - API parity across all SDKs
 
 ### 0.1.0 (2025-11-23)

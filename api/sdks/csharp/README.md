@@ -345,7 +345,7 @@ For commercial licensing options, see [LICENSE-COMMERCIAL.md](../../../LICENSE-C
 
 ### Version 0.2.0
 
-- Go toolchain updated to 1.26.3
+- Go toolchain updated to 1.26.4
 - API parity across all SDKs
 
 ### Version 0.1.0

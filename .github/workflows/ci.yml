@@ -7,7 +7,7 @@ on:
     branches: [ main, develop ]
 
 env:
-  GO_VERSION: '1.26.3'
+  GO_VERSION: '1.26.4'
   COVERAGE_THRESHOLD: 89
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
@@ -50,7 +50,7 @@ jobs:
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v6
       with:
-        file: ./coverage/unit.out
+        files: ./coverage/unit.out
         flags: unittests
         name: codecov-umbrella
         fail_ci_if_error: false
@@ -106,7 +106,7 @@ jobs:
         cache: true
 
     - name: Run golangci-lint
-      uses: golangci/golangci-lint-action@v7
+      uses: golangci/golangci-lint-action@v9
       with:
         version: v2.11.1
         args: --timeout=10m
