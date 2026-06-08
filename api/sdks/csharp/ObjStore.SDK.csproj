@@ -18,26 +18,26 @@
 
   <ItemGroup>
     <!-- gRPC and Protobuf -->
-    <PackageReference Include="Grpc.Net.Client" Version="2.59.0" />
-    <PackageReference Include="Grpc.Tools" Version="2.59.0">
+    <PackageReference Include="Grpc.Net.Client" Version="2.80.0" />
+    <PackageReference Include="Grpc.Tools" Version="2.81.0">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <PackageReference Include="Google.Protobuf" Version="3.25.1" />
+    <PackageReference Include="Google.Protobuf" Version="3.35.0" />
 
     <!-- HTTP Client -->
-    <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.1" />
-    <PackageReference Include="System.Net.Http.Json" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.8" />
+    <PackageReference Include="System.Net.Http.Json" Version="10.0.8" />
 
     <!-- HTTP/3 QUIC Support (built into .NET 7+, no separate package needed) -->
 
     <!-- JSON Serialization -->
-    <PackageReference Include="System.Text.Json" Version="8.0.6" />
+    <PackageReference Include="System.Text.Json" Version="10.0.8" />
 
     <!-- Dependency Injection -->
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
-    <PackageReference Include="Microsoft.Extensions.Options" Version="8.0.2" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.8" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.8" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.8" />
   </ItemGroup>
 
   <ItemGroup>
