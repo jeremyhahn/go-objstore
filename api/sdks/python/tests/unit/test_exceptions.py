@@ -3,10 +3,13 @@
 import pytest
 
 from objstore.exceptions import (
+    AlreadyExistsError,
     AuthenticationError,
+    AuthorizationError,
     ConnectionError,
     ObjectNotFoundError,
     ObjectStoreError,
+    RateLimitError,
     ServerError,
     TimeoutError,
     ValidationError,
@@ -41,6 +44,24 @@ class TestExceptions:
         assert str(error) == "invalid token"
         assert error.status_code == 401
 
+    def test_authorization_error(self) -> None:
+        """Test AuthorizationError."""
+        error = AuthorizationError("access denied")
+        assert str(error) == "access denied"
+        assert error.status_code == 403
+
+    def test_already_exists_error(self) -> None:
+        """Test AlreadyExistsError."""
+        error = AlreadyExistsError("object already exists")
+        assert str(error) == "object already exists"
+        assert error.status_code == 409
+
+    def test_rate_limit_error(self) -> None:
+        """Test RateLimitError."""
+        error = RateLimitError("too many requests")
+        assert str(error) == "too many requests"
+        assert error.status_code == 429
+
     def test_validation_error(self) -> None:
         """Test ValidationError."""
         error = ValidationError("invalid input")
@@ -63,6 +84,9 @@ class TestExceptions:
         assert issubclass(ObjectNotFoundError, ObjectStoreError)
         assert issubclass(ConnectionError, ObjectStoreError)
         assert issubclass(AuthenticationError, ObjectStoreError)
+        assert issubclass(AuthorizationError, ObjectStoreError)
+        assert issubclass(AlreadyExistsError, ObjectStoreError)
+        assert issubclass(RateLimitError, ObjectStoreError)
         assert issubclass(ValidationError, ObjectStoreError)
         assert issubclass(ServerError, ObjectStoreError)
         assert issubclass(TimeoutError, ObjectStoreError)

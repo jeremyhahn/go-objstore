@@ -1,5 +1,7 @@
 use bytes::Bytes;
-use go_objstore::{LifecyclePolicy, Metadata, ObjectStore, ObjectStoreClient, ReplicationMode, ReplicationPolicy};
+use go_objstore::{
+    LifecyclePolicy, Metadata, ObjectStore, ObjectStoreClient, ReplicationMode, ReplicationPolicy,
+};
 use std::collections::HashMap;
 
 #[tokio::main]
@@ -78,7 +80,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let policies = client.get_policies(None).await?;
     println!("✓ Retrieved {} lifecycle policies", policies.len());
     for policy in &policies {
-        println!("  - {} (prefix: {}, action: {})", policy.id, policy.prefix, policy.action);
+        println!(
+            "  - {} (prefix: {}, action: {})",
+            policy.id, policy.prefix, policy.action
+        );
     }
 
     client.remove_policy("example-policy").await?;
@@ -114,7 +119,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("✓ Retrieved {} replication policies", repl_policies.len());
 
     // Clean up replication policy
-    client.remove_replication_policy("example-replication").await?;
+    client
+        .remove_replication_policy("example-replication")
+        .await?;
     println!("✓ Removed replication policy");
 
     // Delete the object

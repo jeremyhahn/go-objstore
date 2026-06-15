@@ -145,7 +145,7 @@ func TestGCS_GetWithContext_Error(t *testing.T) {
 	}
 }
 
-// TestGCS_GetMetadata tests metadata retrieval (stub implementation)
+// TestGCS_GetMetadata tests that GetMetadata never returns nil metadata.
 func TestGCS_GetMetadata(t *testing.T) {
 	fc := fakeClient{b: fakeBucket{objs: map[string]*fakeObj{}}}
 	g := &GCS{client: fc, bucket: "test-bucket"}
@@ -156,21 +156,23 @@ func TestGCS_GetMetadata(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	// Stub implementation returns nil
-	if metadata != nil {
-		t.Fatalf("expected nil metadata (stub), got %v", metadata)
+	// GetMetadata must return a non-nil struct so callers never dereference nil.
+	if metadata == nil {
+		t.Fatal("expected non-nil metadata, got nil")
 	}
 }
 
-// TestGCS_UpdateMetadata tests metadata update (stub implementation)
+// TestGCS_UpdateMetadata tests that metadata updates are applied via
+// ObjectAttrsToUpdate with replace semantics.
 func TestGCS_UpdateMetadata(t *testing.T) {
-	fc := fakeClient{b: fakeBucket{objs: map[string]*fakeObj{}}}
+	obj := &fakeObj{data: []byte("data")}
+	fc := fakeClient{b: fakeBucket{objs: map[string]*fakeObj{"key": obj}}}
 	g := &GCS{client: fc, bucket: "test-bucket"}
 	ctx := context.Background()
 
 	metadata := &common.Metadata{
 		ContentType:     "text/plain",
-		ContentEncoding: "none",
+		ContentEncoding: "gzip",
 		Custom: map[string]string{
 			"updated": "true",
 		},
@@ -178,18 +180,67 @@ func TestGCS_UpdateMetadata(t *testing.T) {
 
 	err := g.UpdateMetadata(ctx, "key", metadata)
 	if err != nil {
-		t.Fatalf("expected no error (stub), got %v", err)
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if obj.updated == nil {
+		t.Fatal("expected Update to be called on the object")
+	}
+	if obj.updated.ContentType != "text/plain" {
+		t.Fatalf("expected content type 'text/plain', got %v", obj.updated.ContentType)
+	}
+	if obj.updated.ContentEncoding != "gzip" {
+		t.Fatalf("expected content encoding 'gzip', got %v", obj.updated.ContentEncoding)
+	}
+	if obj.updated.Metadata["updated"] != "true" {
+		t.Fatalf("expected custom metadata to be applied, got %v", obj.updated.Metadata)
 	}
 }
 
 func TestGCS_UpdateMetadata_NilMetadata(t *testing.T) {
-	fc := fakeClient{b: fakeBucket{objs: map[string]*fakeObj{}}}
+	obj := &fakeObj{data: []byte("data")}
+	fc := fakeClient{b: fakeBucket{objs: map[string]*fakeObj{"key": obj}}}
 	g := &GCS{client: fc, bucket: "test-bucket"}
 	ctx := context.Background()
 
 	err := g.UpdateMetadata(ctx, "key", nil)
 	if err != nil {
-		t.Fatalf("expected no error (stub), got %v", err)
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	// Replace semantics: nil metadata clears existing custom metadata via an
+	// empty (non-nil) map.
+	if obj.updated == nil {
+		t.Fatal("expected Update to be called on the object")
+	}
+	if obj.updated.Metadata == nil || len(obj.updated.Metadata) != 0 {
+		t.Fatalf("expected empty non-nil custom metadata map, got %v", obj.updated.Metadata)
+	}
+}
+
+func TestGCS_UpdateMetadata_NotFound(t *testing.T) {
+	fc := fakeClient{b: fakeBucket{objs: map[string]*fakeObj{}}}
+	g := &GCS{client: fc, bucket: "test-bucket"}
+	ctx := context.Background()
+
+	err := g.UpdateMetadata(ctx, "missing", &common.Metadata{ContentType: "text/plain"})
+	if !errors.Is(err, common.ErrKeyNotFound) {
+		t.Fatalf("expected ErrKeyNotFound, got %v", err)
+	}
+}
+
+func TestGCS_UpdateMetadata_Error(t *testing.T) {
+	obj := &fakeObj{data: []byte("data"), updateErr: true}
+	fc := fakeClient{b: fakeBucket{objs: map[string]*fakeObj{"key": obj}}}
+	g := &GCS{client: fc, bucket: "test-bucket"}
+	ctx := context.Background()
+
+	err := g.UpdateMetadata(ctx, "key", &common.Metadata{ContentType: "text/plain"})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if errors.Is(err, common.ErrKeyNotFound) {
+		t.Fatalf("non-not-found errors must not be mapped to ErrKeyNotFound, got %v", err)
 	}
 }
 

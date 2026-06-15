@@ -2,160 +2,125 @@
 
 Configuration reference for automatic data retention and archival policies.
 
-## Basic Configuration
-
-```yaml
-lifecycle:
-  enabled: true
-  evaluation_interval: 24h
-  policies:
-    - id: cleanup-logs
-      prefix: logs/
-      action: delete
-      retention: 720h  # 30 days
-```
+Lifecycle policies are not configured through a config file. They are managed
+at runtime through the CLI, the server APIs (REST, gRPC, QUIC, MCP), or the Go
+API, and persist in a policy file alongside the storage path.
 
 ## Policy Parameters
 
 ### Required Fields
 - `id` - Unique policy identifier
-- `prefix` - Object key prefix to match
-- `action` - Action to perform (delete or archive)
-- `retention` - How long to keep objects (duration string)
+- `action` - Action to perform (`delete` or `archive`)
+- Retention - How long to keep objects (days in the CLI, `retention_seconds` in the APIs)
 
 ### Optional Fields
-- `enabled` - Enable this policy (default: true)
-- `destination` - Archive backend for archive action
-- `filters` - Additional filtering criteria
+- `prefix` - Object key prefix to match (empty matches all objects)
+- `destination_type` / `destination_settings` - Archive backend for the `archive` action
 
 ## Policy Actions
 
 ### Delete Action
-```yaml
-lifecycle:
-  policies:
-    - id: delete-temp-files
-      prefix: temp/
-      action: delete
-      retention: 24h
-```
+Objects older than the retention period are permanently deleted.
 
-Objects older than retention period are permanently deleted.
+```bash
+objstore policy add delete-temp-files temp/ 1 delete
+```
 
 ### Archive Action
-```yaml
-lifecycle:
-  policies:
-    - id: archive-old-data
-      prefix: data/
-      action: archive
-      retention: 2160h  # 90 days
-      destination: glacier
+Objects older than the retention period are moved to an archive backend.
+
+```bash
+objstore policy add archive-old-data data/ 90 archive
 ```
 
-Objects older than retention period moved to archive backend.
+## Managing Policies with the CLI
 
-## Duration Formats
+```bash
+# Add a policy: objstore policy add <id> <prefix> <retention-days> <action>
+objstore policy add cleanup-old-logs logs/ 30 delete     # Delete logs after 30 days
+objstore policy add archive-backups backups/ 90 archive  # Archive backups after 90 days
 
-Retention periods use Go duration strings:
-- `24h` - 24 hours
-- `168h` - 7 days (1 week)
-- `720h` - 30 days
-- `2160h` - 90 days
-- `8760h` - 365 days (1 year)
+# List all policies
+objstore policy list
 
-## Multiple Policies
-
-```yaml
-lifecycle:
-  enabled: true
-  evaluation_interval: 24h
-  
-  policies:
-    # Delete temporary uploads after 1 day
-    - id: cleanup-uploads
-      prefix: uploads/temp/
-      action: delete
-      retention: 24h
-    
-    # Delete logs after 30 days
-    - id: cleanup-logs
-      prefix: logs/
-      action: delete
-      retention: 720h
-    
-    # Archive old data after 90 days
-    - id: archive-data
-      prefix: data/
-      action: archive
-      retention: 2160h
-      destination: glacier
-    
-    # Delete archived data after 7 years
-    - id: cleanup-archives
-      prefix: archives/
-      action: delete
-      retention: 61320h  # 7 years
+# Remove a policy
+objstore policy remove cleanup-old-logs
 ```
 
-## Evaluation Configuration
+Retention is given in days on the CLI.
 
-```yaml
-lifecycle:
-  enabled: true
-  evaluation_interval: 24h  # How often to evaluate policies
-  evaluation_timeout: 1h    # Maximum time for evaluation
-  batch_size: 1000          # Objects per batch
-  workers: 4                # Concurrent workers
+## Managing Policies through the REST API
+
+```bash
+# Add a policy (retention_seconds: 2592000 = 30 days)
+curl -X POST http://localhost:8080/api/v1/policies \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "id": "cleanup-logs",
+    "prefix": "logs/",
+    "retention_seconds": 2592000,
+    "action": "delete"
+  }'
+
+# List policies
+curl http://localhost:8080/api/v1/policies
+
+# Remove a policy
+curl -X DELETE http://localhost:8080/api/v1/policies/cleanup-logs
+
+# Apply all policies now
+curl -X POST http://localhost:8080/api/v1/policies/apply
 ```
 
-## Archive Destinations
+Archive policies additionally take `destination_type` (e.g. `s3`, `glacier`,
+`local`) and `destination_settings` (backend-specific settings map).
 
-Define archive backends:
+The MCP server exposes the same operations as the `objstore_add_policy`,
+`objstore_remove_policy`, `objstore_get_policies`, and
+`objstore_apply_policies` tools, also using `retention_seconds`.
 
-```yaml
-storage:
-  backends:
-    glacier:
-      type: glacier
-      config:
-        region: us-east-1
-        vault: long-term-storage
+## Policy Execution
 
-lifecycle:
-  policies:
-    - id: archive-old
-      prefix: historical/
-      action: archive
-      retention: 2160h
-      destination: glacier  # References backend name
+Policies are evaluated when explicitly applied — there is no built-in
+scheduler. Trigger evaluation manually or from cron:
+
+```bash
+# Apply all policies
+objstore policy apply
+
+# Against a remote server
+objstore policy apply --server http://localhost:8080
+
+# Cron job example (daily at 2 AM):
+# 0 2 * * * /usr/local/bin/objstore policy apply
 ```
 
-## Filtering
+Objects matching a policy's prefix whose age exceeds the retention period are
+deleted or archived when the policies are applied.
 
-### Size-Based Filtering
-```yaml
-lifecycle:
-  policies:
-    - id: delete-small-temp
-      prefix: temp/
-      action: delete
-      retention: 24h
-      filters:
-        min_size: 0
-        max_size: 1048576  # 1MB
-```
+## Persistence
 
-### Name Pattern Filtering
-```yaml
-lifecycle:
-  policies:
-    - id: delete-logs
-      prefix: logs/
-      action: delete
-      retention: 720h
-      filters:
-        name_pattern: "*.log"
+For the `local` backend the CLI uses a persistent lifecycle manager: policies
+are stored in `.lifecycle-policies.json` within the storage path and survive
+across CLI invocations and server restarts. The server binaries persist
+replication policies similarly (`.replication-policies.json`).
+
+## Programmatic Configuration
+
+```go
+import (
+    "time"
+
+    "github.com/jeremyhahn/go-objstore/pkg/common"
+)
+
+policy := common.LifecyclePolicy{
+    ID:        "cleanup-logs",
+    Prefix:    "logs/",
+    Retention: 30 * 24 * time.Hour,
+    Action:    "delete",
+}
+err := lifecycleManager.AddPolicy(policy)
 ```
 
 ## Backend-Specific Behavior
@@ -173,116 +138,3 @@ Application-level policy evaluation for:
 - Local filesystem
 - MinIO (unless configured)
 - Custom backends
-
-## Monitoring and Metrics
-
-```yaml
-lifecycle:
-  metrics:
-    enabled: true
-    export_interval: 60s
-```
-
-Metrics exported:
-- Objects evaluated per policy
-- Objects deleted
-- Objects archived
-- Errors encountered
-- Evaluation duration
-
-## Error Handling
-
-```yaml
-lifecycle:
-  error_handling:
-    retry_attempts: 3
-    retry_delay: 5s
-    continue_on_error: true  # Don't stop on individual object errors
-```
-
-## Complete Example
-
-```yaml
-lifecycle:
-  enabled: true
-  evaluation_interval: 24h
-  evaluation_timeout: 1h
-  batch_size: 1000
-  workers: 4
-  
-  policies:
-    # Temporary uploads
-    - id: cleanup-temp-uploads
-      prefix: uploads/temp/
-      action: delete
-      retention: 24h
-      enabled: true
-    
-    # Application logs
-    - id: cleanup-app-logs
-      prefix: logs/app/
-      action: delete
-      retention: 720h  # 30 days
-      filters:
-        name_pattern: "*.log"
-    
-    # Access logs
-    - id: cleanup-access-logs
-      prefix: logs/access/
-      action: delete
-      retention: 2160h  # 90 days
-    
-    # Old application data
-    - id: archive-old-data
-      prefix: data/
-      action: archive
-      retention: 4320h  # 180 days
-      destination: glacier
-      filters:
-        min_size: 1048576  # Only archive files > 1MB
-    
-    # Very old archives
-    - id: delete-ancient-archives
-      prefix: archives/
-      action: delete
-      retention: 61320h  # 7 years
-  
-  metrics:
-    enabled: true
-    export_interval: 60s
-  
-  error_handling:
-    retry_attempts: 3
-    retry_delay: 5s
-    continue_on_error: true
-```
-
-## Testing Policies
-
-Test policies without executing:
-
-```bash
-# Dry run mode
-objstore lifecycle evaluate --dry-run
-
-# Test specific policy
-objstore lifecycle evaluate --policy=cleanup-logs --dry-run
-```
-
-## Manual Execution
-
-Trigger policy evaluation manually:
-
-```bash
-# Evaluate all policies
-objstore lifecycle evaluate
-
-# Evaluate specific policy
-objstore lifecycle evaluate --policy=cleanup-logs
-```
-
-## Environment Variable Overrides
-
-- `LIFECYCLE_ENABLED` - Enable lifecycle management
-- `LIFECYCLE_INTERVAL` - Evaluation interval
-- `LIFECYCLE_WORKERS` - Number of workers

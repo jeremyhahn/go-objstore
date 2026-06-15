@@ -22,6 +22,12 @@ tags:
     description: Object storage operations
   - name: metadata
     description: Metadata operations
+  - name: lifecycle
+    description: Lifecycle policy operations
+  - name: replication
+    description: Replication policy and trigger operations
+  - name: archive
+    description: Archive operations
   - name: health
     description: Health check endpoints
 
@@ -40,6 +46,29 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HealthResponse'
+
+  /metrics:
+    get:
+      tags:
+        - health
+      summary: Prometheus metrics
+      description: >
+        Prometheus exposition endpoint. Served at the server root (not under
+        /api/v1). Requires authentication and authorization by default; set
+        the server's MetricsPublic configuration flag (--metrics-public) to
+        expose it anonymously for Prometheus scrapers.
+      operationId: metrics
+      responses:
+        '200':
+          description: Prometheus metrics in text exposition format
+          content:
+            text/plain:
+              schema:
+                type: string
+        '401':
+          description: Authentication required (MetricsPublic disabled)
+        '403':
+          description: Authorization denied (MetricsPublic disabled)
 
   /objects:
     get:
@@ -219,12 +248,8 @@ paths:
             type: string
             example: "documents/file.pdf"
       responses:
-        '200':
+        '204':
           description: Object deleted successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SuccessResponse'
         '404':
           description: Object not found
           content:
@@ -241,8 +266,10 @@ paths:
     head:
       tags:
         - objects
-      summary: Check object existence
-      description: Check if an object exists without downloading its content
+      summary: Get object metadata via HEAD
+      description: >
+        Check if an object exists and retrieve its metadata headers without
+        downloading its content. Returns the same metadata headers as GET.
       operationId: headObject
       parameters:
         - name: key
@@ -275,12 +302,44 @@ paths:
         '404':
           description: Object not found
 
-  /objects/{key}/metadata:
+  /exists/{key}:
+    head:
+      tags:
+        - objects
+      summary: Check object existence
+      description: >
+        Lightweight existence check for an object. Returns 200 if the object
+        exists, 404 otherwise. No body is returned.
+      operationId: existsObject
+      parameters:
+        - name: key
+          in: path
+          description: Object key/path
+          required: true
+          schema:
+            type: string
+            example: "documents/file.pdf"
+      responses:
+        '200':
+          description: Object exists
+        '404':
+          description: Object not found
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /metadata/{key}:
     get:
       tags:
         - metadata
       summary: Get object metadata
-      description: Retrieve metadata for an object without downloading its content
+      description: >
+        Retrieve metadata for an object as a JSON body without downloading the
+        object content. This route is parity with the QUIC GET /metadata/<key>
+        route and the gRPC GetMetadata RPC.
       operationId: getObjectMetadata
       parameters:
         - name: key
@@ -339,6 +398,357 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         '404':
           description: Object not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /archive:
+    post:
+      tags:
+        - archive
+      summary: Archive object
+      description: >
+        Archive an object to a cold-storage destination (e.g., Glacier). The
+        object is read from the active backend and written to the specified
+        destination.
+      operationId: archiveObject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArchiveRequest'
+      responses:
+        '200':
+          description: Object archived successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /policies:
+    get:
+      tags:
+        - lifecycle
+      summary: List lifecycle policies
+      description: Retrieve all configured lifecycle policies, optionally filtered by prefix
+      operationId: getPolicies
+      parameters:
+        - name: prefix
+          in: query
+          description: Filter policies by object-key prefix
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of lifecycle policies
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PolicyListResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    post:
+      tags:
+        - lifecycle
+      summary: Add lifecycle policy
+      description: Create a new lifecycle policy
+      operationId: addPolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PolicyRequest'
+      responses:
+        '201':
+          description: Policy created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Policy already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /policies/{id}:
+    delete:
+      tags:
+        - lifecycle
+      summary: Remove lifecycle policy
+      description: Delete a lifecycle policy by its ID
+      operationId: removePolicy
+      parameters:
+        - name: id
+          in: path
+          description: Policy ID
+          required: true
+          schema:
+            type: string
+            example: "expire-old-docs"
+      responses:
+        '200':
+          description: Policy removed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '404':
+          description: Policy not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /policies/apply:
+    post:
+      tags:
+        - lifecycle
+      summary: Apply lifecycle policies
+      description: >
+        Evaluate all lifecycle policies against the current object set and
+        execute the configured actions (delete or archive) for matching objects
+        that have exceeded their retention period.
+      operationId: applyPolicies
+      responses:
+        '200':
+          description: Policies applied successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplyPoliciesResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /replication/policies:
+    get:
+      tags:
+        - replication
+      summary: List replication policies
+      description: Retrieve all configured replication policies
+      operationId: getReplicationPolicies
+      responses:
+        '200':
+          description: List of replication policies
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReplicationPolicyListResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    post:
+      tags:
+        - replication
+      summary: Add replication policy
+      description: Create a new replication policy
+      operationId: addReplicationPolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReplicationPolicyRequest'
+      responses:
+        '201':
+          description: Replication policy created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /replication/policies/{id}:
+    get:
+      tags:
+        - replication
+      summary: Get replication policy
+      description: Retrieve a specific replication policy by ID
+      operationId: getReplicationPolicy
+      parameters:
+        - name: id
+          in: path
+          description: Replication policy ID
+          required: true
+          schema:
+            type: string
+            example: "replicate-to-backup"
+      responses:
+        '200':
+          description: Replication policy details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReplicationPolicyResponse'
+        '404':
+          description: Policy not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      tags:
+        - replication
+      summary: Remove replication policy
+      description: Delete a replication policy by ID
+      operationId: removeReplicationPolicy
+      parameters:
+        - name: id
+          in: path
+          description: Replication policy ID
+          required: true
+          schema:
+            type: string
+            example: "replicate-to-backup"
+      responses:
+        '200':
+          description: Replication policy removed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '404':
+          description: Policy not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /replication/trigger:
+    post:
+      tags:
+        - replication
+      summary: Trigger replication
+      description: Manually trigger replication for a specific policy
+      operationId: triggerReplication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TriggerReplicationRequest'
+      responses:
+        '200':
+          description: Replication triggered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /replication/status/{id}:
+    get:
+      tags:
+        - replication
+      summary: Get replication status
+      description: Retrieve the current replication status for a policy
+      operationId: getReplicationStatus
+      parameters:
+        - name: id
+          in: path
+          description: Replication policy ID
+          required: true
+          schema:
+            type: string
+            example: "replicate-to-backup"
+      responses:
+        '200':
+          description: Replication status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReplicationStatusResponse'
+        '404':
+          description: Policy not found
           content:
             application/json:
               schema:
@@ -457,9 +867,13 @@ components:
           type: string
           description: Entity tag
           example: "d41d8cd98f00b204e9800998ecf8427e"
+        content_type:
+          type: string
+          description: MIME type of the object
+          example: "application/pdf"
         metadata:
           type: object
-          description: Custom metadata
+          description: Custom metadata key-value pairs
           additionalProperties:
             type: string
 
@@ -490,3 +904,199 @@ components:
           type: boolean
           description: Whether more results are available
           example: false
+
+    ArchiveRequest:
+      type: object
+      required:
+        - key
+        - destination_type
+      properties:
+        key:
+          type: string
+          description: Object key to archive
+          example: "documents/file.pdf"
+        destination_type:
+          type: string
+          description: Archive destination type (e.g., "glacier", "s3")
+          example: "glacier"
+        destination_settings:
+          type: object
+          description: Destination-specific settings
+          additionalProperties:
+            type: string
+          example:
+            vault_name: "my-vault"
+            region: "us-east-1"
+
+    PolicyRequest:
+      type: object
+      required:
+        - id
+        - action
+        - retention_seconds
+      properties:
+        id:
+          type: string
+          description: Unique policy identifier
+          example: "expire-old-docs"
+        prefix:
+          type: string
+          description: Object key prefix the policy applies to (empty = all objects)
+          example: "documents/"
+        retention_seconds:
+          type: integer
+          format: int64
+          description: Retention period in seconds
+          example: 2592000
+        action:
+          type: string
+          description: Action to perform when retention expires
+          enum: [delete, archive]
+          example: "delete"
+        destination_type:
+          type: string
+          description: Archive destination type (required when action=archive)
+          example: "glacier"
+        destination_settings:
+          type: object
+          description: Destination-specific settings (used when action=archive)
+          additionalProperties:
+            type: string
+
+    PolicyResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Policy identifier
+          example: "expire-old-docs"
+        prefix:
+          type: string
+          description: Object key prefix
+          example: "documents/"
+        retention_seconds:
+          type: integer
+          format: int64
+          description: Retention period in seconds
+          example: 2592000
+        action:
+          type: string
+          description: Action performed when retention expires
+          example: "delete"
+
+    PolicyListResponse:
+      type: object
+      properties:
+        policies:
+          type: array
+          items:
+            $ref: '#/components/schemas/PolicyResponse'
+        count:
+          type: integer
+          description: Total number of policies
+          example: 3
+
+    ApplyPoliciesResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          example: "lifecycle policies applied successfully"
+        policies_count:
+          type: integer
+          description: Number of policies evaluated
+          example: 2
+        objects_processed:
+          type: integer
+          description: Number of objects affected
+          example: 5
+
+    ReplicationPolicyRequest:
+      type: object
+      required:
+        - id
+        - destination_backend
+      properties:
+        id:
+          type: string
+          description: Unique replication policy identifier
+          example: "replicate-to-backup"
+        source_backend:
+          type: string
+          description: Source backend name (empty = default backend)
+          example: "default"
+        destination_backend:
+          type: string
+          description: Destination backend name
+          example: "backup"
+        destination_settings:
+          type: object
+          description: Destination backend settings
+          additionalProperties:
+            type: string
+        enabled:
+          type: boolean
+          description: Whether the policy is active
+          default: true
+
+    ReplicationPolicyResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Policy identifier
+          example: "replicate-to-backup"
+        source_backend:
+          type: string
+          example: "default"
+        destination_backend:
+          type: string
+          example: "backup"
+        enabled:
+          type: boolean
+          example: true
+
+    ReplicationPolicyListResponse:
+      type: object
+      properties:
+        policies:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReplicationPolicyResponse'
+        count:
+          type: integer
+          example: 1
+
+    TriggerReplicationRequest:
+      type: object
+      required:
+        - policy_id
+      properties:
+        policy_id:
+          type: string
+          description: Replication policy ID to trigger
+          example: "replicate-to-backup"
+
+    ReplicationStatusResponse:
+      type: object
+      properties:
+        policy_id:
+          type: string
+          example: "replicate-to-backup"
+        status:
+          type: string
+          description: Current replication status
+          example: "completed"
+        objects_replicated:
+          type: integer
+          description: Number of objects replicated in the last run
+          example: 42
+        last_run:
+          type: string
+          format: date-time
+          description: Timestamp of the last replication run
+          example: "2025-11-05T10:00:00Z"
+        error:
+          type: string
+          description: Error message from the last run, if any
+          example: ""

@@ -306,6 +306,13 @@ func (ctx *CommandContext) ArchiveCommandWithSettings(key, destinationBackend st
 }
 
 // AddPolicyCommand adds a lifecycle policy.
+//
+// In server mode the policy is forwarded as-is; the server configures the
+// archive destination from its own settings. In local mode the "archive"
+// action uses the AWS Glacier archiver as the destination, configured from
+// the dedicated archive settings (archive-vault-name, archive-region) with
+// the storage backend region as the region fallback. See newPolicyArchiver
+// for the validation rules.
 func (ctx *CommandContext) AddPolicyCommand(id, prefix, retentionDays, action string) error {
 	// Parse retention days
 	var retentionSeconds int64
@@ -323,23 +330,21 @@ func (ctx *CommandContext) AddPolicyCommand(id, prefix, retentionDays, action st
 		Action:    action,
 	}
 
-	// If action is archive, we need a destination
+	ctxBg := context.Background()
+
+	if ctx.Client != nil {
+		// Use remote client. The archive destination is configured
+		// server-side, so no archiver is constructed here.
+		return ctx.Client.AddPolicy(ctxBg, policy)
+	}
+
+	// Local archive policies need a destination archiver.
 	if action == "archive" {
-		// For CLI, we'll need to extend this to support destination configuration
-		// For now, we'll use the backend settings
-		settings := ctx.Config.GetStorageSettings()
-		archiver, err := factory.NewArchiver("glacier", settings)
+		archiver, err := ctx.newPolicyArchiver()
 		if err != nil {
 			return err
 		}
 		policy.Destination = archiver
-	}
-
-	ctxBg := context.Background()
-
-	if ctx.Client != nil {
-		// Use remote client
-		return ctx.Client.AddPolicy(ctxBg, policy)
 	}
 
 	// Add the policy using local storage
@@ -348,6 +353,23 @@ func (ctx *CommandContext) AddPolicyCommand(id, prefix, retentionDays, action st
 	}
 
 	return nil
+}
+
+// newPolicyArchiver creates the AWS Glacier archiver used as the destination
+// for archive lifecycle policies in local mode. It validates the runtime and
+// configuration up front so misconfiguration surfaces as a clear error when
+// the policy is added rather than an obscure failure when it is applied:
+// the glacier archiver must be compiled into the binary (build tag
+// "glacier") and a vault name must be configured via archive-vault-name.
+func (ctx *CommandContext) newPolicyArchiver() (common.Archiver, error) {
+	if !factory.IsArchiverRegistered("glacier") {
+		return nil, ErrGlacierArchiverUnavailable
+	}
+	settings := ctx.Config.GetArchiverSettings()
+	if settings["vaultName"] == "" {
+		return nil, ErrArchiveVaultRequired
+	}
+	return factory.NewArchiver("glacier", settings)
 }
 
 // RemovePolicyCommand removes a lifecycle policy.

@@ -17,6 +17,8 @@ import (
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
+
+	"github.com/jeremyhahn/go-objstore/pkg/server/metrics"
 )
 
 // SetupRoutes configures all routes for the REST API
@@ -26,6 +28,10 @@ func SetupRoutes(router *gin.Engine, handler *Handler) {
 
 	// Swagger documentation
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+
+	// Prometheus metrics endpoint (requires authorization unless the server is
+	// configured with MetricsPublic)
+	router.GET("/metrics", gin.WrapH(metrics.Handler()))
 
 	// API v1 group
 	v1 := router.Group("/api/v1")

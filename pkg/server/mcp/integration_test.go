@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -60,7 +61,11 @@ func TestServer_StartHTTP_Integration(t *testing.T) {
 	reqBody, _ := json.Marshal(initReq)
 	resp, err := http.Post("http://localhost:18080", "application/json", bytes.NewBuffer(reqBody))
 	if err != nil {
-		// Server might not be ready yet, skip this test
+		// In CI the server must come up; fail loudly instead of masking breakage.
+		if os.Getenv("CI") != "" {
+			t.Fatalf("Server not ready: %v", err)
+		}
+		// Locally the environment may legitimately lack prerequisites.
 		t.Skipf("Server not ready: %v", err)
 		return
 	}

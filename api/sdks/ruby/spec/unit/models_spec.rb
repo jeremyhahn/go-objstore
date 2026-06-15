@@ -177,10 +177,10 @@ RSpec.describe ObjectStore::Models do
       expect(policy.enabled).to be true
     end
 
-    it "defaults replication_mode to TRANSPARENT" do
+    it "defaults replication_mode to transparent" do
       policy = described_class.new(id: "rep2")
 
-      expect(policy.replication_mode).to eq("TRANSPARENT")
+      expect(policy.replication_mode).to eq("transparent")
     end
   end
 

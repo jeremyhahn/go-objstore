@@ -66,7 +66,7 @@ func TestAuthenticationMiddlewareSuccess(t *testing.T) {
 		},
 	}
 
-	router.Use(AuthenticationMiddleware(authenticator, logger, auditLogger))
+	router.Use(AuthenticationMiddleware(authenticator, logger, auditLogger, false))
 	router.GET("/test", func(c *gin.Context) {
 		// Check that principal is set in context
 		principalVal, exists := c.Get("principal")
@@ -112,7 +112,7 @@ func TestAuthenticationMiddlewareFailed(t *testing.T) {
 		shouldFail: true,
 	}
 
-	router.Use(AuthenticationMiddleware(authenticator, logger, auditLogger))
+	router.Use(AuthenticationMiddleware(authenticator, logger, auditLogger, false))
 	router.GET("/test", func(c *gin.Context) {
 		t.Error("Handler should not be called after auth failure")
 		c.String(http.StatusOK, "OK")
@@ -140,7 +140,7 @@ func TestAuthenticationMiddlewareNilAuditLogger(t *testing.T) {
 		},
 	}
 
-	router.Use(AuthenticationMiddleware(authenticator, logger, nil))
+	router.Use(AuthenticationMiddleware(authenticator, logger, nil, false))
 	router.GET("/test", func(c *gin.Context) {
 		c.String(http.StatusOK, "OK")
 	})
@@ -163,7 +163,7 @@ func TestAuthenticationMiddlewareFailedNilAuditLogger(t *testing.T) {
 		shouldFail: true,
 	}
 
-	router.Use(AuthenticationMiddleware(authenticator, logger, nil))
+	router.Use(AuthenticationMiddleware(authenticator, logger, nil, false))
 	router.GET("/test", func(c *gin.Context) {
 		c.String(http.StatusOK, "OK")
 	})
@@ -257,7 +257,7 @@ func TestLoggingMiddleware3xxStatus(t *testing.T) {
 // Test CORS middleware with different request methods
 func TestCORSMiddlewarePUT(t *testing.T) {
 	router := gin.New()
-	router.Use(CORSMiddleware())
+	router.Use(CORSMiddleware(nil))
 	router.PUT("/test", func(c *gin.Context) {
 		c.String(http.StatusOK, "OK")
 	})
@@ -268,7 +268,7 @@ func TestCORSMiddlewarePUT(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
-		t.Errorf("CORSMiddleware() PUT status = %v, want %v", w.Code, http.StatusOK)
+		t.Errorf("CORSMiddleware(nil) PUT status = %v, want %v", w.Code, http.StatusOK)
 	}
 
 	if w.Header().Get("Access-Control-Allow-Origin") != "*" {
@@ -278,7 +278,7 @@ func TestCORSMiddlewarePUT(t *testing.T) {
 
 func TestCORSMiddlewareDELETE(t *testing.T) {
 	router := gin.New()
-	router.Use(CORSMiddleware())
+	router.Use(CORSMiddleware(nil))
 	router.DELETE("/test", func(c *gin.Context) {
 		c.String(http.StatusOK, "OK")
 	})
@@ -289,7 +289,7 @@ func TestCORSMiddlewareDELETE(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
-		t.Errorf("CORSMiddleware() DELETE status = %v, want %v", w.Code, http.StatusOK)
+		t.Errorf("CORSMiddleware(nil) DELETE status = %v, want %v", w.Code, http.StatusOK)
 	}
 
 	if w.Header().Get("Access-Control-Allow-Origin") != "*" {
@@ -299,7 +299,7 @@ func TestCORSMiddlewareDELETE(t *testing.T) {
 
 func TestCORSMiddlewareHEAD(t *testing.T) {
 	router := gin.New()
-	router.Use(CORSMiddleware())
+	router.Use(CORSMiddleware(nil))
 	router.HEAD("/test", func(c *gin.Context) {
 		c.String(http.StatusOK, "OK")
 	})
@@ -310,7 +310,7 @@ func TestCORSMiddlewareHEAD(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
-		t.Errorf("CORSMiddleware() HEAD status = %v, want %v", w.Code, http.StatusOK)
+		t.Errorf("CORSMiddleware(nil) HEAD status = %v, want %v", w.Code, http.StatusOK)
 	}
 
 	if w.Header().Get("Access-Control-Allow-Origin") != "*" {

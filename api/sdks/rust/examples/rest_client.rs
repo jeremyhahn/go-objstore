@@ -57,7 +57,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let list_response = client.list(list_request).await?;
-    println!("✓ Listed {} objects with prefix 'examples/'", list_response.objects.len());
+    println!(
+        "✓ Listed {} objects with prefix 'examples/'",
+        list_response.objects.len()
+    );
     for obj in &list_response.objects {
         println!("  - {} ({} bytes)", obj.key, obj.metadata.size);
     }

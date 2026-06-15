@@ -223,10 +223,10 @@ func (m *mockLogger) Debug(ctx context.Context, msg string, fields ...adapters.F
 func (m *mockLogger) Info(ctx context.Context, msg string, fields ...adapters.Field)  {}
 func (m *mockLogger) Warn(ctx context.Context, msg string, fields ...adapters.Field)  {}
 func (m *mockLogger) Error(ctx context.Context, msg string, fields ...adapters.Field) {}
-func (m *mockLogger) WithFields(fields ...adapters.Field) adapters.Logger              { return m }
-func (m *mockLogger) WithContext(ctx context.Context) adapters.Logger                  { return m }
-func (m *mockLogger) SetLevel(level adapters.LogLevel)                                 {}
-func (m *mockLogger) GetLevel() adapters.LogLevel                                      { return adapters.InfoLevel }
+func (m *mockLogger) WithFields(fields ...adapters.Field) adapters.Logger             { return m }
+func (m *mockLogger) WithContext(ctx context.Context) adapters.Logger                 { return m }
+func (m *mockLogger) SetLevel(level adapters.LogLevel)                                {}
+func (m *mockLogger) GetLevel() adapters.LogLevel                                     { return adapters.InfoLevel }
 
 type mockAuditLogger struct{}
 
@@ -314,11 +314,11 @@ func TestReplication_LocalToLocal_WithPrefixFilter(t *testing.T) {
 
 	// Create test files in source
 	testFiles := map[string][]byte{
-		"logs/app.log":     []byte("application logs"),
-		"logs/error.log":   []byte("error logs"),
-		"data/file1.txt":   []byte("data file 1"),
-		"data/file2.txt":   []byte("data file 2"),
-		"config/app.yaml":  []byte("config data"),
+		"logs/app.log":    []byte("application logs"),
+		"logs/error.log":  []byte("error logs"),
+		"data/file1.txt":  []byte("data file 1"),
+		"data/file2.txt":  []byte("data file 2"),
+		"config/app.yaml": []byte("config data"),
 	}
 
 	for key, content := range testFiles {

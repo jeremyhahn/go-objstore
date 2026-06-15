@@ -37,7 +37,7 @@ func TestCompleteWorkflow(t *testing.T) {
 	// Put with metadata including all fields
 	result, err := executor.Execute(ctx, "objstore_put", map[string]any{
 		"key":  "workflow/test.txt",
-		"data": "test data content",
+		"data": "dGVzdCBkYXRhIGNvbnRlbnQ=", // base64("test data content")
 		"metadata": map[string]any{
 			"content_type":     "text/plain",
 			"content_encoding": "utf-8",
@@ -96,8 +96,9 @@ func TestCompleteWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get: %v", err)
 	}
-	if !strings.Contains(result, "test data content") {
-		t.Error("expected content in result")
+	// Object data is returned base64-encoded.
+	if !strings.Contains(result, "dGVzdCBkYXRhIGNvbnRlbnQ=") {
+		t.Error("expected base64 content in result")
 	}
 
 	// Delete

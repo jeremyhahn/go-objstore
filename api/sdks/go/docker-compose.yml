@@ -55,8 +55,8 @@ services:
       - OBJSTORE_QUIC_URL=https://objstore-server:4433
     volumes:
       - ../../..:/workspace
-    working_dir: /workspace/api/sdks/go/integration
-    command: go test -v -timeout=120s -tags=integration ./...
+    working_dir: /workspace/api/sdks/go
+    command: go test -v -timeout=120s -tags=integration .
     networks:
       - objstore-net
 

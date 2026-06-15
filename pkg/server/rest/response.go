@@ -15,11 +15,11 @@ package rest
 
 import (
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/replication"
+	servererrors "github.com/jeremyhahn/go-objstore/pkg/server/errors"
 )
 
 // ErrorResponse represents a standard error response
@@ -70,7 +70,7 @@ type ArchiveRequest struct {
 type AddPolicyRequest struct {
 	ID                  string            `json:"id" binding:"required" example:"policy-1"`
 	Prefix              string            `json:"prefix,omitempty" example:"logs/"`
-	Retention           time.Duration     `json:"retention_seconds" binding:"required" example:"2592000"`
+	RetentionSeconds    int64             `json:"retention_seconds" example:"2592000"`
 	Action              string            `json:"action" binding:"required" example:"delete"`
 	DestinationType     string            `json:"destination_type,omitempty" example:"s3"`
 	DestinationSettings map[string]string `json:"destination_settings,omitempty"`
@@ -158,6 +158,14 @@ type ReplicationStatusResponse struct {
 	AverageSyncDuration string `json:"average_sync_duration" example:"2.5s"`
 	SyncCount           int64  `json:"sync_count" example:"100"`
 } // @name ReplicationStatusResponse
+
+// RespondWithBackendError classifies a backend error through the shared
+// taxonomy (common.Classify) and sends the matching HTTP status, so REST
+// reports the same class of failure as gRPC and the JSON-RPC transports.
+func RespondWithBackendError(c *gin.Context, err error) {
+	code, message := servererrors.HTTPStatus(err)
+	RespondWithError(c, code, message)
+}
 
 // RespondWithError sends a standard error response
 func RespondWithError(c *gin.Context, code int, message string) {

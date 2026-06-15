@@ -13,7 +13,11 @@
 
 package common
 
-import "errors"
+import (
+	"context"
+	"errors"
+	"io/fs"
+)
 
 var (
 	// Configuration errors
@@ -86,4 +90,93 @@ var (
 
 	// ErrPolicyNotFound is returned when a replication policy is not found.
 	ErrPolicyNotFound = errors.New("replication policy not found")
+
+	// Canonical cross-transport sentinels. Backends and services wrap these so
+	// every transport (REST, gRPC, QUIC, MCP, unix) maps errors consistently
+	// via Classify.
+
+	// ErrAlreadyExists is returned when a resource already exists.
+	ErrAlreadyExists = errors.New("already exists")
+
+	// ErrInvalidArgument is returned when a request argument is invalid.
+	ErrInvalidArgument = errors.New("invalid argument")
+
+	// ErrPermissionDenied is returned when the caller is not authorized.
+	ErrPermissionDenied = errors.New("permission denied")
+
+	// ErrUnauthenticated is returned when the caller is not authenticated.
+	ErrUnauthenticated = errors.New("unauthenticated")
+
+	// ErrResourceExhausted is returned when a rate or quota limit is exceeded.
+	ErrResourceExhausted = errors.New("resource exhausted")
+
+	// ErrUnavailable is returned when a backend or dependency is unavailable.
+	ErrUnavailable = errors.New("unavailable")
 )
+
+// ErrorCode is the canonical classification of an error, independent of
+// transport. Per-transport mappers translate it to HTTP statuses, gRPC codes,
+// and JSON-RPC error codes.
+type ErrorCode int
+
+const (
+	// CodeInternal classifies unrecognized errors. Keep as zero value so an
+	// unset code maps to the safest default.
+	CodeInternal ErrorCode = iota
+	// CodeNotFound classifies missing objects, metadata, and policies.
+	CodeNotFound
+	// CodeAlreadyExists classifies conflicts with an existing resource.
+	CodeAlreadyExists
+	// CodeInvalidArgument classifies invalid request parameters.
+	CodeInvalidArgument
+	// CodePermissionDenied classifies authorization denials.
+	CodePermissionDenied
+	// CodeUnauthenticated classifies authentication failures.
+	CodeUnauthenticated
+	// CodeResourceExhausted classifies rate/quota limit errors.
+	CodeResourceExhausted
+	// CodeUnavailable classifies backend/dependency unavailability.
+	CodeUnavailable
+	// CodeCanceled classifies request cancellation.
+	CodeCanceled
+	// CodeDeadlineExceeded classifies timeouts.
+	CodeDeadlineExceeded
+)
+
+// Classify maps an error to its canonical ErrorCode. Matching uses errors.Is
+// exclusively, so producers must wrap (or be) the canonical sentinels above,
+// the std fs sentinels, or the context errors for classification to work.
+func Classify(err error) ErrorCode {
+	if err == nil {
+		return CodeInternal
+	}
+
+	switch {
+	case errors.Is(err, ErrKeyNotFound),
+		errors.Is(err, ErrMetadataNotFound),
+		errors.Is(err, ErrPolicyNotFound),
+		// Raw filesystem not-found errors leaked by backends.
+		errors.Is(err, fs.ErrNotExist):
+		return CodeNotFound
+	case errors.Is(err, ErrAlreadyExists):
+		return CodeAlreadyExists
+	case errors.Is(err, ErrInvalidArgument):
+		return CodeInvalidArgument
+	case errors.Is(err, ErrPermissionDenied),
+		// Raw filesystem permission errors leaked by backends.
+		errors.Is(err, fs.ErrPermission):
+		return CodePermissionDenied
+	case errors.Is(err, ErrUnauthenticated):
+		return CodeUnauthenticated
+	case errors.Is(err, ErrResourceExhausted):
+		return CodeResourceExhausted
+	case errors.Is(err, ErrUnavailable):
+		return CodeUnavailable
+	case errors.Is(err, context.Canceled):
+		return CodeCanceled
+	case errors.Is(err, context.DeadlineExceeded):
+		return CodeDeadlineExceeded
+	default:
+		return CodeInternal
+	}
+}

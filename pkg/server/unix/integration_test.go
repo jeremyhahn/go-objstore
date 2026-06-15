@@ -21,6 +21,8 @@ import (
 	"net"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-objstore/pkg/server/jsonrpc"
 )
 
 // sendRequest sends a JSON-RPC request and returns the response
@@ -420,7 +422,8 @@ func TestIntegration_ErrorResponses(t *testing.T) {
 				Params:  json.RawMessage(`{"key":"nonexistent"}`),
 				ID:      3,
 			},
-			errCode: ErrCodeInternalError,
+			// Not-found maps to the shared taxonomy code, not internal error.
+			errCode: jsonrpc.CodeNotFound,
 		},
 	}
 

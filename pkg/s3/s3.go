@@ -19,6 +19,7 @@ package s3
 
 import (
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -89,6 +90,9 @@ func (s *S3) Configure(settings map[string]string) error {
 
 // Put stores an object in the backend.
 func (s *S3) Put(key string, data io.Reader) error {
+	if err := common.ValidateKey(key); err != nil {
+		return err
+	}
 	_, err := s.svc.PutObject(&s3.PutObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
@@ -99,6 +103,9 @@ func (s *S3) Put(key string, data io.Reader) error {
 
 // Get retrieves an object from the backend.
 func (s *S3) Get(key string) (io.ReadCloser, error) {
+	if err := common.ValidateKey(key); err != nil {
+		return nil, err
+	}
 	result, err := s.svc.GetObject(&s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
@@ -111,6 +118,9 @@ func (s *S3) Get(key string) (io.ReadCloser, error) {
 
 // Delete removes an object from the backend.
 func (s *S3) Delete(key string) error {
+	if err := common.ValidateKey(key); err != nil {
+		return err
+	}
 	_, err := s.svc.DeleteObject(&s3.DeleteObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
@@ -343,9 +353,8 @@ func isNoSuchLifecycleConfiguration(err error) bool {
 	if err == nil {
 		return false
 	}
-	// AWS SDK returns "NoSuchLifecycleConfiguration" error code
-	return err.Error() == "NoSuchLifecycleConfiguration" ||
-		(len(err.Error()) > 0 && err.Error()[:28] == "NoSuchLifecycleConfiguration")
+	// AWS SDK returns "NoSuchLifecycleConfiguration" as the error code or as a prefix.
+	return strings.HasPrefix(err.Error(), "NoSuchLifecycleConfiguration")
 }
 
 // GetReplicationManager returns the replication manager for this backend.

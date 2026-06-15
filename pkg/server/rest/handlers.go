@@ -40,6 +40,9 @@ const (
 	MaxListLimit = 1000
 )
 
+// keyField is the request/response field name for an object key.
+const keyField = "key"
+
 // Handler handles REST API requests using the ObjstoreFacade
 type Handler struct {
 	backend string // Backend name (empty = default)
@@ -67,7 +70,7 @@ func (h *Handler) keyRef(key string) string {
 
 // PutObject handles object upload
 func (h *Handler) PutObject(c *gin.Context) {
-	key := c.Param("key")
+	key := c.Param(keyField)
 	if key == "" {
 		RespondWithError(c, http.StatusBadRequest, "key parameter is required")
 		return
@@ -112,18 +115,28 @@ func (h *Handler) PutObject(c *gin.Context) {
 		// Handle direct body upload (streaming)
 		reader = c.Request.Body
 
-		// Parse metadata from header if provided
-		metadataHeader := c.GetHeader("X-Metadata")
-		if metadataHeader != "" {
-			metadata = &common.Metadata{}
-			if err := json.Unmarshal([]byte(metadataHeader), metadata); err != nil {
-				RespondWithError(c, http.StatusBadRequest, "invalid metadata JSON in header: "+err.Error())
+		// Content type and encoding are carried in the standard HTTP headers.
+		metadata = &common.Metadata{
+			ContentType:     c.GetHeader("Content-Type"),
+			ContentEncoding: c.GetHeader("Content-Encoding"),
+		}
+
+		// Custom metadata is carried as a JSON object (string->string map) in
+		// the X-Object-Metadata header.
+		if customHeader := c.GetHeader("X-Object-Metadata"); customHeader != "" {
+			custom := map[string]string{}
+			if err := json.Unmarshal([]byte(customHeader), &custom); err != nil {
+				RespondWithError(c, http.StatusBadRequest, "invalid X-Object-Metadata JSON in header: "+err.Error())
 				return
 			}
-		} else {
-			metadata = &common.Metadata{
-				ContentType: c.GetHeader("Content-Type"),
+			// Validate semantic constraints (entry count, key/value length,
+			// control characters) up front so client errors surface as 400
+			// rather than a 500 from PutWithMetadata deeper in the stack.
+			if err := common.ValidateMetadata(custom); err != nil {
+				RespondWithError(c, http.StatusBadRequest, "invalid X-Object-Metadata: "+err.Error())
+				return
 			}
+			metadata.Custom = custom
 		}
 	}
 
@@ -139,7 +152,7 @@ func (h *Handler) PutObject(c *gin.Context) {
 		_ = auditLogger.LogObjectMutation(c.Request.Context(), audit.EventObjectCreated,
 			userID, principal, h.backend, key, c.ClientIP(), requestID, 0,
 			audit.ResultFailure, err)
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -156,12 +169,12 @@ func (h *Handler) PutObject(c *gin.Context) {
 		c.Header("ETag", etag)
 	}
 
-	RespondWithSuccess(c, http.StatusCreated, "object uploaded successfully", gin.H{"key": key, "etag": etag})
+	RespondWithSuccess(c, http.StatusCreated, "object uploaded successfully", gin.H{keyField: key, "etag": etag})
 }
 
 // GetObject handles object download
 func (h *Handler) GetObject(c *gin.Context) {
-	key := c.Param("key")
+	key := c.Param(keyField)
 	if key == "" {
 		RespondWithError(c, http.StatusBadRequest, "key parameter is required")
 		return
@@ -210,6 +223,13 @@ func (h *Handler) GetObject(c *gin.Context) {
 		c.Header("Content-Length", strconv.FormatInt(metadata.Size, 10))
 	}
 
+	// Custom metadata is returned as a JSON object in the X-Object-Metadata header.
+	if len(metadata.Custom) > 0 {
+		if customJSON, err := json.Marshal(metadata.Custom); err == nil {
+			c.Header("X-Object-Metadata", string(customJSON))
+		}
+	}
+
 	// Stream the response
 	c.Status(http.StatusOK)
 	_, err = io.Copy(c.Writer, reader)
@@ -220,7 +240,7 @@ func (h *Handler) GetObject(c *gin.Context) {
 
 // DeleteObject handles object deletion
 func (h *Handler) DeleteObject(c *gin.Context) {
-	key := c.Param("key")
+	key := c.Param(keyField)
 	if key == "" {
 		RespondWithError(c, http.StatusBadRequest, "key parameter is required")
 		return
@@ -234,7 +254,7 @@ func (h *Handler) DeleteObject(c *gin.Context) {
 	// Check if object exists using facade
 	exists, err := objstore.Exists(c.Request.Context(), h.keyRef(key))
 	if err != nil {
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -255,7 +275,7 @@ func (h *Handler) DeleteObject(c *gin.Context) {
 		_ = auditLogger.LogObjectMutation(c.Request.Context(), audit.EventObjectDeleted,
 			userID, principal, h.backend, key, c.ClientIP(), requestID, 0,
 			audit.ResultFailure, err)
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -263,12 +283,13 @@ func (h *Handler) DeleteObject(c *gin.Context) {
 		userID, principal, h.backend, key, c.ClientIP(), requestID, 0,
 		audit.ResultSuccess, nil)
 
-	RespondWithSuccess(c, http.StatusOK, "object deleted successfully", gin.H{"key": key})
+	// 204 No Content per the OpenAPI contract for DELETE.
+	c.Status(http.StatusNoContent)
 }
 
 // HeadObject checks if an object exists
 func (h *Handler) HeadObject(c *gin.Context) {
-	key := c.Param("key")
+	key := c.Param(keyField)
 	if key == "" {
 		RespondWithError(c, http.StatusBadRequest, "key parameter is required")
 		return
@@ -282,7 +303,7 @@ func (h *Handler) HeadObject(c *gin.Context) {
 	// Check if object exists using facade
 	exists, err := objstore.Exists(c.Request.Context(), h.keyRef(key))
 	if err != nil {
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -305,6 +326,11 @@ func (h *Handler) HeadObject(c *gin.Context) {
 		}
 		if metadata.Size > 0 {
 			c.Header("Content-Length", strconv.FormatInt(metadata.Size, 10))
+		}
+		if len(metadata.Custom) > 0 {
+			if customJSON, jerrr := json.Marshal(metadata.Custom); jerrr == nil {
+				c.Header("X-Object-Metadata", string(customJSON))
+			}
 		}
 	}
 
@@ -344,7 +370,7 @@ func (h *Handler) ListObjects(c *gin.Context) {
 	// List using facade
 	result, err := objstore.ListWithOptions(c.Request.Context(), h.backend, opts)
 	if err != nil {
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -353,7 +379,7 @@ func (h *Handler) ListObjects(c *gin.Context) {
 
 // GetObjectMetadata retrieves object metadata
 func (h *Handler) GetObjectMetadata(c *gin.Context) {
-	key := c.Param("key")
+	key := c.Param(keyField)
 	if key == "" {
 		RespondWithError(c, http.StatusBadRequest, "key parameter is required")
 		return
@@ -366,7 +392,7 @@ func (h *Handler) GetObjectMetadata(c *gin.Context) {
 
 	metadata, err := objstore.GetMetadata(c.Request.Context(), h.keyRef(key))
 	if err != nil {
-		RespondWithError(c, http.StatusNotFound, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -380,7 +406,7 @@ func (h *Handler) GetObjectMetadata(c *gin.Context) {
 
 // UpdateObjectMetadata updates object metadata
 func (h *Handler) UpdateObjectMetadata(c *gin.Context) {
-	key := c.Param("key")
+	key := c.Param(keyField)
 	if key == "" {
 		RespondWithError(c, http.StatusBadRequest, "key parameter is required")
 		return
@@ -394,7 +420,7 @@ func (h *Handler) UpdateObjectMetadata(c *gin.Context) {
 	// Check if object exists using facade
 	exists, err := objstore.Exists(c.Request.Context(), h.keyRef(key))
 	if err != nil {
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -413,11 +439,11 @@ func (h *Handler) UpdateObjectMetadata(c *gin.Context) {
 	// Update metadata using facade
 	err = objstore.UpdateMetadata(c.Request.Context(), h.keyRef(key), &metadata)
 	if err != nil {
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
-	RespondWithSuccess(c, http.StatusOK, "metadata updated successfully", gin.H{"key": key})
+	RespondWithSuccess(c, http.StatusOK, "metadata updated successfully", gin.H{keyField: key})
 }
 
 // HealthCheck handles health check requests
@@ -471,7 +497,7 @@ func (h *Handler) Archive(c *gin.Context) {
 		_ = auditLogger.LogObjectMutation(c.Request.Context(), audit.EventObjectArchived,
 			userID, principal, h.backend, req.Key, c.ClientIP(), requestID, 0,
 			audit.ResultFailure, err)
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -480,7 +506,7 @@ func (h *Handler) Archive(c *gin.Context) {
 		audit.ResultSuccess, nil)
 
 	RespondWithSuccess(c, http.StatusOK, "object archived successfully", gin.H{
-		"key":         req.Key,
+		keyField:      req.Key,
 		"destination": req.DestinationType,
 	})
 }
@@ -503,8 +529,8 @@ func (h *Handler) AddPolicy(c *gin.Context) {
 		return
 	}
 
-	if req.Retention <= 0 {
-		RespondWithError(c, http.StatusBadRequest, "retention_seconds must be positive")
+	if req.RetentionSeconds < 0 {
+		RespondWithError(c, http.StatusBadRequest, "retention_seconds must be non-negative")
 		return
 	}
 
@@ -512,7 +538,7 @@ func (h *Handler) AddPolicy(c *gin.Context) {
 	policy := common.LifecyclePolicy{
 		ID:        req.ID,
 		Prefix:    req.Prefix,
-		Retention: req.Retention,
+		Retention: time.Duration(req.RetentionSeconds) * time.Second,
 		Action:    req.Action,
 	}
 
@@ -533,11 +559,8 @@ func (h *Handler) AddPolicy(c *gin.Context) {
 	// Add policy using facade
 	err := objstore.AddPolicy(h.backend, policy)
 	if err != nil {
-		if err.Error() == "policy already exists" {
-			RespondWithError(c, http.StatusConflict, common.SanitizeErrorMessage(err))
-			return
-		}
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		// Classify maps "policy already exists" to 409 Conflict.
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -566,7 +589,7 @@ func (h *Handler) RemovePolicy(c *gin.Context) {
 			RespondWithError(c, http.StatusNotFound, common.SanitizeErrorMessage(err))
 			return
 		}
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -582,7 +605,7 @@ func (h *Handler) GetPolicies(c *gin.Context) {
 	// Get policies using facade
 	policies, err := objstore.GetPolicies(h.backend)
 	if err != nil {
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -599,7 +622,7 @@ func (h *Handler) GetPolicies(c *gin.Context) {
 
 // ExistsObject handles GET /api/v1/objects/exists/*key - checks if an object exists.
 func (h *Handler) ExistsObject(c *gin.Context) {
-	key := c.Param("key")
+	key := c.Param(keyField)
 	if key != "" && key[0] == '/' {
 		key = key[1:]
 	}
@@ -612,14 +635,18 @@ func (h *Handler) ExistsObject(c *gin.Context) {
 	// Check existence using facade
 	exists, err := objstore.Exists(c.Request.Context(), h.keyRef(key))
 	if err != nil {
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"key":    key,
-		"exists": exists,
-	})
+	// Per the OpenAPI contract this HEAD endpoint signals existence via the
+	// status code alone: 200 when present, 404 when absent. A JSON body is
+	// useless on HEAD responses (clients cannot read it).
+	if !exists {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	c.Status(http.StatusOK)
 }
 
 // ApplyPolicies handles POST /api/v1/policies/apply - executes all lifecycle policies.
@@ -629,7 +656,7 @@ func (h *Handler) ApplyPolicies(c *gin.Context) {
 	// Get policies using facade
 	policies, err := objstore.GetPolicies(h.backend)
 	if err != nil {
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -649,7 +676,7 @@ func (h *Handler) ApplyPolicies(c *gin.Context) {
 	}
 	result, err := objstore.ListWithOptions(ctx, h.backend, opts)
 	if err != nil {
-		RespondWithError(c, http.StatusInternalServerError, common.SanitizeErrorMessage(err))
+		RespondWithBackendError(c, err)
 		return
 	}
 
@@ -698,10 +725,17 @@ func (h *Handler) ApplyPolicies(c *gin.Context) {
 
 // Helper functions
 
-// extractPrincipal extracts the principal information from the Gin context
+// extractPrincipal extracts the principal information from the Gin context.
+// AuthenticationMiddleware stores *adapters.Principal; accept both pointer and
+// value forms for robustness.
 func extractPrincipal(c *gin.Context) (principal string, userID string) {
 	if principalValue, exists := c.Get("principal"); exists {
-		if p, ok := principalValue.(adapters.Principal); ok {
+		switch p := principalValue.(type) {
+		case *adapters.Principal:
+			if p != nil {
+				return p.Name, p.ID
+			}
+		case adapters.Principal:
 			return p.Name, p.ID
 		}
 	}

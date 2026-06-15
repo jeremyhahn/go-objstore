@@ -13,7 +13,12 @@
 
 package cli
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+
+	"github.com/jeremyhahn/go-objstore/pkg/common"
+)
 
 var (
 	// Configuration errors
@@ -41,4 +46,18 @@ var (
 
 	// ErrMetadataNotFound is returned when metadata is not found.
 	ErrMetadataNotFound = errors.New("metadata not found")
+
+	// ErrGlacierArchiverUnavailable is returned when an archive lifecycle
+	// policy is added in local mode but the glacier archiver is not compiled
+	// into the binary.
+	ErrGlacierArchiverUnavailable = errors.New("archive policies require the glacier archiver, which is not compiled into this binary (rebuild with -tags glacier)")
+
+	// ErrArchiveVaultRequired is returned when an archive lifecycle policy is
+	// added in local mode without a configured glacier vault.
+	ErrArchiveVaultRequired = errors.New("archive policies require a glacier vault: set archive-vault-name (and optionally archive-region) in the CLI configuration")
+
+	// ErrReplicationRequiresServer is returned when a replication command is
+	// run in local mode. It wraps common.ErrReplicationNotSupported so callers
+	// can still match the typed error with errors.Is.
+	ErrReplicationRequiresServer = fmt.Errorf("%w in local CLI mode: connect to an objstore server with --server to manage replication", common.ErrReplicationNotSupported)
 )

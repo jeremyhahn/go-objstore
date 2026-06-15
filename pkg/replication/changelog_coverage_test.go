@@ -53,6 +53,9 @@ func TestChangeLog_RotateError_FileCreate(t *testing.T) {
 
 // Test rewriteFile error paths
 func TestChangeLog_RewriteFile_OpenError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission test is not meaningful when running as root")
+	}
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "changelog.jsonl")
 
@@ -72,12 +75,12 @@ func TestChangeLog_RewriteFile_OpenError(t *testing.T) {
 
 	cl.Close()
 
-	// Make file unreadable
-	err = os.Chmod(logPath, 0000)
+	// Make the directory read-only so CreateTemp cannot create the temp file.
+	err = os.Chmod(dir, 0500)
 	require.NoError(t, err)
-	defer os.Chmod(logPath, 0644)
+	defer os.Chmod(dir, 0700)
 
-	// Try to rewrite - should fail
+	// Try to rewrite - should fail creating the temp file
 	err = cl.rewriteFile([]ChangeEvent{})
 	assert.Error(t, err)
 }

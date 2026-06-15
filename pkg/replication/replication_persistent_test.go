@@ -215,6 +215,20 @@ func (mfs *mockFileSystem) Remove(name string) error {
 	return nil
 }
 
+func (mfs *mockFileSystem) Rename(src, dst string) error {
+	mfs.mu.Lock()
+	defer mfs.mu.Unlock()
+
+	data, exists := mfs.files[src]
+	if !exists {
+		return os.ErrNotExist
+	}
+
+	mfs.files[dst] = data
+	delete(mfs.files, src)
+	return nil
+}
+
 func (mfs *mockFileSystem) fileExists(name string) bool {
 	mfs.mu.RLock()
 	defer mfs.mu.RUnlock()

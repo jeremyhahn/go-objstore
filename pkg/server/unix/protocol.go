@@ -13,32 +13,21 @@
 
 package unix
 
-import "encoding/json"
+import "github.com/jeremyhahn/go-objstore/pkg/server/jsonrpc"
 
-const jsonRPCVersion = "2.0"
+const jsonRPCVersion = jsonrpc.Version
 
-// Request represents a JSON-RPC 2.0 request
-type Request struct {
-	JSONRPC string          `json:"jsonrpc"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params,omitempty"`
-	ID      any             `json:"id"`
-}
-
-// Response represents a JSON-RPC 2.0 response
-type Response struct {
-	JSONRPC string    `json:"jsonrpc"`
-	Result  any       `json:"result,omitempty"`
-	Error   *RPCError `json:"error,omitempty"`
-	ID      any       `json:"id"`
-}
-
-// RPCError represents a JSON-RPC 2.0 error
-type RPCError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-	Data    any    `json:"data,omitempty"`
-}
+// Request, Response, and RPCError are the JSON-RPC 2.0 envelope types shared
+// with the MCP transport via pkg/server/jsonrpc. Kept as local aliases for
+// source compatibility.
+type (
+	// Request represents a JSON-RPC 2.0 request.
+	Request = jsonrpc.Request
+	// Response represents a JSON-RPC 2.0 response.
+	Response = jsonrpc.Response
+	// RPCError represents a JSON-RPC 2.0 error.
+	RPCError = jsonrpc.Error
+)
 
 // Method names
 const (
@@ -119,12 +108,17 @@ type ArchiveParams struct {
 	DestinationSettings map[string]string `json:"destination_settings"`
 }
 
-// PolicyParams represents lifecycle policy parameters
+// PolicyParams represents lifecycle policy parameters. RetentionSeconds
+// expresses the retention with second granularity; when positive it takes
+// precedence over AfterDays in requests, and responses always populate it
+// (exact) alongside AfterDays (rounded down to whole days) for backward
+// compatibility.
 type PolicyParams struct {
-	ID        string `json:"id"`
-	Prefix    string `json:"prefix"`
-	Action    string `json:"action"` // delete, archive, transition
-	AfterDays int    `json:"after_days"`
+	ID               string `json:"id"`
+	Prefix           string `json:"prefix"`
+	Action           string `json:"action"` // delete, archive, transition
+	AfterDays        int    `json:"after_days"`
+	RetentionSeconds int64  `json:"retention_seconds,omitempty"`
 }
 
 // RemovePolicyParams represents parameters for remove_policy

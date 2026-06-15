@@ -15,12 +15,18 @@ package adapters
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
+	"math/big"
 	"net/http"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc/metadata"
 )
@@ -90,13 +96,6 @@ func TestNoOpAuthenticator(t *testing.T) {
 		}
 	})
 
-	t.Run("ValidatePermission", func(t *testing.T) {
-		principal := &Principal{ID: "test"}
-		err := auth.ValidatePermission(ctx, principal, "resource", "action")
-		if err != nil {
-			t.Errorf("NoOpAuthenticator.ValidatePermission() error = %v, want nil", err)
-		}
-	})
 }
 
 func TestBearerTokenAuthenticator_HTTP(t *testing.T) {
@@ -216,29 +215,6 @@ func TestBearerTokenAuthenticator_gRPC(t *testing.T) {
 		}
 	})
 
-	t.Run("ValidatePermission always succeeds", func(t *testing.T) {
-		principal := &Principal{ID: "user1", Type: "user"}
-		err := auth.ValidatePermission(ctx, principal, "any-resource", "any-action")
-		if err != nil {
-			t.Errorf("ValidatePermission() should not return error, got %v", err)
-		}
-	})
-
-	t.Run("ValidatePermission with admin role", func(t *testing.T) {
-		principal := &Principal{ID: "admin1", Type: "user", Roles: []string{"admin"}}
-		err := auth.ValidatePermission(ctx, principal, "any-resource", "any-action")
-		if err != nil {
-			t.Errorf("ValidatePermission() should not return error for admin, got %v", err)
-		}
-	})
-
-	t.Run("ValidatePermission with non-admin role", func(t *testing.T) {
-		principal := &Principal{ID: "user1", Type: "user", Roles: []string{"viewer"}}
-		err := auth.ValidatePermission(ctx, principal, "any-resource", "any-action")
-		if err != nil {
-			t.Errorf("ValidatePermission() should not return error for non-admin, got %v", err)
-		}
-	})
 }
 
 func TestMTLSAuthenticator(t *testing.T) {
@@ -346,13 +322,6 @@ func TestMTLSAuthenticator(t *testing.T) {
 		}
 	})
 
-	t.Run("ValidatePermission succeeds", func(t *testing.T) {
-		principal := &Principal{ID: "cert-user", Type: "certificate"}
-		err := auth.ValidatePermission(ctx, principal, "any-resource", "any-action")
-		if err != nil {
-			t.Errorf("ValidatePermission() should not return error, got %v", err)
-		}
-	})
 }
 
 func TestCompositeAuthenticator(t *testing.T) {
@@ -444,14 +413,6 @@ func TestCompositeAuthenticator(t *testing.T) {
 		}
 	})
 
-	t.Run("ValidatePermission succeeds", func(t *testing.T) {
-		principal := &Principal{ID: "user", Type: "token"}
-		err := auth.ValidatePermission(ctx, principal, "resource", "action")
-		if err != nil {
-			t.Errorf("ValidatePermission() should not return error, got %v", err)
-		}
-	})
-
 	t.Run("AuthenticateGRPC all methods fail", func(t *testing.T) {
 		md := metadata.MD{
 			"authorization": []string{"Bearer invalid-token"},
@@ -474,15 +435,6 @@ func TestCompositeAuthenticator(t *testing.T) {
 		_, err := auth.AuthenticateMTLS(ctx, state)
 		if err == nil {
 			t.Error("AuthenticateMTLS() error = nil, want error when all methods fail")
-		}
-	})
-
-	t.Run("ValidatePermission with empty authenticators", func(t *testing.T) {
-		emptyAuth := NewCompositeAuthenticator()
-		principal := &Principal{ID: "user", Type: "token"}
-		err := emptyAuth.ValidatePermission(ctx, principal, "resource", "action")
-		if err != nil {
-			t.Errorf("ValidatePermission() with empty authenticators should not return error, got %v", err)
 		}
 	})
 
@@ -513,6 +465,249 @@ func TestCompositeAuthenticator(t *testing.T) {
 		_, err := emptyAuth.AuthenticateMTLS(ctx, state)
 		if !errors.Is(err, ErrUnauthorized) {
 			t.Errorf("AuthenticateMTLS() with no authenticators should return ErrUnauthorized, got %v", err)
+		}
+	})
+}
+
+func TestNoOpAuthorizer(t *testing.T) {
+	authz := NewNoOpAuthorizer()
+	ctx := context.Background()
+
+	cases := []struct {
+		name      string
+		principal *Principal
+		action    string
+		resource  string
+	}{
+		{"nil principal", nil, ActionRead, ResourceObject},
+		{"read object", &Principal{ID: "u"}, ActionRead, "obj-key"},
+		{"write object", &Principal{ID: "u"}, ActionWrite, "obj-key"},
+		{"admin policy", &Principal{ID: "u"}, ActionAdmin, ResourcePolicy},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := authz.Authorize(ctx, tc.principal, tc.action, tc.resource); err != nil {
+				t.Errorf("NoOpAuthorizer.Authorize() = %v, want nil", err)
+			}
+		})
+	}
+}
+
+func TestRBACAuthorizer(t *testing.T) {
+	ctx := context.Background()
+	authz := NewRBACAuthorizer(map[string][]string{
+		"reader": {ActionRead, ActionList},
+		"writer": {ActionWrite},
+		"admin":  {wildcardPermission},
+	})
+
+	t.Run("nil principal is denied", func(t *testing.T) {
+		if err := authz.Authorize(ctx, nil, ActionRead, ResourceObject); !errors.Is(err, ErrInsufficientPermissions) {
+			t.Errorf("Authorize(nil) = %v, want ErrInsufficientPermissions", err)
+		}
+	})
+
+	t.Run("role grants matching action", func(t *testing.T) {
+		p := &Principal{ID: "r", Roles: []string{"reader"}}
+		if err := authz.Authorize(ctx, p, ActionRead, "key"); err != nil {
+			t.Errorf("reader read = %v, want nil", err)
+		}
+		if err := authz.Authorize(ctx, p, ActionList, ""); err != nil {
+			t.Errorf("reader list = %v, want nil", err)
+		}
+	})
+
+	t.Run("role denies non-granted action", func(t *testing.T) {
+		p := &Principal{ID: "r", Roles: []string{"reader"}}
+		if err := authz.Authorize(ctx, p, ActionWrite, "key"); !errors.Is(err, ErrInsufficientPermissions) {
+			t.Errorf("reader write = %v, want ErrInsufficientPermissions", err)
+		}
+		if err := authz.Authorize(ctx, p, ActionDelete, "key"); !errors.Is(err, ErrInsufficientPermissions) {
+			t.Errorf("reader delete = %v, want ErrInsufficientPermissions", err)
+		}
+	})
+
+	t.Run("wildcard grants any action", func(t *testing.T) {
+		p := &Principal{ID: "a", Roles: []string{"admin"}}
+		for _, action := range []string{ActionRead, ActionWrite, ActionDelete, ActionList, ActionAdmin} {
+			if err := authz.Authorize(ctx, p, action, ResourcePolicy); err != nil {
+				t.Errorf("admin %s = %v, want nil", action, err)
+			}
+		}
+	})
+
+	t.Run("multi-role union of permissions", func(t *testing.T) {
+		p := &Principal{ID: "rw", Roles: []string{"reader", "writer"}}
+		if err := authz.Authorize(ctx, p, ActionRead, "key"); err != nil {
+			t.Errorf("reader+writer read = %v, want nil", err)
+		}
+		if err := authz.Authorize(ctx, p, ActionWrite, "key"); err != nil {
+			t.Errorf("reader+writer write = %v, want nil", err)
+		}
+		if err := authz.Authorize(ctx, p, ActionDelete, "key"); !errors.Is(err, ErrInsufficientPermissions) {
+			t.Errorf("reader+writer delete = %v, want ErrInsufficientPermissions", err)
+		}
+	})
+
+	t.Run("unknown role is denied", func(t *testing.T) {
+		p := &Principal{ID: "x", Roles: []string{"nobody"}}
+		if err := authz.Authorize(ctx, p, ActionRead, "key"); !errors.Is(err, ErrInsufficientPermissions) {
+			t.Errorf("unknown role = %v, want ErrInsufficientPermissions", err)
+		}
+	})
+
+	t.Run("no roles is denied", func(t *testing.T) {
+		p := &Principal{ID: "x"}
+		if err := authz.Authorize(ctx, p, ActionRead, "key"); !errors.Is(err, ErrInsufficientPermissions) {
+			t.Errorf("no roles = %v, want ErrInsufficientPermissions", err)
+		}
+	})
+
+	t.Run("input map is copied", func(t *testing.T) {
+		src := map[string][]string{"reader": {ActionRead}}
+		a := NewRBACAuthorizer(src)
+		src["reader"] = []string{ActionWrite}
+		p := &Principal{ID: "r", Roles: []string{"reader"}}
+		if err := a.Authorize(ctx, p, ActionRead, "key"); err != nil {
+			t.Errorf("mutating source map affected authorizer: read = %v, want nil", err)
+		}
+	})
+}
+
+// Compile-time checks that the constructors return types implementing Authorizer.
+var (
+	_ Authorizer = (*NoOpAuthorizer)(nil)
+	_ Authorizer = (*RBACAuthorizer)(nil)
+)
+
+// generateCAAndClientCert creates a self-signed CA and a client certificate
+// signed by it, for AuthenticateMTLS chain-verification tests. It reuses
+// generateTestCert (tls_test.go) for the CA.
+func generateCAAndClientCert(t *testing.T) (caCert, clientCert *x509.Certificate) {
+	t.Helper()
+
+	_, caKeyPEM, caCert, err := generateTestCert(true)
+	if err != nil {
+		t.Fatalf("Failed to generate CA cert: %v", err)
+	}
+
+	caKeyBlock, _ := pem.Decode(caKeyPEM)
+	caKey, err := x509.ParseECPrivateKey(caKeyBlock.Bytes)
+	if err != nil {
+		t.Fatalf("Failed to parse CA key: %v", err)
+	}
+
+	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("Failed to generate client key: %v", err)
+	}
+
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		t.Fatalf("Failed to generate serial number: %v", err)
+	}
+
+	clientTemplate := x509.Certificate{
+		SerialNumber:          serialNumber,
+		Subject:               pkix.Name{CommonName: "client-user"},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		BasicConstraintsValid: true,
+	}
+
+	clientCertDER, err := x509.CreateCertificate(rand.Reader, &clientTemplate, caCert, &clientKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("Failed to create client cert: %v", err)
+	}
+
+	clientCert, err = x509.ParseCertificate(clientCertDER)
+	if err != nil {
+		t.Fatalf("Failed to parse client cert: %v", err)
+	}
+
+	return caCert, clientCert
+}
+
+func TestMTLSAuthenticator_RequiredRoots(t *testing.T) {
+	extractFunc := func(ctx context.Context, cert *x509.Certificate) (*Principal, error) {
+		return &Principal{
+			ID:   cert.Subject.CommonName,
+			Name: cert.Subject.CommonName,
+			Type: "certificate",
+		}, nil
+	}
+
+	caCert, clientCert := generateCAAndClientCert(t)
+	roots := x509.NewCertPool()
+	roots.AddCert(caCert)
+
+	auth := NewMTLSAuthenticator(extractFunc, roots)
+	ctx := context.Background()
+
+	t.Run("accepts certificate chaining to required roots", func(t *testing.T) {
+		state := &tls.ConnectionState{
+			PeerCertificates: []*x509.Certificate{clientCert},
+		}
+
+		principal, err := auth.AuthenticateMTLS(ctx, state)
+		if err != nil {
+			t.Fatalf("AuthenticateMTLS() error = %v, want nil", err)
+		}
+		if principal.ID != "client-user" {
+			t.Errorf("principal.ID = %s, want client-user", principal.ID)
+		}
+	})
+
+	t.Run("rejects certificate not chaining to required roots", func(t *testing.T) {
+		// A self-signed certificate that does not chain to the CA pool.
+		_, _, selfSigned, err := generateTestCert(false)
+		if err != nil {
+			t.Fatalf("Failed to generate self-signed cert: %v", err)
+		}
+		state := &tls.ConnectionState{
+			PeerCertificates: []*x509.Certificate{selfSigned},
+		}
+
+		_, err = auth.AuthenticateMTLS(ctx, state)
+		if !errors.Is(err, ErrInvalidCredentials) {
+			t.Errorf("AuthenticateMTLS() error = %v, want ErrInvalidCredentials", err)
+		}
+	})
+
+	t.Run("trusts non-empty VerifiedChains from the TLS handshake", func(t *testing.T) {
+		state := &tls.ConnectionState{
+			PeerCertificates: []*x509.Certificate{clientCert},
+			VerifiedChains:   [][]*x509.Certificate{{clientCert, caCert}},
+		}
+
+		principal, err := auth.AuthenticateMTLS(ctx, state)
+		if err != nil {
+			t.Fatalf("AuthenticateMTLS() error = %v, want nil", err)
+		}
+		if principal.ID != "client-user" {
+			t.Errorf("principal.ID = %s, want client-user", principal.ID)
+		}
+	})
+
+	t.Run("nil RequiredRoots preserves no-verification behavior", func(t *testing.T) {
+		_, _, selfSigned, err := generateTestCert(false)
+		if err != nil {
+			t.Fatalf("Failed to generate self-signed cert: %v", err)
+		}
+		noRoots := NewMTLSAuthenticator(extractFunc, nil)
+		state := &tls.ConnectionState{
+			PeerCertificates: []*x509.Certificate{selfSigned},
+		}
+
+		principal, err := noRoots.AuthenticateMTLS(ctx, state)
+		if err != nil {
+			t.Fatalf("AuthenticateMTLS() error = %v, want nil", err)
+		}
+		if principal.ID != selfSigned.Subject.CommonName {
+			t.Errorf("principal.ID = %s, want %s", principal.ID, selfSigned.Subject.CommonName)
 		}
 	})
 }

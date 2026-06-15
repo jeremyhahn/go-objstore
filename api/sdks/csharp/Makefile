@@ -29,14 +29,12 @@ build: restore
 # Run unit tests in Docker
 test:
 	@echo "Running unit tests in Docker..."
-	docker compose up --build --abort-on-container-exit csharp-unit-tests
-	docker compose down -v
+	docker compose up --build --abort-on-container-exit csharp-unit-tests; rc=$$?; docker compose down -v; exit $$rc
 
 # Run integration tests in Docker
 integration-test:
 	@echo "Running integration tests in Docker..."
-	docker compose up --build --abort-on-container-exit objstore-server csharp-integration-tests
-	docker compose down -v
+	docker compose up --build --abort-on-container-exit objstore-server csharp-integration-tests; rc=$$?; docker compose down -v; exit $$rc
 
 # Run all tests with code coverage
 coverage: build
@@ -107,12 +105,10 @@ docker-build: ## Build Docker test image
 
 docker-test-unit: ## Run unit tests in Docker
 	@echo "Running unit tests in Docker..."
-	docker compose up --build --abort-on-container-exit csharp-unit-tests
-	docker compose down -v
+	docker compose up --build --abort-on-container-exit csharp-unit-tests; rc=$$?; docker compose down -v; exit $$rc
 
 docker-test-integration: ## Run integration tests in Docker
 	@echo "Running integration tests in Docker..."
-	docker compose up --build --abort-on-container-exit objstore-server csharp-integration-tests
-	docker compose down -v
+	docker compose up --build --abort-on-container-exit objstore-server csharp-integration-tests; rc=$$?; docker compose down -v; exit $$rc
 
 docker-test: docker-test-unit docker-test-integration ## Run all tests in Docker

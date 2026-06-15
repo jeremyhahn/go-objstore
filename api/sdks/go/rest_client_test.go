@@ -8,7 +8,6 @@
 package objstore
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -44,52 +43,6 @@ func TestRESTClient_NewClient_WithTLS(t *testing.T) {
 func TestRESTClient_NewClient_InvalidConfig(t *testing.T) {
 	_, err := newRESTClient(nil)
 	assert.Equal(t, ErrInvalidConfig, err)
-}
-
-func TestRESTClient_UnsupportedOperations(t *testing.T) {
-	config := &ClientConfig{
-		Protocol: ProtocolREST,
-		Address:  "localhost:8080",
-	}
-
-	client, err := newRESTClient(config)
-	require.NoError(t, err)
-
-	ctx := context.Background()
-
-	// Test unsupported operations return ErrStreamingNotSupported
-	err = client.Archive(ctx, "key", "glacier", nil)
-	assert.Equal(t, ErrStreamingNotSupported, err)
-
-	err = client.AddPolicy(ctx, &LifecyclePolicy{})
-	assert.Equal(t, ErrStreamingNotSupported, err)
-
-	err = client.RemovePolicy(ctx, "policy-id")
-	assert.Equal(t, ErrStreamingNotSupported, err)
-
-	_, err = client.GetPolicies(ctx, "")
-	assert.Equal(t, ErrStreamingNotSupported, err)
-
-	_, err = client.ApplyPolicies(ctx)
-	assert.Equal(t, ErrStreamingNotSupported, err)
-
-	err = client.AddReplicationPolicy(ctx, &ReplicationPolicy{})
-	assert.Equal(t, ErrStreamingNotSupported, err)
-
-	err = client.RemoveReplicationPolicy(ctx, "policy-id")
-	assert.Equal(t, ErrStreamingNotSupported, err)
-
-	_, err = client.GetReplicationPolicies(ctx)
-	assert.Equal(t, ErrStreamingNotSupported, err)
-
-	_, err = client.GetReplicationPolicy(ctx, "policy-id")
-	assert.Equal(t, ErrStreamingNotSupported, err)
-
-	_, err = client.TriggerReplication(ctx, nil)
-	assert.Equal(t, ErrStreamingNotSupported, err)
-
-	_, err = client.GetReplicationStatus(ctx, "policy-id")
-	assert.Equal(t, ErrStreamingNotSupported, err)
 }
 
 func TestRESTClient_Close(t *testing.T) {

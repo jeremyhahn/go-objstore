@@ -225,7 +225,7 @@ class TestReplicationPolicies:
                         "last_sync_time": None,
                         "enabled": True,
                         "encryption": None,
-                        "replication_mode": "TRANSPARENT",
+                        "replication_mode": "transparent",
                     }
                 ]
             },
@@ -242,24 +242,26 @@ class TestReplicationPolicies:
 
     @responses.activate
     def test_get_replication_policy(self) -> None:
-        """Test get specific replication policy."""
+        """Test get specific replication policy.
+
+        The server responds with a bare ReplicationPolicyResponse — no "policy"
+        wrapper key.  The client passes the top-level dict directly to the
+        model constructor.
+        """
         responses.add(
             responses.GET,
             "http://localhost:8080/api/v1/replication/policies/repl-1",
             json={
-                "policy": {
-                    "id": "repl-1",
-                    "source_backend": "local",
-                    "source_settings": {"path": "/data"},
-                    "source_prefix": "",
-                    "destination_backend": "s3",
-                    "destination_settings": {"bucket": "backup"},
-                    "check_interval_seconds": 300,
-                    "last_sync_time": None,
-                    "enabled": True,
-                    "encryption": None,
-                    "replication_mode": "TRANSPARENT",
-                }
+                "id": "repl-1",
+                "source_backend": "local",
+                "source_settings": {"path": "/data"},
+                "source_prefix": "",
+                "destination_backend": "s3",
+                "destination_settings": {"bucket": "backup"},
+                "check_interval_seconds": 300,
+                "last_sync_time": None,
+                "enabled": True,
+                "replication_mode": "transparent",
             },
             status=200,
         )
@@ -309,26 +311,28 @@ class TestReplicationPolicies:
 
     @responses.activate
     def test_get_replication_status(self) -> None:
-        """Test get replication status."""
+        """Test get replication status.
+
+        The server responds with a bare ReplicationStatusResponse — no "status"
+        wrapper key.  The REST wire format uses ``average_sync_duration`` as a
+        Go-duration string (not an int ``average_sync_duration_ms``).  The
+        client passes the top-level dict directly to the model constructor.
+        """
         responses.add(
             responses.GET,
             "http://localhost:8080/api/v1/replication/status/repl-1",
             json={
-                "success": True,
-                "status": {
-                    "policy_id": "repl-1",
-                    "source_backend": "local",
-                    "destination_backend": "s3",
-                    "enabled": True,
-                    "total_objects_synced": 1500,
-                    "total_objects_deleted": 50,
-                    "total_bytes_synced": 10485760,
-                    "total_errors": 3,
-                    "last_sync_time": "2025-11-25T10:00:00Z",
-                    "average_sync_duration_ms": 2500,
-                    "sync_count": 10,
-                },
-                "message": "Status retrieved successfully",
+                "policy_id": "repl-1",
+                "source_backend": "local",
+                "destination_backend": "s3",
+                "enabled": True,
+                "total_objects_synced": 1500,
+                "total_objects_deleted": 50,
+                "total_bytes_synced": 10485760,
+                "total_errors": 3,
+                "last_sync_time": "2025-11-25T10:00:00Z",
+                "average_sync_duration": "2.5s",
+                "sync_count": 10,
             },
             status=200,
         )
@@ -341,6 +345,8 @@ class TestReplicationPolicies:
         assert result.status.policy_id == "repl-1"
         assert result.status.total_objects_synced == 1500
         assert result.status.total_bytes_synced == 10485760
+        # average_sync_duration_ms is derived from the Go duration string "2.5s"
+        assert result.status.average_sync_duration_ms == 2500
 
 
 class TestModelValidation:

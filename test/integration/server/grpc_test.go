@@ -287,8 +287,9 @@ func TestGRPCGet(t *testing.T) {
 		assert.Error(t, err)
 		st, ok := status.FromError(err)
 		assert.True(t, ok)
-		// Server returns Internal error for file not found instead of NotFound
-		assert.Equal(t, codes.Internal, st.Code())
+		// The shared error taxonomy classifies missing objects as NotFound on
+		// every transport.
+		assert.Equal(t, codes.NotFound, st.Code())
 	})
 
 	t.Run("get large object streaming", func(t *testing.T) {
@@ -373,8 +374,9 @@ func TestGRPCDelete(t *testing.T) {
 		assert.Error(t, err)
 		st, ok := status.FromError(err)
 		assert.True(t, ok)
-		// Server returns Internal error for file not found instead of NotFound
-		assert.Equal(t, codes.Internal, st.Code())
+		// The shared error taxonomy classifies missing objects as NotFound on
+		// every transport.
+		assert.Equal(t, codes.NotFound, st.Code())
 	})
 
 	t.Run("delete with empty key", func(t *testing.T) {
