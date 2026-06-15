@@ -72,4 +72,48 @@ RSpec.describe "Error Classes" do
         .to raise_error(ObjectStore::ProtocolError, "Protocol mismatch")
     end
   end
+
+  describe ObjectStore::AuthenticationError do
+    it "is an ObjectStore::Error" do
+      expect(ObjectStore::AuthenticationError.new).to be_a(ObjectStore::Error)
+    end
+
+    it "can be raised and caught" do
+      expect { raise ObjectStore::AuthenticationError, "Unauthenticated" }
+        .to raise_error(ObjectStore::AuthenticationError, "Unauthenticated")
+    end
+  end
+
+  describe ObjectStore::AuthorizationError do
+    it "is an ObjectStore::Error" do
+      expect(ObjectStore::AuthorizationError.new).to be_a(ObjectStore::Error)
+    end
+
+    it "can be raised and caught" do
+      expect { raise ObjectStore::AuthorizationError, "Forbidden" }
+        .to raise_error(ObjectStore::AuthorizationError, "Forbidden")
+    end
+  end
+
+  describe ObjectStore::AlreadyExistsError do
+    it "is an ObjectStore::Error" do
+      expect(ObjectStore::AlreadyExistsError.new).to be_a(ObjectStore::Error)
+    end
+
+    it "can be raised and caught" do
+      expect { raise ObjectStore::AlreadyExistsError, "Already exists" }
+        .to raise_error(ObjectStore::AlreadyExistsError, "Already exists")
+    end
+  end
+
+  describe ObjectStore::RateLimitError do
+    it "is an ObjectStore::Error" do
+      expect(ObjectStore::RateLimitError.new).to be_a(ObjectStore::Error)
+    end
+
+    it "can be raised and caught" do
+      expect { raise ObjectStore::RateLimitError, "Rate limited" }
+        .to raise_error(ObjectStore::RateLimitError, "Rate limited")
+    end
+  end
 end

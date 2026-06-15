@@ -193,13 +193,6 @@ func (m *mockLifecycleStorage) GetPolicies() ([]common.LifecyclePolicy, error) {
 	return m.policies, nil
 }
 
-// mockArchiver for testing
-type mockArchiver struct{}
-
-func (m *mockArchiver) Put(key string, data io.Reader) error {
-	return nil
-}
-
 // TestExecuteArchiveTool tests the archive tool execution
 func TestExecuteArchiveTool(t *testing.T) {
 	tests := []struct {

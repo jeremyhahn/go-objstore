@@ -1,6 +1,6 @@
 [package]
 name = "go-objstore"
-version = "0.1.2"
+version = "0.1.5-alpha"
 edition = "2021"
 authors = ["Go ObjectStore Contributors"]
 description = "Rust SDK for go-objstore with REST, gRPC, and QUIC/HTTP3 support"
@@ -12,7 +12,7 @@ categories = ["api-bindings", "network-programming"]
 [dependencies]
 # Async runtime
 tokio = { version = "1.35", features = ["full"] }
-futures = "0.3"
+futures = { version = "0.3", features = ["alloc"] }
 async-trait = "0.1"
 
 # gRPC
@@ -21,16 +21,17 @@ prost = "0.12"
 prost-types = "0.12"
 
 # HTTP clients
-reqwest = { version = "0.11", features = ["json", "multipart", "stream"] }
+reqwest = { version = "0.12", features = ["json", "multipart", "stream"] }
 hyper = { version = "1.0", features = ["full"] }
-h3 = "0.0.4"
-h3-quinn = "0.0.5"
-quinn = { version = "0.10", features = ["rustls", "ring"] }
+h3 = "0.0.8"
+h3-quinn = "0.0.10"
+quinn = { version = "0.11", features = ["rustls", "ring"] }
 
-# HTTP3/QUIC - versions must be compatible with quinn 0.10
-rustls = { version = "0.21", features = ["dangerous_configuration"] }
-rustls-pemfile = "1.0"
-rustls-native-certs = "0.6"
+# HTTP3/QUIC - versions must be compatible with quinn 0.11
+rustls = { version = "0.23", features = ["ring"] }
+rustls-pemfile = "2.0"
+rustls-native-certs = "0.8"
+rustls-pki-types = "1.0"
 tokio-util = { version = "0.7", features = ["compat"] }
 
 # Serialization
@@ -50,6 +51,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 urlencoding = "2.1"
 http = "1.0"
+base64 = "0.22"
 
 [build-dependencies]
 tonic-build = "0.11"
@@ -61,6 +63,7 @@ tempfile = "3.8"
 testcontainers = "0.15"
 tokio-test = "0.4"
 paste = "1.0"
+rcgen = "0.13"
 
 [lib]
 name = "go_objstore"
@@ -81,3 +84,7 @@ path = "examples/quic_client.rs"
 [[example]]
 name = "unified_client"
 path = "examples/unified_client.rs"
+
+[[example]]
+name = "mcp_unix_client"
+path = "examples/mcp_unix_client.rs"

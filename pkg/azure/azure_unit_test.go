@@ -70,10 +70,24 @@ func (m *memBlob) Delete(_ context.Context) error {
 	return nil
 }
 
-func (m *memBlob) GetProperties(_ context.Context) error {
+func (m *memBlob) GetProperties(_ context.Context) (*BlobProperties, error) {
 	if m.propErr != nil {
-		return m.propErr
+		return nil, m.propErr
 	}
+	if m.data == nil {
+		return nil, errTestBlobNotFound
+	}
+	return &BlobProperties{Size: int64(len(m.data))}, nil
+}
+
+func (m *memBlob) SetMetadata(_ context.Context, _ map[string]string) error {
+	if m.data == nil {
+		return errTestBlobNotFound
+	}
+	return nil
+}
+
+func (m *memBlob) SetHTTPHeaders(_ context.Context, _ azblob.BlobHTTPHeaders) error {
 	if m.data == nil {
 		return errTestBlobNotFound
 	}

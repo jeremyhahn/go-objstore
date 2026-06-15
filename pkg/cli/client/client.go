@@ -66,4 +66,8 @@ type Config struct {
 	Protocol   string // rest, grpc, quic, or unix
 	TLSConfig  *adapters.TLSConfig
 	UnixSocket string // Path to Unix socket (for unix protocol)
+
+	// InsecureSkipVerify disables server certificate verification for
+	// TLS-based protocols (QUIC). Testing only.
+	InsecureSkipVerify bool
 }

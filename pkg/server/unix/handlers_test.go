@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
+	"github.com/jeremyhahn/go-objstore/pkg/server/jsonrpc"
 )
 
 func TestHandlePut(t *testing.T) {
@@ -137,7 +138,8 @@ func TestHandleGet(t *testing.T) {
 			name:    "non-existent key",
 			params:  GetParams{Key: "test/nonexistent.txt"},
 			wantErr: true,
-			errCode: ErrCodeInternalError,
+			// Not-found maps to the shared taxonomy code, not internal error.
+			errCode: jsonrpc.CodeNotFound,
 		},
 	}
 
@@ -666,6 +668,27 @@ func TestHandleAddPolicy(t *testing.T) {
 				Prefix:    "logs/",
 				Action:    "delete",
 				AfterDays: 30,
+			},
+			wantErr: false,
+		},
+		{
+			name: "add policy with retention_seconds",
+			params: PolicyParams{
+				ID:               "test-policy-seconds",
+				Prefix:           "tmp/",
+				Action:           "delete",
+				RetentionSeconds: 3600, // 1 hour, sub-day retention
+			},
+			wantErr: false,
+		},
+		{
+			name: "retention_seconds takes precedence over after_days",
+			params: PolicyParams{
+				ID:               "test-policy-precedence",
+				Prefix:           "cache/",
+				Action:           "delete",
+				AfterDays:        30,
+				RetentionSeconds: 90000, // 25 hours
 			},
 			wantErr: false,
 		},
@@ -1542,6 +1565,67 @@ func TestHandleGetPoliciesWithData(t *testing.T) {
 
 	if result[0].ID != "test-get-policy" {
 		t.Errorf("expected policy ID 'test-get-policy', got '%s'", result[0].ID)
+	}
+
+	if result[0].AfterDays != 30 {
+		t.Errorf("expected after_days 30, got %d", result[0].AfterDays)
+	}
+
+	if want := int64(30 * 24 * 3600); result[0].RetentionSeconds != want {
+		t.Errorf("expected retention_seconds %d, got %d", want, result[0].RetentionSeconds)
+	}
+}
+
+// TestHandleGetPoliciesRetentionSeconds pins the round trip of sub-day
+// retention: add_policy with retention_seconds and get_policies returning
+// the exact retention_seconds alongside the rounded after_days.
+func TestHandleGetPoliciesRetentionSeconds(t *testing.T) {
+	storage := NewMockStorage()
+	handler := createTestHandler(t, storage)
+
+	addParams := PolicyParams{
+		ID:               "test-retention-seconds",
+		Prefix:           "tmp/",
+		Action:           "delete",
+		AfterDays:        7,     // Ignored: retention_seconds takes precedence.
+		RetentionSeconds: 90000, // 25 hours.
+	}
+	addParamsJSON, _ := json.Marshal(addParams)
+	addReq := &Request{
+		JSONRPC: jsonRPCVersion,
+		Method:  MethodAddPolicy,
+		Params:  addParamsJSON,
+		ID:      1,
+	}
+	if resp := handler.Handle(context.Background(), addReq); resp.Error != nil {
+		t.Fatalf("add_policy failed: %s", resp.Error.Message)
+	}
+
+	req := &Request{
+		JSONRPC: jsonRPCVersion,
+		Method:  MethodGetPolicies,
+		ID:      2,
+	}
+	resp := handler.Handle(context.Background(), req)
+	if resp.Error != nil {
+		t.Fatalf("get_policies failed: %s", resp.Error.Message)
+	}
+
+	result, ok := resp.Result.([]PolicyParams)
+	if !ok {
+		t.Fatal("result is not []PolicyParams")
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 policy, got %d", len(result))
+	}
+
+	if result[0].RetentionSeconds != 90000 {
+		t.Errorf("expected retention_seconds 90000, got %d", result[0].RetentionSeconds)
+	}
+
+	// after_days is rounded down to whole days for backward compatibility.
+	if result[0].AfterDays != 1 {
+		t.Errorf("expected after_days 1, got %d", result[0].AfterDays)
 	}
 }
 

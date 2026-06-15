@@ -4,7 +4,63 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.5-alpha] - 2026-06-15
+
+Cross-transport consistency, SDK hardening, and security fixes across the
+REST/gRPC/QUIC/MCP/Unix servers and all six SDKs (Go, TypeScript, Python,
+Ruby, Rust, C#).
+
+### Breaking / wire-visible
+
+- MCP transport is binary-safe: object data is base64-encoded in both
+  directions; non-base64 `objstore_put` data is rejected.
+- REST/QUIC `DELETE` returns 204 No Content (SDKs still accept the legacy 200).
+- JSON-RPC (MCP, Unix) uses canonical codes: -32001 forbidden,
+  -32002 unauthenticated, -32003 unavailable, -32004 not found,
+  -32005 already exists, -32029 rate limited.
+- REST `/metrics` requires authorization by default (`--metrics-public` opts out).
+- Unix `add_policy` accepts exact `retention_seconds`; MCP default address is `:8081`.
+
+### Added
+
+- Shared cross-transport error taxonomy and JSON-RPC envelope package, with
+  full typed-error parity across all six SDKs (HTTP, JSON-RPC, and gRPC codes
+  map to typed errors on every transport).
+- Cross-protocol conformance suite plus per-SDK unit and e2e-smoke tests in CI.
+- Middleware parity (rate limiting, audit logging, request-ID tracking) on the
+  QUIC, MCP, and Unix transports.
+- Real implementations for previously stubbed/no-op paths: Azure
+  GetMetadata/UpdateMetadata, GCS UpdateMetadata/RemovePolicy, Glacier
+  multipart upload, and the pool least-utilization strategy.
+
+### Security
+
+- gRPC mTLS now verifies the peer chain against RequiredRoots and preserves
+  VerifiedChains (previously any presented certificate minted a principal).
+- Python and Ruby QUIC clients verify TLS certificates by default.
+- Swagger requires authentication; REST list is authorized as the list action;
+  MCP error text is sanitized; the Unix server bounds connections and refuses
+  to delete a non-socket path.
+
+### Fixed
+
+- SDK unix clients use one persistent, response-ID-validated connection with
+  automatic reconnect (was a fresh socket per request; the Go client could
+  return a stale reply).
+- Unix policy listing, TypeScript QUIC auth headers, code-based JSON-RPC error
+  mapping, audit request-ID correlation, graceful-shutdown races, TLS-disabled
+  startup panics, and QUIC error-taxonomy mapping.
+- Genuine HTTP/3 CLI QUIC client, plus numerous SDK streaming, connection-reuse,
+  and resource-leak fixes.
+
+### Changed
+
+- Unit-test coverage raised to 98.6% across all packages.
+- Internal deduplication of auth/JSON-RPC/HTTP helpers in every SDK; dead code
+  removed; `docs/configuration` rewritten around the real server flags.
+- Go toolchain 1.21 to 1.26.4; the JavaScript SDK is consolidated into the
+  TypeScript package; the encryption example uses stdlib AES-256-GCM (the
+  go-xkms dependency was removed).
 
 ## [0.1.4-alpha] - 2025-12-06
 
@@ -52,7 +108,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
-- Multi-Language SDK Support: Added official client SDKs for 7 programming languages
+- Multi-Language SDK Support: Added official client SDKs for 6 programming languages
   - TypeScript SDK with full type safety and async/await support
   - Go SDK with idiomatic Go patterns and context support
   - Python SDK with async support and type hints

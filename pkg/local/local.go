@@ -40,6 +40,7 @@ type Local struct {
 	changeLog              ChangeLog
 	logger                 adapters.Logger
 	auditLog               audit.AuditLogger
+	lifecycleCancel        context.CancelFunc // stops the background lifecycle goroutine
 }
 
 // New creates a new Local storage backend.
@@ -109,7 +110,9 @@ func (l *Local) Configure(settings map[string]string) error {
 	if settings["runLifecycle"] == "true" {
 		// Only in-memory manager supports Run method
 		if memManager, ok := l.lifecycleManager.(*LifecycleManager); ok {
-			go memManager.Run(l)
+			ctx, cancel := context.WithCancel(context.Background())
+			l.lifecycleCancel = cancel
+			go memManager.Run(ctx, l)
 		}
 	}
 
@@ -150,6 +153,13 @@ func (lfs *localFileSystem) OpenFile(name string, flag int, perm os.FileMode) (c
 func (lfs *localFileSystem) Remove(name string) error {
 	fullPath := filepath.Join(lfs.basePath, name)
 	return os.Remove(fullPath)
+}
+
+func (lfs *localFileSystem) Rename(src, dst string) error {
+	return os.Rename(
+		filepath.Join(lfs.basePath, src),
+		filepath.Join(lfs.basePath, dst),
+	)
 }
 
 // localFile wraps os.File to implement common.LifecycleFile
@@ -210,14 +220,12 @@ func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 		dataToWrite = encryptedData
 	}
 
-	f, err := os.Create(path) // #nosec G304 -- Path validated by validateKey() to prevent directory traversal
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-
-	size, err := io.Copy(f, dataToWrite)
-	if err != nil {
+	var size int64
+	if err := writeFileAtomic(path, 0644, func(w io.Writer) error {
+		n, werr := io.Copy(w, dataToWrite)
+		size = n
+		return werr
+	}); err != nil {
 		log.Printf("[LOCAL] ✗ Failed to write object '%s': %v", key, err)
 		return err
 	}
@@ -380,6 +388,9 @@ func (l *Local) UpdateMetadata(ctx context.Context, key string, metadata *common
 	path := filepath.Join(l.path, key)
 	info, err := os.Stat(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%w: %s", common.ErrKeyNotFound, key)
+		}
 		return err
 	}
 
@@ -739,7 +750,17 @@ func (l *Local) saveMetadata(key string, metadata *common.Metadata) error {
 		return err
 	}
 
-	return os.WriteFile(metadataPath, data, 0600) // Restrict file permissions for security
+	// Ensure the parent directory exists before writing the sidecar.
+	if err := os.MkdirAll(filepath.Dir(metadataPath), 0750); err != nil {
+		return err
+	}
+
+	// Write the sidecar atomically so a crash mid-write cannot leave a
+	// truncated or partial metadata file alongside the object.
+	return writeFileAtomic(metadataPath, 0600, func(w io.Writer) error {
+		_, werr := w.Write(data)
+		return werr
+	})
 }
 
 // loadMetadata loads metadata from a sidecar file.
@@ -766,6 +787,70 @@ func (l *Local) loadMetadata(key string) (*common.Metadata, error) {
 	}
 
 	return &metadata, nil
+}
+
+// writeFileAtomic writes a file durably and atomically. It streams the payload
+// into a temporary file created in filepath.Dir(path) — the same directory as
+// path, so the final rename stays on a single filesystem and the temp location
+// can never diverge from the rename target — fsyncs it, then renames it over
+// path. A crash or concurrent reader therefore never observes a truncated or
+// partial file: the target either contains the previous contents or the fully
+// written new ones. On any error the temporary file is removed and path is left
+// untouched.
+//
+// write is invoked with the open temporary file. The final file is given the
+// supplied mode.
+func writeFileAtomic(path string, mode os.FileMode, write func(io.Writer) error) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".tmp-*") // #nosec G304 -- dir derived from a key validated by validateKey() to prevent directory traversal
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+
+	// Ensure the temp file is cleaned up unless it was successfully renamed.
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tmp.Close()
+			_ = os.Remove(tmpName)
+		}
+	}()
+
+	if err := write(tmp); err != nil {
+		return err
+	}
+
+	// Match the requested final permissions before publishing the file.
+	if err := tmp.Chmod(mode); err != nil {
+		return err
+	}
+
+	// Flush file contents to stable storage before the rename so the data is
+	// durable, not just the directory entry.
+	if err := tmp.Sync(); err != nil {
+		return err
+	}
+
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	committed = true
+
+	// Fsync the parent directory so the rename is durable on the inode level.
+	d, err := os.Open(dir) // #nosec G304 -- dir is derived from a validated key path
+	if err != nil {
+		return err
+	}
+	if err := d.Sync(); err != nil {
+		_ = d.Close()
+		return err
+	}
+	return d.Close()
 }
 
 // formatBytes formats a byte count as a human-readable string
@@ -823,4 +908,12 @@ func (l *Local) GetLogger() adapters.Logger {
 // GetAuditLogger returns the configured audit logger.
 func (l *Local) GetAuditLogger() audit.AuditLogger {
 	return l.auditLog
+}
+
+// Close stops any background goroutines started by Configure (e.g. the lifecycle
+// ticker). It is safe to call multiple times.
+func (l *Local) Close() {
+	if l.lifecycleCancel != nil {
+		l.lifecycleCancel()
+	}
 }

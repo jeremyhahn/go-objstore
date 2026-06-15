@@ -18,11 +18,21 @@ module ObjectStore
       # @param port [Integer] Server port (default: 4433 for QUIC)
       # @param use_ssl [Boolean] Whether to use TLS
       # @param timeout [Integer] Request timeout in seconds
-      def initialize(host: "localhost", port: 4433, use_ssl: true, timeout: 30)
+      # @param token [String, nil] Bearer token for Authorization header
+      # @param headers [Hash] Additional HTTP headers to send on every request
+      # @param tenant_id [String, nil] Tenant identifier sent as X-Tenant-ID header
+      def initialize(host: "localhost", port: 4433, use_ssl: true, timeout: 30,
+                     token: nil, headers: {}, tenant_id: nil, verify_ssl: true)
         @host = host
         @port = port
         @use_ssl = use_ssl
         @timeout = timeout
+        @token = token
+        @extra_headers = headers || {}
+        @tenant_id = tenant_id
+        # TLS certificates are verified by default; disable only for testing
+        # against self-signed certificates.
+        @verify_mode = verify_ssl ? OpenSSL::SSL::VERIFY_PEER : OpenSSL::SSL::VERIFY_NONE
       end
 
       # Upload an object to the store
@@ -46,14 +56,12 @@ module ObjectStore
           request["Content-Encoding"] = metadata_obj.content_encoding
         end
 
-        # Build metadata JSON including content_type and custom fields
-        metadata_hash = {}
-        metadata_hash["content_type"] = metadata_obj.content_type if metadata_obj.content_type
-        metadata_hash["content_encoding"] = metadata_obj.content_encoding if metadata_obj.content_encoding
-        metadata_hash.merge!(metadata_obj.custom) if metadata_obj.custom
-
-        if metadata_hash.any?
-          request["X-Object-Metadata"] = metadata_hash.to_json
+        # Custom metadata is sent as individual X-Meta-<key> headers (the QUIC
+        # server reads Content-Type/Content-Encoding plus X-Meta-* headers).
+        if metadata_obj.custom
+          metadata_obj.custom.each do |k, v|
+            request["X-Meta-#{k}"] = v.to_s
+          end
         end
 
         response = execute_request(uri, request)
@@ -87,14 +95,11 @@ module ObjectStore
           request["Content-Encoding"] = metadata_obj.content_encoding
         end
 
-        # Build metadata JSON
-        metadata_hash = {}
-        metadata_hash["content_type"] = metadata_obj.content_type if metadata_obj.content_type
-        metadata_hash["content_encoding"] = metadata_obj.content_encoding if metadata_obj.content_encoding
-        metadata_hash.merge!(metadata_obj.custom) if metadata_obj.custom
-
-        if metadata_hash.any?
-          request["X-Object-Metadata"] = metadata_hash.to_json
+        # Custom metadata is sent as individual X-Meta-<key> headers.
+        if metadata_obj.custom
+          metadata_obj.custom.each do |k, v|
+            request["X-Meta-#{k}"] = v.to_s
+          end
         end
 
         # Set request body to the IO stream
@@ -122,12 +127,7 @@ module ObjectStore
 
         response = execute_request(uri, request)
 
-        metadata = Models::Metadata.new(
-          content_type: response["content-type"],
-          size: response["content-length"]&.to_i,
-          etag: response["etag"],
-          last_modified: response["last-modified"]
-        )
+        metadata = metadata_from_headers(response, size: response.body&.bytesize)
 
         Models::GetResponse.new(response.body, metadata)
       end
@@ -146,12 +146,13 @@ module ObjectStore
         request = Net::HTTP::Get.new(uri)
 
         metadata = nil
+        apply_auth_headers(request)
 
         Net::HTTP.start(uri.hostname, uri.port,
                         use_ssl: @use_ssl,
                         read_timeout: @timeout,
                         write_timeout: @timeout,
-                        verify_mode: OpenSSL::SSL::VERIFY_NONE) do |http|
+                        verify_mode: @verify_mode) do |http|
           http.request(request) do |response|
             handle_response(response)
 
@@ -173,7 +174,7 @@ module ObjectStore
         metadata
       rescue Net::OpenTimeout, Net::ReadTimeout => e
         raise ObjectStore::TimeoutError, e.message
-      rescue ObjectStore::NotFoundError, ObjectStore::ValidationError, ObjectStore::ServerError
+      rescue ObjectStore::Error
         raise
       rescue StandardError => e
         raise ObjectStore::ConnectionError, e.message
@@ -192,15 +193,19 @@ module ObjectStore
 
         response = execute_request(uri, request)
 
-        Models::DeleteResponse.new(success: true, message: parse_body(response)["message"])
+        # The server returns 204 No Content; parse_body yields {} for the
+        # empty body, so default the message.
+        body = parse_body(response)
+        message = body.is_a?(Hash) ? body["message"] : nil
+        Models::DeleteResponse.new(success: true, message: message || "Object deleted successfully")
       end
 
       def list(prefix: nil, delimiter: nil, max_results: 100, continue_from: nil)
         params = {}
         params[:prefix] = prefix if prefix
         params[:delimiter] = delimiter if delimiter
-        params[:limit] = max_results if max_results
-        params[:token] = continue_from if continue_from
+        params[:max] = max_results if max_results
+        params[:continue] = continue_from if continue_from
 
         uri = build_uri("/objects", params)
         request = Net::HTTP::Get.new(uri)
@@ -223,36 +228,15 @@ module ObjectStore
       end
 
       def get_metadata(key)
-        uri = build_uri("/metadata/#{encode_key(key)}")
-        request = Net::HTTP::Get.new(uri)
+        # The QUIC server has no /metadata route; metadata is read via a
+        # HEAD on the object and parsed from response headers.
+        uri = build_uri("/objects/#{encode_key(key)}")
+        request = Net::HTTP::Head.new(uri)
 
         response = execute_request(uri, request)
-        body = parse_body(response)
-
-        # Server returns: { "metadata": {...}, "size": 123, "etag": "...", "content_type": "..." }
-        # Extract fields from both the nested metadata object and top level
-        metadata_obj = body["metadata"] || {}
-
-        # Try to get content_type from multiple places: top-level, metadata object
-        # Don't use response headers as they reflect the API response, not the stored object
-        content_type = body["content_type"] || metadata_obj["content_type"]
-        content_encoding = body["content_encoding"] || metadata_obj["content_encoding"]
-
-        # Collect custom metadata fields (excluding standard fields)
-        standard_fields = ["content_type", "content_encoding", "size", "etag", "last_modified"]
-        custom = metadata_obj.reject { |k, _| standard_fields.include?(k) }
-
-        metadata_data = {
-          content_type: content_type,
-          content_encoding: content_encoding,
-          size: body["size"],
-          etag: body["etag"],
-          last_modified: body["last_modified"],
-          custom: custom
-        }
 
         Models::MetadataResponse.new(
-          metadata: metadata_data,
+          metadata: metadata_from_headers(response),
           success: true
         )
       end
@@ -260,10 +244,18 @@ module ObjectStore
       def update_metadata(key, metadata)
         metadata_obj = metadata.is_a?(Models::Metadata) ? metadata : Models::Metadata.new(metadata)
 
-        uri = build_uri("/metadata/#{encode_key(key)}")
-        request = Net::HTTP::Put.new(uri)
+        # The QUIC server updates metadata via PATCH on the object with a
+        # JSON body of { content_type, content_encoding, custom }.
+        payload = {
+          content_type: metadata_obj.content_type,
+          content_encoding: metadata_obj.content_encoding,
+          custom: metadata_obj.custom
+        }.compact
+
+        uri = build_uri("/objects/#{encode_key(key)}")
+        request = Net::HTTP::Patch.new(uri)
         request["Content-Type"] = "application/json"
-        request.body = metadata_obj.to_json
+        request.body = payload.to_json
 
         response = execute_request(uri, request)
 
@@ -350,10 +342,17 @@ module ObjectStore
       def add_replication_policy(policy)
         policy_obj = policy.is_a?(Models::ReplicationPolicy) ? policy : Models::ReplicationPolicy.new(policy)
 
+        # The QUIC server expects `check_interval` (seconds), not
+        # `check_interval_seconds` as the REST server uses.
+        payload = policy_obj.to_h
+        if payload.key?(:check_interval_seconds)
+          payload[:check_interval] = payload.delete(:check_interval_seconds)
+        end
+
         uri = build_uri("/replication/policies")
         request = Net::HTTP::Post.new(uri)
         request["Content-Type"] = "application/json"
-        request.body = policy_obj.to_json
+        request.body = payload.to_json
 
         response = execute_request(uri, request)
 
@@ -391,38 +390,52 @@ module ObjectStore
       end
 
       def trigger_replication(policy_id: nil, parallel: false, worker_count: 4)
-        payload = {
-          policy_id: policy_id,
-          parallel: parallel,
-          worker_count: worker_count
-        }.compact
+        # The QUIC server takes policy_id as a query param (empty = sync all),
+        # not a JSON body. parallel/worker_count are not supported over QUIC.
+        params = {}
+        params[:policy_id] = policy_id if policy_id
 
-        uri = build_uri("/replication/trigger")
+        uri = build_uri("/replication/trigger", params)
         request = Net::HTTP::Post.new(uri)
-        request["Content-Type"] = "application/json"
-        request.body = payload.to_json
 
         response = execute_request(uri, request)
         body = parse_body(response)
 
         {
           success: true,
-          result: body["result"],
+          result: body["result"]&.transform_keys(&:to_sym),
           message: body["message"]
         }
       end
 
       def get_replication_status(id)
-        uri = build_uri("/replication/policies/#{id}/status")
+        uri = build_uri("/replication/status/#{id}")
         request = Net::HTTP::Get.new(uri)
 
         response = execute_request(uri, request)
         body = parse_body(response)
 
+        # The server returns status fields flat at the top level (not nested
+        # under a "status" key).
         {
           success: true,
-          status: Models::ReplicationStatus.new(body["status"])
+          status: Models::ReplicationStatus.new(body)
         }
+      end
+
+      # Close the underlying HTTP connection if one is held
+      #
+      # This client opens a short-lived connection per request via
+      # Net::HTTP.start, so there is no persistent connection to release.
+      # Provided for API parity; closes a persistent connection if one is
+      # ever held. Safe to call multiple times.
+      #
+      # @return [void]
+      def close
+        return unless defined?(@http) && @http
+
+        @http.finish if @http.respond_to?(:finish) && @http.respond_to?(:started?) && @http.started?
+        @http = nil
       end
 
       private
@@ -442,18 +455,52 @@ module ObjectStore
         URI.encode_www_form_component(key)
       end
 
+      # Build a Models::Metadata from the standard and X-Meta-<key> response
+      # headers. The QUIC server conveys content_type/content_encoding via
+      # standard headers and custom metadata as individual X-Meta-* headers.
+      #
+      # @param response [Net::HTTPResponse] the HTTP response to read headers from
+      # @param size [Integer, nil] explicit size override (e.g. body bytesize for
+      #   GET, where Content-Length may be absent); falls back to Content-Length
+      #
+      # @return [Models::Metadata]
+      def metadata_from_headers(response, size: nil)
+        custom = {}
+        response.each_header do |name, value|
+          next unless name =~ /\Ax-meta-(.+)\z/i
+
+          custom[Regexp.last_match(1)] = value
+        end
+
+        Models::Metadata.new(
+          content_type: response["content-type"],
+          content_encoding: response["content-encoding"],
+          size: size || response["content-length"]&.to_i,
+          etag: response["etag"],
+          last_modified: response["last-modified"],
+          custom: custom
+        )
+      end
+
+      def apply_auth_headers(request)
+        request["Authorization"] = "Bearer #{@token}" if @token
+        request["X-Tenant-ID"] = @tenant_id if @tenant_id
+        @extra_headers.each { |k, v| request[k.to_s] = v.to_s }
+      end
+
       def execute_request(uri, request)
+        apply_auth_headers(request)
         Net::HTTP.start(uri.hostname, uri.port,
                         use_ssl: @use_ssl,
                         read_timeout: @timeout,
                         write_timeout: @timeout,
-                        verify_mode: OpenSSL::SSL::VERIFY_NONE) do |http|
+                        verify_mode: @verify_mode) do |http|
           response = http.request(request)
           handle_response(response)
         end
       rescue Net::OpenTimeout, Net::ReadTimeout => e
         raise ObjectStore::TimeoutError, e.message
-      rescue ObjectStore::NotFoundError, ObjectStore::ValidationError, ObjectStore::ServerError
+      rescue ObjectStore::Error
         # Re-raise our custom errors as-is
         raise
       rescue StandardError => e
@@ -462,21 +509,34 @@ module ObjectStore
 
       def handle_response(response)
         case response.code
-        when "200", "201"
+        when "200", "201", "204"
           response
         when "404"
           raise ObjectStore::NotFoundError, "Resource not found"
         when "400"
-          body = parse_body(response)
-          raise ObjectStore::ValidationError, body["message"] || "Bad request"
+          raise ObjectStore::ValidationError, error_message(response, "Bad request")
+        when "401"
+          raise ObjectStore::AuthenticationError, error_message(response, "Unauthenticated")
+        when "403"
+          raise ObjectStore::AuthorizationError, error_message(response, "Forbidden")
+        when "409"
+          raise ObjectStore::AlreadyExistsError, error_message(response, "Already exists")
         when "413"
           raise ObjectStore::ValidationError, "Request entity too large"
+        when "429"
+          raise ObjectStore::RateLimitError, error_message(response, "Rate limited")
         when /^5/
-          body = parse_body(response)
-          raise ObjectStore::ServerError, body["message"] || "Server error"
+          raise ObjectStore::ServerError, error_message(response, "Server error")
         else
           raise ObjectStore::Error, "Unexpected response: #{response.code}"
         end
+      end
+
+      # Extract the server-provided error message from a response body,
+      # falling back to a generic default when the body is absent or not JSON.
+      def error_message(response, fallback)
+        body = parse_body(response)
+        (body.is_a?(Hash) && body["message"]) || fallback
       end
 
       def parse_body(response)

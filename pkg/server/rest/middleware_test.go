@@ -25,7 +25,7 @@ import (
 
 func TestCORSMiddleware(t *testing.T) {
 	router := gin.New()
-	router.Use(CORSMiddleware())
+	router.Use(CORSMiddleware(nil))
 	router.GET("/test", func(c *gin.Context) {
 		c.String(http.StatusOK, "OK")
 	})
@@ -63,13 +63,13 @@ func TestCORSMiddleware(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			if w.Code != tt.wantStatusCode {
-				t.Errorf("CORSMiddleware() status = %v, want %v", w.Code, tt.wantStatusCode)
+				t.Errorf("CORSMiddleware(nil) status = %v, want %v", w.Code, tt.wantStatusCode)
 			}
 
 			for header, expectedValue := range tt.checkHeaders {
 				actualValue := w.Header().Get(header)
 				if !contains(actualValue, expectedValue) {
-					t.Errorf("CORSMiddleware() header %s = %v, want to contain %v", header, actualValue, expectedValue)
+					t.Errorf("CORSMiddleware(nil) header %s = %v, want to contain %v", header, actualValue, expectedValue)
 				}
 			}
 		})

@@ -71,7 +71,6 @@ func (fs *StorageFS) Name() string {
 }
 
 // Create creates a file in the filesystem, returning the file and an error, if any.
-// For now, this returns a placeholder until the File implementation is complete.
 func (fs *StorageFS) Create(name string) (File, error) {
 	return fs.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
 }
@@ -136,7 +135,6 @@ func (fs *StorageFS) MkdirAll(name string, perm os.FileMode) error {
 }
 
 // Open opens a file, returning the file and an error, if any.
-// For now, this returns a placeholder until the File implementation is complete.
 func (fs *StorageFS) Open(name string) (File, error) {
 	return fs.OpenFile(name, os.O_RDONLY, 0)
 }
@@ -636,27 +634,12 @@ func (d *dirEntry) Info() (os.FileInfo, error) {
 // dirExists checks if a directory exists in the storage backend.
 func (fs *StorageFS) dirExists(name string) (bool, error) {
 	markerKey := path.Join(name, dirMarker)
-
-	// Try to get the directory marker
-	data, err := fs.storage.Get(markerKey)
-	if err != nil {
-		return false, err
-	}
-	_ = data.Close() // #nosec G104 -- Closing read-only resource, error not actionable
-
-	return true, nil
+	return fs.storage.Exists(context.Background(), markerKey)
 }
 
 // fileExists checks if a file exists in the storage backend.
 func (fs *StorageFS) fileExists(name string) (bool, error) {
-	// Try to get the file
-	data, err := fs.storage.Get(name)
-	if err != nil {
-		return false, err
-	}
-	_ = data.Close() // #nosec G104 -- Closing read-only resource, error not actionable
-
-	return true, nil
+	return fs.storage.Exists(context.Background(), name)
 }
 
 // fileInfo is a simple implementation of os.FileInfo for internal use

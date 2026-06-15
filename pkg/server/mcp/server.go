@@ -14,16 +14,22 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
+	"github.com/jeremyhahn/go-objstore/pkg/audit"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
+	"github.com/jeremyhahn/go-objstore/pkg/server/middleware"
 	"github.com/sourcegraph/jsonrpc2"
 )
 
@@ -42,11 +48,19 @@ const (
 	ModeHTTP ServerMode = "http"
 )
 
+// defaultMCPMaxBodySize is the default maximum request body size for MCP HTTP
+// requests (100 MB, matching the REST server default).
+const defaultMCPMaxBodySize int64 = 100 * 1024 * 1024
+
 // ServerConfig holds the server configuration
 type ServerConfig struct {
 	Mode           ServerMode
 	HTTPAddress    string
 	ResourcePrefix string
+
+	// MaxBodySize is the maximum request body size in bytes for HTTP mode.
+	// Defaults to defaultMCPMaxBodySize (100 MB) when zero.
+	MaxBodySize int64
 
 	// Logger is the pluggable logger adapter (default: DefaultLogger)
 	Logger adapters.Logger
@@ -55,12 +69,41 @@ type ServerConfig struct {
 	// (default: NoOpAuthenticator). Not used for stdio mode.
 	Authenticator adapters.Authenticator
 
+	// Authorizer is the pluggable authorization adapter.
+	// For HTTP mode it is always enforced (default: NoOpAuthorizer = allow-all).
+	// For stdio mode it is enforced when EnforceStdioAuthz is true (default:
+	// false for backward compatibility; set to true to require the same RBAC
+	// checks on stdio as HTTP). When left false, stdio is unauthenticated and
+	// every method is allowed — this is acceptable only when access to the
+	// stdio pipe is controlled at the OS level.
+	Authorizer adapters.Authorizer
+
+	// EnforceStdioAuthz, when true, runs the Authorizer for every JSON-RPC
+	// request arriving over stdio. The anonymous principal (from
+	// NoOpAuthenticator) is used because stdio carries no credential object.
+	// Set this to true when pairing with a custom Authorizer that restricts
+	// anonymous access. Ignored in HTTP mode (always enforced there).
+	EnforceStdioAuthz bool
+
 	// TLSConfig is the TLS/mTLS configuration for HTTP mode (optional)
 	TLSConfig *adapters.TLSConfig
 
 	// Backend is the name of the backend to use when using the facade.
 	// If empty, the default backend is used.
 	Backend string
+
+	// EnableRateLimit enables rate limiting (default: false). In stdio mode a
+	// single shared bucket applies to the pipe.
+	EnableRateLimit bool
+
+	// RateLimitConfig is the rate limiting configuration.
+	RateLimitConfig *middleware.RateLimitConfig
+
+	// EnableAudit enables audit logging (default: false).
+	EnableAudit bool
+
+	// AuditLogger is the audit logger used when EnableAudit is set.
+	AuditLogger audit.AuditLogger
 }
 
 // Server is the main MCP server
@@ -69,6 +112,7 @@ type Server struct {
 	toolRegistry    *ToolRegistry
 	toolExecutor    *ToolExecutor
 	resourceManager *ResourceManager
+	rateLimiter     *middleware.RateLimiter
 }
 
 // NewServer creates a new MCP server using the ObjstoreFacade.
@@ -84,6 +128,11 @@ func NewServer(config *ServerConfig) (*Server, error) {
 		config.ResourcePrefix = ""
 	}
 
+	// Set default max body size if not provided
+	if config.MaxBodySize <= 0 {
+		config.MaxBodySize = defaultMCPMaxBodySize
+	}
+
 	// Set default logger if not provided
 	if config.Logger == nil {
 		config.Logger = adapters.NewDefaultLogger()
@@ -94,6 +143,16 @@ func NewServer(config *ServerConfig) (*Server, error) {
 		config.Authenticator = adapters.NewNoOpAuthenticator()
 	}
 
+	// Set default authorizer if not provided (for HTTP mode)
+	if config.Authorizer == nil {
+		config.Authorizer = adapters.NewNoOpAuthorizer()
+	}
+
+	// Default the audit logger when auditing is enabled without one.
+	if config.EnableAudit && config.AuditLogger == nil {
+		config.AuditLogger = audit.NewDefaultAuditLogger()
+	}
+
 	// Initialize components
 	toolRegistry := NewToolRegistry()
 	toolRegistry.RegisterDefaultTools()
@@ -101,11 +160,17 @@ func NewServer(config *ServerConfig) (*Server, error) {
 	toolExecutor := NewToolExecutor(config.Backend)
 	resourceManager := NewResourceManager(config.Backend, config.ResourcePrefix)
 
+	var rateLimiter *middleware.RateLimiter
+	if config.EnableRateLimit {
+		rateLimiter = middleware.NewRateLimiter(config.RateLimitConfig, config.Logger)
+	}
+
 	return &Server{
 		config:          config,
 		toolRegistry:    toolRegistry,
 		toolExecutor:    toolExecutor,
 		resourceManager: resourceManager,
+		rateLimiter:     rateLimiter,
 	}, nil
 }
 
@@ -137,6 +202,9 @@ func (s *Server) startStdio(ctx context.Context) error {
 
 	// Wait for context cancellation or connection close
 	<-conn.DisconnectNotify()
+	if s.rateLimiter != nil {
+		s.rateLimiter.Stop()
+	}
 	s.config.Logger.Info(ctx, "MCP server (stdio mode) stopped")
 	return nil
 }
@@ -145,7 +213,7 @@ func (s *Server) startStdio(ctx context.Context) error {
 func (s *Server) startHTTP(ctx context.Context) error {
 	address := s.config.HTTPAddress
 	if address == "" {
-		address = ":8080"
+		address = ":8081"
 	}
 
 	// Create HTTP mux for routing
@@ -161,22 +229,42 @@ func (s *Server) startHTTP(ctx context.Context) error {
 	jsonrpcHandler := NewHTTPHandler(s)
 	mux.Handle("/", s.authenticationMiddleware(jsonrpcHandler))
 
+	// Wrap the mux with the shared middleware stack. Order (outermost first):
+	// request ID → rate limit → audit → mux, matching the REST server.
+	var h http.Handler = mux
+	if s.config.EnableAudit && s.config.AuditLogger != nil {
+		h = audit.AuditHTTPMiddleware(s.config.AuditLogger)(h)
+	}
+	if s.rateLimiter != nil {
+		h = s.rateLimiter.HTTPMiddleware(h)
+	}
+	h = middleware.RequestIDHTTPMiddleware(h)
+
 	server := &http.Server{
 		Addr:              address,
-		Handler:           mux,
-		ReadHeaderTimeout: 30 * time.Second, // Prevent slowloris attacks
+		Handler:           h,
+		ReadHeaderTimeout: 10 * time.Second, // Prevent slowloris attacks
 		ReadTimeout:       60 * time.Second,
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1 MB
 	}
 
-	// Configure TLS if provided
+	// Configure TLS if provided. Build returns a nil *tls.Config when the
+	// adapter config is disabled (the zero value); serve plaintext in that case.
 	if s.config.TLSConfig != nil {
 		tlsConfig, err := s.config.TLSConfig.Build()
 		if err != nil {
 			return err
 		}
-		server.TLSConfig = tlsConfig
+		if tlsConfig != nil {
+			// Production floor: never serve TLS below 1.2 regardless of how the
+			// adapter config was constructed.
+			if tlsConfig.MinVersion < tls.VersionTLS12 {
+				tlsConfig.MinVersion = tls.VersionTLS12
+			}
+			server.TLSConfig = tlsConfig
+		}
 	}
 
 	// Start server in a goroutine
@@ -188,7 +276,7 @@ func (s *Server) startHTTP(ctx context.Context) error {
 			return
 		}
 
-		if s.config.TLSConfig != nil {
+		if server.TLSConfig != nil {
 			s.config.Logger.Info(ctx, "Starting MCP server in HTTP mode with TLS",
 				adapters.Field{Key: "address", Value: address},
 			)
@@ -209,15 +297,26 @@ func (s *Server) startHTTP(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		s.config.Logger.Info(ctx, "Stopping MCP server (HTTP mode)")
+		if s.rateLimiter != nil {
+			s.rateLimiter.Stop()
+		}
 		return server.Shutdown(context.Background())
 	case err := <-errChan:
+		if s.rateLimiter != nil {
+			s.rateLimiter.Stop()
+		}
 		return err
 	}
 }
 
-// authenticationMiddleware wraps an HTTP handler with authentication
+// authenticationMiddleware wraps an HTTP handler with authentication and
+// bounds the request body to prevent DoS via unbounded reads.
 func (s *Server) authenticationMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Bound the body early so every downstream read (auth, deriveMCPActionResource,
+		// ServeHTTP) is protected.
+		r.Body = http.MaxBytesReader(w, r.Body, s.config.MaxBodySize)
+
 		// Authenticate the request
 		principal, err := s.config.Authenticator.AuthenticateHTTP(r.Context(), r)
 		if err != nil {
@@ -230,18 +329,80 @@ func (s *Server) authenticationMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Store principal in context
+		// Store principal in context and enrich a request-local logger.
+		// Do NOT assign back to s.config.Logger — that would mutate shared
+		// server state and cause a data race under concurrent requests.
 		ctx := context.WithValue(r.Context(), principalContextKey, principal)
 		r = r.WithContext(ctx)
 
-		// Add principal info to logger
-		s.config.Logger = s.config.Logger.WithFields(
+		reqLogger := s.config.Logger.WithFields(
 			adapters.Field{Key: "principal_id", Value: principal.ID},
 			adapters.Field{Key: "principal_name", Value: principal.Name},
 		)
 
+		// Authorize the request. Peek at the JSON-RPC body to derive the
+		// MCP method (and tool name for tools/call), then restore the body
+		// for the downstream handler.
+		action, resource, body := s.deriveMCPActionResource(r)
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		if err := s.config.Authorizer.Authorize(ctx, principal, action, resource); err != nil {
+			reqLogger.Warn(ctx, "MCP HTTP authorization denied",
+				adapters.Field{Key: "error", Value: err.Error()},
+				adapters.Field{Key: "path", Value: r.URL.Path},
+				adapters.Field{Key: "action", Value: action},
+			)
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
 		next.ServeHTTP(w, r)
 	})
+}
+
+// mcpToolActions maps an MCP tool name to its required action per the standard
+// taxonomy. Tools not present default to admin (deny-safe).
+var mcpToolActions = map[string]string{
+	"objstore_get":             adapters.ActionRead,
+	"objstore_exists":          adapters.ActionRead,
+	"objstore_get_metadata":    adapters.ActionRead,
+	"objstore_list":            adapters.ActionList,
+	"objstore_put":             adapters.ActionWrite,
+	"objstore_update_metadata": adapters.ActionWrite,
+	"objstore_delete":          adapters.ActionDelete,
+}
+
+// deriveMCPActionResource reads the request body and maps the MCP JSON-RPC
+// method (and tool name for tools/call) to an (action, resource) pair. It
+// returns the consumed body bytes so the caller can restore r.Body. Read-only
+// protocol methods (initialize, tools/list, resources/*, ping) map to read.
+func (s *Server) deriveMCPActionResource(r *http.Request) (action, resource string, body []byte) {
+	body, _ = io.ReadAll(r.Body) // #nosec G104 -- body re-read errors surface downstream as invalid JSON
+	_ = r.Body.Close()
+
+	var parsed struct {
+		Method string `json:"method"`
+		Params struct {
+			Name string `json:"name"`
+		} `json:"params"`
+	}
+	_ = json.Unmarshal(body, &parsed) // #nosec G104 -- malformed bodies are rejected by the downstream handler
+
+	if parsed.Method != methodToolsCall {
+		// initialize, tools/list, resources/list, resources/read, ping.
+		return adapters.ActionRead, "", body
+	}
+
+	tool := parsed.Params.Name
+	if act, ok := mcpToolActions[tool]; ok {
+		return act, tool, body
+	}
+	// Lifecycle/replication tools and any unmapped tool require admin.
+	switch {
+	case strings.Contains(tool, "replication"):
+		return adapters.ActionAdmin, adapters.ResourceReplication, body
+	default:
+		return adapters.ActionAdmin, adapters.ResourcePolicy, body
+	}
 }
 
 // ListTools returns all available tools

@@ -6,6 +6,8 @@ import {
   ValidationError,
   AuthenticationError,
   AuthorizationError,
+  AlreadyExistsError,
+  RateLimitError,
   ServerError,
   TimeoutError,
 } from '../../src/errors';
@@ -82,6 +84,24 @@ describe('Error Classes', () => {
       expect(error.message).toBe('Access denied');
       expect(error.code).toBe('AUTHORIZATION_ERROR');
       expect(error.statusCode).toBe(403);
+    });
+  });
+
+  describe('AlreadyExistsError', () => {
+    it('should create error with conflict message', () => {
+      const error = new AlreadyExistsError('Object already exists');
+      expect(error.message).toBe('Object already exists');
+      expect(error.code).toBe('ALREADY_EXISTS');
+      expect(error.statusCode).toBe(409);
+    });
+  });
+
+  describe('RateLimitError', () => {
+    it('should create error with rate limit message', () => {
+      const error = new RateLimitError('Rate limit exceeded');
+      expect(error.message).toBe('Rate limit exceeded');
+      expect(error.code).toBe('RATE_LIMITED');
+      expect(error.statusCode).toBe(429);
     });
   });
 

@@ -269,12 +269,12 @@ func securityDemo() {
 
 	// All of these will fail due to validation
 	attackVectors := []string{
-		"../../../etc/passwd",     // Path traversal
-		"path/../file.txt",        // Path traversal
-		"/etc/passwd",             // Absolute path
-		"file\x00.txt",           // Null byte
-		"file\n.txt",             // Control character
-		"INVALID:key",            // Invalid backend name
+		"../../../etc/passwd", // Path traversal
+		"path/../file.txt",    // Path traversal
+		"/etc/passwd",         // Absolute path
+		"file\x00.txt",        // Null byte
+		"file\n.txt",          // Control character
+		"INVALID:key",         // Invalid backend name
 	}
 
 	fmt.Println("  Testing security validations...")

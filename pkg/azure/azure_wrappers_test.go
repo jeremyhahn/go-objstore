@@ -76,16 +76,53 @@ func TestContainerWrapper_ListBlobsFlat(t *testing.T) {
 func TestBlobWrapper_GetProperties(t *testing.T) {
 	// Stub the GetProperties function
 	oldGetProps := azureGetPropertiesFn
-	azureGetPropertiesFn = func(_ context.Context, _ azblob.BlockBlobURL) error {
-		return nil
+	azureGetPropertiesFn = func(_ context.Context, _ azblob.BlockBlobURL) (*BlobProperties, error) {
+		return &BlobProperties{Size: 42, ContentType: "text/plain"}, nil
 	}
 	defer func() { azureGetPropertiesFn = oldGetProps }()
 
 	u, _ := url.Parse("http://127.0.0.1:1/container/blob")
 	bw := blobWrapper{azblob.NewBlockBlobURL(*u, azblob.NewPipeline(azblob.NewAnonymousCredential(), azblob.PipelineOptions{}))}
 
-	err := bw.GetProperties(context.Background())
+	props, err := bw.GetProperties(context.Background())
 	if err != nil {
 		t.Fatalf("GetProperties error: %v", err)
+	}
+	if props == nil || props.Size != 42 || props.ContentType != "text/plain" {
+		t.Fatalf("GetProperties returned unexpected properties: %+v", props)
+	}
+}
+
+func TestBlobWrapper_SetMetadataAndHeaders(t *testing.T) {
+	// Stub the setter functions
+	oldSetMeta, oldSetHeaders := azureSetMetadataFn, azureSetHTTPHeadersFn
+	var gotMetadata map[string]string
+	var gotHeaders azblob.BlobHTTPHeaders
+	azureSetMetadataFn = func(_ context.Context, _ azblob.BlockBlobURL, metadata map[string]string) error {
+		gotMetadata = metadata
+		return nil
+	}
+	azureSetHTTPHeadersFn = func(_ context.Context, _ azblob.BlockBlobURL, headers azblob.BlobHTTPHeaders) error {
+		gotHeaders = headers
+		return nil
+	}
+	defer func() { azureSetMetadataFn, azureSetHTTPHeadersFn = oldSetMeta, oldSetHeaders }()
+
+	u, _ := url.Parse("http://127.0.0.1:1/container/blob")
+	bw := blobWrapper{azblob.NewBlockBlobURL(*u, azblob.NewPipeline(azblob.NewAnonymousCredential(), azblob.PipelineOptions{}))}
+
+	if err := bw.SetMetadata(context.Background(), map[string]string{"k": "v"}); err != nil {
+		t.Fatalf("SetMetadata error: %v", err)
+	}
+	if gotMetadata["k"] != "v" {
+		t.Fatalf("SetMetadata passed unexpected metadata: %v", gotMetadata)
+	}
+
+	headers := azblob.BlobHTTPHeaders{ContentType: "text/plain"}
+	if err := bw.SetHTTPHeaders(context.Background(), headers); err != nil {
+		t.Fatalf("SetHTTPHeaders error: %v", err)
+	}
+	if gotHeaders.ContentType != "text/plain" {
+		t.Fatalf("SetHTTPHeaders passed unexpected headers: %+v", gotHeaders)
 	}
 }

@@ -19,6 +19,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -27,21 +28,114 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	"github.com/jeremyhahn/go-objstore/pkg/replication"
+	servererrors "github.com/jeremyhahn/go-objstore/pkg/server/errors"
+	"github.com/jeremyhahn/go-objstore/pkg/server/jsonrpc"
 	"github.com/jeremyhahn/go-objstore/pkg/version"
 )
 
+// Response and log field keys used across the unix socket server.
+const (
+	fieldStatus = "status"
+	fieldError  = "error"
+)
+
+// ErrCodeForbidden is the JSON-RPC error code returned when authorization is
+// denied. Shared with the MCP transport via pkg/server/jsonrpc.
+const ErrCodeForbidden = jsonrpc.CodeForbidden
+
 // Handler handles JSON-RPC requests
 type Handler struct {
-	backend string
-	logger  adapters.Logger
+	backend       string
+	logger        adapters.Logger
+	authenticator adapters.Authenticator
+	authorizer    adapters.Authorizer
 }
 
-// NewHandler creates a new handler
-func NewHandler(backend string, logger adapters.Logger) *Handler {
-	return &Handler{
-		backend: backend,
-		logger:  logger,
+// NewHandler creates a new handler.
+//
+// Unix transport carries no per-request HTTP/gRPC/mTLS credential object, so the
+// authenticator is invoked via its HTTP entrypoint with a credential-less request.
+// With the default NoOpAuthenticator this yields the anonymous principal; custom
+// authenticators that require credentials will deny (since none are present).
+func NewHandler(backend string, logger adapters.Logger, authenticator adapters.Authenticator, authorizer adapters.Authorizer) *Handler {
+	if authenticator == nil {
+		authenticator = adapters.NewNoOpAuthenticator()
 	}
+	if authorizer == nil {
+		authorizer = adapters.NewNoOpAuthorizer()
+	}
+	return &Handler{
+		backend:       backend,
+		logger:        logger,
+		authenticator: authenticator,
+		authorizer:    authorizer,
+	}
+}
+
+// methodAuthz maps a JSON-RPC method name to its required (action, resource)
+// pair per the standard taxonomy. Health/ping are public and not present.
+var methodAuthz = map[string]struct {
+	action   string
+	resource string
+}{
+	MethodGet:              {adapters.ActionRead, ""},
+	MethodExists:           {adapters.ActionRead, ""},
+	MethodGetMetadata:      {adapters.ActionRead, ""},
+	MethodPut:              {adapters.ActionWrite, ""},
+	MethodUpdateMetadata:   {adapters.ActionWrite, ""},
+	MethodDelete:           {adapters.ActionDelete, ""},
+	MethodList:             {adapters.ActionList, ""},
+	MethodArchive:          {adapters.ActionAdmin, adapters.ResourcePolicy},
+	MethodAddPolicy:        {adapters.ActionAdmin, adapters.ResourcePolicy},
+	MethodRemovePolicy:     {adapters.ActionAdmin, adapters.ResourcePolicy},
+	MethodGetPolicies:      {adapters.ActionAdmin, adapters.ResourcePolicy},
+	MethodApplyPolicies:    {adapters.ActionAdmin, adapters.ResourcePolicy},
+	MethodAddReplPolicy:    {adapters.ActionAdmin, adapters.ResourceReplication},
+	MethodRemoveReplPolicy: {adapters.ActionAdmin, adapters.ResourceReplication},
+	MethodGetReplPolicy:    {adapters.ActionAdmin, adapters.ResourceReplication},
+	MethodGetReplPolicies:  {adapters.ActionAdmin, adapters.ResourceReplication},
+	MethodTriggerRepl:      {adapters.ActionAdmin, adapters.ResourceReplication},
+	MethodGetReplStatus:    {adapters.ActionAdmin, adapters.ResourceReplication},
+}
+
+// authorize authenticates the (credential-less) unix request and enforces
+// authorization for the given method. It returns an error response on denial,
+// or nil to proceed. Health/ping are public.
+func (h *Handler) authorize(ctx context.Context, req *Request) *Response {
+	mapping, needsAuthz := methodAuthz[req.Method]
+	if !needsAuthz {
+		// Health, ping, and unknown methods are not gated here; unknown methods
+		// are rejected later by the dispatch switch.
+		return nil
+	}
+
+	// Prefer a peer-credential principal injected at the connection layer
+	// (Unix SO_PEERCRED). This is the natural identity for a Unix socket and
+	// takes precedence over the transport authenticator. When absent, fall back
+	// to the configured Authenticator (NoOp/anonymous by default), which
+	// preserves backward compatibility and lets consumers inject a custom one.
+	principal, ok := principalFromContext(ctx)
+	if !ok {
+		// Derive the principal via the authenticator's HTTP entrypoint with a
+		// credential-less request (unix transport carries no credentials).
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "/", nil)
+		if err != nil {
+			return h.errorResponse(req.ID, ErrCodeInternalError, "failed to build auth context")
+		}
+		principal, err = h.authenticator.AuthenticateHTTP(ctx, httpReq)
+		if err != nil {
+			return h.errorResponse(req.ID, ErrCodeForbidden, "forbidden")
+		}
+	}
+
+	if err := h.authorizer.Authorize(ctx, principal, mapping.action, mapping.resource); err != nil {
+		h.logger.Warn(ctx, "unix authorization denied",
+			adapters.Field{Key: fieldError, Value: err.Error()},
+			adapters.Field{Key: "method", Value: req.Method},
+		)
+		return h.errorResponse(req.ID, ErrCodeForbidden, "forbidden")
+	}
+	return nil
 }
 
 // keyRef builds a key reference with optional backend prefix.
@@ -54,6 +148,12 @@ func (h *Handler) keyRef(key string) string {
 
 // Handle processes a JSON-RPC request and returns a response
 func (h *Handler) Handle(ctx context.Context, req *Request) *Response {
+	// Enforce authentication + authorization before dispatch. Health/ping are
+	// public and pass through. The default NoOpAuthorizer allows everything.
+	if denied := h.authorize(ctx, req); denied != nil {
+		return denied
+	}
+
 	switch req.Method {
 	case MethodPut:
 		return h.handlePut(ctx, req)
@@ -124,15 +224,15 @@ func (h *Handler) handlePut(ctx context.Context, req *Request) *Response {
 			Custom:          params.Metadata.Custom,
 		}
 		if err := objstore.PutWithMetadata(ctx, h.keyRef(params.Key), bytes.NewReader(data), metadata); err != nil {
-			return h.errorResponse(req.ID, ErrCodeInternalError, err.Error())
+			return h.backendErrorResponse(req.ID, err)
 		}
 	} else {
 		if err := objstore.PutWithContext(ctx, h.keyRef(params.Key), bytes.NewReader(data)); err != nil {
-			return h.errorResponse(req.ID, ErrCodeInternalError, err.Error())
+			return h.backendErrorResponse(req.ID, err)
 		}
 	}
 
-	return h.successResponse(req.ID, map[string]string{"status": "ok"})
+	return h.successResponse(req.ID, map[string]string{fieldStatus: "ok"})
 }
 
 // handleGet handles the get method
@@ -149,14 +249,14 @@ func (h *Handler) handleGet(ctx context.Context, req *Request) *Response {
 	// Get object using facade
 	reader, err := objstore.GetWithContext(ctx, h.keyRef(params.Key))
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, err.Error())
+		return h.backendErrorResponse(req.ID, err)
 	}
 	defer reader.Close()
 
 	// Read all data
 	data, err := io.ReadAll(reader)
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, err.Error())
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	result := &GetResult{
@@ -188,10 +288,10 @@ func (h *Handler) handleDelete(ctx context.Context, req *Request) *Response {
 	}
 
 	if err := objstore.DeleteWithContext(ctx, h.keyRef(params.Key)); err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, err.Error())
+		return h.backendErrorResponse(req.ID, err)
 	}
 
-	return h.successResponse(req.ID, map[string]string{"status": "ok"})
+	return h.successResponse(req.ID, map[string]string{fieldStatus: "ok"})
 }
 
 // handleExists handles the exists method
@@ -207,7 +307,7 @@ func (h *Handler) handleExists(ctx context.Context, req *Request) *Response {
 
 	exists, err := objstore.Exists(ctx, h.keyRef(params.Key))
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, err.Error())
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	return h.successResponse(req.ID, &ExistsResult{Exists: exists})
@@ -231,7 +331,7 @@ func (h *Handler) handleList(ctx context.Context, req *Request) *Response {
 
 	result, err := objstore.ListWithOptions(ctx, h.backend, opts)
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, err.Error())
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	objects := make([]ObjectInfo, 0, len(result.Objects))
@@ -267,7 +367,7 @@ func (h *Handler) handleGetMetadata(ctx context.Context, req *Request) *Response
 
 	metadata, err := objstore.GetMetadata(ctx, h.keyRef(params.Key))
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, err.Error())
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	result := &MetadataParams{
@@ -298,10 +398,10 @@ func (h *Handler) handleUpdateMetadata(ctx context.Context, req *Request) *Respo
 	}
 
 	if err := objstore.UpdateMetadata(ctx, h.keyRef(params.Key), metadata); err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, err.Error())
+		return h.backendErrorResponse(req.ID, err)
 	}
 
-	return h.successResponse(req.ID, map[string]string{"status": "ok"})
+	return h.successResponse(req.ID, map[string]string{fieldStatus: "ok"})
 }
 
 // handleArchive handles the archive method
@@ -322,14 +422,14 @@ func (h *Handler) handleArchive(ctx context.Context, req *Request) *Response {
 	// Create archiver from factory
 	archiver, err := factory.NewArchiver(params.DestinationType, params.DestinationSettings)
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, err.Error())
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	if err := objstore.Archive(h.keyRef(params.Key), archiver); err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, err.Error())
+		return h.backendErrorResponse(req.ID, err)
 	}
 
-	return h.successResponse(req.ID, map[string]string{"status": "ok"})
+	return h.successResponse(req.ID, map[string]string{fieldStatus: "ok"})
 }
 
 // handleAddPolicy handles the add_policy method
@@ -339,18 +439,25 @@ func (h *Handler) handleAddPolicy(ctx context.Context, req *Request) *Response {
 		return h.errorResponse(req.ID, ErrCodeInvalidParams, "invalid parameters")
 	}
 
+	// retention_seconds takes precedence over after_days when positive,
+	// allowing sub-day retention over the unix transport.
+	retention := time.Duration(params.AfterDays) * 24 * time.Hour
+	if params.RetentionSeconds > 0 {
+		retention = time.Duration(params.RetentionSeconds) * time.Second
+	}
+
 	policy := common.LifecyclePolicy{
 		ID:        params.ID,
 		Prefix:    params.Prefix,
 		Action:    params.Action,
-		Retention: time.Duration(params.AfterDays) * 24 * time.Hour,
+		Retention: retention,
 	}
 
 	if err := objstore.AddPolicy(h.backend, policy); err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, err.Error())
+		return h.backendErrorResponse(req.ID, err)
 	}
 
-	return h.successResponse(req.ID, map[string]string{"status": "ok"})
+	return h.successResponse(req.ID, map[string]string{fieldStatus: "ok"})
 }
 
 // handleRemovePolicy handles the remove_policy method
@@ -365,26 +472,29 @@ func (h *Handler) handleRemovePolicy(ctx context.Context, req *Request) *Respons
 	}
 
 	if err := objstore.RemovePolicy(h.backend, params.ID); err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, err.Error())
+		return h.backendErrorResponse(req.ID, err)
 	}
 
-	return h.successResponse(req.ID, map[string]string{"status": "ok"})
+	return h.successResponse(req.ID, map[string]string{fieldStatus: "ok"})
 }
 
 // handleGetPolicies handles the get_policies method
 func (h *Handler) handleGetPolicies(ctx context.Context, req *Request) *Response {
 	policies, err := objstore.GetPolicies(h.backend)
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, err.Error())
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	result := make([]PolicyParams, 0, len(policies))
 	for _, p := range policies {
 		result = append(result, PolicyParams{
-			ID:        p.ID,
-			Prefix:    p.Prefix,
-			Action:    p.Action,
-			AfterDays: int(p.Retention.Hours() / 24),
+			ID:     p.ID,
+			Prefix: p.Prefix,
+			Action: p.Action,
+			// after_days is rounded for backward compatibility;
+			// retention_seconds carries the exact retention.
+			AfterDays:        int(p.Retention.Hours() / 24),
+			RetentionSeconds: int64(p.Retention / time.Second),
 		})
 	}
 
@@ -396,7 +506,7 @@ func (h *Handler) handleApplyPolicies(ctx context.Context, req *Request) *Respon
 	// Get policies
 	policies, err := objstore.GetPolicies(h.backend)
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, err.Error())
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	if len(policies) == 0 {
@@ -414,7 +524,7 @@ func (h *Handler) handleApplyPolicies(ctx context.Context, req *Request) *Respon
 
 	listResult, err := objstore.ListWithOptions(ctx, h.backend, opts)
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, err.Error())
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	for _, policy := range policies {
@@ -469,7 +579,7 @@ func (h *Handler) handleAddReplicationPolicy(ctx context.Context, req *Request) 
 	// Get replication manager from facade
 	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, err.Error())
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	policy := common.ReplicationPolicy{
@@ -489,10 +599,10 @@ func (h *Handler) handleAddReplicationPolicy(ctx context.Context, req *Request) 
 	}
 
 	if err := repMgr.AddPolicy(policy); err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, err.Error())
+		return h.backendErrorResponse(req.ID, err)
 	}
 
-	return h.successResponse(req.ID, map[string]string{"status": "ok"})
+	return h.successResponse(req.ID, map[string]string{fieldStatus: "ok"})
 }
 
 // handleRemoveReplicationPolicy handles remove_replication_policy
@@ -509,14 +619,14 @@ func (h *Handler) handleRemoveReplicationPolicy(ctx context.Context, req *Reques
 	// Get replication manager from facade
 	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, err.Error())
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	if err := repMgr.RemovePolicy(params.ID); err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, err.Error())
+		return h.backendErrorResponse(req.ID, err)
 	}
 
-	return h.successResponse(req.ID, map[string]string{"status": "ok"})
+	return h.successResponse(req.ID, map[string]string{fieldStatus: "ok"})
 }
 
 // handleGetReplicationPolicy handles get_replication_policy
@@ -533,12 +643,12 @@ func (h *Handler) handleGetReplicationPolicy(ctx context.Context, req *Request) 
 	// Get replication manager from facade
 	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, err.Error())
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	policy, err := repMgr.GetPolicy(params.ID)
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, err.Error())
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	result := &ReplicationPolicyParams{
@@ -558,12 +668,12 @@ func (h *Handler) handleGetReplicationPolicies(ctx context.Context, req *Request
 	// Get replication manager from facade
 	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, err.Error())
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	policies, err := repMgr.GetPolicies()
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, err.Error())
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	result := make([]ReplicationPolicyParams, 0, len(policies))
@@ -593,7 +703,7 @@ func (h *Handler) handleTriggerReplication(ctx context.Context, req *Request) *R
 	// Get replication manager from facade
 	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, err.Error())
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	var syncResult *common.SyncResult
@@ -607,7 +717,7 @@ func (h *Handler) handleTriggerReplication(ctx context.Context, req *Request) *R
 	}
 
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, err.Error())
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	result := &TriggerReplicationResult{
@@ -634,7 +744,7 @@ func (h *Handler) handleGetReplicationStatus(ctx context.Context, req *Request) 
 	// Get replication manager from facade
 	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, err.Error())
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	// Get replication status using type assertion
@@ -647,7 +757,7 @@ func (h *Handler) handleGetReplicationStatus(ctx context.Context, req *Request) 
 
 	status, err := statusGetter.GetReplicationStatus(params.ID)
 	if err != nil {
-		return h.errorResponse(req.ID, ErrCodeInternalError, err.Error())
+		return h.backendErrorResponse(req.ID, err)
 	}
 
 	var lastSyncTime string
@@ -686,12 +796,13 @@ func (h *Handler) successResponse(id any, result any) *Response {
 
 // errorResponse creates an error response
 func (h *Handler) errorResponse(id any, code int, message string) *Response {
-	return &Response{
-		JSONRPC: jsonRPCVersion,
-		Error: &RPCError{
-			Code:    code,
-			Message: message,
-		},
-		ID: id,
-	}
+	return jsonrpc.NewError(id, code, message)
+}
+
+// backendErrorResponse maps a backend error through the shared taxonomy so
+// not-found, permission, and rate-limit errors surface with their proper
+// JSON-RPC codes instead of a blanket internal error.
+func (h *Handler) backendErrorResponse(id any, err error) *Response {
+	code, message := servererrors.JSONRPCError(err)
+	return jsonrpc.NewError(id, code, message)
 }

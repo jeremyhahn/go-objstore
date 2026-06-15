@@ -613,6 +613,7 @@ func TestSyncAll_WithErrors(t *testing.T) {
 type errorFileSystem struct {
 	openError   error
 	removeError error
+	renameError error
 }
 
 func (e *errorFileSystem) OpenFile(name string, flag int, perm os.FileMode) (ReplicationFile, error) {
@@ -625,6 +626,13 @@ func (e *errorFileSystem) OpenFile(name string, flag int, perm os.FileMode) (Rep
 func (e *errorFileSystem) Remove(name string) error {
 	if e.removeError != nil {
 		return e.removeError
+	}
+	return nil
+}
+
+func (e *errorFileSystem) Rename(src, dst string) error {
+	if e.renameError != nil {
+		return e.renameError
 	}
 	return nil
 }

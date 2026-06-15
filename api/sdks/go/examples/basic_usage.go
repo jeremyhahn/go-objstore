@@ -25,6 +25,12 @@ func main() {
 
 	// Example using REST client
 	restExample()
+
+	// Example using MCP client
+	mcpExample()
+
+	// Example using Unix socket client
+	unixExample()
 }
 
 func grpcExample() {
@@ -168,4 +174,106 @@ func restExample() {
 		return
 	}
 	fmt.Println("Object deleted successfully")
+}
+
+func mcpExample() {
+	fmt.Println("\n=== MCP Client Example ===")
+
+	// Connect to an MCP server with optional Bearer token auth.
+	config := &objstore.ClientConfig{
+		Protocol:       objstore.ProtocolMCP,
+		Address:        "localhost:8090",
+		RequestTimeout: 30 * time.Second,
+		// Optional app-layer auth fields:
+		Token:    "my-bearer-token",
+		TenantID: "tenant-acme",
+		Headers:  map[string]string{"X-Request-Source": "example"},
+	}
+
+	client, err := objstore.NewClient(config)
+	if err != nil {
+		log.Fatalf("Failed to create MCP client: %v", err)
+	}
+	defer client.Close()
+
+	ctx := context.Background()
+
+	health, err := client.Health(ctx)
+	if err != nil {
+		log.Printf("Health check failed: %v", err)
+		return
+	}
+	fmt.Printf("MCP server status: %s\n", health.Status)
+
+	result, err := client.Put(ctx, "example/mcp-test.txt", []byte("Hello from MCP!"), &objstore.Metadata{
+		ContentType: "text/plain",
+	})
+	if err != nil {
+		log.Printf("Failed to put object: %v", err)
+		return
+	}
+	fmt.Printf("Object stored (success=%v)\n", result.Success)
+
+	getResult, err := client.Get(ctx, "example/mcp-test.txt")
+	if err != nil {
+		log.Printf("Failed to get object: %v", err)
+		return
+	}
+	fmt.Printf("Retrieved data: %s\n", string(getResult.Data))
+}
+
+func unixExample() {
+	fmt.Println("\n=== Unix Socket Client Example ===")
+
+	// Address is the filesystem path to the Unix domain socket.
+	// Unix auth is handled by the server via OS peercred; no token needed.
+	config := &objstore.ClientConfig{
+		Protocol:          objstore.ProtocolUnix,
+		Address:           "/var/run/objstore/objstore.sock",
+		ConnectionTimeout: 5 * time.Second,
+		RequestTimeout:    30 * time.Second,
+	}
+
+	client, err := objstore.NewClient(config)
+	if err != nil {
+		// Socket may not exist in this example environment.
+		log.Printf("Failed to create Unix client (socket may not exist): %v", err)
+		return
+	}
+	defer client.Close()
+
+	ctx := context.Background()
+
+	health, err := client.Health(ctx)
+	if err != nil {
+		log.Printf("Health check failed: %v", err)
+		return
+	}
+	fmt.Printf("Unix server status: %s\n", health.Status)
+
+	_, err = client.Put(ctx, "example/unix-test.txt", []byte("Hello from Unix socket!"), nil)
+	if err != nil {
+		log.Printf("Failed to put object: %v", err)
+		return
+	}
+
+	getResult, err := client.Get(ctx, "example/unix-test.txt")
+	if err != nil {
+		log.Printf("Failed to get object: %v", err)
+		return
+	}
+	fmt.Printf("Retrieved data: %s\n", string(getResult.Data))
+
+	// Streaming example (REST/QUIC/gRPC only; type-assert for Streamer).
+	if streamer, ok := client.(objstore.Streamer); ok {
+		rc, meta, err := streamer.GetStream(ctx, "example/unix-test.txt")
+		if err != nil {
+			log.Printf("GetStream failed: %v", err)
+			return
+		}
+		defer rc.Close()
+		fmt.Printf("Streaming object, content-type=%s\n", meta.ContentType)
+	} else {
+		fmt.Println("Unix client does not implement Streamer (buffered only)")
+	}
 }

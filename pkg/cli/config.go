@@ -36,11 +36,15 @@ type Config struct {
 	ServerProtocol string // Server protocol: rest, grpc, or quic
 
 	// Encryption settings
-	EncryptionEnabled      bool
-	EncryptionKeyID        string
-	EncryptionBackend      string
-	EncryptionBackendPath  string
-	EncryptionKeychainPath string
+	EncryptionEnabled     bool
+	EncryptionKeyID       string
+	EncryptionBackend     string
+	EncryptionBackendPath string
+	EncryptionKMSPath     string
+
+	// Archiver settings used by archive lifecycle policies in local mode.
+	ArchiveVaultName string // AWS Glacier vault name (required for archive policies)
+	ArchiveRegion    string // AWS region for the archiver (falls back to BackendRegion)
 }
 
 // InitConfig initializes the configuration using Viper.
@@ -96,6 +100,9 @@ func GetConfig(v *viper.Viper) *Config {
 		OutputFormat:   v.GetString("output-format"),
 		Server:         v.GetString("server"),
 		ServerProtocol: v.GetString("server-protocol"),
+
+		ArchiveVaultName: v.GetString("archive-vault-name"),
+		ArchiveRegion:    v.GetString("archive-region"),
 	}
 }
 
@@ -136,8 +143,8 @@ func (c *Config) GetStorageSettings() map[string]string {
 	if c.EncryptionBackendPath != "" {
 		settings["encryption_backend_path"] = c.EncryptionBackendPath
 	}
-	if c.EncryptionKeychainPath != "" {
-		settings["encryption_keychain_path"] = c.EncryptionKeychainPath
+	if c.EncryptionKMSPath != "" {
+		settings["encryption_kms_path"] = c.EncryptionKMSPath
 	}
 
 	// For local backend, use persistent lifecycle manager so policies survive across CLI commands
@@ -147,6 +154,25 @@ func (c *Config) GetStorageSettings() map[string]string {
 		settings["lifecyclePolicyFile"] = ".lifecycle-policies.json"
 	}
 
+	return settings
+}
+
+// GetArchiverSettings returns the settings used to configure the AWS Glacier
+// archiver for archive lifecycle policies. The dedicated archive settings
+// (archive-vault-name, archive-region) take precedence; when no archive
+// region is configured the storage backend region is used instead.
+func (c *Config) GetArchiverSettings() map[string]string {
+	settings := make(map[string]string)
+	if c.ArchiveVaultName != "" {
+		settings["vaultName"] = c.ArchiveVaultName
+	}
+	region := c.ArchiveRegion
+	if region == "" {
+		region = c.BackendRegion
+	}
+	if region != "" {
+		settings["region"] = region
+	}
 	return settings
 }
 

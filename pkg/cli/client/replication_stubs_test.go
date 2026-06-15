@@ -358,7 +358,7 @@ func TestRESTClient_GetPoliciesSuccess(t *testing.T) {
 	server := newMockServer(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`[{"id":"policy1","prefix":"logs/","action":"delete"}]`))
+		w.Write([]byte(`{"policies":[{"id":"policy1","prefix":"logs/","action":"delete"}],"count":1}`))
 	})
 	defer server.Close()
 
