@@ -17,6 +17,8 @@ package gcs
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
@@ -31,47 +33,102 @@ func (g *GCS) PutWithContext(ctx context.Context, key string, data io.Reader) er
 }
 
 // PutWithMetadata stores an object with associated metadata.
-// Note: GCS metadata support requires accessing the underlying storage.Writer.
-// For now, this delegates to the standard Put method.
 func (g *GCS) PutWithMetadata(ctx context.Context, key string, data io.Reader, metadata *common.Metadata) error {
+	if err := common.ValidateKey(key); err != nil {
+		return err
+	}
 	w := g.client.Bucket(g.bucket).Object(key).NewWriter(ctx)
-	defer func() { _ = w.Close() }()
-	_, err := io.Copy(w, data)
-	return err
+	if _, err := io.Copy(w, data); err != nil {
+		// Close to release the GCS write stream; ignore close error.
+		_ = w.Close()
+		return err
+	}
+	// Close finalizes the GCS upload; capture its error.
+	return w.Close()
 }
 
 // GetWithContext retrieves an object from the backend with context support.
 func (g *GCS) GetWithContext(ctx context.Context, key string) (io.ReadCloser, error) {
+	if err := common.ValidateKey(key); err != nil {
+		return nil, err
+	}
 	obj := g.client.Bucket(g.bucket).Object(key)
 	return obj.NewReader(ctx)
 }
 
 // GetMetadata retrieves only the metadata for an object.
-// Note: This is a stub implementation. Full implementation requires GCS SDK extensions.
+// It performs a best-effort Attrs call to populate Size and ContentType;
+// callers are guaranteed a non-nil *common.Metadata on success.
 func (g *GCS) GetMetadata(ctx context.Context, key string) (*common.Metadata, error) {
-	// Stub: return nil to indicate metadata not implemented for GCS wrapper
-	return nil, nil
+	if err := common.ValidateKey(key); err != nil {
+		return nil, err
+	}
+	meta := &common.Metadata{}
+	obj := g.client.Bucket(g.bucket).Object(key)
+	attrs, err := obj.Attrs(ctx)
+	if err != nil {
+		// Return the empty struct rather than nil so callers never dereference nil.
+		return meta, nil
+	}
+	meta.Size = attrs.Size
+	meta.ContentType = attrs.ContentType
+	return meta, nil
 }
 
 // UpdateMetadata updates the metadata for an existing object.
-// Note: This is a stub implementation. Full implementation requires GCS SDK extensions.
+// Matching the local and S3 backends, the object's metadata is replaced
+// rather than merged: custom metadata, content type and content encoding not
+// present in the supplied metadata are cleared. A missing object yields an
+// error wrapping common.ErrKeyNotFound.
 func (g *GCS) UpdateMetadata(ctx context.Context, key string, metadata *common.Metadata) error {
-	// Stub: no-op for now
+	if err := common.ValidateKey(key); err != nil {
+		return err
+	}
+	if metadata == nil {
+		metadata = &common.Metadata{}
+	}
+	custom := metadata.Custom
+	if custom == nil {
+		// An empty (non-nil) map instructs GCS to delete all custom metadata,
+		// preserving replace semantics.
+		custom = map[string]string{}
+	}
+	uattrs := storage.ObjectAttrsToUpdate{
+		ContentType:     metadata.ContentType,
+		ContentEncoding: metadata.ContentEncoding,
+		Metadata:        custom,
+	}
+	if _, err := g.client.Bucket(g.bucket).Object(key).Update(ctx, uattrs); err != nil {
+		if errors.Is(err, storage.ErrObjectNotExist) {
+			return fmt.Errorf("%w: %s", common.ErrKeyNotFound, key)
+		}
+		return err
+	}
 	return nil
 }
 
 // DeleteWithContext removes an object from the backend with context support.
 func (g *GCS) DeleteWithContext(ctx context.Context, key string) error {
+	if err := common.ValidateKey(key); err != nil {
+		return err
+	}
 	obj := g.client.Bucket(g.bucket).Object(key)
 	return obj.Delete(ctx)
 }
 
 // Exists checks if an object exists in the backend.
+// Returns false,nil only for a not-found condition; propagates all other errors.
 func (g *GCS) Exists(ctx context.Context, key string) (bool, error) {
+	if err := common.ValidateKey(key); err != nil {
+		return false, err
+	}
 	obj := g.client.Bucket(g.bucket).Object(key)
 	_, err := obj.Attrs(ctx)
 	if err != nil {
-		return false, nil
+		if errors.Is(err, storage.ErrObjectNotExist) {
+			return false, nil
+		}
+		return false, err
 	}
 	return true, nil
 }

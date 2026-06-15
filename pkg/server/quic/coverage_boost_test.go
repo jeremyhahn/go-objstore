@@ -16,7 +16,6 @@ package quic
 import (
 	"bytes"
 	"context"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -43,8 +42,8 @@ func TestHandlerPutTimeout(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
-	// Should get timeout or success depending on timing
-	if w.Code != http.StatusRequestTimeout && w.Code != http.StatusCreated {
+	// Should get 504 (deadline exceeded) or success depending on timing
+	if w.Code != http.StatusGatewayTimeout && w.Code != http.StatusCreated {
 		t.Logf("Got status %d (may vary due to timing)", w.Code)
 	}
 }
@@ -71,8 +70,8 @@ func TestHandlerGetTimeout(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
-	// Might get timeout or not found depending on timing
-	if w.Code != http.StatusRequestTimeout && w.Code != http.StatusNotFound && w.Code != http.StatusOK {
+	// Might get 504 (deadline exceeded) or not found depending on timing
+	if w.Code != http.StatusGatewayTimeout && w.Code != http.StatusNotFound && w.Code != http.StatusOK {
 		t.Logf("Got status %d", w.Code)
 	}
 }
@@ -99,8 +98,8 @@ func TestHandlerDeleteTimeout(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
-	// Might succeed or timeout
-	if w.Code != http.StatusRequestTimeout && w.Code != http.StatusNoContent && w.Code != http.StatusInternalServerError {
+	// Might succeed or hit the deadline (504)
+	if w.Code != http.StatusGatewayTimeout && w.Code != http.StatusNoContent && w.Code != http.StatusInternalServerError {
 		t.Logf("Got status %d", w.Code)
 	}
 }
@@ -120,8 +119,8 @@ func TestHandlerListTimeout(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
-	// Might succeed or timeout
-	if w.Code != http.StatusRequestTimeout && w.Code != http.StatusOK {
+	// Might succeed or hit the deadline (504)
+	if w.Code != http.StatusGatewayTimeout && w.Code != http.StatusOK {
 		t.Logf("Got status %d", w.Code)
 	}
 }
@@ -343,25 +342,6 @@ func TestHandlerListNoNextToken(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status 200, got %d", w.Code)
 	}
-}
-
-// Test reading errors during GET
-type errorReader struct {
-	io.Reader
-	failAfter int
-	count     int
-}
-
-func (e *errorReader) Read(p []byte) (n int, err error) {
-	e.count++
-	if e.count > e.failAfter {
-		return 0, io.ErrUnexpectedEOF
-	}
-	return e.Reader.Read(p)
-}
-
-func (e *errorReader) Close() error {
-	return nil
 }
 
 func TestServerStartError(t *testing.T) {

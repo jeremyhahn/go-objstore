@@ -158,9 +158,9 @@ func TestHandleUpdateMetadata_ErrorPaths(t *testing.T) {
 
 		handler.handleUpdateMetadata(w, req, "nonexistent.txt")
 
-		// Returns 500 because UpdateMetadata returns error for non-existent object
-		if w.Code != http.StatusInternalServerError {
-			t.Errorf("expected status 500, got %d", w.Code)
+		// The shared taxonomy classifies missing objects as 404.
+		if w.Code != http.StatusNotFound {
+			t.Errorf("expected status 404, got %d", w.Code)
 		}
 	})
 }

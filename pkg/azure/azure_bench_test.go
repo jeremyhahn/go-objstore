@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
+
+	"github.com/Azure/azure-storage-blob-go/azblob"
 )
 
 // Mock implementations for benchmarking
@@ -48,7 +50,15 @@ func (m *mockBlobAPI) Delete(ctx context.Context) error {
 	return nil
 }
 
-func (m *mockBlobAPI) GetProperties(ctx context.Context) error {
+func (m *mockBlobAPI) GetProperties(ctx context.Context) (*BlobProperties, error) {
+	return &BlobProperties{Size: int64(len(m.data))}, nil
+}
+
+func (m *mockBlobAPI) SetMetadata(ctx context.Context, metadata map[string]string) error {
+	return nil
+}
+
+func (m *mockBlobAPI) SetHTTPHeaders(ctx context.Context, headers azblob.BlobHTTPHeaders) error {
 	return nil
 }
 

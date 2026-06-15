@@ -293,7 +293,7 @@ func TestRESTClient_Policies(t *testing.T) {
 			if r.Method == http.MethodPost {
 				w.WriteHeader(http.StatusCreated)
 			} else if r.Method == http.MethodGet {
-				w.Write([]byte(`[{"id":"test","prefix":"tmp/","retention_seconds":86400,"action":"delete"}]`))
+				w.Write([]byte(`{"policies":[{"id":"test","prefix":"tmp/","retention_seconds":86400,"action":"delete"}],"count":1}`))
 			}
 		case "/api/v1/policies/test":
 			if r.Method == http.MethodDelete {
@@ -805,11 +805,11 @@ func TestRESTClient_ApplyPolicies_Success(t *testing.T) {
 func TestRESTClient_GetPolicies_WithMultiplePolicies(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`[
-			{"ID":"p1","Prefix":"test/","Retention":7200000000000,"Action":"delete"},
-			{"ID":"p2","Prefix":"old/","Retention":2592000000000000,"Action":"archive"},
-			{"ID":"p3","Prefix":"temp/","Retention":3600000000000,"Action":"delete"}
-		]`))
+		w.Write([]byte(`{"policies":[
+			{"id":"p1","prefix":"test/","retention_seconds":7200,"action":"delete"},
+			{"id":"p2","prefix":"old/","retention_seconds":2592000,"action":"archive"},
+			{"id":"p3","prefix":"temp/","retention_seconds":3600,"action":"delete"}
+		],"count":3}`))
 	}))
 	defer server.Close()
 
@@ -842,12 +842,12 @@ func TestRESTClient_Put_StatusOK(t *testing.T) {
 }
 
 func TestQUICClient_Put_StatusOK(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK) // Test with OK instead of Created
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 	err := client.Put(context.Background(), "test.txt", strings.NewReader("data"), nil)
 	if err != nil {
 		t.Errorf("Put with StatusOK failed: %v", err)
@@ -893,13 +893,13 @@ func TestQUICClient_Exists_RequestError(t *testing.T) {
 }
 
 func TestQUICClient_Exists_ContextCanceled(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(100 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
@@ -1035,12 +1035,12 @@ func TestRESTClient_Put_ReadError(t *testing.T) {
 }
 
 func TestQUICClient_Put_ReadError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 	}))
 	defer server.Close()
 
-	client, _ := NewQUICClient(&Config{ServerURL: server.URL})
+	client := newQUICTestClient(t, server.URL)
 
 	// Create a reader that errors
 	reader := &errorReader{}

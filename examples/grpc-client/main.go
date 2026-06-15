@@ -25,6 +25,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+const exampleKey = "example/hello.txt"
+
 func main() {
 	// Connect to the gRPC server
 	// Note: grpc.NewClient doesn't block by default, connection is established lazily
@@ -45,7 +47,7 @@ func main() {
 	// Example 1: Put an object
 	fmt.Println("1. Putting an object...")
 	putResp, err := client.Put(ctx, &objstorepb.PutRequest{
-		Key:  "example/hello.txt",
+		Key:  exampleKey,
 		Data: []byte("Hello, gRPC ObjectStore!"),
 		Metadata: &objstorepb.Metadata{
 			ContentType: "text/plain",
@@ -63,7 +65,7 @@ func main() {
 	// Example 2: Get the object back
 	fmt.Println("2. Getting the object...")
 	getStream, err := client.Get(ctx, &objstorepb.GetRequest{
-		Key: "example/hello.txt",
+		Key: exampleKey,
 	})
 	if err != nil {
 		log.Fatalf("Get failed: %v", err)
@@ -95,7 +97,7 @@ func main() {
 	// Example 3: Check if object exists
 	fmt.Println("3. Checking if object exists...")
 	existsResp, err := client.Exists(ctx, &objstorepb.ExistsRequest{
-		Key: "example/hello.txt",
+		Key: exampleKey,
 	})
 	if err != nil {
 		log.Fatalf("Exists failed: %v", err)
@@ -105,7 +107,7 @@ func main() {
 	// Example 4: Get metadata only
 	fmt.Println("4. Getting metadata...")
 	metaResp, err := client.GetMetadata(ctx, &objstorepb.GetMetadataRequest{
-		Key: "example/hello.txt",
+		Key: exampleKey,
 	})
 	if err != nil {
 		log.Fatalf("GetMetadata failed: %v", err)
@@ -116,7 +118,7 @@ func main() {
 	// Example 5: Update metadata
 	fmt.Println("5. Updating metadata...")
 	updateResp, err := client.UpdateMetadata(ctx, &objstorepb.UpdateMetadataRequest{
-		Key: "example/hello.txt",
+		Key: exampleKey,
 		Metadata: &objstorepb.Metadata{
 			ContentType: "text/plain; charset=utf-8",
 			Custom: map[string]string{
@@ -167,7 +169,7 @@ func main() {
 	// Example 8: Delete an object
 	fmt.Println("8. Deleting an object...")
 	delResp, err := client.Delete(ctx, &objstorepb.DeleteRequest{
-		Key: "example/hello.txt",
+		Key: exampleKey,
 	})
 	if err != nil {
 		log.Fatalf("Delete failed: %v", err)

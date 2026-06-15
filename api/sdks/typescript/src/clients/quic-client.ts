@@ -1,3 +1,4 @@
+import { Readable } from 'stream';
 import {
   QuicClientConfig,
   IObjectStoreClient,
@@ -46,37 +47,75 @@ import {
 } from '../types';
 
 /**
- * QUIC/HTTP3 client for go-objstore
+ * QUIC/HTTP3 client for go-objstore.
  *
- * Note: This is a simplified implementation. Full HTTP/3 support requires
- * a native HTTP/3 library or using fetch API with HTTP/3 support in Node.js.
- * For production use, consider using a dedicated HTTP/3 library or the
- * native fetch API when HTTP/3 support is stable.
+ * WARNING — NOT A REAL HTTP/3 (QUIC) TRANSPORT.
+ *
+ * Node.js has no native HTTP/3 support, so this client speaks plain
+ * HTTP/1.1 over TCP (via fetch) to an HTTPS endpoint. It does NOT
+ * implement HTTP/3 and CANNOT connect to the bundled go-objstore QUIC
+ * server, which listens on UDP and accepts HTTP/3 only.
+ *
+ * It works only against deployments where a proxy or gateway terminates
+ * HTTP/3 and forwards to an HTTP/1.1 upstream, or where the server also
+ * exposes the same routes over regular HTTPS. For this reason the QUIC
+ * integration tests are permanently skipped; QuicClient code paths are
+ * covered by unit tests instead.
  */
 export class QuicClient implements IObjectStoreClient {
   private baseUrl: string;
+  private authHeaders: Record<string, string>;
 
   constructor(config: QuicClientConfig) {
     this.baseUrl = `${config.secure ? 'https' : 'http'}://${config.address}`;
+    this.authHeaders = {};
+    if (config.token) {
+      this.authHeaders['Authorization'] = `Bearer ${config.token}`;
+    }
+    if (config.tenantId) {
+      this.authHeaders['X-Tenant-ID'] = config.tenantId;
+    }
+    if (config.headers) {
+      Object.assign(this.authHeaders, config.headers);
+    }
   }
 
   async put(request: PutRequest): Promise<PutResponse> {
-    const response = await this.makeRequest('PUT', `/objects/${encodeURIComponent(request.key)}`, {
-      body: request.data,
-      metadata: request.metadata,
-    });
+    // QUIC server reads metadata from headers: Content-Type, Content-Encoding,
+    // and one X-Meta-<key> header per custom metadata entry. The etag is
+    // returned only in the ETag response header (the body is {key, message}).
+    const headers: Record<string, string> = {};
+    if (request.metadata) {
+      if (request.metadata.contentType) {
+        headers['Content-Type'] = request.metadata.contentType;
+      }
+      if (request.metadata.contentEncoding) {
+        headers['Content-Encoding'] = request.metadata.contentEncoding;
+      }
+      if (request.metadata.custom) {
+        for (const [k, v] of Object.entries(request.metadata.custom)) {
+          headers[`X-Meta-${k}`] = v;
+        }
+      }
+    }
+
+    const { body, headers: responseHeaders } = await this.makeRequest(
+      'PUT',
+      `/objects/${encodeURIComponent(request.key)}`,
+      { body: request.data, headers, returnHeaders: true }
+    );
 
     return {
       success: true,
-      message: response.message,
-      etag: response.etag,
+      message: body.message,
+      etag: responseHeaders?.get('etag') || undefined,
     };
   }
 
   async get(request: GetRequest): Promise<GetResponse> {
     // GET object returns raw binary data with metadata in headers
     const url = `${this.baseUrl}/objects/${encodeURIComponent(request.key)}`;
-    const response = await fetch(url, { method: 'GET' });
+    const response = await fetch(url, { method: 'GET', headers: { ...this.authHeaders } });
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -84,15 +123,10 @@ export class QuicClient implements IObjectStoreClient {
     }
 
     const data = Buffer.from(await response.arrayBuffer());
-    const metadata: Metadata = {
-      contentType: response.headers.get('content-type') || undefined,
-      contentEncoding: response.headers.get('content-encoding') || undefined,
-      etag: response.headers.get('etag') || undefined,
-      size: parseInt(response.headers.get('content-length') || '0', 10) || data.length,
-      lastModified: response.headers.get('last-modified')
-        ? new Date(response.headers.get('last-modified')!)
-        : undefined,
-    };
+    const metadata = this.metadataFromHeaders(response.headers);
+    if (metadata.size === undefined) {
+      metadata.size = data.length;
+    }
 
     return { data, metadata };
   }
@@ -100,9 +134,11 @@ export class QuicClient implements IObjectStoreClient {
   async delete(request: DeleteRequest): Promise<DeleteResponse> {
     const response = await this.makeRequest('DELETE', `/objects/${encodeURIComponent(request.key)}`);
 
+    // The server returns 204 No Content (empty body); tolerate 200 + JSON
+    // from older servers.
     return {
       success: true,
-      message: response.message,
+      message: response?.message ?? 'Object deleted successfully',
     };
   }
 
@@ -110,8 +146,19 @@ export class QuicClient implements IObjectStoreClient {
     const params = new URLSearchParams();
     if (request.prefix) params.append('prefix', request.prefix);
     if (request.delimiter) params.append('delimiter', request.delimiter);
-    if (request.maxResults) params.append('limit', request.maxResults.toString());
-    if (request.continueFrom) params.append('token', request.continueFrom);
+    // The QUIC server reads `max`/`continue` for list pagination. In Node the
+    // TypeScript QUIC client has no native HTTP/3 and is pointed at the REST
+    // endpoint, which instead reads `limit`/`token`. Send both spellings so the
+    // request paginates correctly regardless of which server handles it; the
+    // unrecognized keys are ignored by each server.
+    if (request.maxResults) {
+      params.append('max', request.maxResults.toString());
+      params.append('limit', request.maxResults.toString());
+    }
+    if (request.continueFrom) {
+      params.append('continue', request.continueFrom);
+      params.append('token', request.continueFrom);
+    }
 
     const response = await this.makeRequest('GET', `/objects?${params.toString()}`);
 
@@ -127,31 +174,50 @@ export class QuicClient implements IObjectStoreClient {
   }
 
   async exists(request: ExistsRequest): Promise<ExistsResponse> {
-    try {
-      const url = `${this.baseUrl}/objects/${encodeURIComponent(request.key)}`;
-      const response = await fetch(url, { method: 'HEAD' });
-      return { exists: response.ok };
-    } catch (error) {
+    // QUIC server: HEAD /objects/{key} → 200 exists / 404 absent. Transport
+    // failures (DNS, handshake, refused) propagate as errors — reporting
+    // them as "object missing" could trigger destructive recreate logic.
+    const url = `${this.baseUrl}/objects/${encodeURIComponent(request.key)}`;
+    const response = await fetch(url, { method: 'HEAD', headers: { ...this.authHeaders } });
+    if (response.status === 404) {
       return { exists: false };
     }
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '');
+      throw new Error(`QUIC/HTTP3 error (${response.status}): ${errorText}`);
+    }
+    return { exists: true };
   }
 
   async getMetadata(request: GetMetadataRequest): Promise<MetadataResponse> {
-    // REST API uses /metadata/:key endpoint
-    const response = await this.makeRequest('GET', `/metadata/${encodeURIComponent(request.key)}`);
+    // QUIC server: metadata is exposed via HEAD /objects/{key}; there is no
+    // /metadata route. Parse the response headers (incl. X-Meta-*).
+    const url = `${this.baseUrl}/objects/${encodeURIComponent(request.key)}`;
+    const response = await fetch(url, { method: 'HEAD', headers: { ...this.authHeaders } });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => '');
+      throw new Error(`QUIC/HTTP3 error (${response.status}): ${errorText}`);
+    }
 
     return {
-      metadata: this.deserializeMetadata(response),
+      metadata: this.metadataFromHeaders(response.headers),
       success: true,
     };
   }
 
   async updateMetadata(request: UpdateMetadataRequest): Promise<UpdateMetadataResponse> {
-    // REST API uses /metadata/:key endpoint
+    // QUIC server: PATCH /objects/{key} with JSON {content_type, content_encoding, custom}.
     const response = await this.makeRequest(
-      'PUT',
-      `/metadata/${encodeURIComponent(request.key)}`,
-      { body: this.serializeMetadata(request.metadata) }
+      'PATCH',
+      `/objects/${encodeURIComponent(request.key)}`,
+      {
+        body: {
+          content_type: request.metadata.contentType,
+          content_encoding: request.metadata.contentEncoding,
+          custom: request.metadata.custom,
+        },
+      }
     );
 
     return {
@@ -259,7 +325,8 @@ export class QuicClient implements IObjectStoreClient {
         source_prefix: request.policy.sourcePrefix,
         destination_backend: request.policy.destinationBackend,
         destination_settings: request.policy.destinationSettings,
-        check_interval_seconds: request.policy.checkIntervalSeconds,
+        // QUIC server field is `check_interval` (seconds), not check_interval_seconds.
+        check_interval: request.policy.checkIntervalSeconds,
         enabled: request.policy.enabled,
         encryption: request.policy.encryption,
         replication_mode: replicationModeToString(request.policy.replicationMode),
@@ -299,7 +366,7 @@ export class QuicClient implements IObjectStoreClient {
         sourcePrefix: p.source_prefix,
         destinationBackend: p.destination_backend,
         destinationSettings: p.destination_settings,
-        checkIntervalSeconds: p.check_interval_seconds,
+        checkIntervalSeconds: p.check_interval ?? p.check_interval_seconds,
         lastSyncTime: p.last_sync_time ? new Date(p.last_sync_time) : undefined,
         enabled: p.enabled,
         encryption: p.encryption,
@@ -324,7 +391,7 @@ export class QuicClient implements IObjectStoreClient {
         sourcePrefix: response.source_prefix,
         destinationBackend: response.destination_backend,
         destinationSettings: response.destination_settings,
-        checkIntervalSeconds: response.check_interval_seconds,
+        checkIntervalSeconds: response.check_interval ?? response.check_interval_seconds,
         lastSyncTime: response.last_sync_time ? new Date(response.last_sync_time) : undefined,
         enabled: response.enabled,
         encryption: response.encryption,
@@ -336,13 +403,14 @@ export class QuicClient implements IObjectStoreClient {
   async triggerReplication(
     request: TriggerReplicationRequest
   ): Promise<TriggerReplicationResponse> {
-    const response = await this.makeRequest('POST', '/replication/trigger', {
-      body: {
-        policy_id: request.policyId,
-        parallel: request.parallel,
-        worker_count: request.workerCount,
-      },
-    });
+    // QUIC server takes policy_id as a QUERY param (empty = sync all policies).
+    const params = new URLSearchParams();
+    if (request.policyId) params.append('policy_id', request.policyId);
+    const query = params.toString();
+    const response = await this.makeRequest(
+      'POST',
+      `/replication/trigger${query ? `?${query}` : ''}`
+    );
 
     return {
       success: response.success || true,
@@ -392,6 +460,54 @@ export class QuicClient implements IObjectStoreClient {
     };
   }
 
+  /**
+   * Stream an object from the QUIC/HTTP3 backend. The fetch API does not
+   * expose a true Node.js stream interface, so this wraps the response body in
+   * a Readable. Requires Node.js 18+ (fetch + ReadableStream).
+   */
+  async getStream(key: string): Promise<Readable> {
+    const url = `${this.baseUrl}/objects/${encodeURIComponent(key)}`;
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { ...this.authHeaders },
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`QUIC/HTTP3 error (${response.status}): ${errorText}`);
+    }
+    // Wrap the WHATWG ReadableStream in a Node.js Readable.
+    const body = response.body;
+    if (!body) {
+      return Readable.from([]);
+    }
+    return Readable.from(
+      (async function* () {
+        const reader = body.getReader();
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            yield Buffer.from(value);
+          }
+        } finally {
+          reader.releaseLock();
+        }
+      })()
+    );
+  }
+
+  /**
+   * Upload a Readable stream or AsyncIterable as an object. Buffers the stream
+   * to produce a single fetch request body.
+   */
+  async putStream(key: string, stream: Readable | AsyncIterable<Buffer>): Promise<PutResponse> {
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) {
+      chunks.push(chunk as Buffer);
+    }
+    return this.put({ key, data: Buffer.concat(chunks) });
+  }
+
   async close(): Promise<void> {
     // Nothing to close for QUIC client
     return Promise.resolve();
@@ -404,15 +520,24 @@ export class QuicClient implements IObjectStoreClient {
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
+      ...this.authHeaders,
     };
 
     let body: any;
-    if (options.body) {
+    if (options.body !== undefined) {
       if (Buffer.isBuffer(options.body)) {
         body = options.body;
         headers['Content-Type'] = 'application/octet-stream';
       } else {
         body = JSON.stringify(options.body);
+      }
+    }
+
+    // Caller-supplied headers (e.g. Content-Type, Content-Encoding, X-Meta-*)
+    // override the defaults above.
+    if (options.headers) {
+      for (const [k, v] of Object.entries(options.headers as Record<string, string>)) {
+        headers[k] = v;
       }
     }
 
@@ -423,36 +548,52 @@ export class QuicClient implements IObjectStoreClient {
       body,
     });
 
-    if (!response.ok && response.status !== 404) {
+    if (!response.ok) {
       const errorText = await response.text();
       throw new Error(`QUIC/HTTP3 error (${response.status}): ${errorText}`);
     }
 
-    if (method === 'HEAD') {
-      return {};
+    const parsedBody =
+      method === 'HEAD' || response.status === 204
+        ? {}
+        : response.headers.get('content-type')?.includes('application/json')
+        ? await response.json()
+        : await response.text();
+
+    if (options.returnHeaders) {
+      return { body: parsedBody, headers: response.headers };
     }
 
-    if (response.headers.get('content-type')?.includes('application/json')) {
-      return await response.json();
-    }
-
-    return await response.text();
+    return parsedBody;
   }
 
-  private serializeMetadata(metadata: Metadata): any {
-    // REST API expects common.Metadata JSON format (snake_case)
+  private metadataFromHeaders(headers: Headers): Metadata {
+    const custom: Record<string, string> = {};
+    // Iterate headers to collect X-Meta-* custom metadata. Guard forEach for
+    // environments/mocks that expose only Headers.get().
+    if (typeof headers.forEach === 'function') {
+      headers.forEach((value: string, name: string) => {
+        if (name.toLowerCase().startsWith('x-meta-')) {
+          custom[name.substring('x-meta-'.length)] = value;
+        }
+      });
+    }
+
+    const contentLength = headers.get('content-length');
     return {
-      content_type: metadata.contentType,
-      content_encoding: metadata.contentEncoding,
-      size: metadata.size,
-      last_modified: metadata.lastModified?.toISOString(),
-      etag: metadata.etag,
-      custom: metadata.custom,
+      contentType: headers.get('content-type') || undefined,
+      contentEncoding: headers.get('content-encoding') || undefined,
+      etag: headers.get('etag') || undefined,
+      size: contentLength ? parseInt(contentLength, 10) : undefined,
+      lastModified: headers.get('last-modified')
+        ? new Date(headers.get('last-modified')!)
+        : undefined,
+      custom: Object.keys(custom).length > 0 ? custom : undefined,
     };
   }
 
   private deserializeMetadata(obj: any): Metadata {
-    // REST API returns ObjectResponse format:
+    // List responses return ObjectResponse-style JSON:
     // - content_type (snake_case)
     // - modified (not last_modified)
     // - size, etag, key, metadata (for custom)

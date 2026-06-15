@@ -15,6 +15,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -404,7 +405,7 @@ func TestToolExecutor_ExecutePut(t *testing.T) {
 			name: "valid put",
 			args: map[string]any{
 				"key":  "test/file.txt",
-				"data": "hello world",
+				"data": "aGVsbG8gd29ybGQ=", // base64("hello world")
 			},
 			wantError: false,
 		},
@@ -412,7 +413,7 @@ func TestToolExecutor_ExecutePut(t *testing.T) {
 			name: "put with metadata",
 			args: map[string]any{
 				"key":  "test/file2.txt",
-				"data": "hello world",
+				"data": "aGVsbG8gd29ybGQ=", // base64("hello world")
 				"metadata": map[string]any{
 					"content_type": "text/plain",
 					"custom": map[string]any{
@@ -425,7 +426,7 @@ func TestToolExecutor_ExecutePut(t *testing.T) {
 		{
 			name: "missing key",
 			args: map[string]any{
-				"data": "hello world",
+				"data": "aGVsbG8gd29ybGQ=", // base64("hello world")
 			},
 			wantError: true,
 		},
@@ -460,6 +461,67 @@ func TestToolExecutor_ExecutePut(t *testing.T) {
 				t.Error("expected success to be true")
 			}
 		})
+	}
+}
+
+// TestToolExecutor_BinaryRoundTrip pins the MCP data encoding contract:
+// object data is base64-encoded in both directions, so arbitrary binary
+// payloads survive a put/get round trip byte-for-byte.
+func TestToolExecutor_BinaryRoundTrip(t *testing.T) {
+	storage := NewMockStorage()
+	executor := createTestToolExecutor(t, storage)
+	ctx := context.Background()
+
+	payload := []byte{0x00, 0x01, 0xff, 0xfe, 0x80, 'h', 'i', 0x00}
+
+	putResult, err := executor.Execute(ctx, "objstore_put", map[string]any{
+		"key":  "bin/blob",
+		"data": base64.StdEncoding.EncodeToString(payload),
+	})
+	if err != nil {
+		t.Fatalf("put: %v", err)
+	}
+
+	var putMap map[string]any
+	if err := json.Unmarshal([]byte(putResult), &putMap); err != nil {
+		t.Fatalf("parse put result: %v", err)
+	}
+	if got := putMap["size"].(float64); int(got) != len(payload) {
+		t.Errorf("put size = %v, want %d (decoded byte count)", got, len(payload))
+	}
+
+	getResult, err := executor.Execute(ctx, "objstore_get", map[string]any{"key": "bin/blob"})
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	var getMap map[string]any
+	if err := json.Unmarshal([]byte(getResult), &getMap); err != nil {
+		t.Fatalf("parse get result: %v", err)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(getMap["data"].(string))
+	if err != nil {
+		t.Fatalf("get data is not valid base64: %v", err)
+	}
+	if string(decoded) != string(payload) {
+		t.Errorf("round trip mismatch: got %x, want %x", decoded, payload)
+	}
+}
+
+// TestToolExecutor_PutRejectsInvalidBase64 verifies non-base64 data is
+// rejected instead of being stored corrupted.
+func TestToolExecutor_PutRejectsInvalidBase64(t *testing.T) {
+	storage := NewMockStorage()
+	executor := createTestToolExecutor(t, storage)
+
+	_, err := executor.Execute(context.Background(), "objstore_put", map[string]any{
+		"key":  "k",
+		"data": "this is not base64!!!",
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid base64 data")
+	}
+	if !strings.Contains(err.Error(), "base64") {
+		t.Errorf("error should mention base64, got: %v", err)
 	}
 }
 
@@ -517,8 +579,11 @@ func TestToolExecutor_ExecuteGet(t *testing.T) {
 			if !resultMap["success"].(bool) {
 				t.Error("expected success to be true")
 			}
-			if resultMap["data"].(string) != "hello world" {
-				t.Errorf("expected data 'hello world', got '%s'", resultMap["data"])
+			decoded, decErr := base64.StdEncoding.DecodeString(resultMap["data"].(string))
+			if decErr != nil {
+				t.Errorf("data is not valid base64: %v", decErr)
+			} else if string(decoded) != "hello world" {
+				t.Errorf("expected data 'hello world', got '%s'", decoded)
 			}
 		})
 	}
@@ -794,7 +859,7 @@ func TestToolExecutor_StorageErrorOnPut(t *testing.T) {
 
 	_, err := executor.Execute(context.Background(), "objstore_put", map[string]any{
 		"key":  "test.txt",
-		"data": "hello",
+		"data": "aGVsbG8=", // base64("hello")
 	})
 	if err == nil {
 		t.Error("expected error when storage put fails")
@@ -920,7 +985,7 @@ func TestToolExecutor_ExecuteUpdateMetadata(t *testing.T) {
 	// First put an object
 	_, err := executor.Execute(context.Background(), "objstore_put", map[string]any{
 		"key":  "test-key",
-		"data": "test data",
+		"data": "dGVzdCBkYXRh", // base64("test data")
 	})
 	if err != nil {
 		t.Fatalf("failed to put object: %v", err)

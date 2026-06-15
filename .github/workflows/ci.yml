@@ -7,7 +7,7 @@ on:
     branches: [ main, develop ]
 
 env:
-  GO_VERSION: '1.25.5'
+  GO_VERSION: '1.26.4'
   COVERAGE_THRESHOLD: 89
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
@@ -19,10 +19,10 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         go-version: ${{ env.GO_VERSION }}
         cache: true
@@ -32,6 +32,9 @@ jobs:
 
     - name: Verify dependencies
       run: go mod verify
+
+    - name: Verify version consistency
+      run: make version-check
 
     - name: Run unit tests with coverage
       run: |
@@ -48,12 +51,85 @@ jobs:
         fi
 
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v4
+      uses: codecov/codecov-action@v6
       with:
-        file: ./coverage/unit.out
+        files: ./coverage/unit.out
         flags: unittests
         name: codecov-umbrella
         fail_ci_if_error: false
+
+  sdk-tests:
+    name: SDK Tests (${{ matrix.sdk }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sdk: [go, typescript, python, ruby, rust, csharp]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    - name: Set up Node.js
+      if: matrix.sdk == 'typescript'
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+
+    - name: Set up Python
+      if: matrix.sdk == 'python'
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Set up Ruby
+      if: matrix.sdk == 'ruby'
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.3'
+
+    - name: Set up Rust
+      if: matrix.sdk == 'rust'
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache Rust build
+      if: matrix.sdk == 'rust'
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: api/sdks/rust
+
+    - name: Set up .NET
+      if: matrix.sdk == 'csharp'
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '9.0.x'
+
+    - name: Run ${{ matrix.sdk }} SDK unit tests
+      run: make -C api/sdks test-${{ matrix.sdk }}
+
+  conformance-test:
+    name: Cross-Protocol Conformance
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    - name: Run conformance suite
+      run: make conformance-test
 
   integration-test:
     name: Integration Tests
@@ -62,10 +138,10 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         go-version: ${{ env.GO_VERSION }}
         cache: true
@@ -91,24 +167,30 @@ jobs:
     - name: Run factory integration tests
       run: make integration-test-factory
 
+    - name: Run replication integration tests
+      run: make integration-test-replication
+
+    - name: Run CLI integration tests
+      run: make integration-test-cli
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         go-version: ${{ env.GO_VERSION }}
         cache: true
 
     - name: Run golangci-lint
-      uses: golangci/golangci-lint-action@v7
+      uses: golangci/golangci-lint-action@v9
       with:
-        version: v2.7.1
+        version: v2.11.1
         args: --timeout=10m
 
   security:
@@ -120,10 +202,10 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         go-version: ${{ env.GO_VERSION }}
         cache: true
@@ -134,7 +216,7 @@ jobs:
         args: '-no-fail -fmt json -out gosec-results.json -exclude-dir=examples ./...'
 
     - name: Upload gosec results as artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       if: always()
       with:
         name: gosec-results
@@ -152,10 +234,10 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     - name: Set up Go
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@v6
       with:
         go-version: ${{ env.GO_VERSION }}
         cache: true
@@ -179,7 +261,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     - name: Set up QEMU
       uses: docker/setup-qemu-action@v3
@@ -238,7 +320,7 @@ jobs:
         category: 'trivy-secrets'
 
     - name: Run Grype vulnerability scanner
-      uses: anchore/scan-action@v4
+      uses: anchore/scan-action@v6
       id: grype
       with:
         image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ci-scan
@@ -248,7 +330,11 @@ jobs:
 
     - name: Upload Grype results to GitHub Security tab
       uses: github/codeql-action/upload-sarif@v3
+      # SARIF upload to the Security tab is best-effort: a transient empty/truncated
+      # SARIF from the scanner must not fail an otherwise-green build (the scan itself
+      # already ran above). Guard on a non-empty output and never block on upload.
       if: always() && steps.grype.outputs.sarif != ''
+      continue-on-error: true
       with:
         sarif_file: ${{ steps.grype.outputs.sarif }}
         category: 'grype'

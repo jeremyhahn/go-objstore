@@ -15,7 +15,7 @@ package quic
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"io"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
@@ -88,7 +88,7 @@ func (m *mockErrorStorage) Get(key string) (io.ReadCloser, error) {
 	}
 	data, exists := m.objects[key]
 	if !exists {
-		return nil, errors.New("object not found")
+		return nil, fmt.Errorf("%w: %s", common.ErrKeyNotFound, key)
 	}
 	return io.NopCloser(io.Reader(newBytesReader(data))), nil
 }
@@ -182,7 +182,7 @@ func (m *mockErrorStorage) GetMetadata(ctx context.Context, key string) (*common
 	}
 	meta, exists := m.metadata[key]
 	if !exists {
-		return nil, errors.New("object not found")
+		return nil, fmt.Errorf("%w: %s", common.ErrMetadataNotFound, key)
 	}
 	return meta, nil
 }
@@ -193,7 +193,7 @@ func (m *mockErrorStorage) UpdateMetadata(ctx context.Context, key string, metad
 	}
 	_, exists := m.metadata[key]
 	if !exists {
-		return errors.New("object not found")
+		return fmt.Errorf("%w: %s", common.ErrKeyNotFound, key)
 	}
 	m.metadata[key] = metadata
 	return nil
@@ -221,7 +221,7 @@ func (m *mockErrorStorage) AddPolicy(policy common.LifecyclePolicy) error {
 	// Check for duplicate
 	for _, p := range m.policies {
 		if p.ID == policy.ID {
-			return errors.New("policy already exists")
+			return common.ErrAlreadyExists
 		}
 	}
 

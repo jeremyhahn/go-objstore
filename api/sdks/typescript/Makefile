@@ -36,8 +36,7 @@ clean:
 # Run unit tests in Docker
 test:
 	@echo "Running unit tests in Docker..."
-	docker compose up --build --abort-on-container-exit typescript-unit-tests
-	docker compose down -v
+	docker compose up --build --abort-on-container-exit typescript-unit-tests; rc=$$?; docker compose down -v; exit $$rc
 
 # Run unit tests with coverage
 test-unit:
@@ -46,8 +45,7 @@ test-unit:
 # Run integration tests in Docker
 integration-test:
 	@echo "Running integration tests in Docker..."
-	docker compose up --build --abort-on-container-exit objstore-server typescript-integration-tests
-	docker compose down -v
+	docker compose up --build --abort-on-container-exit objstore-server typescript-integration-tests; rc=$$?; docker compose down -v; exit $$rc
 
 # Generate coverage report
 coverage:
@@ -92,12 +90,10 @@ docker-build: ## Build Docker test image
 
 docker-test-unit: ## Run unit tests in Docker
 	@echo "Running unit tests in Docker..."
-	docker compose up --build --abort-on-container-exit typescript-unit-tests
-	docker compose down -v
+	docker compose up --build --abort-on-container-exit typescript-unit-tests; rc=$$?; docker compose down -v; exit $$rc
 
 docker-test-integration: ## Run integration tests in Docker
 	@echo "Running integration tests in Docker..."
-	docker compose up --build --abort-on-container-exit objstore-server typescript-integration-tests
-	docker compose down -v
+	docker compose up --build --abort-on-container-exit objstore-server typescript-integration-tests; rc=$$?; docker compose down -v; exit $$rc
 
 docker-test: docker-test-unit docker-test-integration ## Run all tests in Docker

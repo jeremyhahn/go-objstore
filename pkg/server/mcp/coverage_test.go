@@ -15,6 +15,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -31,7 +32,7 @@ func TestToolExecutor_EdgeCases(t *testing.T) {
 	// Test executePut with invalid metadata type
 	_, err := executor.Execute(context.Background(), "objstore_put", map[string]any{
 		"key":      "test.txt",
-		"data":     "hello",
+		"data":     base64.StdEncoding.EncodeToString([]byte("hello")),
 		"metadata": "invalid_metadata_string",
 	})
 	if err != nil {
@@ -41,7 +42,7 @@ func TestToolExecutor_EdgeCases(t *testing.T) {
 	// Test executePut with partial custom metadata
 	result, err := executor.Execute(context.Background(), "objstore_put", map[string]any{
 		"key":  "test2.txt",
-		"data": "hello",
+		"data": base64.StdEncoding.EncodeToString([]byte("hello")),
 		"metadata": map[string]any{
 			"content_type": "text/plain",
 			"custom": map[string]any{
@@ -241,7 +242,7 @@ func TestToolExecutor_PutWithEncoding(t *testing.T) {
 
 	result, err := executor.Execute(context.Background(), "objstore_put", map[string]any{
 		"key":  "encoded.txt.gz",
-		"data": "compressed data",
+		"data": base64.StdEncoding.EncodeToString([]byte("compressed data")),
 		"metadata": map[string]any{
 			"content_type":     "text/plain",
 			"content_encoding": "gzip",
@@ -291,7 +292,7 @@ func TestToolExecutor_MetadataWithCustomFields(t *testing.T) {
 
 	result, err := executor.Execute(context.Background(), "objstore_put", map[string]any{
 		"key":  "custom.txt",
-		"data": "test data",
+		"data": base64.StdEncoding.EncodeToString([]byte("test data")),
 		"metadata": map[string]any{
 			"custom": map[string]any{
 				"author":   "test author",

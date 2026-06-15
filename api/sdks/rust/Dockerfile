@@ -1,8 +1,11 @@
 # Dockerfile for Rust SDK testing
-FROM rust:1.83-slim
+# Needs a toolchain new enough for edition2024 transitive deps (Cargo >= 1.85).
+FROM rust:1-slim
 
-# Install system dependencies
+# Install system dependencies (build-essential provides the C linker `cc`
+# that rustc needs to link test/bin artifacts).
 RUN apt-get update && apt-get install -y \
+    build-essential \
     pkg-config \
     libssl-dev \
     curl \

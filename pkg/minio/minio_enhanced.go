@@ -34,6 +34,9 @@ func (m *MinIO) PutWithContext(ctx context.Context, key string, data io.Reader) 
 
 // PutWithMetadata stores an object with associated metadata.
 func (m *MinIO) PutWithMetadata(ctx context.Context, key string, data io.Reader, metadata *common.Metadata) error {
+	if err := common.ValidateKey(key); err != nil {
+		return err
+	}
 	input := &s3.PutObjectInput{
 		Bucket: aws.String(m.bucket),
 		Key:    aws.String(key),
@@ -62,6 +65,9 @@ func (m *MinIO) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 
 // GetWithContext retrieves an object from the backend with context support.
 func (m *MinIO) GetWithContext(ctx context.Context, key string) (io.ReadCloser, error) {
+	if err := common.ValidateKey(key); err != nil {
+		return nil, err
+	}
 	result, err := m.svc.GetObjectWithContext(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(m.bucket),
 		Key:    aws.String(key),
@@ -74,6 +80,9 @@ func (m *MinIO) GetWithContext(ctx context.Context, key string) (io.ReadCloser, 
 
 // GetMetadata retrieves only the metadata for an object.
 func (m *MinIO) GetMetadata(ctx context.Context, key string) (*common.Metadata, error) {
+	if err := common.ValidateKey(key); err != nil {
+		return nil, err
+	}
 	result, err := m.svc.HeadObjectWithContext(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(m.bucket),
 		Key:    aws.String(key),
@@ -138,6 +147,9 @@ func (m *MinIO) UpdateMetadata(ctx context.Context, key string, metadata *common
 
 // DeleteWithContext removes an object from the backend with context support.
 func (m *MinIO) DeleteWithContext(ctx context.Context, key string) error {
+	if err := common.ValidateKey(key); err != nil {
+		return err
+	}
 	_, err := m.svc.DeleteObjectWithContext(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(m.bucket),
 		Key:    aws.String(key),
@@ -147,6 +159,9 @@ func (m *MinIO) DeleteWithContext(ctx context.Context, key string) error {
 
 // Exists checks if an object exists in the backend.
 func (m *MinIO) Exists(ctx context.Context, key string) (bool, error) {
+	if err := common.ValidateKey(key); err != nil {
+		return false, err
+	}
 	_, err := m.svc.HeadObjectWithContext(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(m.bucket),
 		Key:    aws.String(key),

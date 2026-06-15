@@ -19,6 +19,7 @@ package minio
 
 import (
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -105,6 +106,9 @@ func (m *MinIO) Configure(settings map[string]string) error {
 
 // Put stores an object in the backend.
 func (m *MinIO) Put(key string, data io.Reader) error {
+	if err := common.ValidateKey(key); err != nil {
+		return err
+	}
 	_, err := m.svc.PutObject(&s3.PutObjectInput{
 		Bucket: aws.String(m.bucket),
 		Key:    aws.String(key),
@@ -115,6 +119,9 @@ func (m *MinIO) Put(key string, data io.Reader) error {
 
 // Get retrieves an object from the backend.
 func (m *MinIO) Get(key string) (io.ReadCloser, error) {
+	if err := common.ValidateKey(key); err != nil {
+		return nil, err
+	}
 	result, err := m.svc.GetObject(&s3.GetObjectInput{
 		Bucket: aws.String(m.bucket),
 		Key:    aws.String(key),
@@ -127,6 +134,9 @@ func (m *MinIO) Get(key string) (io.ReadCloser, error) {
 
 // Delete removes an object from the backend.
 func (m *MinIO) Delete(key string) error {
+	if err := common.ValidateKey(key); err != nil {
+		return err
+	}
 	_, err := m.svc.DeleteObject(&s3.DeleteObjectInput{
 		Bucket: aws.String(m.bucket),
 		Key:    aws.String(key),
@@ -361,9 +371,8 @@ func isNoSuchLifecycleConfiguration(err error) bool {
 	if err == nil {
 		return false
 	}
-	// AWS SDK returns "NoSuchLifecycleConfiguration" error code
-	return err.Error() == "NoSuchLifecycleConfiguration" ||
-		(len(err.Error()) > 0 && err.Error()[:28] == "NoSuchLifecycleConfiguration")
+	// AWS SDK returns "NoSuchLifecycleConfiguration" as the error code or as a prefix.
+	return strings.HasPrefix(err.Error(), "NoSuchLifecycleConfiguration")
 }
 
 // GetReplicationManager returns the replication manager for this backend.

@@ -27,19 +27,4 @@ var (
 
 	// ErrServerAlreadyStarted is returned when attempting to start an already running server.
 	ErrServerAlreadyStarted = errors.New("server already started")
-
-	// ErrInvalidKey is returned when the object key is invalid.
-	ErrInvalidKey = errors.New("invalid object key")
-
-	// ErrObjectNotFound is returned when an object is not found.
-	ErrObjectNotFound = errors.New("object not found")
-
-	// ErrRequestBodyTooLarge is returned when the request body exceeds the maximum size.
-	ErrRequestBodyTooLarge = errors.New("request body too large")
-
-	// ErrInvalidContentLength is returned when the Content-Length header is invalid.
-	ErrInvalidContentLength = errors.New("invalid content-length header")
-
-	// ErrMethodNotAllowed is returned when an HTTP method is not allowed for the endpoint.
-	ErrMethodNotAllowed = errors.New("method not allowed")
 )

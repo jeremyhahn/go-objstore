@@ -89,6 +89,28 @@ func TestGCS_Wrappers_Additional(t *testing.T) {
 	}
 }
 
+func TestGCS_ObjectUpdate(t *testing.T) {
+	oldUpdate := gcsUpdateObjectFn
+	var gotUattrs storage.ObjectAttrsToUpdate
+	gcsUpdateObjectFn = func(_ *storage.ObjectHandle, _ context.Context, uattrs storage.ObjectAttrsToUpdate) (*storage.ObjectAttrs, error) {
+		gotUattrs = uattrs
+		return &storage.ObjectAttrs{Name: "updated-obj"}, nil
+	}
+	defer func() { gcsUpdateObjectFn = oldUpdate }()
+
+	ow := objectWrapper{&storage.ObjectHandle{}}
+	attrs, err := ow.Update(context.Background(), storage.ObjectAttrsToUpdate{ContentType: "text/plain"})
+	if err != nil {
+		t.Errorf("Update failed: %v", err)
+	}
+	if attrs == nil || attrs.Name != "updated-obj" {
+		t.Error("Update returned unexpected result")
+	}
+	if gotUattrs.ContentType != "text/plain" {
+		t.Errorf("Update passed unexpected attrs: %+v", gotUattrs)
+	}
+}
+
 func TestGCS_ObjectAttrs(t *testing.T) {
 	oldAttrs := gcsAttrsFn
 	gcsAttrsFn = func(_ *storage.ObjectHandle, _ context.Context) (*storage.ObjectAttrs, error) {

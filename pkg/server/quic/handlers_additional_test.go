@@ -42,9 +42,9 @@ func TestHandlerPutObjectWithTimeout(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
-	// Should timeout
-	if w.Code != http.StatusRequestTimeout {
-		t.Logf("Expected timeout status, got %d", w.Code)
+	// A canceled request context maps to 499 via the shared error taxonomy.
+	if w.Code != 499 {
+		t.Logf("Expected canceled status, got %d", w.Code)
 	}
 }
 
@@ -68,8 +68,8 @@ func TestHandlerGetObjectWithTimeout(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
-	// Should timeout or fail
-	if w.Code != http.StatusRequestTimeout && w.Code != http.StatusNotFound {
+	// A canceled request context maps to 499 via the shared error taxonomy.
+	if w.Code != 499 && w.Code != http.StatusNotFound {
 		t.Logf("Expected error status, got %d", w.Code)
 	}
 }
@@ -94,9 +94,9 @@ func TestHandlerDeleteObjectWithTimeout(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
-	// Should timeout or succeed
-	if w.Code != http.StatusRequestTimeout && w.Code != http.StatusNoContent {
-		t.Logf("Expected timeout or success status, got %d", w.Code)
+	// A canceled request context maps to 499 via the shared error taxonomy.
+	if w.Code != 499 && w.Code != http.StatusNoContent {
+		t.Logf("Expected canceled or success status, got %d", w.Code)
 	}
 }
 
@@ -114,9 +114,9 @@ func TestHandlerListObjectsWithTimeout(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
-	// Should timeout or succeed
-	if w.Code != http.StatusRequestTimeout && w.Code != http.StatusOK {
-		t.Logf("Expected timeout or success status, got %d", w.Code)
+	// A canceled request context maps to 499 via the shared error taxonomy.
+	if w.Code != 499 && w.Code != http.StatusOK {
+		t.Logf("Expected canceled or success status, got %d", w.Code)
 	}
 }
 

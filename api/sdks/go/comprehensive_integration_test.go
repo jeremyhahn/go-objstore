@@ -8,12 +8,23 @@
 //go:build integration
 // +build integration
 
+// Package objstore contains the single comprehensive integration test suite.
+//
+// This is the canonical OPERATIONS × PROTOCOLS data-driven suite for the Go
+// SDK.  Every one of the 19 operations is exercised against every available
+// protocol (REST, gRPC, QUIC) with real assertions.  QUIC is enabled with
+// InsecureSkipVerify because the integration server runs with --quic-self-signed.
+//
+// Build tag: integration
+// Run:  go test -v -tags=integration -timeout=120s ./...
 package objstore
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,1031 +32,823 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Helper functions to get server addresses from environment or defaults
-func getGRPCAddr() string {
-	if addr := os.Getenv("OBJSTORE_GRPC_HOST"); addr != "" {
-		return addr
-	}
-	return "objstore-server:50051"
-}
+// ---------------------------------------------------------------------------
+// Environment helpers
+// ---------------------------------------------------------------------------
 
-func getRESTAddr() string {
+func integrationRESTAddr() string {
 	if addr := os.Getenv("OBJSTORE_REST_URL"); addr != "" {
-		// Strip http:// or https:// prefix if present
-		if len(addr) > 7 && addr[:7] == "http://" {
-			addr = addr[7:]
-		} else if len(addr) > 8 && addr[:8] == "https://" {
-			addr = addr[8:]
+		// Strip scheme so ClientConfig.Address receives host:port only.
+		for _, pfx := range []string{"https://", "http://"} {
+			if len(addr) >= len(pfx) && addr[:len(pfx)] == pfx {
+				return addr[len(pfx):]
+			}
 		}
 		return addr
 	}
 	return "objstore-server:8080"
 }
 
-func getQUICAddr() string {
+func integrationGRPCAddr() string {
+	if addr := os.Getenv("OBJSTORE_GRPC_HOST"); addr != "" {
+		return addr
+	}
+	return "objstore-server:50051"
+}
+
+func integrationQUICAddr() string {
 	if addr := os.Getenv("OBJSTORE_QUIC_URL"); addr != "" {
-		// Strip https:// prefix if present
-		if len(addr) > 8 && addr[:8] == "https://" {
-			addr = addr[8:]
+		const pfx = "https://"
+		if len(addr) >= len(pfx) && addr[:len(pfx)] == pfx {
+			return addr[len(pfx):]
 		}
 		return addr
 	}
 	return "objstore-server:4433"
 }
 
-// TestCaseOperation describes a single operation test case
-type TestCaseOperation struct {
-	name        string
-	operation   string // put, get, delete, exists, list, etc.
-	key         string
-	data        []byte
-	metadata    *Metadata
-	shouldError bool
-	errorType   error
-	skipReason  string // If set, skip this test case for specific protocol
+// ---------------------------------------------------------------------------
+// Protocol descriptor
+// ---------------------------------------------------------------------------
+
+type protoDesc struct {
+	name  string
+	proto Protocol
+	addr  string
 }
 
-// TestResult holds the result of a test operation
-type TestResult struct {
-	operationName string
-	passed        bool
-	duration      time.Duration
-	error         error
-}
-
-// ComprehensiveIntegrationTestSuite contains all test cases for a protocol
-type ComprehensiveIntegrationTestSuite struct {
-	protocol  Protocol
-	address   string
-	testCases []TestCaseOperation
-	results   []TestResult
-}
-
-// NewComprehensiveIntegrationTestSuite creates a new test suite for a protocol
-func NewComprehensiveIntegrationTestSuite(protocol Protocol, address string) *ComprehensiveIntegrationTestSuite {
-	return &ComprehensiveIntegrationTestSuite{
-		protocol:  protocol,
-		address:   address,
-		testCases: make([]TestCaseOperation, 0),
-		results:   make([]TestResult, 0),
+// availableProtocols returns all three protocols.  QUIC uses InsecureSkipVerify
+// because the integration server runs with --quic-self-signed.
+func availableProtocols() []protoDesc {
+	return []protoDesc{
+		{name: "REST", proto: ProtocolREST, addr: integrationRESTAddr()},
+		{name: "gRPC", proto: ProtocolGRPC, addr: integrationGRPCAddr()},
+		{name: "QUIC", proto: ProtocolQUIC, addr: integrationQUICAddr()},
 	}
 }
 
-// addTestCase adds a test case to the suite
-func (s *ComprehensiveIntegrationTestSuite) addTestCase(tc TestCaseOperation) {
-	s.testCases = append(s.testCases, tc)
-}
-
-// createClientForProtocol creates a client for the test protocol
-func (s *ComprehensiveIntegrationTestSuite) createClient() (Client, error) {
-	config := &ClientConfig{
-		Protocol:          s.protocol,
-		Address:           s.address,
+// newProtocolClient creates a client for the given protocol descriptor.
+func newProtocolClient(t *testing.T, p protoDesc) Client {
+	t.Helper()
+	cfg := &ClientConfig{
+		Protocol:          p.proto,
+		Address:           p.addr,
 		ConnectionTimeout: 10 * time.Second,
 		RequestTimeout:    30 * time.Second,
-		UseTLS:            false,
 		MaxRecvMsgSize:    10 * 1024 * 1024,
 		MaxSendMsgSize:    10 * 1024 * 1024,
 	}
-
-	// QUIC requires TLS
-	if s.protocol == ProtocolQUIC {
-		config.UseTLS = true
-		config.InsecureSkipVerify = true
+	if p.proto == ProtocolQUIC {
+		cfg.UseTLS = true
+		cfg.InsecureSkipVerify = true
 	}
-
-	return NewClient(config)
+	client, err := NewClient(cfg)
+	require.NoError(t, err, "create client for %s", p.name)
+	return client
 }
 
-// TestComprehensiveIntegrationAllOperations tests all 19 operations across all 3 protocols
-// Using table-driven approach with subtests for each protocol
-func TestComprehensiveIntegrationAllOperations(t *testing.T) {
-	// Define all test protocols
-	protocols := []struct {
-		name    string
-		proto   Protocol
-		address string
-		skip    bool
-	}{
-		{
-			name:    "REST",
-			proto:   ProtocolREST,
-			address: getRESTAddr(),
-			skip:    false,
-		},
-		{
-			name:    "gRPC",
-			proto:   ProtocolGRPC,
-			address: getGRPCAddr(),
-			skip:    false,
-		},
-		{
-			name:    "QUIC",
-			proto:   ProtocolQUIC,
-			address: getQUICAddr(),
-			skip:    true, // Requires TLS certificates in test environment
-		},
-	}
-
-	// Test each protocol independently
-	for _, prot := range protocols {
-		t.Run(prot.name, func(t *testing.T) {
-			if prot.skip {
-				t.Skip("QUIC protocol requires TLS certificates. " +
-					"QUIC (HTTP/3) mandates TLS 1.3. " +
-					"Test server would need valid TLS certificates or self-signed with proper CA setup.")
-			}
-
-			testAllOperationsTableDriven(t, prot.proto, prot.address, prot.name)
-		})
+// canonicalReplicationPolicy returns the canonical replication policy payload
+// from the spec: source/destination both "local", async mode, 3600 s interval.
+// The supplied id must be unique per test run.
+func canonicalReplicationPolicy(id string) *ReplicationPolicy {
+	srcPath := fmt.Sprintf("/tmp/repl-src-%s", id)
+	dstPath := fmt.Sprintf("/tmp/repl-dst-%s", id)
+	return &ReplicationPolicy{
+		ID:                   id,
+		SourceBackend:        "local",
+		SourceSettings:       map[string]string{"path": srcPath},
+		DestinationBackend:   "local",
+		DestinationSettings:  map[string]string{"path": dstPath},
+		CheckIntervalSeconds: 3600,
+		Enabled:              true,
 	}
 }
 
-// testAllOperationsTableDriven tests all operations using table-driven approach
-func testAllOperationsTableDriven(t *testing.T, protocol Protocol, address string, protocolName string) {
-	// Create client
-	config := &ClientConfig{
-		Protocol:          protocol,
-		Address:           address,
-		ConnectionTimeout: 10 * time.Second,
-		RequestTimeout:    30 * time.Second,
-		UseTLS:            false,
-		MaxRecvMsgSize:    10 * 1024 * 1024,
-		MaxSendMsgSize:    10 * 1024 * 1024,
-	}
+// ---------------------------------------------------------------------------
+// Operation descriptors
+// ---------------------------------------------------------------------------
 
-	if protocol == ProtocolQUIC {
-		config.UseTLS = true
-		config.InsecureSkipVerify = true
-	}
+// opFunc is a single operation run against a client.
+type opFunc func(ctx context.Context, t *testing.T, client Client, proto string)
 
-	client, err := NewClient(config)
-	require.NoError(t, err, "failed to create client for protocol %s", protocolName)
-	defer client.Close()
+type operation struct {
+	name     string
+	category string
+	run      opFunc
+}
 
-	ctx := context.Background()
-
-	// Define test cases for all 19 operations
-	testCases := []struct {
-		name      string
-		operation string
-		setupFunc func() (string, []byte, *Metadata) // Returns key, data, metadata
-		testFunc  func(context.Context, Client, string, []byte, *Metadata) error
-		verify    func(context.Context, Client) error
-		cleanup   func(context.Context, Client, string)
-		skipFor   []Protocol // Protocols to skip this test for
-	}{
-		// 1. PUT Operation
+// allOperations returns the canonical table of 19 operations + close.
+func allOperations() []operation {
+	return []operation{
+		// ---------------------------------------------------------------
+		// basic
+		// ---------------------------------------------------------------
 		{
-			name:      "Put_BasicOperation",
-			operation: "Put",
-			setupFunc: func() (string, []byte, *Metadata) {
-				key := fmt.Sprintf("%s-put-basic-%d", protocolName, time.Now().UnixNano())
-				data := []byte("Hello, World!")
-				metadata := &Metadata{
+			name:     "put",
+			category: "basic",
+			run: func(ctx context.Context, t *testing.T, client Client, proto string) {
+				t.Helper()
+				key := fmt.Sprintf("integ-%s-put-%d", proto, time.Now().UnixNano())
+				data := []byte("hello from put")
+				t.Cleanup(func() { client.Delete(ctx, key) }) //nolint:errcheck
+
+				result, err := client.Put(ctx, key, data, &Metadata{
 					ContentType: "text/plain",
-					Custom: map[string]string{
-						"test": "value",
-					},
-				}
-				return key, data, metadata
-			},
-			testFunc: func(ctx context.Context, client Client, key string, data []byte, metadata *Metadata) error {
-				result, err := client.Put(ctx, key, data, metadata)
-				if err != nil {
-					return err
-				}
-				if !result.Success {
-					return fmt.Errorf("put returned success=false")
-				}
-				return nil
-			},
-			verify: func(ctx context.Context, client Client) error {
-				return nil
-			},
-			cleanup: func(ctx context.Context, client Client, key string) {
-				client.Delete(ctx, key) // nolint: errcheck
+					Custom:      map[string]string{"k": "v"},
+				})
+				require.NoError(t, err)
+				assert.True(t, result.Success, "put.Success must be true")
 			},
 		},
-		// 2. GET Operation
 		{
-			name:      "Get_BasicOperation",
-			operation: "Get",
-			setupFunc: func() (string, []byte, *Metadata) {
-				key := fmt.Sprintf("%s-get-basic-%d", protocolName, time.Now().UnixNano())
-				data := []byte("Test data for get")
-				return key, data, nil
-			},
-			testFunc: func(ctx context.Context, client Client, key string, data []byte, metadata *Metadata) error {
-				// First put the object
-				_, err := client.Put(ctx, key, data, nil)
-				if err != nil {
-					return fmt.Errorf("setup put failed: %w", err)
-				}
+			name:     "get",
+			category: "basic",
+			run: func(ctx context.Context, t *testing.T, client Client, proto string) {
+				t.Helper()
+				key := fmt.Sprintf("integ-%s-get-%d", proto, time.Now().UnixNano())
+				want := []byte("round-trip data")
+				_, err := client.Put(ctx, key, want, nil)
+				require.NoError(t, err, "setup put")
+				t.Cleanup(func() { client.Delete(ctx, key) }) //nolint:errcheck
 
-				// Then get it
-				result, err := client.Get(ctx, key)
-				if err != nil {
-					return err
-				}
-				if result == nil || len(result.Data) == 0 {
-					return fmt.Errorf("get returned empty data")
-				}
-				return nil
-			},
-			verify: func(ctx context.Context, client Client) error {
-				return nil
-			},
-			cleanup: func(ctx context.Context, client Client, key string) {
-				client.Delete(ctx, key) // nolint: errcheck
+				got, err := client.Get(ctx, key)
+				require.NoError(t, err)
+				require.NotNil(t, got)
+				assert.Equal(t, want, got.Data, "get data must match put data")
 			},
 		},
-		// 3. DELETE Operation
 		{
-			name:      "Delete_BasicOperation",
-			operation: "Delete",
-			setupFunc: func() (string, []byte, *Metadata) {
-				key := fmt.Sprintf("%s-delete-basic-%d", protocolName, time.Now().UnixNano())
-				data := []byte("To be deleted")
-				return key, data, nil
-			},
-			testFunc: func(ctx context.Context, client Client, key string, data []byte, metadata *Metadata) error {
-				// First put the object
-				_, err := client.Put(ctx, key, data, nil)
-				if err != nil {
-					return fmt.Errorf("setup put failed: %w", err)
-				}
+			name:     "delete",
+			category: "basic",
+			run: func(ctx context.Context, t *testing.T, client Client, proto string) {
+				t.Helper()
+				key := fmt.Sprintf("integ-%s-delete-%d", proto, time.Now().UnixNano())
+				_, err := client.Put(ctx, key, []byte("to be deleted"), nil)
+				require.NoError(t, err, "setup put")
 
-				// Then delete it
-				return client.Delete(ctx, key)
-			},
-			verify: func(ctx context.Context, client Client) error {
-				return nil
-			},
-			cleanup: func(ctx context.Context, client Client, key string) {
-				client.Delete(ctx, key) // nolint: errcheck
-			},
-		},
-		// 4. EXISTS Operation
-		{
-			name:      "Exists_BasicOperation",
-			operation: "Exists",
-			setupFunc: func() (string, []byte, *Metadata) {
-				key := fmt.Sprintf("%s-exists-basic-%d", protocolName, time.Now().UnixNano())
-				data := []byte("Existing object")
-				return key, data, nil
-			},
-			testFunc: func(ctx context.Context, client Client, key string, data []byte, metadata *Metadata) error {
-				// First put the object
-				_, err := client.Put(ctx, key, data, nil)
-				if err != nil {
-					return fmt.Errorf("setup put failed: %w", err)
-				}
+				require.NoError(t, client.Delete(ctx, key))
 
-				// Then check if it exists
 				exists, err := client.Exists(ctx, key)
-				if err != nil {
-					return err
-				}
-				if !exists {
-					return fmt.Errorf("exists returned false for existing object")
-				}
-				return nil
-			},
-			verify: func(ctx context.Context, client Client) error {
-				return nil
-			},
-			cleanup: func(ctx context.Context, client Client, key string) {
-				client.Delete(ctx, key) // nolint: errcheck
+				require.NoError(t, err)
+				assert.False(t, exists, "object must not exist after delete")
 			},
 		},
-		// 5. LIST Operation
 		{
-			name:      "List_BasicOperation",
-			operation: "List",
-			setupFunc: func() (string, []byte, *Metadata) {
-				key := fmt.Sprintf("%s-list-basic-%d", protocolName, time.Now().UnixNano())
-				data := []byte("Object to list")
-				return key, data, nil
-			},
-			testFunc: func(ctx context.Context, client Client, key string, data []byte, metadata *Metadata) error {
-				// First put some objects
-				_, err := client.Put(ctx, key, data, nil)
-				if err != nil {
-					return fmt.Errorf("setup put failed: %w", err)
-				}
+			name:     "exists",
+			category: "basic",
+			run: func(ctx context.Context, t *testing.T, client Client, proto string) {
+				t.Helper()
+				key := fmt.Sprintf("integ-%s-exists-%d", proto, time.Now().UnixNano())
+				absent := fmt.Sprintf("integ-%s-absent-%d", proto, time.Now().UnixNano())
 
-				// List objects
-				opts := &ListOptions{
-					Prefix:     protocolName,
-					MaxResults: 100,
-				}
-				result, err := client.List(ctx, opts)
-				if err != nil {
-					return err
-				}
-				if result == nil {
-					return fmt.Errorf("list returned nil result")
-				}
-				return nil
-			},
-			verify: func(ctx context.Context, client Client) error {
-				return nil
-			},
-			cleanup: func(ctx context.Context, client Client, key string) {
-				client.Delete(ctx, key) // nolint: errcheck
+				_, err := client.Put(ctx, key, []byte("exists test"), nil)
+				require.NoError(t, err, "setup put")
+				t.Cleanup(func() { client.Delete(ctx, key) }) //nolint:errcheck
+
+				yes, err := client.Exists(ctx, key)
+				require.NoError(t, err)
+				assert.True(t, yes, "exists must return true for existing object")
+
+				no, err := client.Exists(ctx, absent)
+				require.NoError(t, err)
+				assert.False(t, no, "exists must return false for absent object")
 			},
 		},
-		// 6. GETMETADATA Operation
 		{
-			name:      "GetMetadata_BasicOperation",
-			operation: "GetMetadata",
-			setupFunc: func() (string, []byte, *Metadata) {
-				key := fmt.Sprintf("%s-getmeta-basic-%d", protocolName, time.Now().UnixNano())
-				data := []byte("Object with metadata")
-				return key, data, nil
-			},
-			testFunc: func(ctx context.Context, client Client, key string, data []byte, metadata *Metadata) error {
-				// First put the object
-				_, err := client.Put(ctx, key, data, nil)
-				if err != nil {
-					return fmt.Errorf("setup put failed: %w", err)
+			name:     "list",
+			category: "basic",
+			run: func(ctx context.Context, t *testing.T, client Client, proto string) {
+				t.Helper()
+				prefix := fmt.Sprintf("integ-%s-list-%d", proto, time.Now().UnixNano())
+				keys := []string{
+					prefix + "/a",
+					prefix + "/b",
+					prefix + "/c",
 				}
+				for _, k := range keys {
+					_, err := client.Put(ctx, k, []byte("list item"), nil)
+					require.NoError(t, err, "setup put %s", k)
+				}
+				t.Cleanup(func() {
+					for _, k := range keys {
+						client.Delete(ctx, k) //nolint:errcheck
+					}
+				})
 
-				// Get metadata
+				result, err := client.List(ctx, &ListOptions{Prefix: prefix, MaxResults: 100})
+				require.NoError(t, err)
+				require.NotNil(t, result)
+
+				found := make(map[string]bool)
+				for _, obj := range result.Objects {
+					found[obj.Key] = true
+				}
+				for _, k := range keys {
+					assert.True(t, found[k], "list must contain key %s", k)
+				}
+				assert.GreaterOrEqual(t, len(result.Objects), len(keys), "list count must be >= number of put keys")
+			},
+		},
+
+		// ---------------------------------------------------------------
+		// metadata
+		// ---------------------------------------------------------------
+		{
+			name:     "getMetadata",
+			category: "metadata",
+			run: func(ctx context.Context, t *testing.T, client Client, proto string) {
+				t.Helper()
+				key := fmt.Sprintf("integ-%s-getmeta-%d", proto, time.Now().UnixNano())
+				data := []byte("metadata test")
+				_, err := client.Put(ctx, key, data, &Metadata{
+					ContentType: "application/octet-stream",
+					Custom:      map[string]string{"env": "test"},
+				})
+				require.NoError(t, err, "setup put")
+				t.Cleanup(func() { client.Delete(ctx, key) }) //nolint:errcheck
+
 				meta, err := client.GetMetadata(ctx, key)
-				if err != nil {
-					return err
-				}
-				if meta == nil {
-					return fmt.Errorf("getmetadata returned nil")
-				}
-				return nil
-			},
-			verify: func(ctx context.Context, client Client) error {
-				return nil
-			},
-			cleanup: func(ctx context.Context, client Client, key string) {
-				client.Delete(ctx, key) // nolint: errcheck
+				require.NoError(t, err)
+				require.NotNil(t, meta)
+				assert.Equal(t, int64(len(data)), meta.Size, "metadata.Size must equal data length")
+				assert.Equal(t, "application/octet-stream", meta.ContentType, "metadata.ContentType must match")
 			},
 		},
-		// 7. UPDATEMETADATA Operation
 		{
-			name:      "UpdateMetadata_BasicOperation",
-			operation: "UpdateMetadata",
-			setupFunc: func() (string, []byte, *Metadata) {
-				key := fmt.Sprintf("%s-updatemeta-basic-%d", protocolName, time.Now().UnixNano())
-				data := []byte("Object to update metadata")
-				return key, data, nil
-			},
-			testFunc: func(ctx context.Context, client Client, key string, data []byte, metadata *Metadata) error {
-				// First put the object
-				_, err := client.Put(ctx, key, data, nil)
-				if err != nil {
-					return fmt.Errorf("setup put failed: %w", err)
-				}
-
-				// Update metadata
-				newMeta := &Metadata{
+			name:     "updateMetadata",
+			category: "metadata",
+			run: func(ctx context.Context, t *testing.T, client Client, proto string) {
+				t.Helper()
+				key := fmt.Sprintf("integ-%s-updatemeta-%d", proto, time.Now().UnixNano())
+				_, err := client.Put(ctx, key, []byte("update metadata test"), &Metadata{
 					ContentType: "text/plain",
-					Custom: map[string]string{
-						"updated": "true",
-					},
+					Custom:      map[string]string{"version": "1"},
+				})
+				require.NoError(t, err, "setup put")
+				t.Cleanup(func() { client.Delete(ctx, key) }) //nolint:errcheck
+
+				newMeta := &Metadata{
+					ContentType: "application/json",
+					Custom:      map[string]string{"version": "2", "updated": "true"},
 				}
 				err = client.UpdateMetadata(ctx, key, newMeta)
-				// REST doesn't support metadata updates without re-uploading
-				if err == ErrNotSupported {
-					return nil
-				}
-				return err
-			},
-			verify: func(ctx context.Context, client Client) error {
-				return nil
-			},
-			cleanup: func(ctx context.Context, client Client, key string) {
-				client.Delete(ctx, key) // nolint: errcheck
-			},
-			skipFor: []Protocol{ProtocolREST},
-		},
-		// 8. HEALTH Operation
-		{
-			name:      "Health_BasicOperation",
-			operation: "Health",
-			setupFunc: func() (string, []byte, *Metadata) {
-				return "", nil, nil
-			},
-			testFunc: func(ctx context.Context, client Client, key string, data []byte, metadata *Metadata) error {
-				health, err := client.Health(ctx)
-				if err != nil {
-					return err
-				}
-				if health == nil {
-					return fmt.Errorf("health returned nil")
-				}
-				return nil
-			},
-			verify: func(ctx context.Context, client Client) error {
-				return nil
-			},
-			cleanup: func(ctx context.Context, client Client, key string) {
-				// No cleanup needed
-			},
-		},
-		// 9. ARCHIVE Operation
-		{
-			name:      "Archive_BasicOperation",
-			operation: "Archive",
-			setupFunc: func() (string, []byte, *Metadata) {
-				key := fmt.Sprintf("%s-archive-basic-%d", protocolName, time.Now().UnixNano())
-				data := []byte("Object to archive")
-				return key, data, nil
-			},
-			testFunc: func(ctx context.Context, client Client, key string, data []byte, metadata *Metadata) error {
-				// First put the object
-				_, err := client.Put(ctx, key, data, nil)
-				if err != nil {
-					return fmt.Errorf("setup put failed: %w", err)
-				}
+				require.NoError(t, err)
 
-				// Archive it
-				err = client.Archive(ctx, key, "glacier", map[string]string{
-					"vault": "test-vault",
-				})
-				// Archive may not be supported - that's OK
-				if err != nil {
-					// Log but don't fail
-					t.Logf("Archive operation returned: %v", err)
+				// Read back and assert the new values persisted.
+				got, err := client.GetMetadata(ctx, key)
+				require.NoError(t, err)
+				require.NotNil(t, got)
+				assert.Equal(t, "application/json", got.ContentType, "updated ContentType must be read back")
+				if got.Custom != nil {
+					assert.Equal(t, "2", got.Custom["version"], "custom[version] must be updated value")
 				}
-				return nil
 			},
-			verify: func(ctx context.Context, client Client) error {
-				return nil
-			},
-			cleanup: func(ctx context.Context, client Client, key string) {
-				client.Delete(ctx, key) // nolint: errcheck
-			},
-			skipFor: []Protocol{ProtocolREST},
 		},
-		// 10. ADDPOLICY Operation
+
+		// ---------------------------------------------------------------
+		// health
+		// ---------------------------------------------------------------
 		{
-			name:      "AddPolicy_BasicOperation",
-			operation: "AddPolicy",
-			setupFunc: func() (string, []byte, *Metadata) {
-				return "", nil, nil
+			name:     "health",
+			category: "health",
+			run: func(ctx context.Context, t *testing.T, client Client, proto string) {
+				t.Helper()
+				status, err := client.Health(ctx)
+				require.NoError(t, err)
+				require.NotNil(t, status)
+				assert.NotEmpty(t, status.Status, "health.Status must not be empty")
+				// Accept "SERVING", "serving", "healthy", etc.
+				switch status.Status {
+				case "SERVING", "serving", "healthy", "HEALTHY", "OK", "ok":
+					// all valid healthy states
+				default:
+					t.Errorf("unexpected health status %q (expected SERVING/healthy/OK)", status.Status)
+				}
 			},
-			testFunc: func(ctx context.Context, client Client, key string, data []byte, metadata *Metadata) error {
+		},
+
+		// ---------------------------------------------------------------
+		// lifecycle
+		// ---------------------------------------------------------------
+		{
+			name:     "addPolicy",
+			category: "lifecycle",
+			run: func(ctx context.Context, t *testing.T, client Client, proto string) {
+				t.Helper()
 				policy := &LifecyclePolicy{
-					ID:               fmt.Sprintf("%s-policy-%d", protocolName, time.Now().UnixNano()),
+					ID:               fmt.Sprintf("integ-%s-addpol-%d", proto, time.Now().UnixNano()),
 					Prefix:           "temp/",
 					RetentionSeconds: 3600,
 					Action:           "delete",
 				}
+				t.Cleanup(func() { client.RemovePolicy(ctx, policy.ID) }) //nolint:errcheck
+
 				err := client.AddPolicy(ctx, policy)
-				// Not all backends support this
-				if err != nil {
-					t.Logf("AddPolicy returned: %v", err)
-				}
-				return nil
+				require.NoError(t, err)
 			},
-			verify: func(ctx context.Context, client Client) error {
-				return nil
-			},
-			cleanup: func(ctx context.Context, client Client, key string) {
-				// No cleanup needed
-			},
-			skipFor: []Protocol{ProtocolREST},
 		},
-		// 11. REMOVEPOLICY Operation
 		{
-			name:      "RemovePolicy_BasicOperation",
-			operation: "RemovePolicy",
-			setupFunc: func() (string, []byte, *Metadata) {
-				return "", nil, nil
-			},
-			testFunc: func(ctx context.Context, client Client, key string, data []byte, metadata *Metadata) error {
-				policyID := fmt.Sprintf("%s-policy-remove-%d", protocolName, time.Now().UnixNano())
-				err := client.RemovePolicy(ctx, policyID)
-				// Not all backends support this
-				if err != nil {
-					t.Logf("RemovePolicy returned: %v", err)
+			name:     "getPolicies",
+			category: "lifecycle",
+			run: func(ctx context.Context, t *testing.T, client Client, proto string) {
+				t.Helper()
+				policy := &LifecyclePolicy{
+					ID:               fmt.Sprintf("integ-%s-getpols-%d", proto, time.Now().UnixNano()),
+					Prefix:           "temp/",
+					RetentionSeconds: 3600,
+					Action:           "delete",
 				}
-				return nil
-			},
-			verify: func(ctx context.Context, client Client) error {
-				return nil
-			},
-			cleanup: func(ctx context.Context, client Client, key string) {
-				// No cleanup needed
-			},
-			skipFor: []Protocol{ProtocolREST},
-		},
-		// 12. GETPOLICIES Operation
-		{
-			name:      "GetPolicies_BasicOperation",
-			operation: "GetPolicies",
-			setupFunc: func() (string, []byte, *Metadata) {
-				return "", nil, nil
-			},
-			testFunc: func(ctx context.Context, client Client, key string, data []byte, metadata *Metadata) error {
+				require.NoError(t, client.AddPolicy(ctx, policy), "setup addPolicy")
+				t.Cleanup(func() { client.RemovePolicy(ctx, policy.ID) }) //nolint:errcheck
+
 				policies, err := client.GetPolicies(ctx, "")
-				// Not all backends support this
-				if err != nil {
-					t.Logf("GetPolicies returned: %v", err)
-					return nil
+				require.NoError(t, err)
+				require.NotNil(t, policies)
+
+				var found bool
+				for _, p := range policies {
+					if p.ID == policy.ID {
+						found = true
+						break
+					}
 				}
-				if policies == nil {
-					return fmt.Errorf("getpolicies returned nil")
-				}
-				return nil
+				assert.True(t, found, "getPolicies must contain the added policy id %s", policy.ID)
 			},
-			verify: func(ctx context.Context, client Client) error {
-				return nil
-			},
-			cleanup: func(ctx context.Context, client Client, key string) {
-				// No cleanup needed
-			},
-			skipFor: []Protocol{ProtocolREST},
 		},
-		// 13. APPLYPOLICIES Operation
 		{
-			name:      "ApplyPolicies_BasicOperation",
-			operation: "ApplyPolicies",
-			setupFunc: func() (string, []byte, *Metadata) {
-				return "", nil, nil
+			name:     "removePolicy",
+			category: "lifecycle",
+			run: func(ctx context.Context, t *testing.T, client Client, proto string) {
+				t.Helper()
+				policy := &LifecyclePolicy{
+					ID:               fmt.Sprintf("integ-%s-rempol-%d", proto, time.Now().UnixNano()),
+					Prefix:           "temp/",
+					RetentionSeconds: 3600,
+					Action:           "delete",
+				}
+				require.NoError(t, client.AddPolicy(ctx, policy), "setup addPolicy")
+
+				require.NoError(t, client.RemovePolicy(ctx, policy.ID))
+
+				policies, err := client.GetPolicies(ctx, "")
+				require.NoError(t, err)
+				for _, p := range policies {
+					assert.NotEqual(t, policy.ID, p.ID, "removed policy must not appear in getPolicies")
+				}
 			},
-			testFunc: func(ctx context.Context, client Client, key string, data []byte, metadata *Metadata) error {
+		},
+		{
+			name:     "applyPolicies",
+			category: "lifecycle",
+			run: func(ctx context.Context, t *testing.T, client Client, proto string) {
+				t.Helper()
 				result, err := client.ApplyPolicies(ctx)
-				// Not all backends support this
-				if err != nil {
-					t.Logf("ApplyPolicies returned: %v", err)
-					return nil
-				}
-				if result == nil {
-					return fmt.Errorf("applypolicies returned nil")
-				}
-				return nil
+				require.NoError(t, err)
+				require.NotNil(t, result)
+				assert.GreaterOrEqual(t, result.PoliciesCount, int32(0), "applyPolicies.PoliciesCount must be >= 0")
+				assert.GreaterOrEqual(t, result.ObjectsProcessed, int32(0), "applyPolicies.ObjectsProcessed must be >= 0")
 			},
-			verify: func(ctx context.Context, client Client) error {
-				return nil
-			},
-			cleanup: func(ctx context.Context, client Client, key string) {
-				// No cleanup needed
-			},
-			skipFor: []Protocol{ProtocolREST},
 		},
-		// 14. ADDREPLICATIONPOLICY Operation
+
+		// ---------------------------------------------------------------
+		// archive
+		// ---------------------------------------------------------------
 		{
-			name:      "AddReplicationPolicy_BasicOperation",
-			operation: "AddReplicationPolicy",
-			setupFunc: func() (string, []byte, *Metadata) {
-				return "", nil, nil
-			},
-			testFunc: func(ctx context.Context, client Client, key string, data []byte, metadata *Metadata) error {
-				policy := &ReplicationPolicy{
-					ID:                   fmt.Sprintf("%s-repl-policy-%d", protocolName, time.Now().UnixNano()),
-					SourceBackend:        "local",
-					SourceSettings:       map[string]string{"path": "/tmp/source"},
-					DestinationBackend:   "local",
-					DestinationSettings:  map[string]string{"path": "/tmp/dest"},
-					CheckIntervalSeconds: 60,
-					Enabled:              true,
+			name:     "archive",
+			category: "archive",
+			run: func(ctx context.Context, t *testing.T, client Client, proto string) {
+				t.Helper()
+				key := fmt.Sprintf("integ-%s-archive-%d", proto, time.Now().UnixNano())
+				_, err := client.Put(ctx, key, []byte("archive me"), nil)
+				require.NoError(t, err, "setup put")
+				t.Cleanup(func() { client.Delete(ctx, key) }) //nolint:errcheck
+
+				err = client.Archive(ctx, key, "glacier", map[string]string{"vault": "test-vault"})
+				if err != nil {
+					// Archive genuinely requires a glacier/archiver backend.  The
+					// local backend does not ship a glacier archiver, so a
+					// capability skip is appropriate here.
+					t.Skipf("archive not supported on this backend: %v", err)
 				}
+			},
+		},
+
+		// ---------------------------------------------------------------
+		// replication  (server now supports these — assert real success)
+		// ---------------------------------------------------------------
+		{
+			name:     "addReplicationPolicy",
+			category: "replication",
+			run: func(ctx context.Context, t *testing.T, client Client, proto string) {
+				t.Helper()
+				id := fmt.Sprintf("integ-%s-addrepl-%d", proto, time.Now().UnixNano())
+				policy := canonicalReplicationPolicy(id)
+				t.Cleanup(func() { client.RemoveReplicationPolicy(ctx, id) }) //nolint:errcheck
+
 				err := client.AddReplicationPolicy(ctx, policy)
-				// Not all backends support this
-				if err != nil {
-					t.Logf("AddReplicationPolicy returned: %v", err)
-				}
-				return nil
+				require.NoError(t, err, "addReplicationPolicy must succeed")
 			},
-			verify: func(ctx context.Context, client Client) error {
-				return nil
-			},
-			cleanup: func(ctx context.Context, client Client, key string) {
-				// No cleanup needed
-			},
-			skipFor: []Protocol{ProtocolREST},
 		},
-		// 15. REMOVEREPLICATIONPOLICY Operation
 		{
-			name:      "RemoveReplicationPolicy_BasicOperation",
-			operation: "RemoveReplicationPolicy",
-			setupFunc: func() (string, []byte, *Metadata) {
-				return "", nil, nil
-			},
-			testFunc: func(ctx context.Context, client Client, key string, data []byte, metadata *Metadata) error {
-				policyID := fmt.Sprintf("%s-repl-policy-remove-%d", protocolName, time.Now().UnixNano())
-				err := client.RemoveReplicationPolicy(ctx, policyID)
-				// Not all backends support this
-				if err != nil {
-					t.Logf("RemoveReplicationPolicy returned: %v", err)
-				}
-				return nil
-			},
-			verify: func(ctx context.Context, client Client) error {
-				return nil
-			},
-			cleanup: func(ctx context.Context, client Client, key string) {
-				// No cleanup needed
-			},
-			skipFor: []Protocol{ProtocolREST},
-		},
-		// 16. GETREPLICATIONPOLICIES Operation
-		{
-			name:      "GetReplicationPolicies_BasicOperation",
-			operation: "GetReplicationPolicies",
-			setupFunc: func() (string, []byte, *Metadata) {
-				return "", nil, nil
-			},
-			testFunc: func(ctx context.Context, client Client, key string, data []byte, metadata *Metadata) error {
+			name:     "getReplicationPolicies",
+			category: "replication",
+			run: func(ctx context.Context, t *testing.T, client Client, proto string) {
+				t.Helper()
+				id := fmt.Sprintf("integ-%s-getrepls-%d", proto, time.Now().UnixNano())
+				policy := canonicalReplicationPolicy(id)
+				require.NoError(t, client.AddReplicationPolicy(ctx, policy), "setup addReplicationPolicy")
+				t.Cleanup(func() { client.RemoveReplicationPolicy(ctx, id) }) //nolint:errcheck
+
 				policies, err := client.GetReplicationPolicies(ctx)
-				// Not all backends support this
-				if err != nil {
-					t.Logf("GetReplicationPolicies returned: %v", err)
-					return nil
+				require.NoError(t, err)
+				require.NotNil(t, policies)
+				assert.GreaterOrEqual(t, len(policies), 1, "getReplicationPolicies count must be >= 1")
+
+				var found bool
+				for _, p := range policies {
+					if p.ID == id {
+						found = true
+						break
+					}
 				}
-				if policies == nil {
-					return fmt.Errorf("getreplicationpolicies returned nil")
-				}
-				return nil
+				assert.True(t, found, "getReplicationPolicies must contain the added policy id %s", id)
 			},
-			verify: func(ctx context.Context, client Client) error {
-				return nil
-			},
-			cleanup: func(ctx context.Context, client Client, key string) {
-				// No cleanup needed
-			},
-			skipFor: []Protocol{ProtocolREST},
 		},
-		// 17. GETREPLICATIONPOLICY Operation
 		{
-			name:      "GetReplicationPolicy_BasicOperation",
-			operation: "GetReplicationPolicy",
-			setupFunc: func() (string, []byte, *Metadata) {
-				return "", nil, nil
+			name:     "getReplicationPolicy",
+			category: "replication",
+			run: func(ctx context.Context, t *testing.T, client Client, proto string) {
+				t.Helper()
+				id := fmt.Sprintf("integ-%s-getrepl-%d", proto, time.Now().UnixNano())
+				policy := canonicalReplicationPolicy(id)
+				require.NoError(t, client.AddReplicationPolicy(ctx, policy), "setup addReplicationPolicy")
+				t.Cleanup(func() { client.RemoveReplicationPolicy(ctx, id) }) //nolint:errcheck
+
+				got, err := client.GetReplicationPolicy(ctx, id)
+				require.NoError(t, err)
+				require.NotNil(t, got)
+				assert.Equal(t, id, got.ID, "getReplicationPolicy.ID must match")
+				assert.Equal(t, "local", got.SourceBackend, "getReplicationPolicy.SourceBackend must be local")
+				assert.Equal(t, "local", got.DestinationBackend, "getReplicationPolicy.DestinationBackend must be local")
+				assert.Equal(t, int64(3600), got.CheckIntervalSeconds, "getReplicationPolicy.CheckIntervalSeconds must be 3600")
 			},
-			testFunc: func(ctx context.Context, client Client, key string, data []byte, metadata *Metadata) error {
-				policyID := fmt.Sprintf("%s-repl-policy-get-%d", protocolName, time.Now().UnixNano())
-				policy, err := client.GetReplicationPolicy(ctx, policyID)
-				// Policy likely doesn't exist - that's OK
-				if err != nil {
-					t.Logf("GetReplicationPolicy returned: %v", err)
-					return nil
-				}
-				if policy == nil {
-					return fmt.Errorf("getreplicationpolicy returned nil")
-				}
-				return nil
-			},
-			verify: func(ctx context.Context, client Client) error {
-				return nil
-			},
-			cleanup: func(ctx context.Context, client Client, key string) {
-				// No cleanup needed
-			},
-			skipFor: []Protocol{ProtocolREST},
 		},
-		// 18. TRIGGERREPLICATION Operation
 		{
-			name:      "TriggerReplication_BasicOperation",
-			operation: "TriggerReplication",
-			setupFunc: func() (string, []byte, *Metadata) {
-				return "", nil, nil
-			},
-			testFunc: func(ctx context.Context, client Client, key string, data []byte, metadata *Metadata) error {
-				opts := &TriggerReplicationOptions{
-					PolicyID: fmt.Sprintf("%s-repl-policy-trigger-%d", protocolName, time.Now().UnixNano()),
+			name:     "removeReplicationPolicy",
+			category: "replication",
+			run: func(ctx context.Context, t *testing.T, client Client, proto string) {
+				t.Helper()
+				id := fmt.Sprintf("integ-%s-remrepl-%d", proto, time.Now().UnixNano())
+				policy := canonicalReplicationPolicy(id)
+				require.NoError(t, client.AddReplicationPolicy(ctx, policy), "setup addReplicationPolicy")
+
+				require.NoError(t, client.RemoveReplicationPolicy(ctx, id))
+
+				policies, err := client.GetReplicationPolicies(ctx)
+				require.NoError(t, err)
+				for _, p := range policies {
+					assert.NotEqual(t, id, p.ID, "removed replication policy must not appear in getReplicationPolicies")
 				}
-				result, err := client.TriggerReplication(ctx, opts)
-				// Not all backends support this
-				if err != nil {
-					t.Logf("TriggerReplication returned: %v", err)
-					return nil
-				}
-				if result == nil {
-					return fmt.Errorf("triggerreplication returned nil")
-				}
-				return nil
 			},
-			verify: func(ctx context.Context, client Client) error {
-				return nil
-			},
-			cleanup: func(ctx context.Context, client Client, key string) {
-				// No cleanup needed
-			},
-			skipFor: []Protocol{ProtocolREST},
 		},
-		// 19. GETREPLICATIONSTATUS Operation
 		{
-			name:      "GetReplicationStatus_BasicOperation",
-			operation: "GetReplicationStatus",
-			setupFunc: func() (string, []byte, *Metadata) {
-				return "", nil, nil
+			name:     "triggerReplication",
+			category: "replication",
+			run: func(ctx context.Context, t *testing.T, client Client, proto string) {
+				t.Helper()
+				id := fmt.Sprintf("integ-%s-trigger-%d", proto, time.Now().UnixNano())
+				policy := canonicalReplicationPolicy(id)
+				require.NoError(t, client.AddReplicationPolicy(ctx, policy), "setup addReplicationPolicy")
+				t.Cleanup(func() { client.RemoveReplicationPolicy(ctx, id) }) //nolint:errcheck
+
+				result, err := client.TriggerReplication(ctx, &TriggerReplicationOptions{PolicyID: id})
+				require.NoError(t, err)
+				require.NotNil(t, result)
+				assert.Equal(t, id, result.PolicyID, "triggerReplication result.PolicyID must match")
+				assert.GreaterOrEqual(t, result.Synced, int32(0), "triggerReplication result.Synced must be >= 0")
+				assert.GreaterOrEqual(t, result.BytesTotal, int64(0), "triggerReplication result.BytesTotal must be >= 0")
+				assert.GreaterOrEqual(t, result.DurationMs, int64(0), "triggerReplication result.DurationMs must be >= 0")
 			},
-			testFunc: func(ctx context.Context, client Client, key string, data []byte, metadata *Metadata) error {
-				policyID := fmt.Sprintf("%s-repl-policy-status-%d", protocolName, time.Now().UnixNano())
-				status, err := client.GetReplicationStatus(ctx, policyID)
-				// Status likely doesn't exist - that's OK
-				if err != nil {
-					t.Logf("GetReplicationStatus returned: %v", err)
-					return nil
+		},
+		{
+			name:     "getReplicationStatus",
+			category: "replication",
+			run: func(ctx context.Context, t *testing.T, client Client, proto string) {
+				t.Helper()
+				id := fmt.Sprintf("integ-%s-status-%d", proto, time.Now().UnixNano())
+				policy := canonicalReplicationPolicy(id)
+				require.NoError(t, client.AddReplicationPolicy(ctx, policy), "setup addReplicationPolicy")
+				t.Cleanup(func() { client.RemoveReplicationPolicy(ctx, id) }) //nolint:errcheck
+
+				status, err := client.GetReplicationStatus(ctx, id)
+				require.NoError(t, err)
+				require.NotNil(t, status)
+				assert.Equal(t, id, status.PolicyID, "getReplicationStatus.PolicyID must match")
+				assert.GreaterOrEqual(t, status.TotalObjectsSynced, int64(0), "TotalObjectsSynced must be >= 0")
+				assert.GreaterOrEqual(t, status.SyncCount, int64(0), "SyncCount must be >= 0")
+			},
+		},
+
+		// ---------------------------------------------------------------
+		// close / dispose
+		// ---------------------------------------------------------------
+		{
+			name:     "close",
+			category: "close",
+			run: func(ctx context.Context, t *testing.T, client Client, proto string) {
+				t.Helper()
+				// Idempotent: first close is part of the shared client lifecycle.
+				// Here we create a separate short-lived client and close it twice.
+				var (
+					p     protoDesc
+					found bool
+				)
+				for _, pd := range availableProtocols() {
+					if pd.name == proto {
+						p = pd
+						found = true
+						break
+					}
 				}
-				if status == nil {
-					return fmt.Errorf("getreplicationstatus returned nil")
+				if !found {
+					t.Fatalf("no protocol descriptor for %s", proto)
 				}
-				return nil
+				c2 := newProtocolClient(t, p)
+				assert.NoError(t, c2.Close(), "first Close must not error")
+				assert.NoError(t, c2.Close(), "second Close must be idempotent")
 			},
-			verify: func(ctx context.Context, client Client) error {
-				return nil
-			},
-			cleanup: func(ctx context.Context, client Client, key string) {
-				// No cleanup needed
-			},
-			skipFor: []Protocol{ProtocolREST},
 		},
 	}
+}
 
-	// Run each test case
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Check if this test should be skipped for this protocol
-			for _, skipProto := range tc.skipFor {
-				if skipProto == protocol {
-					t.Skipf("Operation %s not supported for %s protocol", tc.operation, protocolName)
-				}
-			}
+// ---------------------------------------------------------------------------
+// Primary driver: OPERATIONS × PROTOCOLS
+// ---------------------------------------------------------------------------
 
-			// Setup
-			key, data, metadata := tc.setupFunc()
-			t.Cleanup(func() {
-				tc.cleanup(ctx, client, key)
-			})
+// TestComprehensiveIntegrationAllOperations is the single table-driven suite.
+// It runs every operation against every available protocol.
+func TestComprehensiveIntegrationAllOperations(t *testing.T) {
+	ctx := context.Background()
+	protocols := availableProtocols()
+	ops := allOperations()
 
-			// Execute test
-			start := time.Now()
-			err := tc.testFunc(ctx, client, key, data, metadata)
-			duration := time.Since(start)
+	for _, p := range protocols {
+		p := p
+		t.Run(p.name, func(t *testing.T) {
+			client := newProtocolClient(t, p)
+			defer client.Close() //nolint:errcheck
 
-			// Assert results
-			if err != nil {
-				t.Errorf("Operation %s failed: %v (duration: %v)", tc.operation, err, duration)
-			} else {
-				t.Logf("Operation %s succeeded (duration: %v)", tc.operation, duration)
-			}
-
-			// Verify results
-			if err == nil {
-				if verifyErr := tc.verify(ctx, client); verifyErr != nil {
-					t.Errorf("Verification failed: %v", verifyErr)
-				}
+			for _, op := range ops {
+				op := op
+				t.Run(op.category+"/"+op.name, func(t *testing.T) {
+					op.run(ctx, t, client, p.name)
+				})
 			}
 		})
 	}
 }
 
-// TestCrossProtocolConsistency tests that all protocols return consistent responses
+// ---------------------------------------------------------------------------
+// Cross-protocol consistency
+// ---------------------------------------------------------------------------
+
+// TestCrossProtocolConsistency verifies that every ordered (A,B) protocol pair
+// is consistent: put via A then get/metadata/delete via B.
 func TestCrossProtocolConsistency(t *testing.T) {
-	t.Run("ObjectOperationsConsistency", func(t *testing.T) {
-		// Create clients for all protocols
-		restClient, err := NewClient(&ClientConfig{
-			Protocol: ProtocolREST,
-			Address:  getRESTAddr(),
-		})
-		require.NoError(t, err)
-		defer restClient.Close()
+	ctx := context.Background()
+	protocols := availableProtocols()
 
-		grpcClient, err := NewClient(&ClientConfig{
-			Protocol:          ProtocolGRPC,
-			Address:           getGRPCAddr(),
-			ConnectionTimeout: 10 * time.Second,
-			RequestTimeout:    30 * time.Second,
-		})
-		require.NoError(t, err)
-		defer grpcClient.Close()
+	// Build client map lazily — only create what is needed.
+	clients := make(map[string]Client, len(protocols))
+	for _, p := range protocols {
+		p := p
+		c := newProtocolClient(t, p)
+		t.Cleanup(func() { c.Close() }) //nolint:errcheck
+		clients[p.name] = c
+	}
 
-		ctx := context.Background()
+	for _, a := range protocols {
+		for _, b := range protocols {
+			if a.name == b.name {
+				continue
+			}
+			a, b := a, b
+			t.Run(fmt.Sprintf("%s->%s", a.name, b.name), func(t *testing.T) {
+				clientA := clients[a.name]
+				clientB := clients[b.name]
+				key := fmt.Sprintf("cross-%s-%s-%d", a.name, b.name, time.Now().UnixNano())
+				want := []byte(fmt.Sprintf("cross-protocol data %s->%s", a.name, b.name))
+				const contentType = "application/octet-stream"
 
-		// Test that both clients handle Put/Get consistently
-		testKey := fmt.Sprintf("consistency-test-%d", time.Now().UnixNano())
-		testData := []byte("Consistency test data")
+				// put via A
+				res, err := clientA.Put(ctx, key, want, &Metadata{
+					ContentType: contentType,
+				})
+				require.NoError(t, err, "put via %s", a.name)
+				assert.True(t, res.Success)
+				t.Cleanup(func() { clientA.Delete(ctx, key) }) //nolint:errcheck
 
-		// Put via REST
-		restResult, err := restClient.Put(ctx, testKey, testData, nil)
-		require.NoError(t, err)
-		assert.True(t, restResult.Success)
+				// get via B — assert data equal
+				got, err := clientB.Get(ctx, key)
+				require.NoError(t, err, "get via %s", b.name)
+				require.NotNil(t, got)
+				assert.True(t, bytes.Equal(want, got.Data),
+					"data mismatch: put via %s, get via %s", a.name, b.name)
 
-		// Put via gRPC
-		grpcResult, err := grpcClient.Put(ctx, testKey, testData, nil)
-		require.NoError(t, err)
-		assert.True(t, grpcResult.Success)
+				// getMetadata via B — assert size and content_type
+				meta, err := clientB.GetMetadata(ctx, key)
+				require.NoError(t, err, "getMetadata via %s", b.name)
+				require.NotNil(t, meta)
+				assert.Equal(t, int64(len(want)), meta.Size,
+					"metadata.Size mismatch across %s->%s", a.name, b.name)
+				assert.Equal(t, contentType, meta.ContentType,
+					"metadata.ContentType mismatch across %s->%s", a.name, b.name)
 
-		// Get via REST
-		restGetResult, err := restClient.Get(ctx, testKey)
-		require.NoError(t, err)
-		assert.Equal(t, testData, restGetResult.Data)
+				// delete via A, then exists via B must be false
+				require.NoError(t, clientA.Delete(ctx, key), "delete via %s", a.name)
+				exists, err := clientB.Exists(ctx, key)
+				require.NoError(t, err, "exists via %s", b.name)
+				assert.False(t, exists, "exists must be false after delete via %s (checked via %s)", a.name, b.name)
+			})
+		}
+	}
+}
 
-		// Get via gRPC
-		grpcGetResult, err := grpcClient.Get(ctx, testKey)
-		require.NoError(t, err)
-		assert.Equal(t, testData, grpcGetResult.Data)
+// ---------------------------------------------------------------------------
+// Error-handling cases
+// ---------------------------------------------------------------------------
 
-		// Both should return same data
-		assert.Equal(t, restGetResult.Data, grpcGetResult.Data)
+// TestIntegrationErrorHandling verifies that every protocol surfaces errors
+// correctly for common negative cases.
+func TestIntegrationErrorHandling(t *testing.T) {
+	ctx := context.Background()
 
-		// Cleanup
-		restClient.Delete(ctx, testKey) // nolint: errcheck
+	t.Run("NonexistentObject", func(t *testing.T) {
+		for _, p := range availableProtocols() {
+			p := p
+			t.Run(p.name, func(t *testing.T) {
+				client := newProtocolClient(t, p)
+				defer client.Close() //nolint:errcheck
+
+				key := fmt.Sprintf("nonexistent-%s-%d", p.name, time.Now().UnixNano())
+				_, err := client.Get(ctx, key)
+				assert.Error(t, err, "%s: get nonexistent must error", p.name)
+			})
+		}
 	})
 
-	t.Run("ListOperationsConsistency", func(t *testing.T) {
-		restClient, err := NewClient(&ClientConfig{
-			Protocol: ProtocolREST,
-			Address:  getRESTAddr(),
-		})
-		require.NoError(t, err)
-		defer restClient.Close()
+	t.Run("EmptyKey", func(t *testing.T) {
+		for _, p := range availableProtocols() {
+			p := p
+			t.Run(p.name, func(t *testing.T) {
+				client := newProtocolClient(t, p)
+				defer client.Close() //nolint:errcheck
 
-		grpcClient, err := NewClient(&ClientConfig{
-			Protocol:          ProtocolGRPC,
-			Address:           getGRPCAddr(),
-			ConnectionTimeout: 10 * time.Second,
-			RequestTimeout:    30 * time.Second,
-		})
-		require.NoError(t, err)
-		defer grpcClient.Close()
+				_, err := client.Put(ctx, "", []byte("data"), nil)
+				assert.ErrorIs(t, err, ErrInvalidKey, "%s: put empty key", p.name)
 
-		ctx := context.Background()
-
-		// List via REST
-		restList, err := restClient.List(ctx, &ListOptions{Prefix: "consistency", MaxResults: 10})
-		require.NoError(t, err)
-		assert.NotNil(t, restList)
-
-		// List via gRPC
-		grpcList, err := grpcClient.List(ctx, &ListOptions{Prefix: "consistency", MaxResults: 10})
-		require.NoError(t, err)
-		assert.NotNil(t, grpcList)
-
-		// Both should return valid results
-		assert.NotNil(t, restList.Objects)
-		assert.NotNil(t, grpcList.Objects)
+				_, err = client.Get(ctx, "")
+				assert.ErrorIs(t, err, ErrInvalidKey, "%s: get empty key", p.name)
+			})
+		}
 	})
 
-	t.Run("HealthCheckConsistency", func(t *testing.T) {
-		restClient, err := NewClient(&ClientConfig{
-			Protocol: ProtocolREST,
-			Address:  getRESTAddr(),
-		})
-		require.NoError(t, err)
-		defer restClient.Close()
+	t.Run("RESTObjectNotFound", func(t *testing.T) {
+		client := newProtocolClient(t, protoDesc{name: "REST", proto: ProtocolREST, addr: integrationRESTAddr()})
+		defer client.Close() //nolint:errcheck
 
-		grpcClient, err := NewClient(&ClientConfig{
-			Protocol:          ProtocolGRPC,
-			Address:           getGRPCAddr(),
-			ConnectionTimeout: 10 * time.Second,
-			RequestTimeout:    30 * time.Second,
-		})
-		require.NoError(t, err)
-		defer grpcClient.Close()
+		key := fmt.Sprintf("nonexistent-rest-%d", time.Now().UnixNano())
 
-		ctx := context.Background()
+		_, err := client.Get(ctx, key)
+		assert.ErrorIs(t, err, ErrObjectNotFound)
 
-		// Health check via REST
-		restHealth, err := restClient.Health(ctx)
-		require.NoError(t, err)
-		assert.NotNil(t, restHealth)
+		err = client.UpdateMetadata(ctx, key, &Metadata{ContentType: "text/plain"})
+		assert.ErrorIs(t, err, ErrObjectNotFound)
+	})
 
-		// Health check via gRPC
-		grpcHealth, err := grpcClient.Health(ctx)
-		require.NoError(t, err)
-		assert.NotNil(t, grpcHealth)
+	t.Run("GRPCObjectNotFound", func(t *testing.T) {
+		client := newProtocolClient(t, protoDesc{name: "gRPC", proto: ProtocolGRPC, addr: integrationGRPCAddr()})
+		defer client.Close() //nolint:errcheck
 
-		// Both should return successful health status
-		assert.NotEmpty(t, restHealth.Status)
-		assert.NotEmpty(t, grpcHealth.Status)
+		key := fmt.Sprintf("nonexistent-grpc-%d", time.Now().UnixNano())
+		_, err := client.Get(ctx, key)
+		assert.Error(t, err)
+	})
+
+	t.Run("NonexistentDeleteIdempotency", func(t *testing.T) {
+		// Some backends return success for idempotent deletes; we accept either.
+		for _, p := range availableProtocols() {
+			p := p
+			t.Run(p.name, func(t *testing.T) {
+				client := newProtocolClient(t, p)
+				defer client.Close() //nolint:errcheck
+
+				key := fmt.Sprintf("nonexistent-del-%s-%d", p.name, time.Now().UnixNano())
+				err := client.Delete(ctx, key)
+				if err != nil {
+					// Either ErrObjectNotFound or similar is acceptable.
+					t.Logf("%s: delete nonexistent returned (acceptable): %v", p.name, err)
+				}
+			})
+		}
 	})
 }
 
-// TestErrorHandlingConsistency tests that protocols handle errors consistently
-func TestErrorHandlingConsistency(t *testing.T) {
-	t.Run("NonexistentObjectHandling", func(t *testing.T) {
-		restClient, err := NewClient(&ClientConfig{
-			Protocol: ProtocolREST,
-			Address:  getRESTAddr(),
-		})
-		require.NoError(t, err)
-		defer restClient.Close()
+// ---------------------------------------------------------------------------
+// Concurrent operations
+// ---------------------------------------------------------------------------
 
-		grpcClient, err := NewClient(&ClientConfig{
-			Protocol:          ProtocolGRPC,
-			Address:           getGRPCAddr(),
-			ConnectionTimeout: 10 * time.Second,
-			RequestTimeout:    30 * time.Second,
-		})
-		require.NoError(t, err)
-		defer grpcClient.Close()
+// TestIntegrationConcurrentOperations verifies the gRPC client is safe
+// for concurrent use.
+func TestIntegrationConcurrentOperations(t *testing.T) {
+	client := newProtocolClient(t, protoDesc{name: "gRPC", proto: ProtocolGRPC, addr: integrationGRPCAddr()})
+	defer client.Close() //nolint:errcheck
 
-		ctx := context.Background()
-		nonexistentKey := fmt.Sprintf("nonexistent-%d", time.Now().UnixNano())
+	ctx := context.Background()
+	const n = 10
+	var wg sync.WaitGroup
+	wg.Add(n)
 
-		// Get nonexistent via REST
-		_, restErr := restClient.Get(ctx, nonexistentKey)
-		assert.Error(t, restErr)
+	for i := 0; i < n; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			key := fmt.Sprintf("concurrent-%d-%d", i, time.Now().UnixNano())
+			data := []byte(fmt.Sprintf("goroutine-%d", i))
 
-		// Get nonexistent via gRPC
-		_, grpcErr := grpcClient.Get(ctx, nonexistentKey)
-		assert.Error(t, grpcErr)
+			_, err := client.Put(ctx, key, data, nil)
+			assert.NoError(t, err)
 
-		// Both should return errors (specific error type may vary by protocol)
-		t.Logf("REST error: %v", restErr)
-		t.Logf("gRPC error: %v", grpcErr)
-	})
+			got, err := client.Get(ctx, key)
+			assert.NoError(t, err)
+			if err == nil {
+				assert.Equal(t, data, got.Data)
+			}
 
-	t.Run("InvalidKeyHandling", func(t *testing.T) {
-		restClient, err := NewClient(&ClientConfig{
-			Protocol: ProtocolREST,
-			Address:  getRESTAddr(),
-		})
-		require.NoError(t, err)
-		defer restClient.Close()
+			assert.NoError(t, client.Delete(ctx, key))
+		}()
+	}
 
-		ctx := context.Background()
-
-		// Try to put with empty key
-		_, err = restClient.Put(ctx, "", []byte("test"), nil)
-		assert.Error(t, err)
-
-		// Try to get with empty key
-		_, err = restClient.Get(ctx, "")
-		assert.Error(t, err)
-	})
+	wg.Wait()
 }
 
-// TestBackendLimitationsAndSkips tests that appropriate operations are skipped
-// based on backend capabilities
-func TestBackendLimitationsAndSkips(t *testing.T) {
-	t.Run("RESTProtocolLimitations", func(t *testing.T) {
-		client, err := NewClient(&ClientConfig{
-			Protocol: ProtocolREST,
-			Address:  getRESTAddr(),
-		})
-		require.NoError(t, err)
-		defer client.Close()
+// ---------------------------------------------------------------------------
+// Large objects
+// ---------------------------------------------------------------------------
 
-		ctx := context.Background()
-
-		// REST doesn't support all advanced features
-		t.Run("UpdateMetadataNotSupported", func(t *testing.T) {
-			key := fmt.Sprintf("rest-metadata-test-%d", time.Now().UnixNano())
-			testData := []byte("Test data")
-
-			// Create object
-			_, err := client.Put(ctx, key, testData, nil)
+// TestIntegrationLargeObject verifies that a 1 MiB object survives a
+// put/get round-trip with byte-exact equality.
+func TestIntegrationLargeObject(t *testing.T) {
+	for _, p := range availableProtocols() {
+		p := p
+		t.Run(p.name, func(t *testing.T) {
+			cfg := &ClientConfig{
+				Protocol:          p.proto,
+				Address:           p.addr,
+				ConnectionTimeout: 10 * time.Second,
+				RequestTimeout:    60 * time.Second,
+				MaxRecvMsgSize:    10 * 1024 * 1024,
+				MaxSendMsgSize:    10 * 1024 * 1024,
+			}
+			if p.proto == ProtocolQUIC {
+				cfg.UseTLS = true
+				cfg.InsecureSkipVerify = true
+			}
+			client, err := NewClient(cfg)
 			require.NoError(t, err)
-			defer client.Delete(ctx, key) // nolint: errcheck
+			defer client.Close() //nolint:errcheck
 
-			// Try to update metadata
-			err = client.UpdateMetadata(ctx, key, &Metadata{ContentType: "text/plain"})
-			// REST should return ErrNotSupported or similar
-			if err != nil {
-				t.Logf("UpdateMetadata correctly returned error: %v", err)
+			ctx := context.Background()
+			key := fmt.Sprintf("large-%s-%d", p.name, time.Now().UnixNano())
+
+			data := make([]byte, 1024*1024)
+			for i := range data {
+				data[i] = byte(i % 256)
 			}
-		})
 
-		t.Run("ApplyPoliciesNotSupported", func(t *testing.T) {
-			result, err := client.ApplyPolicies(ctx)
-			if err != nil {
-				t.Logf("ApplyPolicies correctly returned error: %v", err)
-				assert.Nil(t, result)
-			}
-		})
-	})
-
-	t.Run("GRPCProtocolCapabilities", func(t *testing.T) {
-		client, err := NewClient(&ClientConfig{
-			Protocol:          ProtocolGRPC,
-			Address:           getGRPCAddr(),
-			ConnectionTimeout: 10 * time.Second,
-			RequestTimeout:    30 * time.Second,
-		})
-		require.NoError(t, err)
-		defer client.Close()
-
-		ctx := context.Background()
-
-		// gRPC supports more advanced features
-		t.Run("UpdateMetadataSupported", func(t *testing.T) {
-			key := fmt.Sprintf("grpc-metadata-test-%d", time.Now().UnixNano())
-			testData := []byte("Test data")
-
-			// Create object
-			_, err := client.Put(ctx, key, testData, nil)
+			res, err := client.Put(ctx, key, data, nil)
 			require.NoError(t, err)
-			defer client.Delete(ctx, key) // nolint: errcheck
+			assert.True(t, res.Success)
+			t.Cleanup(func() { client.Delete(ctx, key) }) //nolint:errcheck
 
-			// Update metadata (might succeed or fail depending on backend support)
-			err = client.UpdateMetadata(ctx, key, &Metadata{ContentType: "text/plain"})
-			if err != nil {
-				t.Logf("UpdateMetadata returned: %v", err)
-			}
+			got, err := client.Get(ctx, key)
+			require.NoError(t, err)
+			assert.Equal(t, len(data), len(got.Data))
+			assert.Equal(t, data, got.Data)
 		})
-	})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// REST-specific (ApplyPolicies)
+// ---------------------------------------------------------------------------
+
+// TestIntegrationRESTApplyPolicies verifies the REST /policies/apply endpoint.
+func TestIntegrationRESTApplyPolicies(t *testing.T) {
+	client := newProtocolClient(t, protoDesc{name: "REST", proto: ProtocolREST, addr: integrationRESTAddr()})
+	defer client.Close() //nolint:errcheck
+
+	result, err := client.ApplyPolicies(context.Background())
+	require.NoError(t, err)
+	assert.NotNil(t, result)
 }

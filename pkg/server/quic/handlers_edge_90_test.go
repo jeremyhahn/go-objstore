@@ -75,8 +75,10 @@ func TestHandleGet_MetadataError(t *testing.T) {
 
 	handler.handleGet(w, req, "test.txt")
 
-	if w.Code != http.StatusNotFound {
-		t.Errorf("expected status 404, got %d", w.Code)
+	// An unclassified backend error maps to 500 via the shared taxonomy,
+	// not a blanket 404.
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("expected status 500, got %d", w.Code)
 	}
 }
 

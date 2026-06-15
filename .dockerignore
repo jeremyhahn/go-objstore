@@ -1,53 +1,56 @@
-# Git
-.git
-.gitignore
-.github
+# .dockerignore — keep the build context small.
+# Build contexts are the repo root (server + Go/Rust SDK images). Exclude VCS,
+# docs, and all language build/test artifacts that are regenerated inside images.
 
-# Build artifacts
-bin/
-coverage/
-*.test
-*.out
-
-# IDE files
+# VCS / CI / editor / OS
+.git/
+.github/
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 .DS_Store
-
-# OS files
 Thumbs.db
-.DS_Store
 
 # Documentation
 *.md
 docs/
 
-# Docker
-Dockerfile
-.dockerignore
-docker-compose.yml
-docker-entrypoint.sh
+# Node (JS/TS SDKs)
+node_modules/
+**/node_modules/
 
-# Test files
-# Note: Integration tests in test/integration are NOT ignored for Docker-based testing
-# Ignore unit test files in pkg/ and cmd/ directories
-pkg/**/*_test.go
-cmd/**/*_test.go
+# Rust build output
+target/
+**/target/
 
-# Examples
-examples/
+# Python
+**/.venv/
+**/venv/
+**/__pycache__/
+**/.pytest_cache/
+*.pyc
 
-# Scripts
-scripts/
+# Ruby bundled gems
+**/vendor/
+**/.bundle/
 
-# Tools
-tools/
+# .NET build output
+**/obj/
+api/sdks/csharp/bin/
+api/sdks/csharp/**/bin/
 
-# Temporary files
-*.log
-*.tmp
-tmp/
-temp/
+# Coverage / test results
+coverage/
+**/coverage/
+**/TestResults/
+*.out
+*.cover
+*.prof
+coverage.txt
+coverage.html
+*.test
+
+# Docker files (avoid recursion)
+docker-compose*.yml

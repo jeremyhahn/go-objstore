@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
+	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/server/middleware"
 	"github.com/quic-go/quic-go"
 )
 
@@ -66,12 +68,36 @@ type Options struct {
 	// Authenticator is the pluggable authentication adapter (default: NoOpAuthenticator)
 	Authenticator adapters.Authenticator
 
+	// Authorizer is the pluggable authorization adapter (default: NoOpAuthorizer = allow-all)
+	Authorizer adapters.Authorizer
+
 	// AdapterTLSConfig is the TLS/mTLS configuration using the adapter (preferred over TLSConfig)
 	AdapterTLSConfig *adapters.TLSConfig
 
 	// Backend is the name of the backend to use when using the facade.
 	// If empty, the default backend is used.
 	Backend string
+
+	// AllowedOrigins is the list of origins permitted by the CORS handling in
+	// ServeHTTP. When empty/nil (or set to ["*"]), all origins are allowed
+	// without credentials. When set to a specific allowlist, only those origins
+	// are echoed back and credentials are permitted.
+	AllowedOrigins []string
+
+	// EnableRequestID enables X-Request-ID handling (default: true).
+	EnableRequestID bool
+
+	// EnableRateLimit enables rate limiting (default: false).
+	EnableRateLimit bool
+
+	// RateLimitConfig is the rate limiting configuration.
+	RateLimitConfig *middleware.RateLimitConfig
+
+	// EnableAudit enables audit logging (default: false).
+	EnableAudit bool
+
+	// AuditLogger is the audit logger used when EnableAudit is set.
+	AuditLogger audit.AuditLogger
 }
 
 // DefaultOptions returns a new Options instance with sensible defaults.
@@ -85,8 +111,11 @@ func DefaultOptions() *Options {
 		MaxBiStreams:       100,
 		MaxUniStreams:      100,
 		EnableDatagrams:    false,
+		EnableRequestID:    true,
+		RateLimitConfig:    middleware.DefaultRateLimitConfig(),
 		Logger:             adapters.NewDefaultLogger(),
 		Authenticator:      adapters.NewNoOpAuthenticator(),
+		Authorizer:         adapters.NewNoOpAuthorizer(),
 		AdapterTLSConfig:   nil, // Must be set by user
 		QUICConfig: &quic.Config{
 			MaxIdleTimeout:                 60 * time.Second,
@@ -141,6 +170,10 @@ func (o *Options) Validate() error {
 
 	if o.QUICConfig == nil {
 		o.QUICConfig = DefaultOptions().QUICConfig
+	}
+
+	if o.Authorizer == nil {
+		o.Authorizer = adapters.NewNoOpAuthorizer()
 	}
 
 	// Sync QUIC config with options
@@ -209,6 +242,12 @@ func (o *Options) WithAuthenticator(auth adapters.Authenticator) *Options {
 	return o
 }
 
+// WithAuthorizer sets the authorization adapter.
+func (o *Options) WithAuthorizer(authz adapters.Authorizer) *Options {
+	o.Authorizer = authz
+	return o
+}
+
 // WithAdapterTLS sets the TLS configuration using the adapter.
 func (o *Options) WithAdapterTLS(config *adapters.TLSConfig) *Options {
 	o.AdapterTLSConfig = config
@@ -218,5 +257,39 @@ func (o *Options) WithAdapterTLS(config *adapters.TLSConfig) *Options {
 // WithBackend sets the backend name for facade-based operation.
 func (o *Options) WithBackend(backend string) *Options {
 	o.Backend = backend
+	return o
+}
+
+// WithAllowedOrigins sets the list of origins permitted by the CORS handling.
+// When empty (or set to ["*"]), all origins are allowed without credentials.
+func (o *Options) WithAllowedOrigins(origins ...string) *Options {
+	o.AllowedOrigins = origins
+	return o
+}
+
+// WithRequestID enables or disables X-Request-ID handling.
+func (o *Options) WithRequestID(enabled bool) *Options {
+	o.EnableRequestID = enabled
+	return o
+}
+
+// WithRateLimit enables rate limiting with the given configuration. A nil
+// config uses the defaults.
+func (o *Options) WithRateLimit(config *middleware.RateLimitConfig) *Options {
+	o.EnableRateLimit = true
+	if config != nil {
+		o.RateLimitConfig = config
+	}
+	return o
+}
+
+// WithAudit enables audit logging with the given logger. A nil logger uses
+// the default audit logger.
+func (o *Options) WithAudit(auditLogger audit.AuditLogger) *Options {
+	o.EnableAudit = true
+	if auditLogger == nil {
+		auditLogger = audit.NewDefaultAuditLogger()
+	}
+	o.AuditLogger = auditLogger
 	return o
 }

@@ -2,222 +2,126 @@
 
 Configuration reference for the REST API server.
 
-## Basic Configuration
+The REST server is configured with command-line flags. There is no configuration
+file. Two binaries serve the REST API:
 
-```yaml
-rest:
-  enabled: true
-  address: "0.0.0.0:8080"
-  read_timeout: 30s
-  write_timeout: 30s
-  idle_timeout: 120s
+- `objstore-rest-server` - standalone REST server
+- `objstore-server` - combined server (gRPC + REST + QUIC + MCP)
+
+Advanced settings (timeouts, TLS, auth adapters, rate limiting) are available
+programmatically through `restserver.ServerConfig` when embedding the server in
+your own application (see `pkg/server/rest`).
+
+## Standalone Server Flags (objstore-rest-server)
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--host` | `localhost` | REST server host |
+| `--port` | `8080` | REST server port |
+| `--backend` | `local` | Storage backend (`local`, `s3`, `gcs`, `azure`) |
+| `--path` | `/tmp/objstore` | Storage path for the local backend |
+| `--metrics-public` | `false` | Expose `/metrics` without authorization |
+
+```bash
+objstore-rest-server --host 0.0.0.0 --port 8080 --backend local --path /var/lib/objstore
 ```
 
-## Parameters
+## Combined Server Flags (objstore-server)
 
-### Network
-- `address` - Listen address and port (default: "0.0.0.0:8080")
-- `base_path` - API base path (default: "/api/v1")
+The combined server enables REST by default and uses these REST-related flags:
 
-### Timeouts
-- `read_timeout` - Maximum duration for reading request (default: 30s)
-- `write_timeout` - Maximum duration for writing response (default: 30s)
-- `idle_timeout` - Maximum idle connection time (default: 120s)
-- `shutdown_timeout` - Graceful shutdown timeout (default: 30s)
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--rest` | `true` | Enable the REST server |
+| `--rest-port` | `8080` | REST server port (binds `0.0.0.0`) |
+| `--metrics-public` | `false` | Expose `/metrics` without authorization |
+| `--rate-limit` | `false` | Enable rate limiting on all transports |
+| `--rate-limit-rps` | `100` | Rate limit requests per second |
+| `--rate-limit-burst` | `200` | Rate limit burst size |
+| `--rate-limit-per-client` | `false` | Rate limit per client instead of globally |
+| `--audit` | `true` | Enable audit logging on all transports |
 
-### Limits
-- `max_body_size` - Maximum request body size in bytes (default: 10MB)
-- `max_header_size` - Maximum header size in bytes (default: 1MB)
-
-## TLS Configuration
-
-```yaml
-rest:
-  tls:
-    enabled: true
-    cert_file: /path/to/server.crt
-    key_file: /path/to/server.key
-    min_version: "1.2"  # 1.0, 1.1, 1.2, 1.3
-    cipher_suites:
-      - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
-      - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+```bash
+objstore-server --rest-port 8080 --backend local --path /var/lib/objstore
 ```
 
-## Authentication
+## Built-in Defaults
 
-```yaml
-rest:
-  auth:
-    enabled: true
-    type: bearer  # bearer, api_key, basic
-    bearer_token: ${API_TOKEN}
-```
+The server runs with these defaults (`restserver.DefaultServerConfig()`):
 
-### API Key Authentication
-```yaml
-rest:
-  auth:
-    enabled: true
-    type: api_key
-    api_key_header: X-API-Key
-    api_keys:
-      - ${API_KEY_1}
-      - ${API_KEY_2}
-```
+- `read_timeout`: 60s
+- `write_timeout`: 60s
+- `idle_timeout`: 120s
+- `max_request_size`: 100MB (104857600 bytes)
+- CORS: enabled (all origins, no credentials)
+- Security headers: enabled
+- Request ID middleware: enabled
+- Audit logging: enabled (JSON format)
+- Rate limiting: disabled
+- TLS: disabled
+- `/metrics`: requires authorization (set `--metrics-public` to exempt it)
 
-## CORS Configuration
+## TLS, Authentication, and Rate Limiting (Programmatic)
 
-```yaml
-rest:
-  cors:
-    enabled: true
-    allowed_origins:
-      - "https://example.com"
-      - "https://app.example.com"
-    allowed_methods:
-      - GET
-      - POST
-      - PUT
-      - DELETE
-    allowed_headers:
-      - Content-Type
-      - Authorization
-    exposed_headers:
-      - X-Request-ID
-    max_age: 3600
-    allow_credentials: true
-```
+The standalone binaries do not expose TLS or authentication flags for REST.
+When embedding the server, configure these through `restserver.ServerConfig`:
 
-## Compression
+```go
+config := restserver.DefaultServerConfig()
+config.Host = "0.0.0.0"
+config.Port = 8443
+config.TLSConfig = &adapters.TLSConfig{
+    CertFile: "/etc/objstore/tls/server.crt",
+    KeyFile:  "/etc/objstore/tls/server.key",
+}
+config.Authenticator = myAuthenticator // adapters.Authenticator
+config.Authorizer = myAuthorizer       // adapters.Authorizer
+config.EnableRateLimit = true
 
-```yaml
-rest:
-  compression:
-    enabled: true
-    level: 5  # 1-9, higher = more compression
-    min_size: 1024  # Minimum response size to compress (bytes)
-    types:
-      - application/json
-      - text/plain
-```
-
-## Logging
-
-```yaml
-rest:
-  logging:
-    enabled: true
-    format: json  # json, text
-    log_requests: true
-    log_responses: false
-    log_headers: false
-```
-
-## Rate Limiting
-
-```yaml
-rest:
-  rate_limit:
-    enabled: true
-    requests_per_minute: 100
-    burst: 50
-    key_function: ip  # ip, header, custom
-```
-
-## Health and Metrics
-
-```yaml
-rest:
-  health_check:
-    enabled: true
-    path: /health
-    
-  metrics:
-    enabled: true
-    path: /metrics
-```
-
-## Complete Example
-
-```yaml
-rest:
-  enabled: true
-  address: "0.0.0.0:8080"
-  base_path: "/api/v1"
-  read_timeout: 30s
-  write_timeout: 30s
-  idle_timeout: 120s
-  max_body_size: 10485760  # 10MB
-  
-  tls:
-    enabled: true
-    cert_file: /etc/objstore/tls/server.crt
-    key_file: /etc/objstore/tls/server.key
-    min_version: "1.2"
-  
-  auth:
-    enabled: true
-    type: bearer
-    bearer_token: ${API_TOKEN}
-  
-  cors:
-    enabled: true
-    allowed_origins:
-      - "*"
-    allowed_methods:
-      - GET
-      - POST
-      - PUT
-      - DELETE
-      - HEAD
-    allowed_headers:
-      - "*"
-    max_age: 3600
-  
-  compression:
-    enabled: true
-    level: 6
-    min_size: 1024
-  
-  logging:
-    enabled: true
-    format: json
-    log_requests: true
-  
-  rate_limit:
-    enabled: true
-    requests_per_minute: 1000
-    burst: 100
-  
-  health_check:
-    enabled: true
-    path: /health
-  
-  metrics:
-    enabled: true
-    path: /metrics
+server, err := restserver.NewServer(storage, config)
 ```
 
 ## API Endpoints
 
+All object routes are available under `/api/v1` and, for backwards
+compatibility, at the root path.
+
 ### Objects
-- `GET /objects` - List objects
-- `GET /objects/{key}` - Get object
-- `PUT /objects/{key}` - Put object
-- `DELETE /objects/{key}` - Delete object
-- `HEAD /objects/{key}` - Check existence
-- `GET /objects/{key}/metadata` - Get metadata
+- `GET /api/v1/objects` - List objects
+- `GET /api/v1/objects/{key}` - Get object
+- `PUT /api/v1/objects/{key}` - Put object
+- `DELETE /api/v1/objects/{key}` - Delete object (returns `204 No Content`)
+- `HEAD /api/v1/objects/{key}` - Check existence
+- `HEAD /api/v1/exists/{key}` - Check existence
+- `GET /api/v1/metadata/{key}` - Get metadata
+- `PUT /api/v1/metadata/{key}` - Update metadata
 
-### Query Parameters
+### Lifecycle and Archive
+- `POST /api/v1/archive` - Archive an object
+- `GET /api/v1/policies` - List lifecycle policies
+- `POST /api/v1/policies` - Add lifecycle policy
+- `DELETE /api/v1/policies/{id}` - Remove lifecycle policy
+- `POST /api/v1/policies/apply` - Apply lifecycle policies
+
+### Replication
+- `POST /api/v1/replication/policies` - Add replication policy
+- `GET /api/v1/replication/policies` - List replication policies
+- `GET /api/v1/replication/policies/{id}` - Get replication policy
+- `DELETE /api/v1/replication/policies/{id}` - Remove replication policy
+- `POST /api/v1/replication/trigger` - Trigger replication
+- `GET /api/v1/replication/status/{id}` - Get replication status
+
+### Operational
+- `GET /health` - Health check (no auth required)
+- `GET /metrics` - Prometheus metrics (requires authorization unless `--metrics-public`)
+- `GET /swagger/*` - Swagger UI
+
+### Query Parameters (list)
 - `prefix` - Filter by prefix
-- `delimiter` - Hierarchical delimiter
-- `limit` - Maximum results
-- `marker` - Pagination marker
 
-## Environment Variable Overrides
+## Container Example
 
-- `REST_ADDRESS` - Listen address
-- `REST_TLS_ENABLED` - Enable TLS
-- `REST_TLS_CERT` - Certificate path
-- `REST_TLS_KEY` - Key path
-- `API_TOKEN` - Authentication token
+```bash
+docker run -p 8080:8080 objstore \
+  objstore-rest-server --host 0.0.0.0 --port 8080 --backend local --path /data
+```

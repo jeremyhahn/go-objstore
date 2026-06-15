@@ -122,26 +122,79 @@ func TestPutObjectInvalidCustomMetadata(t *testing.T) {
 	router := gin.New()
 	router.PUT("/objects/*key", handler.PutObject)
 
-	// Create metadata with too many custom fields (if there's a limit)
-	metadata := map[string]any{
-		"content_type": "text/plain",
-		"custom": map[string]string{
-			// Add a very long key/value that might exceed validation limits
-			"key": strings.Repeat("x", 10000),
-		},
+	// Create custom metadata with a very long key/value (if there's a limit)
+	custom := map[string]string{
+		"key": strings.Repeat("x", 10000),
 	}
-	metadataJSON, _ := json.Marshal(metadata)
+	metadataJSON, _ := json.Marshal(custom)
 
 	req := httptest.NewRequest("PUT", "/objects/test.txt", strings.NewReader("content"))
 	req.Header.Set("Content-Type", "text/plain")
-	req.Header.Set("X-Metadata", string(metadataJSON))
+	req.Header.Set("X-Object-Metadata", string(metadataJSON))
 	w := httptest.NewRecorder()
 
 	router.ServeHTTP(w, req)
 
-	// May succeed or fail depending on metadata validation rules
-	if w.Code != http.StatusBadRequest && w.Code != http.StatusCreated {
-		t.Logf("PutObject() with large custom metadata status = %v", w.Code)
+	// An over-long metadata value fails up-front validation and must
+	// return 400, never 201 or a 500 from deeper in the stack.
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400, got %d", w.Code)
+	}
+}
+
+// TestPutObjectMetadataTooManyEntries verifies that a custom metadata map
+// exceeding the maximum number of entries is rejected with 400 by the
+// handler's up-front validation rather than surfacing as a 500. The
+// maximum is 100 (common.MaxMetadataEntries), so 200 distinct entries is
+// comfortably over the limit.
+func TestPutObjectMetadataTooManyEntries(t *testing.T) {
+	storage := NewMockStorage()
+	handler := newTestHandler(t, storage)
+
+	router := gin.New()
+	router.PUT("/objects/*key", handler.PutObject)
+
+	custom := make(map[string]string)
+	for i := 1; i <= 200; i++ {
+		// Distinct variable-length keys avoid needing strconv/fmt.
+		custom[strings.Repeat("k", i)] = "value"
+	}
+	metadataJSON, _ := json.Marshal(custom)
+
+	req := httptest.NewRequest("PUT", "/objects/too-many-meta.txt", strings.NewReader("content"))
+	req.Header.Set("Content-Type", "text/plain")
+	req.Header.Set("X-Object-Metadata", string(metadataJSON))
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400, got %d", w.Code)
+	}
+}
+
+// TestPutObjectMetadataControlChars verifies that a CR/LF-containing
+// metadata value is rejected with 400 as defense against response-header
+// injection.
+func TestPutObjectMetadataControlChars(t *testing.T) {
+	storage := NewMockStorage()
+	handler := newTestHandler(t, storage)
+
+	router := gin.New()
+	router.PUT("/objects/*key", handler.PutObject)
+
+	// Hand-build the JSON so the CRLF survives into the literal value.
+	metadataJSON := "{\"author\":\"alice\\r\\nX-Injected: 1\"}"
+
+	req := httptest.NewRequest("PUT", "/objects/crlf-meta.txt", strings.NewReader("content"))
+	req.Header.Set("Content-Type", "text/plain")
+	req.Header.Set("X-Object-Metadata", metadataJSON)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400, got %d", w.Code)
 	}
 }
 
@@ -594,18 +647,15 @@ func TestPutObjectDirectUploadWithCustomMetadata(t *testing.T) {
 	router := gin.New()
 	router.PUT("/objects/*key", handler.PutObject)
 
-	metadata := map[string]any{
-		"content_type": "text/plain",
-		"custom": map[string]string{
-			"author":  "testuser",
-			"version": "1.0",
-		},
+	custom := map[string]string{
+		"author":  "testuser",
+		"version": "1.0",
 	}
-	metadataJSON, _ := json.Marshal(metadata)
+	metadataJSON, _ := json.Marshal(custom)
 
 	req := httptest.NewRequest("PUT", "/objects/test.txt", strings.NewReader("content"))
 	req.Header.Set("Content-Type", "text/plain")
-	req.Header.Set("X-Metadata", string(metadataJSON))
+	req.Header.Set("X-Object-Metadata", string(metadataJSON))
 	w := httptest.NewRecorder()
 
 	router.ServeHTTP(w, req)

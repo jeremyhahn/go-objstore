@@ -82,7 +82,7 @@ func TestProtoToMetadata(t *testing.T) {
 		Etag:            "abc",
 	}
 
-	result := protoToMetadata(meta)
+	result := metadataFromProto(meta)
 	assert.NotNil(t, result)
 	assert.Equal(t, "text/plain", result.ContentType)
 }

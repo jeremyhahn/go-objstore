@@ -205,6 +205,20 @@ func (m *mockFileSystem) Remove(name string) error {
 	return nil
 }
 
+func (m *mockFileSystem) Rename(src, dst string) error {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	data, exists := m.files[src]
+	if !exists {
+		return os.ErrNotExist
+	}
+
+	m.files[dst] = data
+	delete(m.files, src)
+	return nil
+}
+
 // TestNewPersistentLifecycleManager tests creating a new persistent lifecycle manager
 func TestNewPersistentLifecycleManager(t *testing.T) {
 	fs := newMockFileSystem()

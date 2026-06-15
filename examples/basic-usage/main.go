@@ -152,6 +152,7 @@ func contextExample() {
 
 	// Example 2: Context with cancellation
 	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
 
 	// Simulate cancellation after operation starts
 	go func() {

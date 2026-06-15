@@ -39,12 +39,24 @@ type ManagementPoliciesClient interface {
 	Delete(ctx context.Context, resourceGroupName string, accountName string, managementPolicyName armstorage.ManagementPolicyName, options *armstorage.ManagementPoliciesClientDeleteOptions) (armstorage.ManagementPoliciesClientDeleteResponse, error)
 }
 
+// BlobProperties holds the blob property values needed to build a common.Metadata.
+type BlobProperties struct {
+	Size            int64
+	ContentType     string
+	ContentEncoding string
+	LastModified    time.Time
+	ETag            string
+	Metadata        map[string]string
+}
+
 // Small internal interfaces for testability without network.
 type BlobAPI interface {
 	UploadFromReader(ctx context.Context, r io.Reader) error
 	NewReader(ctx context.Context) (io.ReadCloser, error)
 	Delete(ctx context.Context) error
-	GetProperties(ctx context.Context) error
+	GetProperties(ctx context.Context) (*BlobProperties, error)
+	SetMetadata(ctx context.Context, metadata map[string]string) error
+	SetHTTPHeaders(ctx context.Context, headers azblob.BlobHTTPHeaders) error
 }
 
 type ContainerAPI interface {
@@ -83,8 +95,26 @@ var (
 		_, err := b.Delete(ctx, azblob.DeleteSnapshotsOptionNone, azblob.BlobAccessConditions{})
 		return err
 	}
-	azureGetPropertiesFn = func(ctx context.Context, b azblob.BlockBlobURL) error {
-		_, err := b.GetProperties(ctx, azblob.BlobAccessConditions{}, azblob.ClientProvidedKeyOptions{})
+	azureGetPropertiesFn = func(ctx context.Context, b azblob.BlockBlobURL) (*BlobProperties, error) {
+		resp, err := b.GetProperties(ctx, azblob.BlobAccessConditions{}, azblob.ClientProvidedKeyOptions{})
+		if err != nil {
+			return nil, err
+		}
+		return &BlobProperties{
+			Size:            resp.ContentLength(),
+			ContentType:     resp.ContentType(),
+			ContentEncoding: resp.ContentEncoding(),
+			LastModified:    resp.LastModified(),
+			ETag:            string(resp.ETag()),
+			Metadata:        resp.NewMetadata(),
+		}, nil
+	}
+	azureSetMetadataFn = func(ctx context.Context, b azblob.BlockBlobURL, metadata map[string]string) error {
+		_, err := b.SetMetadata(ctx, azblob.Metadata(metadata), azblob.BlobAccessConditions{}, azblob.ClientProvidedKeyOptions{})
+		return err
+	}
+	azureSetHTTPHeadersFn = func(ctx context.Context, b azblob.BlockBlobURL, headers azblob.BlobHTTPHeaders) error {
+		_, err := b.SetHTTPHeaders(ctx, headers, azblob.BlobAccessConditions{})
 		return err
 	}
 	azureListFn = func(ctx context.Context, c azblob.ContainerURL, prefix string) ([]string, error) {
@@ -128,8 +158,14 @@ func (b blobWrapper) NewReader(ctx context.Context) (io.ReadCloser, error) {
 func (b blobWrapper) Delete(ctx context.Context) error {
 	return azureDeleteFn(ctx, b.BlockBlobURL)
 }
-func (b blobWrapper) GetProperties(ctx context.Context) error {
+func (b blobWrapper) GetProperties(ctx context.Context) (*BlobProperties, error) {
 	return azureGetPropertiesFn(ctx, b.BlockBlobURL)
+}
+func (b blobWrapper) SetMetadata(ctx context.Context, metadata map[string]string) error {
+	return azureSetMetadataFn(ctx, b.BlockBlobURL, metadata)
+}
+func (b blobWrapper) SetHTTPHeaders(ctx context.Context, headers azblob.BlobHTTPHeaders) error {
+	return azureSetHTTPHeadersFn(ctx, b.BlockBlobURL, headers)
 }
 
 // Azure is a storage backend that stores files in Azure Blob Storage.
@@ -231,6 +267,9 @@ func (a *Azure) Put(key string, data io.Reader) error {
 	if a.container == nil {
 		return common.ErrNotConfigured
 	}
+	if err := common.ValidateKey(key); err != nil {
+		return err
+	}
 	blob := a.container.NewBlockBlob(key)
 	return blob.UploadFromReader(context.Background(), data)
 }
@@ -240,6 +279,9 @@ func (a *Azure) Get(key string) (io.ReadCloser, error) {
 	if a.container == nil {
 		return nil, common.ErrNotConfigured
 	}
+	if err := common.ValidateKey(key); err != nil {
+		return nil, err
+	}
 	blob := a.container.NewBlockBlob(key)
 	return blob.NewReader(context.Background())
 }
@@ -248,6 +290,9 @@ func (a *Azure) Get(key string) (io.ReadCloser, error) {
 func (a *Azure) Delete(key string) error {
 	if a.container == nil {
 		return common.ErrNotConfigured
+	}
+	if err := common.ValidateKey(key); err != nil {
+		return err
 	}
 	blob := a.container.NewBlockBlob(key)
 	return blob.Delete(context.Background())

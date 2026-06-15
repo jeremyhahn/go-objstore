@@ -78,24 +78,6 @@ func (m *mockStorageForFile) Get(key string) (io.ReadCloser, error) {
 	return m.mockStorage.Get(key)
 }
 
-func (m *mockStorageForFile) getSize(key string) int64 {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if md, ok := m.metadata[key]; ok {
-		return md.size
-	}
-	return 0
-}
-
-func (m *mockStorageForFile) getModTime(key string) time.Time {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if md, ok := m.metadata[key]; ok {
-		return md.modTime
-	}
-	return time.Time{}
-}
-
 // TestNewStorageFile_WriteMode tests creating a file in write mode
 func TestNewStorageFile_WriteMode(t *testing.T) {
 	storage := newMockStorageForFile()

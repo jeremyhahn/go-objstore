@@ -25,8 +25,7 @@ build: install ## Build the gem
 
 test: ## Run unit tests in Docker
 	@echo "Running unit tests in Docker..."
-	docker compose up --build --abort-on-container-exit ruby-unit-tests
-	docker compose down -v
+	docker compose up --build --abort-on-container-exit ruby-unit-tests; rc=$$?; docker compose down -v; exit $$rc
 
 coverage: install ## Run tests with coverage report
 	COVERAGE=true $(RSPEC) spec/unit --format documentation
@@ -40,8 +39,7 @@ coverage: install ## Run tests with coverage report
 
 integration-test: ## Run integration tests in Docker
 	@echo "Running integration tests in Docker..."
-	docker compose up --build --abort-on-container-exit objstore-server ruby-integration-tests
-	docker compose down -v
+	docker compose up --build --abort-on-container-exit objstore-server ruby-integration-tests; rc=$$?; docker compose down -v; exit $$rc
 
 docker-up: ## Start Docker containers for integration tests
 	@echo "Starting go-objstore server..."
@@ -91,12 +89,10 @@ docker-build: ## Build Docker test image
 
 docker-test-unit: ## Run unit tests in Docker
 	@echo "Running unit tests in Docker..."
-	docker compose up --build --abort-on-container-exit ruby-unit-tests
-	docker compose down -v
+	docker compose up --build --abort-on-container-exit ruby-unit-tests; rc=$$?; docker compose down -v; exit $$rc
 
 docker-test-integration: ## Run integration tests in Docker
 	@echo "Running integration tests in Docker..."
-	docker compose up --build --abort-on-container-exit objstore-server ruby-integration-tests
-	docker compose down -v
+	docker compose up --build --abort-on-container-exit objstore-server ruby-integration-tests; rc=$$?; docker compose down -v; exit $$rc
 
 docker-test: docker-test-unit docker-test-integration ## Run all tests in Docker

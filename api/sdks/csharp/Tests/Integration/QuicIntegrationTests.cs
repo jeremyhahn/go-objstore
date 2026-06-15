@@ -6,179 +6,27 @@ using Xunit;
 
 namespace ObjStore.SDK.Tests.Integration;
 
+/// <summary>
+/// QUIC/HTTP3-specific integration tests. Happy-path coverage for all 19 operations is in
+/// ComprehensiveTests. This file retains edge cases and error conditions unique to the QUIC
+/// transport or supplementing coverage not present in ComprehensiveTests.
+///
+/// All tests gate on IsQuicAvailable (set during InitializeAsync by probing the QUIC health
+/// endpoint). If QUIC is unavailable (endpoint down, platform lacks HTTP/3, etc.) the test is
+/// skipped with an explicit log — never silently failed.
+///
+/// Shared helpers (SupportsReplication, SupportsArchive, IsQuicAvailable) are defined once in
+/// IntegrationTestBase and inherited here.
+/// </summary>
 [Collection("Integration")]
 public class QuicIntegrationTests : IntegrationTestBase
 {
-    private bool? _supportsReplication;
-    private bool? _supportsArchive;
-    private bool? _supportsHttp3;
-
-    /// <summary>
-    /// Checks if HTTP/3 (QUIC) is available in the current .NET environment.
-    /// Caches the result to avoid repeated checks.
-    /// </summary>
-    private async Task<bool> SupportsHttp3()
-    {
-        if (_supportsHttp3.HasValue)
-        {
-            return _supportsHttp3.Value;
-        }
-
-        try
-        {
-            // Try to create a QUIC client and make a simple health check
-            using var client = ObjectStoreClientFactory.CreateQuicClient(QuicBaseUrl);
-            await client.HealthAsync();
-            _supportsHttp3 = true;
-            return true;
-        }
-        catch (PlatformNotSupportedException)
-        {
-            // Platform doesn't support HTTP/3
-            _supportsHttp3 = false;
-            return false;
-        }
-        catch (NotSupportedException)
-        {
-            // HTTP/3 explicitly not supported
-            _supportsHttp3 = false;
-            return false;
-        }
-        catch (Exception ex) when (ex.Message.Contains("HTTP/3") ||
-                                     ex.Message.Contains("QUIC") ||
-                                     ex.Message.Contains("not supported"))
-        {
-            _supportsHttp3 = false;
-            return false;
-        }
-        catch
-        {
-            // Other errors might be connectivity issues, assume HTTP/3 is supported
-            _supportsHttp3 = true;
-            return true;
-        }
-    }
-
-    /// <summary>
-    /// Checks if the backend supports replication by attempting to add a policy.
-    /// Caches the result to avoid repeated checks.
-    /// </summary>
-    private async Task<bool> SupportsReplication()
-    {
-        if (_supportsReplication.HasValue)
-        {
-            return _supportsReplication.Value;
-        }
-
-        try
-        {
-            using var client = ObjectStoreClientFactory.CreateQuicClient(QuicBaseUrl);
-            var testPolicy = new ReplicationPolicy
-            {
-                Id = $"feature-check-{Guid.NewGuid()}",
-                SourceBackend = "local",
-                DestinationBackend = "local",
-                CheckIntervalSeconds = 300,
-                Enabled = false,
-                ReplicationMode = ReplicationMode.Transparent
-            };
-
-            // Try to add the policy
-            await client.AddReplicationPolicyAsync(testPolicy);
-
-            // If successful, clean up and return true
-            await client.RemoveReplicationPolicyAsync(testPolicy.Id);
-            _supportsReplication = true;
-            return true;
-        }
-        catch (Exception ex) when (ex.Message.Contains("not supported") ||
-                                     ex.Message.Contains("not implemented") ||
-                                     ex.Message.Contains("unsupported"))
-        {
-            _supportsReplication = false;
-            return false;
-        }
-        catch
-        {
-            // On other errors, assume feature is supported but there's a different issue
-            _supportsReplication = true;
-            return true;
-        }
-    }
-
-    /// <summary>
-    /// Checks if the backend supports archive operations.
-    /// Caches the result to avoid repeated checks.
-    /// </summary>
-    private async Task<bool> SupportsArchive()
-    {
-        if (_supportsArchive.HasValue)
-        {
-            return _supportsArchive.Value;
-        }
-
-        try
-        {
-            using var client = ObjectStoreClientFactory.CreateQuicClient(QuicBaseUrl);
-            var testKey = $"feature-check/archive-{Guid.NewGuid()}.txt";
-            var data = Encoding.UTF8.GetBytes("archive feature check");
-
-            // Create a test object
-            await client.PutAsync(testKey, data);
-
-            try
-            {
-                // Try to archive it
-                await client.ArchiveAsync(testKey, "glacier", new Dictionary<string, string>
-                {
-                    ["vault"] = "test-vault"
-                });
-
-                _supportsArchive = true;
-                return true;
-            }
-            catch (NotSupportedException)
-            {
-                _supportsArchive = false;
-                return false;
-            }
-            catch (Exception ex) when (ex.Message.Contains("not supported") ||
-                                        ex.Message.Contains("not implemented") ||
-                                        ex.Message.Contains("unsupported"))
-            {
-                _supportsArchive = false;
-                return false;
-            }
-            finally
-            {
-                // Clean up test object
-                try { await client.DeleteAsync(testKey); } catch { }
-            }
-        }
-        catch
-        {
-            // On setup errors, assume feature is not supported
-            _supportsArchive = false;
-            return false;
-        }
-    }
-
     [Fact]
     public async Task PutAndGet_ShouldWorkEndToEnd()
     {
-        if (!IsServerAvailable)
-        {
-            return;
-        }
+        if (!IsServerAvailable) { Assert.Fail("REST server unavailable — integration tests require the objstore-server container (this is a failure, not a skip)."); }
+        if (!IsQuicAvailable) { Console.WriteLine("[SKIP] QUIC/HTTP3 not available."); return; }
 
-        // Check if HTTP/3 is supported
-        if (!await SupportsHttp3())
-        {
-            // Skip test - HTTP/3 (QUIC) not supported in current .NET environment
-            return;
-        }
-
-        // Arrange
         using var client = ObjectStoreClientFactory.CreateQuicClient(QuicBaseUrl);
         var key = $"test/quic/file-{Guid.NewGuid()}.txt";
         var data = Encoding.UTF8.GetBytes("Hello from QUIC!");
@@ -188,58 +36,33 @@ public class QuicIntegrationTests : IntegrationTestBase
             Custom = new Dictionary<string, string> { ["author"] = "quic-integration-test" }
         };
 
-        // Act - Put
         var etag = await client.PutAsync(key, data, metadata);
-
-        // Assert - Put
         etag.Should().NotBeNullOrEmpty();
 
-        // Act - Get
         var (retrievedData, retrievedMetadata) = await client.GetAsync(key);
-
-        // Assert - Get
         retrievedData.Should().BeEquivalentTo(data);
         retrievedMetadata.Should().NotBeNull();
         retrievedMetadata!.ContentType.Should().Be("text/plain");
 
-        // Cleanup
         await client.DeleteAsync(key);
     }
 
     [Fact]
     public async Task Delete_ShouldRemoveObject()
     {
-        if (!IsServerAvailable)
-        {
-            return;
-        }
+        if (!IsServerAvailable) { Assert.Fail("REST server unavailable — integration tests require the objstore-server container (this is a failure, not a skip)."); }
+        if (!IsQuicAvailable) { Console.WriteLine("[SKIP] QUIC/HTTP3 not available."); return; }
 
-        // Check if HTTP/3 is supported
-        if (!await SupportsHttp3())
-        {
-            // Skip test - HTTP/3 (QUIC) not supported in current .NET environment
-            return;
-        }
-
-        // Arrange
         using var client = ObjectStoreClientFactory.CreateQuicClient(QuicBaseUrl);
         var key = $"test/quic/delete-{Guid.NewGuid()}.txt";
-        var data = Encoding.UTF8.GetBytes("Delete me via QUIC");
+        await client.PutAsync(key, Encoding.UTF8.GetBytes("Delete me via QUIC"));
 
-        // Act - Put
-        await client.PutAsync(key, data);
-
-        // Assert - Exists before delete
         var existsBefore = await client.ExistsAsync(key);
         existsBefore.Should().BeTrue();
 
-        // Act - Delete
         var deleted = await client.DeleteAsync(key);
-
-        // Assert - Delete successful
         deleted.Should().BeTrue();
 
-        // Assert - Does not exist after delete
         var existsAfter = await client.ExistsAsync(key);
         existsAfter.Should().BeFalse();
     }
@@ -247,95 +70,51 @@ public class QuicIntegrationTests : IntegrationTestBase
     [Fact]
     public async Task List_ShouldReturnObjects()
     {
-        if (!IsServerAvailable)
-        {
-            return;
-        }
+        if (!IsServerAvailable) { Assert.Fail("REST server unavailable — integration tests require the objstore-server container (this is a failure, not a skip)."); }
+        if (!IsQuicAvailable) { Console.WriteLine("[SKIP] QUIC/HTTP3 not available."); return; }
 
-        // Check if HTTP/3 is supported
-        if (!await SupportsHttp3())
-        {
-            // Skip test - HTTP/3 (QUIC) not supported in current .NET environment
-            return;
-        }
-
-        // Arrange
         using var client = ObjectStoreClientFactory.CreateQuicClient(QuicBaseUrl);
         var prefix = $"test/quic/list-{Guid.NewGuid()}/";
         var keys = new[] { $"{prefix}file1.txt", $"{prefix}file2.txt", $"{prefix}file3.txt" };
         var data = Encoding.UTF8.GetBytes("test data");
 
-        // Act - Put multiple objects
         foreach (var key in keys)
-        {
             await client.PutAsync(key, data);
-        }
 
-        // Act - List
         var result = await client.ListAsync(prefix);
-
-        // Assert
         result.Should().NotBeNull();
         result.Objects.Should().HaveCountGreaterOrEqualTo(3);
 
-        // Cleanup
         foreach (var key in keys)
-        {
             await client.DeleteAsync(key);
-        }
     }
 
     [Fact]
     public async Task Exists_ShouldReturnCorrectStatus()
     {
-        if (!IsServerAvailable)
-        {
-            return;
-        }
+        if (!IsServerAvailable) { Assert.Fail("REST server unavailable — integration tests require the objstore-server container (this is a failure, not a skip)."); }
+        if (!IsQuicAvailable) { Console.WriteLine("[SKIP] QUIC/HTTP3 not available."); return; }
 
-        // Check if HTTP/3 is supported
-        if (!await SupportsHttp3())
-        {
-            // Skip test - HTTP/3 (QUIC) not supported in current .NET environment
-            return;
-        }
-
-        // Arrange
         using var client = ObjectStoreClientFactory.CreateQuicClient(QuicBaseUrl);
         var key = $"test/quic/exists-{Guid.NewGuid()}.txt";
-        var data = Encoding.UTF8.GetBytes("exists test via QUIC");
 
-        // Act & Assert - Does not exist initially
         var existsBefore = await client.ExistsAsync(key);
         existsBefore.Should().BeFalse();
 
-        // Act - Put
-        await client.PutAsync(key, data);
+        await client.PutAsync(key, Encoding.UTF8.GetBytes("exists test via QUIC"));
 
-        // Assert - Exists after put
         var existsAfter = await client.ExistsAsync(key);
         existsAfter.Should().BeTrue();
 
-        // Cleanup
         await client.DeleteAsync(key);
     }
 
     [Fact]
     public async Task GetMetadata_ShouldReturnObjectMetadata()
     {
-        if (!IsServerAvailable)
-        {
-            return;
-        }
+        if (!IsServerAvailable) { Assert.Fail("REST server unavailable — integration tests require the objstore-server container (this is a failure, not a skip)."); }
+        if (!IsQuicAvailable) { Console.WriteLine("[SKIP] QUIC/HTTP3 not available."); return; }
 
-        // Check if HTTP/3 is supported
-        if (!await SupportsHttp3())
-        {
-            // Skip test - HTTP/3 (QUIC) not supported in current .NET environment
-            return;
-        }
-
-        // Arrange
         using var client = ObjectStoreClientFactory.CreateQuicClient(QuicBaseUrl);
         var key = $"test/quic/metadata-{Guid.NewGuid()}.txt";
         var data = Encoding.UTF8.GetBytes("metadata test via QUIC");
@@ -345,80 +124,52 @@ public class QuicIntegrationTests : IntegrationTestBase
             Custom = new Dictionary<string, string> { ["version"] = "1.0", ["protocol"] = "quic" }
         };
 
-        // Act - Put
         await client.PutAsync(key, data, metadata);
 
-        // Act - Get Metadata
         var retrievedMetadata = await client.GetMetadataAsync(key);
-
-        // Assert
         retrievedMetadata.Should().NotBeNull();
-        retrievedMetadata!.Size.Should().BeGreaterThan(0);
+        retrievedMetadata!.Size.Should().Be(data.Length);
+        retrievedMetadata.ContentType.Should().Be("text/plain");
 
-        // Cleanup
         await client.DeleteAsync(key);
     }
 
     [Fact]
-    public async Task UpdateMetadata_ShouldUpdateObjectMetadata()
+    public async Task UpdateMetadata_ShouldPersistNewValues()
     {
-        if (!IsServerAvailable)
-        {
-            return;
-        }
+        if (!IsServerAvailable) { Assert.Fail("REST server unavailable — integration tests require the objstore-server container (this is a failure, not a skip)."); }
+        if (!IsQuicAvailable) { Console.WriteLine("[SKIP] QUIC/HTTP3 not available."); return; }
 
-        // Check if HTTP/3 is supported
-        if (!await SupportsHttp3())
-        {
-            // Skip test - HTTP/3 (QUIC) not supported in current .NET environment
-            return;
-        }
-
-        // Arrange
         using var client = ObjectStoreClientFactory.CreateQuicClient(QuicBaseUrl);
         var key = $"test/quic/update-metadata-{Guid.NewGuid()}.txt";
-        var data = Encoding.UTF8.GetBytes("update metadata test via QUIC");
+        await client.PutAsync(key, Encoding.UTF8.GetBytes("update metadata test via QUIC"));
 
-        // Act - Put
-        await client.PutAsync(key, data);
-
-        // Act - Update Metadata
         var newMetadata = new ObjectMetadata
         {
             ContentType = "application/json",
             Custom = new Dictionary<string, string> { ["updated"] = "true", ["protocol"] = "quic" }
         };
         var updated = await client.UpdateMetadataAsync(key, newMetadata);
-
-        // Assert
         updated.Should().BeTrue();
 
-        // Cleanup
+        // Read-back assertion
+        var readBack = await client.GetMetadataAsync(key);
+        readBack.Should().NotBeNull();
+        readBack!.ContentType.Should().Be("application/json");
+        readBack.Custom.Should().NotBeNull();
+        readBack.Custom!["updated"].Should().Be("true");
+
         await client.DeleteAsync(key);
     }
 
     [Fact]
     public async Task Health_ShouldReturnHealthyStatus()
     {
-        if (!IsServerAvailable)
-        {
-            return;
-        }
+        if (!IsServerAvailable) { Assert.Fail("REST server unavailable — integration tests require the objstore-server container (this is a failure, not a skip)."); }
+        if (!IsQuicAvailable) { Console.WriteLine("[SKIP] QUIC/HTTP3 not available."); return; }
 
-        // Check if HTTP/3 is supported
-        if (!await SupportsHttp3())
-        {
-            // Skip test - HTTP/3 (QUIC) not supported in current .NET environment
-            return;
-        }
-
-        // Arrange
         using var client = ObjectStoreClientFactory.CreateQuicClient(QuicBaseUrl);
-
-        // Act
         var health = await client.HealthAsync();
-
-        // Assert
         health.Should().NotBeNull();
         health.Status.Should().Be(HealthStatus.Serving);
     }
@@ -426,19 +177,9 @@ public class QuicIntegrationTests : IntegrationTestBase
     [Fact]
     public async Task LifecyclePolicy_ShouldAddGetAndRemove()
     {
-        if (!IsServerAvailable)
-        {
-            return;
-        }
+        if (!IsServerAvailable) { Assert.Fail("REST server unavailable — integration tests require the objstore-server container (this is a failure, not a skip)."); }
+        if (!IsQuicAvailable) { Console.WriteLine("[SKIP] QUIC/HTTP3 not available."); return; }
 
-        // Check if HTTP/3 is supported
-        if (!await SupportsHttp3())
-        {
-            // Skip test - HTTP/3 (QUIC) not supported in current .NET environment
-            return;
-        }
-
-        // Arrange
         using var client = ObjectStoreClientFactory.CreateQuicClient(QuicBaseUrl);
         var policy = new LifecyclePolicy
         {
@@ -448,47 +189,27 @@ public class QuicIntegrationTests : IntegrationTestBase
             Action = "delete"
         };
 
-        // Act - Add Policy
         var added = await client.AddPolicyAsync(policy);
-
-        // Assert - Add
         added.Should().BeTrue();
 
-        // Act - Get Policies
         var policies = await client.GetPoliciesAsync();
-
-        // Assert - Policy exists
         policies.Should().Contain(p => p.Id == policy.Id);
 
-        // Act - Remove Policy
         var removed = await client.RemovePolicyAsync(policy.Id);
-
-        // Assert - Remove
         removed.Should().BeTrue();
+
+        var policiesAfter = await client.GetPoliciesAsync();
+        policiesAfter.Should().NotContain(p => p.Id == policy.Id);
     }
 
     [Fact]
     public async Task ApplyPolicies_ShouldExecuteSuccessfully()
     {
-        if (!IsServerAvailable)
-        {
-            return;
-        }
+        if (!IsServerAvailable) { Assert.Fail("REST server unavailable — integration tests require the objstore-server container (this is a failure, not a skip)."); }
+        if (!IsQuicAvailable) { Console.WriteLine("[SKIP] QUIC/HTTP3 not available."); return; }
 
-        // Check if HTTP/3 is supported
-        if (!await SupportsHttp3())
-        {
-            // Skip test - HTTP/3 (QUIC) not supported in current .NET environment
-            return;
-        }
-
-        // Arrange
         using var client = ObjectStoreClientFactory.CreateQuicClient(QuicBaseUrl);
-
-        // Act
         var result = await client.ApplyPoliciesAsync();
-
-        // Assert
         result.Success.Should().BeTrue();
         result.ObjectsProcessed.Should().BeGreaterOrEqualTo(0);
     }
@@ -496,104 +217,77 @@ public class QuicIntegrationTests : IntegrationTestBase
     [Fact]
     public async Task ReplicationPolicy_ShouldAddGetAndRemove()
     {
-        if (!IsServerAvailable)
-        {
-            return;
-        }
-
-        // Check if HTTP/3 is supported
-        if (!await SupportsHttp3())
-        {
-            // Skip test - HTTP/3 (QUIC) not supported in current .NET environment
-            return;
-        }
-
-        // Check if replication is supported
+        if (!IsServerAvailable) { Assert.Fail("REST server unavailable — integration tests require the objstore-server container (this is a failure, not a skip)."); }
+        if (!IsQuicAvailable) { Console.WriteLine("[SKIP] QUIC/HTTP3 not available."); return; }
         if (!await SupportsReplication())
         {
-            // Skip test - replication not supported by local storage backend
+            Console.WriteLine("[SKIP] QUIC ReplicationPolicy: server reports replication unsupported.");
             return;
         }
 
-        // Arrange
         using var client = ObjectStoreClientFactory.CreateQuicClient(QuicBaseUrl);
         var policy = new ReplicationPolicy
         {
             Id = $"quic-test-repl-{Guid.NewGuid()}",
             SourceBackend = "local",
             DestinationBackend = "local",
-            CheckIntervalSeconds = 300,
+            CheckIntervalSeconds = 3600,
             Enabled = true,
             ReplicationMode = ReplicationMode.Transparent
         };
 
-        // Act - Add Policy
         var added = await client.AddReplicationPolicyAsync(policy);
-
-        // Assert - Add
         added.Should().BeTrue();
 
-        // Act - Get Policies
         var policies = await client.GetReplicationPoliciesAsync();
-
-        // Assert - Policy exists
         policies.Should().Contain(p => p.Id == policy.Id);
 
-        // Act - Remove Policy
         var removed = await client.RemoveReplicationPolicyAsync(policy.Id);
-
-        // Assert - Remove
         removed.Should().BeTrue();
+
+        var policiesAfter = await client.GetReplicationPoliciesAsync();
+        policiesAfter.Should().NotContain(p => p.Id == policy.Id);
     }
 
     [Fact]
     public async Task TriggerReplication_ShouldExecuteSuccessfully()
     {
-        if (!IsServerAvailable)
-        {
-            return;
-        }
-
-        // Check if HTTP/3 is supported
-        if (!await SupportsHttp3())
-        {
-            // Skip test - HTTP/3 (QUIC) not supported in current .NET environment
-            return;
-        }
-
-        // Check if replication is supported
+        if (!IsServerAvailable) { Assert.Fail("REST server unavailable — integration tests require the objstore-server container (this is a failure, not a skip)."); }
+        if (!IsQuicAvailable) { Console.WriteLine("[SKIP] QUIC/HTTP3 not available."); return; }
         if (!await SupportsReplication())
         {
-            // Skip test - replication not supported by local storage backend
+            Console.WriteLine("[SKIP] QUIC TriggerReplication: server reports replication unsupported.");
             return;
         }
 
-        // Arrange
         using var client = ObjectStoreClientFactory.CreateQuicClient(QuicBaseUrl);
         var policy = new ReplicationPolicy
         {
             Id = $"quic-trigger-repl-{Guid.NewGuid()}",
             SourceBackend = "local",
             DestinationBackend = "local",
-            CheckIntervalSeconds = 300,
+            CheckIntervalSeconds = 3600,
             Enabled = true,
             ReplicationMode = ReplicationMode.Transparent
         };
 
-        // Add policy first
         await client.AddReplicationPolicyAsync(policy);
 
         try
         {
-            // Act - Trigger replication
             var result = await client.TriggerReplicationAsync(policy.Id);
 
-            // Assert
-            result.Should().BeTrue();
+            result.Success.Should().BeTrue("TriggerReplication should succeed for the added policy");
+            result.SyncResult.Should().NotBeNull("server should return a sync result payload");
+            result.SyncResult!.PolicyId.Should().Be(policy.Id, "returned policy_id must match the triggered policy");
+            result.SyncResult.Synced.Should().BeGreaterOrEqualTo(0);
+            result.SyncResult.Deleted.Should().BeGreaterOrEqualTo(0);
+            result.SyncResult.Failed.Should().BeGreaterOrEqualTo(0);
+            result.SyncResult.BytesTotal.Should().BeGreaterOrEqualTo(0);
+            result.SyncResult.DurationMs.Should().BeGreaterOrEqualTo(0);
         }
         finally
         {
-            // Cleanup
             await client.RemoveReplicationPolicyAsync(policy.Id);
         }
     }
@@ -601,52 +295,37 @@ public class QuicIntegrationTests : IntegrationTestBase
     [Fact]
     public async Task GetReplicationStatus_ShouldReturnStatus()
     {
-        if (!IsServerAvailable)
-        {
-            return;
-        }
-
-        // Check if HTTP/3 is supported
-        if (!await SupportsHttp3())
-        {
-            // Skip test - HTTP/3 (QUIC) not supported in current .NET environment
-            return;
-        }
-
-        // Check if replication is supported
+        if (!IsServerAvailable) { Assert.Fail("REST server unavailable — integration tests require the objstore-server container (this is a failure, not a skip)."); }
+        if (!IsQuicAvailable) { Console.WriteLine("[SKIP] QUIC/HTTP3 not available."); return; }
         if (!await SupportsReplication())
         {
-            // Skip test - replication not supported by local storage backend
+            Console.WriteLine("[SKIP] QUIC GetReplicationStatus: server reports replication unsupported.");
             return;
         }
 
-        // Arrange
         using var client = ObjectStoreClientFactory.CreateQuicClient(QuicBaseUrl);
         var policy = new ReplicationPolicy
         {
             Id = $"quic-status-repl-{Guid.NewGuid()}",
             SourceBackend = "local",
             DestinationBackend = "local",
-            CheckIntervalSeconds = 300,
+            CheckIntervalSeconds = 3600,
             Enabled = true,
             ReplicationMode = ReplicationMode.Transparent
         };
 
-        // Add policy first
         await client.AddReplicationPolicyAsync(policy);
 
         try
         {
-            // Act - Get replication status
             var status = await client.GetReplicationStatusAsync(policy.Id);
-
-            // Assert
             status.Should().NotBeNull();
             status!.PolicyId.Should().Be(policy.Id);
+            status.TotalObjectsSynced.Should().BeGreaterOrEqualTo(0);
+            status.SyncCount.Should().BeGreaterOrEqualTo(0);
         }
         finally
         {
-            // Cleanup
             await client.RemoveReplicationPolicyAsync(policy.Id);
         }
     }
@@ -655,78 +334,43 @@ public class QuicIntegrationTests : IntegrationTestBase
     [Trait("Category", "Archive")]
     public async Task Archive_ShouldArchiveObject()
     {
-        if (!IsServerAvailable)
-        {
-            return;
-        }
-
-        // Check if HTTP/3 is supported
-        if (!await SupportsHttp3())
-        {
-            // Skip test - HTTP/3 (QUIC) not supported in current .NET environment
-            return;
-        }
-
-        // Check if archive is supported
+        if (!IsServerAvailable) { Assert.Fail("REST server unavailable — integration tests require the objstore-server container (this is a failure, not a skip)."); }
+        if (!IsQuicAvailable) { Console.WriteLine("[SKIP] QUIC/HTTP3 not available."); return; }
         if (!await SupportsArchive())
         {
-            // Skip test - archive/glacier operations not supported by local storage backend
+            Console.WriteLine("[SKIP] QUIC Archive: server reports archive unsupported.");
             return;
         }
 
-        // Arrange
         using var client = ObjectStoreClientFactory.CreateQuicClient(QuicBaseUrl);
         var key = $"test/quic/archive-{Guid.NewGuid()}.txt";
-        var data = Encoding.UTF8.GetBytes("Archive this via QUIC");
-
-        // Put object first
-        await client.PutAsync(key, data);
+        await client.PutAsync(key, Encoding.UTF8.GetBytes("Archive this via QUIC"));
 
         try
         {
-            // Act - Archive the object
             var archived = await client.ArchiveAsync(key, "glacier", new Dictionary<string, string>
             {
                 ["vault"] = "test-vault"
             });
-
-            // Assert
             archived.Should().BeTrue();
         }
         finally
         {
-            // Cleanup
-            try
-            {
-                await client.DeleteAsync(key);
-            }
-            catch
-            {
-                // Object may have been archived/deleted
-            }
+            try { await client.DeleteAsync(key); } catch { }
         }
     }
+
+    // --- Edge cases unique to QUIC transport ---
 
     [Fact]
     public async Task GetNonexistent_ShouldThrowException()
     {
-        if (!IsServerAvailable)
-        {
-            return;
-        }
+        if (!IsServerAvailable) { Assert.Fail("REST server unavailable — integration tests require the objstore-server container (this is a failure, not a skip)."); }
+        if (!IsQuicAvailable) { Console.WriteLine("[SKIP] QUIC/HTTP3 not available."); return; }
 
-        // Check if HTTP/3 is supported
-        if (!await SupportsHttp3())
-        {
-            // Skip test - HTTP/3 (QUIC) not supported in current .NET environment
-            return;
-        }
-
-        // Arrange
         using var client = ObjectStoreClientFactory.CreateQuicClient(QuicBaseUrl);
         var key = $"test/quic/nonexistent-{Guid.NewGuid()}.txt";
 
-        // Act & Assert - Should throw ObjectNotFoundException for non-existent keys
         await Assert.ThrowsAsync<ObjStore.SDK.Exceptions.ObjectNotFoundException>(
             async () => await client.GetAsync(key));
     }
@@ -734,53 +378,26 @@ public class QuicIntegrationTests : IntegrationTestBase
     [Fact]
     public async Task DeleteNonexistent_ShouldHandleGracefully()
     {
-        if (!IsServerAvailable)
-        {
-            return;
-        }
+        if (!IsServerAvailable) { Assert.Fail("REST server unavailable — integration tests require the objstore-server container (this is a failure, not a skip)."); }
+        if (!IsQuicAvailable) { Console.WriteLine("[SKIP] QUIC/HTTP3 not available."); return; }
 
-        // Check if HTTP/3 is supported
-        if (!await SupportsHttp3())
-        {
-            // Skip test - HTTP/3 (QUIC) not supported in current .NET environment
-            return;
-        }
-
-        // Arrange
         using var client = ObjectStoreClientFactory.CreateQuicClient(QuicBaseUrl);
         var key = $"test/quic/nonexistent-delete-{Guid.NewGuid()}.txt";
 
-        // Act - Delete non-existent object (idempotent operation)
         var result = await client.DeleteAsync(key);
-
-        // Assert - Should not throw, may return false
         result.Should().BeFalse();
     }
 
     [Fact]
     public async Task UpdateMetadataNonexistent_ShouldHandleGracefully()
     {
-        if (!IsServerAvailable)
-        {
-            return;
-        }
+        if (!IsServerAvailable) { Assert.Fail("REST server unavailable — integration tests require the objstore-server container (this is a failure, not a skip)."); }
+        if (!IsQuicAvailable) { Console.WriteLine("[SKIP] QUIC/HTTP3 not available."); return; }
 
-        // Check if HTTP/3 is supported
-        if (!await SupportsHttp3())
-        {
-            // Skip test - HTTP/3 (QUIC) not supported in current .NET environment
-            return;
-        }
-
-        // Arrange
         using var client = ObjectStoreClientFactory.CreateQuicClient(QuicBaseUrl);
         var key = $"test/quic/nonexistent-metadata-{Guid.NewGuid()}.txt";
-        var metadata = new ObjectMetadata
-        {
-            ContentType = "text/plain"
-        };
+        var metadata = new ObjectMetadata { ContentType = "text/plain" };
 
-        // Act & Assert - Should throw or return false
         try
         {
             var result = await client.UpdateMetadataAsync(key, metadata);
@@ -788,7 +405,6 @@ public class QuicIntegrationTests : IntegrationTestBase
         }
         catch (Exception)
         {
-            // Expected for non-existent object
             Assert.True(true);
         }
     }
@@ -796,194 +412,114 @@ public class QuicIntegrationTests : IntegrationTestBase
     [Fact]
     public async Task EmptyObject_ShouldHandleCorrectly()
     {
-        if (!IsServerAvailable)
-        {
-            return;
-        }
+        if (!IsServerAvailable) { Assert.Fail("REST server unavailable — integration tests require the objstore-server container (this is a failure, not a skip)."); }
+        if (!IsQuicAvailable) { Console.WriteLine("[SKIP] QUIC/HTTP3 not available."); return; }
 
-        // Check if HTTP/3 is supported
-        if (!await SupportsHttp3())
-        {
-            // Skip test - HTTP/3 (QUIC) not supported in current .NET environment
-            return;
-        }
-
-        // Arrange
         using var client = ObjectStoreClientFactory.CreateQuicClient(QuicBaseUrl);
         var key = $"test/quic/empty-{Guid.NewGuid()}.txt";
-        var data = Array.Empty<byte>();
 
-        // Act - Put empty object
-        await client.PutAsync(key, data);
+        await client.PutAsync(key, Array.Empty<byte>());
 
-        // Act - Get empty object
         var (retrievedData, retrievedMetadata) = await client.GetAsync(key);
-
-        // Assert
         retrievedData.Should().BeEmpty();
         retrievedMetadata.Should().NotBeNull();
         retrievedMetadata!.Size.Should().Be(0);
 
-        // Cleanup
         await client.DeleteAsync(key);
     }
 
     [Fact]
     public async Task BinaryData_ShouldPreserveAllBytes()
     {
-        if (!IsServerAvailable)
-        {
-            return;
-        }
+        if (!IsServerAvailable) { Assert.Fail("REST server unavailable — integration tests require the objstore-server container (this is a failure, not a skip)."); }
+        if (!IsQuicAvailable) { Console.WriteLine("[SKIP] QUIC/HTTP3 not available."); return; }
 
-        // Check if HTTP/3 is supported
-        if (!await SupportsHttp3())
-        {
-            // Skip test - HTTP/3 (QUIC) not supported in current .NET environment
-            return;
-        }
-
-        // Arrange
         using var client = ObjectStoreClientFactory.CreateQuicClient(QuicBaseUrl);
         var key = $"test/quic/binary-{Guid.NewGuid()}.bin";
         var data = Enumerable.Range(0, 256).Select(i => (byte)i).ToArray();
 
-        // Act - Put binary data
         await client.PutAsync(key, data);
 
-        // Act - Get binary data
         var (retrievedData, retrievedMetadata) = await client.GetAsync(key);
-
-        // Assert
         retrievedData.Should().BeEquivalentTo(data);
         retrievedMetadata.Should().NotBeNull();
         retrievedMetadata!.Size.Should().Be(256);
 
-        // Cleanup
         await client.DeleteAsync(key);
     }
 
     [Fact]
     public async Task LargeObject_ShouldHandleCorrectly()
     {
-        if (!IsServerAvailable)
-        {
-            return;
-        }
+        if (!IsServerAvailable) { Assert.Fail("REST server unavailable — integration tests require the objstore-server container (this is a failure, not a skip)."); }
+        if (!IsQuicAvailable) { Console.WriteLine("[SKIP] QUIC/HTTP3 not available."); return; }
 
-        // Check if HTTP/3 is supported
-        if (!await SupportsHttp3())
-        {
-            // Skip test - HTTP/3 (QUIC) not supported in current .NET environment
-            return;
-        }
-
-        // Arrange
         using var client = ObjectStoreClientFactory.CreateQuicClient(QuicBaseUrl);
         var key = $"test/quic/large-{Guid.NewGuid()}.bin";
-        // Create 1MB of data
         var data = new byte[1024 * 1024];
         new Random().NextBytes(data);
 
-        // Act - Put large object
         await client.PutAsync(key, data);
 
-        // Act - Get large object
         var (retrievedData, retrievedMetadata) = await client.GetAsync(key);
-
-        // Assert
         retrievedData.Should().BeEquivalentTo(data);
         retrievedMetadata.Should().NotBeNull();
         retrievedMetadata!.Size.Should().Be(data.Length);
 
-        // Cleanup
         await client.DeleteAsync(key);
     }
 
     [Fact]
     public async Task ListWithDelimiter_ShouldReturnHierarchicalStructure()
     {
-        if (!IsServerAvailable)
-        {
-            return;
-        }
+        if (!IsServerAvailable) { Assert.Fail("REST server unavailable — integration tests require the objstore-server container (this is a failure, not a skip)."); }
+        if (!IsQuicAvailable) { Console.WriteLine("[SKIP] QUIC/HTTP3 not available."); return; }
 
-        // Check if HTTP/3 is supported
-        if (!await SupportsHttp3())
-        {
-            // Skip test - HTTP/3 (QUIC) not supported in current .NET environment
-            return;
-        }
-
-        // Arrange
         using var client = ObjectStoreClientFactory.CreateQuicClient(QuicBaseUrl);
-        var base_prefix = $"test/quic/hierarchy-{Guid.NewGuid()}/";
+        var basePrefix = $"test/quic/hierarchy-{Guid.NewGuid()}/";
         var keys = new[]
         {
-            $"{base_prefix}file1.txt",
-            $"{base_prefix}file2.txt",
-            $"{base_prefix}subdir1/file3.txt",
-            $"{base_prefix}subdir2/file4.txt"
+            $"{basePrefix}file1.txt",
+            $"{basePrefix}file2.txt",
+            $"{basePrefix}subdir1/file3.txt",
+            $"{basePrefix}subdir2/file4.txt"
         };
         var data = Encoding.UTF8.GetBytes("test data");
 
-        // Create objects
         foreach (var key in keys)
-        {
             await client.PutAsync(key, data);
-        }
 
-        // Act - List with delimiter
-        var result = await client.ListAsync(base_prefix, delimiter: "/");
-
-        // Assert - Should have files and common prefixes
+        var result = await client.ListAsync(basePrefix, delimiter: "/");
         result.Should().NotBeNull();
-        result.Objects.Should().HaveCountGreaterOrEqualTo(2); // file1.txt, file2.txt
+        result.Objects.Should().HaveCountGreaterOrEqualTo(2);
 
-        // Cleanup
         foreach (var key in keys)
-        {
             await client.DeleteAsync(key);
-        }
     }
 
     [Fact]
     public async Task ProtocolConsistency_QuicVsRest()
     {
-        if (!IsServerAvailable)
-        {
-            return;
-        }
+        if (!IsServerAvailable) { Assert.Fail("REST server unavailable — integration tests require the objstore-server container (this is a failure, not a skip)."); }
+        if (!IsQuicAvailable) { Console.WriteLine("[SKIP] QUIC/HTTP3 not available."); return; }
 
-        // Check if HTTP/3 is supported
-        if (!await SupportsHttp3())
-        {
-            // Skip test - HTTP/3 (QUIC) not supported in current .NET environment
-            return;
-        }
-
-        // Arrange
         using var quicClient = ObjectStoreClientFactory.CreateQuicClient(QuicBaseUrl);
         using var restClient = ObjectStoreClientFactory.CreateRestClient(RestBaseUrl);
         var key = $"test/consistency/protocol-{Guid.NewGuid()}.txt";
         var data = Encoding.UTF8.GetBytes("Protocol consistency test");
 
-        // Act - Put via QUIC
         await quicClient.PutAsync(key, data);
 
         try
         {
-            // Act - Get via both protocols
             var (quicData, quicMetadata) = await quicClient.GetAsync(key);
             var (restData, restMetadata) = await restClient.GetAsync(key);
 
-            // Assert - Both protocols should return same data
             quicData.Should().BeEquivalentTo(restData);
             quicMetadata!.Size.Should().Be(restMetadata!.Size);
         }
         finally
         {
-            // Cleanup
             await quicClient.DeleteAsync(key);
         }
     }
