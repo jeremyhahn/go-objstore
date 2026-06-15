@@ -4,7 +4,7 @@ go 1.26.4
 
 require (
 	github.com/jeremyhahn/go-objstore v0.1.4-alpha
-	github.com/quic-go/quic-go v0.59.1
+	github.com/quic-go/quic-go v0.60.0
 	github.com/stretchr/testify v1.11.1
 	google.golang.org/grpc v1.81.1
 	google.golang.org/protobuf v1.36.11
