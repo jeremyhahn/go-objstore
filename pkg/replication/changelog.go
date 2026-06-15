@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -58,6 +59,7 @@ type JSONLChangeLog struct {
 	filePath string
 	mutex    sync.Mutex
 	maxSize  int64
+	closed   bool
 }
 
 // NewJSONLChangeLog creates a new JSONL-based change log.
@@ -75,11 +77,33 @@ func NewJSONLChangeLog(filePath string, maxSize int64) (*JSONLChangeLog, error) 
 	}, nil
 }
 
+// ensureFile lazily (re)opens the log file when a prior rotation or rewrite
+// failed and left the handle nil. A changelog that has been explicitly closed
+// stays closed. Must be called with the mutex held.
+func (cl *JSONLChangeLog) ensureFile() error {
+	if cl.closed {
+		return ErrChangeLogClosed
+	}
+	if cl.file != nil {
+		return nil
+	}
+	file, err := os.OpenFile(cl.filePath, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0600) // #nosec G304 -- path from configuration
+	if err != nil {
+		return fmt.Errorf("failed to reopen change log file: %w", err)
+	}
+	cl.file = file
+	return nil
+}
+
 // RecordChange records a new change event to the log.
 // Thread-safe and performs atomic writes with sync.
 func (cl *JSONLChangeLog) RecordChange(event ChangeEvent) error {
 	cl.mutex.Lock()
 	defer cl.mutex.Unlock()
+
+	if err := cl.ensureFile(); err != nil {
+		return err
+	}
 
 	// Initialize Processed map if nil
 	if event.Processed == nil {
@@ -127,6 +151,10 @@ func (cl *JSONLChangeLog) GetUnprocessed(policyID string) ([]ChangeEvent, error)
 	cl.mutex.Lock()
 	defer cl.mutex.Unlock()
 
+	if err := cl.ensureFile(); err != nil {
+		return nil, err
+	}
+
 	// Seek to beginning
 	if _, err := cl.file.Seek(0, 0); err != nil {
 		return nil, fmt.Errorf("failed to seek to start: %w", err)
@@ -165,6 +193,10 @@ func (cl *JSONLChangeLog) GetUnprocessed(policyID string) ([]ChangeEvent, error)
 func (cl *JSONLChangeLog) MarkProcessed(key, policyID string) error {
 	cl.mutex.Lock()
 	defer cl.mutex.Unlock()
+
+	if err := cl.ensureFile(); err != nil {
+		return err
+	}
 
 	// Read all events
 	if _, err := cl.file.Seek(0, 0); err != nil {
@@ -214,17 +246,23 @@ func (cl *JSONLChangeLog) Rotate() error {
 
 // rotate performs the actual rotation (must be called with mutex held).
 func (cl *JSONLChangeLog) rotate() error {
+	if err := cl.ensureFile(); err != nil {
+		return err
+	}
+
 	// Close current file
 	if err := cl.file.Close(); err != nil {
 		return fmt.Errorf("failed to close file for rotation: %w", err)
 	}
+	cl.file = nil
 
 	// Create backup filename with timestamp
 	backupPath := fmt.Sprintf("%s.%d", cl.filePath, time.Now().Unix())
 
 	// Rename current file to backup
 	if err := os.Rename(cl.filePath, backupPath); err != nil {
-		// Try to reopen the original file to maintain consistency
+		// Try to reopen the original file to maintain consistency. On failure
+		// cl.file stays nil and the next operation retries via ensureFile.
 		file, openErr := os.OpenFile(cl.filePath, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0600)
 		if openErr != nil {
 			return fmt.Errorf("%w: rename: %v, reopen: %v", ErrChangeLogRenameReopen, err, openErr)
@@ -233,7 +271,8 @@ func (cl *JSONLChangeLog) rotate() error {
 		return fmt.Errorf("failed to rename file: %w", err)
 	}
 
-	// Open new file
+	// Open new file. On failure cl.file stays nil and the next operation
+	// retries via ensureFile.
 	file, err := os.OpenFile(cl.filePath, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to create new file: %w", err)
@@ -243,45 +282,75 @@ func (cl *JSONLChangeLog) rotate() error {
 	return nil
 }
 
-// rewriteFile rewrites the entire file with the given events (must be called with mutex held).
+// rewriteFile rewrites the entire file with the given events atomically
+// (must be called with mutex held). It writes to a sibling temp file, fsyncs
+// it, renames it over the log file, then reopens the log file for appending.
+// A crash between write and rename leaves the original file intact.
 func (cl *JSONLChangeLog) rewriteFile(events []ChangeEvent) error {
-	// Truncate file
-	if err := cl.file.Truncate(0); err != nil {
-		return fmt.Errorf("failed to truncate file: %w", err)
+	dir := filepath.Dir(cl.filePath)
+	tmp, err := os.CreateTemp(dir, ".changelog-tmp-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
 	}
+	tmpName := tmp.Name()
 
-	// Seek to beginning
-	if _, err := cl.file.Seek(0, 0); err != nil {
-		return fmt.Errorf("failed to seek to start: %w", err)
-	}
+	// Clean up on any error before rename.
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tmp.Close()
+			_ = os.Remove(tmpName)
+		}
+	}()
 
-	// Write all events
+	// Write all events to the temp file.
 	for _, event := range events {
 		data, err := json.Marshal(event)
 		if err != nil {
 			return fmt.Errorf("failed to marshal event: %w", err)
 		}
-
-		if _, err := cl.file.Write(append(data, '\n')); err != nil {
+		if _, err := tmp.Write(append(data, '\n')); err != nil {
 			return fmt.Errorf("failed to write event: %w", err)
 		}
 	}
 
-	// Sync to disk
-	if err := cl.file.Sync(); err != nil {
-		return fmt.Errorf("failed to sync file: %w", err)
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("failed to sync temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("failed to close temp file: %w", err)
 	}
 
+	// Atomic replace.
+	if err := os.Rename(tmpName, cl.filePath); err != nil {
+		return fmt.Errorf("failed to rename temp file: %w", err)
+	}
+	committed = true
+
+	// Reopen the canonical file for subsequent appends. On failure cl.file is
+	// cleared so the next operation retries the open via ensureFile instead of
+	// writing to a closed handle.
+	_ = cl.file.Close()
+	cl.file = nil
+	newFile, err := os.OpenFile(cl.filePath, os.O_APPEND|os.O_RDWR, 0600) // #nosec G304 -- path from configuration
+	if err != nil {
+		return fmt.Errorf("failed to reopen log file: %w", err)
+	}
+	cl.file = newFile
 	return nil
 }
 
-// Close closes the change log file.
+// Close closes the change log file. Subsequent operations return
+// ErrChangeLogClosed.
 func (cl *JSONLChangeLog) Close() error {
 	cl.mutex.Lock()
 	defer cl.mutex.Unlock()
 
+	cl.closed = true
 	if cl.file != nil {
-		return cl.file.Close()
+		err := cl.file.Close()
+		cl.file = nil
+		return err
 	}
 	return nil
 }

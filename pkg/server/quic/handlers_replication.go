@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -47,26 +48,18 @@ func (h *Handler) handleGetReplicationPolicies(w http.ResponseWriter, r *http.Re
 	// Get replication manager from facade
 	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
 		if errors.Is(err, common.ErrReplicationNotSupported) {
 			http.Error(w, "replication not supported by this storage backend", http.StatusInternalServerError)
-		} else {
-			http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+			return
 		}
+		writeBackendError(ctx, w, err)
 		return
 	}
 
 	// Get all policies
 	policies, err := repMgr.GetPolicies()
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
-		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+		writeBackendError(ctx, w, err)
 		return
 	}
 
@@ -89,15 +82,15 @@ func (h *Handler) handleGetReplicationPolicies(w http.ResponseWriter, r *http.Re
 	}
 
 	response := map[string]any{
-		"success":  true,
-		"policies": policyResults,
-		"count":    len(policyResults),
+		fieldSuccess: true,
+		"policies":   policyResults,
+		"count":      len(policyResults),
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: "error", Value: err.Error()})
+		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: fieldError, Value: err.Error()})
 	}
 }
 
@@ -177,42 +170,30 @@ func (h *Handler) handleAddReplicationPolicy(w http.ResponseWriter, r *http.Requ
 	// Get replication manager from facade
 	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
 		if errors.Is(err, common.ErrReplicationNotSupported) {
 			http.Error(w, "replication not supported by this storage backend", http.StatusInternalServerError)
-		} else {
-			http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+			return
 		}
+		writeBackendError(ctx, w, err)
 		return
 	}
 
 	// Add policy
 	err = repMgr.AddPolicy(policy)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
-		// Check for duplicate policy error
-		if err.Error() == "policy already exists" {
-			http.Error(w, common.SanitizeErrorMessage(err), http.StatusConflict)
-			return
-		}
-		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+		// Classify maps "policy already exists" to 409 Conflict.
+		writeBackendError(ctx, w, err)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	if err := json.NewEncoder(w).Encode(map[string]any{
-		"success": true,
-		"message": "replication policy added successfully",
-		"id":      req.ID,
+		fieldSuccess: true,
+		fieldMessage: "replication policy added successfully",
+		"id":         req.ID,
 	}); err != nil {
-		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: "error", Value: err.Error()})
+		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: fieldError, Value: err.Error()})
 	}
 }
 
@@ -243,35 +224,27 @@ func (h *Handler) handleGetReplicationPolicy(w http.ResponseWriter, r *http.Requ
 	// Get replication manager from facade
 	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
 		if errors.Is(err, common.ErrReplicationNotSupported) {
 			http.Error(w, "replication not supported by this storage backend", http.StatusInternalServerError)
-		} else {
-			http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+			return
 		}
+		writeBackendError(ctx, w, err)
 		return
 	}
 
 	// Get policy
 	policy, err := repMgr.GetPolicy(id)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
 		if errors.Is(err, common.ErrPolicyNotFound) {
 			http.Error(w, "policy not found", http.StatusNotFound)
 			return
 		}
-		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+		writeBackendError(ctx, w, err)
 		return
 	}
 
 	policyResult := map[string]any{
-		"success":              true,
+		fieldSuccess:           true,
 		"id":                   policy.ID,
 		"source_backend":       policy.SourceBackend,
 		"source_settings":      policy.SourceSettings,
@@ -288,7 +261,7 @@ func (h *Handler) handleGetReplicationPolicy(w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(policyResult); err != nil {
-		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: "error", Value: err.Error()})
+		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: fieldError, Value: err.Error()})
 	}
 }
 
@@ -307,41 +280,33 @@ func (h *Handler) handleDeleteReplicationPolicy(w http.ResponseWriter, r *http.R
 	// Get replication manager from facade
 	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
 		if errors.Is(err, common.ErrReplicationNotSupported) {
 			http.Error(w, "replication not supported by this storage backend", http.StatusInternalServerError)
-		} else {
-			http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+			return
 		}
+		writeBackendError(ctx, w, err)
 		return
 	}
 
 	// Remove policy
 	err = repMgr.RemovePolicy(id)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
 		if errors.Is(err, common.ErrPolicyNotFound) {
 			http.Error(w, "policy not found", http.StatusNotFound)
 			return
 		}
-		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+		writeBackendError(ctx, w, err)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(map[string]any{
-		"success": true,
-		"message": "replication policy removed successfully",
-		"id":      id,
+		fieldSuccess: true,
+		fieldMessage: "replication policy removed successfully",
+		"id":         id,
 	}); err != nil {
-		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: "error", Value: err.Error()})
+		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: fieldError, Value: err.Error()})
 	}
 }
 
@@ -355,49 +320,51 @@ func (h *Handler) handleTriggerReplication(w http.ResponseWriter, r *http.Reques
 	ctx, cancel := context.WithTimeout(r.Context(), h.writeTimeout)
 	defer cancel()
 
-	policyID := r.URL.Query().Get("policy_id")
+	query := r.URL.Query()
+	policyID := query.Get("policy_id")
+	parallel, _ := strconv.ParseBool(query.Get("parallel"))
+	workerCount, _ := strconv.Atoi(query.Get("worker_count"))
 
 	// Get replication manager from facade
 	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
 		if errors.Is(err, common.ErrReplicationNotSupported) {
 			http.Error(w, "replication not supported by this storage backend", http.StatusInternalServerError)
-		} else {
-			http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+			return
 		}
+		writeBackendError(ctx, w, err)
 		return
 	}
 
 	var result *common.SyncResult
 
-	// Trigger sync
-	if policyID == "" {
+	// Trigger sync, honoring the parallel/worker_count query params.
+	switch {
+	case parallel && policyID == "":
+		// Sync all policies in parallel
+		result, err = repMgr.SyncAllParallel(ctx, workerCount)
+	case parallel:
+		// Sync a specific policy in parallel
+		result, err = repMgr.SyncPolicyParallel(ctx, policyID, workerCount)
+	case policyID == "":
 		// Sync all policies
 		result, err = repMgr.SyncAll(ctx)
-	} else {
+	default:
 		// Sync specific policy
 		result, err = repMgr.SyncPolicy(ctx, policyID)
 	}
 
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
 		if errors.Is(err, common.ErrPolicyNotFound) {
 			http.Error(w, "policy not found", http.StatusNotFound)
 			return
 		}
-		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+		writeBackendError(ctx, w, err)
 		return
 	}
 
 	response := map[string]any{
-		"success": true,
+		fieldSuccess: true,
 		"result": map[string]any{
 			"policy_id":   result.PolicyID,
 			"synced":      result.Synced,
@@ -407,13 +374,13 @@ func (h *Handler) handleTriggerReplication(w http.ResponseWriter, r *http.Reques
 			"duration":    result.Duration.String(),
 			"errors":      result.Errors,
 		},
-		"message": "replication triggered successfully",
+		fieldMessage: "replication triggered successfully",
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: "error", Value: err.Error()})
+		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: fieldError, Value: err.Error()})
 	}
 }
 
@@ -432,15 +399,11 @@ func (h *Handler) handleGetReplicationStatus(w http.ResponseWriter, r *http.Requ
 	// Get replication manager from facade
 	repMgr, err := objstore.GetReplicationManager(h.backend)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
 		if errors.Is(err, common.ErrReplicationNotSupported) {
 			http.Error(w, "replication not supported by this storage backend", http.StatusInternalServerError)
-		} else {
-			http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+			return
 		}
+		writeBackendError(ctx, w, err)
 		return
 	}
 
@@ -454,20 +417,16 @@ func (h *Handler) handleGetReplicationStatus(w http.ResponseWriter, r *http.Requ
 	}
 	replicationStatus, err := statusProvider.GetReplicationStatus(id)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			http.Error(w, "request timeout", http.StatusRequestTimeout)
-			return
-		}
 		if errors.Is(err, common.ErrPolicyNotFound) {
 			http.Error(w, "policy not found", http.StatusNotFound)
 			return
 		}
-		http.Error(w, common.SanitizeErrorMessage(err), http.StatusInternalServerError)
+		writeBackendError(ctx, w, err)
 		return
 	}
 
 	statusResult := map[string]any{
-		"success":               true,
+		fieldSuccess:            true,
 		"policy_id":             replicationStatus.PolicyID,
 		"source_backend":        replicationStatus.SourceBackend,
 		"destination_backend":   replicationStatus.DestinationBackend,
@@ -484,6 +443,6 @@ func (h *Handler) handleGetReplicationStatus(w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(statusResult); err != nil {
-		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: "error", Value: err.Error()})
+		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: fieldError, Value: err.Error()})
 	}
 }

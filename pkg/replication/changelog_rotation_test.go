@@ -129,39 +129,45 @@ func TestRewriteFile_MultipleEvents(t *testing.T) {
 	}
 }
 
-// Test rewriteFile truncate failure
-func TestRewriteFile_TruncateError(t *testing.T) {
+// Test rewriteFile temp-file creation failure
+// Simulates the failure by pointing filePath at a directory whose parent doesn't exist.
+func TestRewriteFile_TempCreateError(t *testing.T) {
 	tmpDir := t.TempDir()
 	logPath := filepath.Join(tmpDir, "changes.jsonl")
 
 	cl, err := NewJSONLChangeLog(logPath, 1024*1024)
 	require.NoError(t, err)
+	defer cl.Close()
 
-	// Close the file to cause truncate error
-	cl.file.Close()
+	// Point filePath at a non-existent directory so CreateTemp fails.
+	cl.filePath = filepath.Join(tmpDir, "nonexistent", "changes.jsonl")
 
-	// Try to rewrite - should fail on truncate
 	cl.mutex.Lock()
 	err = cl.rewriteFile([]ChangeEvent{{Key: "test", Operation: "put", Timestamp: time.Now()}})
 	cl.mutex.Unlock()
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "truncate")
+	assert.Contains(t, err.Error(), "temp file")
 }
 
-// Test rewriteFile seek failure after truncate
-func TestRewriteFile_SeekError(t *testing.T) {
+// TestRewriteFile_RenameError simulates a rename failure by making the target
+// directory read-only after creating the temp file.
+func TestRewriteFile_RenameError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("rename error test is not meaningful when running as root")
+	}
 	tmpDir := t.TempDir()
 	logPath := filepath.Join(tmpDir, "changes.jsonl")
 
 	cl, err := NewJSONLChangeLog(logPath, 1024*1024)
 	require.NoError(t, err)
+	defer cl.Close()
 
-	// Write some data
-	err = cl.RecordChange(ChangeEvent{Key: "test", Operation: "put", Timestamp: time.Now()})
-	require.NoError(t, err)
+	// Record an event so the log exists
+	require.NoError(t, cl.RecordChange(ChangeEvent{Key: "k", Operation: "put", Timestamp: time.Now()}))
 
-	// Close file to cause seek error after truncate would succeed
-	cl.file.Close()
+	// Make the directory read-only so the rename will fail.
+	require.NoError(t, os.Chmod(tmpDir, 0500))
+	defer os.Chmod(tmpDir, 0700) // restore for cleanup
 
 	cl.mutex.Lock()
 	err = cl.rewriteFile([]ChangeEvent{{Key: "test2", Operation: "put", Timestamp: time.Now()}})
@@ -169,42 +175,59 @@ func TestRewriteFile_SeekError(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// Test rewriteFile write failure
-func TestRewriteFile_WriteError(t *testing.T) {
+// TestRewriteFile_SuccessReopensFile verifies the file handle is valid after rewrite.
+func TestRewriteFile_SuccessReopensFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	logPath := filepath.Join(tmpDir, "changes.jsonl")
 
 	cl, err := NewJSONLChangeLog(logPath, 1024*1024)
 	require.NoError(t, err)
+	defer cl.Close()
 
-	// Close the file to cause write error
-	cl.file.Close()
-
+	events := []ChangeEvent{{Key: "k1", Operation: "put", Timestamp: time.Now()}}
 	cl.mutex.Lock()
-	err = cl.rewriteFile([]ChangeEvent{{Key: "test", Operation: "put", Timestamp: time.Now()}})
+	err = cl.rewriteFile(events)
 	cl.mutex.Unlock()
-	assert.Error(t, err)
+	require.NoError(t, err)
+
+	// The file should still be writable after the rewrite.
+	require.NoError(t, cl.RecordChange(ChangeEvent{Key: "k2", Operation: "put", Timestamp: time.Now()}))
 }
 
-// Test rewriteFile sync failure
-func TestRewriteFile_SyncError(t *testing.T) {
+// TestRewriteFile_ReopenFailureRecovers verifies that when the post-rename
+// reopen fails, the changelog does not strand a closed file handle: the
+// failing call errors, and the next operation lazily reopens the file.
+func TestRewriteFile_ReopenFailureRecovers(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission-based reopen failure is not meaningful when running as root")
+	}
 	tmpDir := t.TempDir()
 	logPath := filepath.Join(tmpDir, "changes.jsonl")
 
 	cl, err := NewJSONLChangeLog(logPath, 1024*1024)
 	require.NoError(t, err)
+	defer cl.Close()
 
-	// Record an event
-	err = cl.RecordChange(ChangeEvent{Key: "test", Operation: "put", Timestamp: time.Now()})
-	require.NoError(t, err)
+	require.NoError(t, cl.RecordChange(ChangeEvent{Key: "k1", Operation: "put", Timestamp: time.Now()}))
 
-	// Close file to cause sync error after write
-	cl.file.Close()
-
+	// Force the rewrite to succeed through rename but fail on reopen: rewrite
+	// opens with O_APPEND|O_RDWR (no O_CREATE), so a write-only directory check
+	// is not enough; instead make the renamed file unreadable via chmod after
+	// rename by pre-creating an unwritable target path through a directory swap.
+	// Simpler deterministic approach: replace the log with a directory between
+	// rename and reopen is racy, so simulate the stranded state directly:
 	cl.mutex.Lock()
-	err = cl.rewriteFile([]ChangeEvent{{Key: "test2", Operation: "put", Timestamp: time.Now()}})
+	_ = cl.file.Close()
+	cl.file = nil // state rewriteFile leaves behind on reopen failure
 	cl.mutex.Unlock()
-	assert.Error(t, err)
+
+	// The next operation must recover via ensureFile rather than failing with
+	// "file already closed".
+	require.NoError(t, cl.RecordChange(ChangeEvent{Key: "k2", Operation: "put", Timestamp: time.Now()}))
+
+	events, err := cl.GetUnprocessed("policy-x")
+	require.NoError(t, err)
+	require.Len(t, events, 2)
 }
 
 // Test rotate with successful timestamp backup
@@ -301,8 +324,12 @@ func TestRotate_RenameFailure(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "rename")
 
-	// Verify file handle is still valid (reopen was attempted)
-	assert.NotNil(t, cl.file)
+	// The reopen also fails in the read-only directory, so no closed handle is
+	// left behind: cl.file is nil and the next operation lazily recovers once
+	// permissions are restored.
+	assert.Nil(t, cl.file)
+	require.NoError(t, os.Chmod(tmpDir, 0755))
+	require.NoError(t, cl.RecordChange(ChangeEvent{Key: "recovered", Operation: "put", Timestamp: time.Now()}))
 
 	cl.Close()
 }
@@ -581,35 +608,33 @@ func TestRecordChange_SyncError(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// Test rewriteFile with event containing unmarshalable data (channel in Processed map won't happen in practice)
-// This tests the marshal error path in rewriteFile
-func TestRewriteFile_MarshalError(t *testing.T) {
+// TestRewriteFile_CreateTempError verifies that rewriteFile fails gracefully when
+// the temp file cannot be created (directory not writable).
+func TestRewriteFile_CreateTempError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission test is not meaningful when running as root")
+	}
 	tmpDir := t.TempDir()
 	logPath := filepath.Join(tmpDir, "changes.jsonl")
 
 	cl, err := NewJSONLChangeLog(logPath, 1024*1024)
 	require.NoError(t, err)
-	defer cl.Close()
+	defer func() {
+		_ = os.Chmod(tmpDir, 0700)
+		cl.Close()
+	}()
 
-	// Create an event that would cause marshal to succeed (Go json.Marshal doesn't usually fail on structs)
-	// Instead, test the error path by closing the file, which will cause write to fail
-	event := ChangeEvent{
-		Key:       "test",
-		Operation: "put",
-		Timestamp: time.Now(),
-	}
+	// Write a valid event first.
+	require.NoError(t, cl.RecordChange(ChangeEvent{Key: "test", Operation: "put", Timestamp: time.Now()}))
 
-	// Write a valid event first
-	err = cl.RecordChange(event)
-	require.NoError(t, err)
-
-	// Now test rewrite path - close file to cause write error (which happens after marshal)
-	cl.file.Close()
+	// Make the directory read-only so CreateTemp fails.
+	require.NoError(t, os.Chmod(tmpDir, 0500))
 
 	cl.mutex.Lock()
-	err = cl.rewriteFile([]ChangeEvent{event})
+	err = cl.rewriteFile([]ChangeEvent{{Key: "test2", Operation: "put", Timestamp: time.Now()}})
 	cl.mutex.Unlock()
 	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "temp file")
 }
 
 // Test Rotate public method (wrapper around rotate)
@@ -713,8 +738,11 @@ func TestRotate_RenameFailure_Reopen(t *testing.T) {
 	cl.mutex.Unlock()
 	assert.Error(t, err)
 
-	// File should still be valid after failed rotation
-	assert.NotNil(t, cl.file)
+	// Reopen also fails in the read-only directory; the handle is cleared and
+	// the changelog recovers lazily once permissions are restored.
+	assert.Nil(t, cl.file)
+	require.NoError(t, os.Chmod(tmpDir, 0755))
+	require.NoError(t, cl.RecordChange(ChangeEvent{Key: "recovered", Operation: "put", Timestamp: time.Now()}))
 
 	cl.Close()
 }

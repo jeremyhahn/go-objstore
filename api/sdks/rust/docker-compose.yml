@@ -1,5 +1,5 @@
 services:
-  # Go ObjectStore server with local storage backend
+  # go-objstore server (local backend) for integration tests
   objstore-server:
     build:
       context: ../../..
@@ -8,9 +8,9 @@ services:
         BUILD_TAGS: local
     command: ["/app/objstore-server", "--quic-self-signed"]
     ports:
-      - "8080:8080"    # REST
-      - "50051:50051"  # gRPC
-      - "4433:4433"    # QUIC
+      - "18480:8080"    # REST
+      - "15451:50051"  # gRPC
+      - "14833:4433"    # QUIC
     environment:
       - STORAGE_BACKEND=local
       - STORAGE_PATH=/data
@@ -29,7 +29,9 @@ services:
     networks:
       - objstore-net
 
-  # Rust SDK unit tests
+  # Rust SDK unit tests: library inline tests (src/*.rs) plus the unit_tests
+  # target (type/serde). The integration_* targets require a live server and are
+  # intentionally excluded here so the unit suite needs no network.
   rust-unit-tests:
     build:
       context: ../../..
@@ -37,11 +39,12 @@ services:
     volumes:
       - .:/app
       - cargo-cache:/usr/local/cargo/registry
-    command: cargo test --lib --bins --tests
+    command: cargo test --lib --test unit_tests
     networks:
       - objstore-net
 
-  # Rust SDK integration tests
+  # Rust SDK integration tests: run the integration_* suites against the live
+  # server (single-threaded to avoid cross-test races).
   rust-integration-tests:
     build:
       context: ../../..
@@ -50,24 +53,20 @@ services:
       objstore-server:
         condition: service_healthy
     environment:
-      # For integration_test.rs (full URL format)
       - OBJSTORE_REST_URL=http://objstore-server:8080
       - OBJSTORE_GRPC_URL=http://objstore-server:50051
       - OBJSTORE_QUIC_URL=https://objstore-server:4433
-      # For integration_comprehensive.rs (host:port format)
       - REST_HOST=objstore-server:8080
       - GRPC_HOST=objstore-server:50051
       - QUIC_HOST=objstore-server:4433
+    command: cargo test --test integration_comprehensive -- --test-threads=1
     volumes:
       - .:/app
       - cargo-cache:/usr/local/cargo/registry
-    # Run all integration tests single-threaded to avoid race conditions
-    # Note: QUIC tests will gracefully skip if connection fails in Docker
-    command: cargo test --test '*' -- --ignored --test-threads=1
     networks:
       - objstore-net
 
-  # Rust SDK coverage tests
+  # Rust SDK coverage
   rust-coverage:
     build:
       context: ../../..
@@ -75,7 +74,7 @@ services:
     volumes:
       - .:/app
       - cargo-cache:/usr/local/cargo/registry
-    command: cargo llvm-cov --lib --bins --tests --summary-only
+    command: cargo llvm-cov --lib --test unit_tests --summary-only
     networks:
       - objstore-net
 

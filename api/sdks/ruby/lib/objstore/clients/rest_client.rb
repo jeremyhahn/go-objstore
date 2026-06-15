@@ -17,11 +17,18 @@ module ObjectStore
       # @param port [Integer] Server port
       # @param use_ssl [Boolean] Whether to use HTTPS
       # @param timeout [Integer] Request timeout in seconds
-      def initialize(host: "localhost", port: 8080, use_ssl: false, timeout: 30)
+      # @param token [String, nil] Bearer token for Authorization header
+      # @param headers [Hash] Additional HTTP headers to send on every request
+      # @param tenant_id [String, nil] Tenant identifier sent as X-Tenant-ID header
+      def initialize(host: "localhost", port: 8080, use_ssl: false, timeout: 30,
+                     token: nil, headers: {}, tenant_id: nil)
         @host = host
         @port = port
         @use_ssl = use_ssl
         @timeout = timeout
+        @token = token
+        @extra_headers = headers || {}
+        @tenant_id = tenant_id
         @connection = build_connection
       end
 
@@ -44,14 +51,11 @@ module ObjectStore
             req.headers["Content-Encoding"] = metadata_obj.content_encoding
           end
 
-          # Build metadata JSON including content_type and custom fields
-          metadata_hash = {}
-          metadata_hash["content_type"] = metadata_obj.content_type if metadata_obj.content_type
-          metadata_hash["content_encoding"] = metadata_obj.content_encoding if metadata_obj.content_encoding
-          metadata_hash.merge!(metadata_obj.custom) if metadata_obj.custom
-
-          if metadata_hash.any?
-            req.headers["X-Object-Metadata"] = metadata_hash.to_json
+          # X-Object-Metadata carries ONLY the custom string->string map.
+          # content_type/content_encoding are conveyed via standard HTTP headers above.
+          custom = metadata_obj.custom
+          if custom && custom.any?
+            req.headers["X-Object-Metadata"] = custom.to_json
           end
 
           req.body = data
@@ -103,9 +107,11 @@ module ObjectStore
         handle_response(response) do |body|
           metadata = Models::Metadata.new(
             content_type: response.headers["content-type"],
+            content_encoding: response.headers["content-encoding"],
             size: response.headers["content-length"]&.to_i,
             etag: response.headers["etag"],
-            last_modified: response.headers["last-modified"]
+            last_modified: response.headers["last-modified"],
+            custom: parse_custom_metadata(response)
           )
 
           Models::GetResponse.new(body, metadata)
@@ -133,9 +139,11 @@ module ObjectStore
           # Return metadata from headers
           Models::Metadata.new(
             content_type: response.headers["content-type"],
+            content_encoding: response.headers["content-encoding"],
             size: response.headers["content-length"]&.to_i,
             etag: response.headers["etag"],
-            last_modified: response.headers["last-modified"]
+            last_modified: response.headers["last-modified"],
+            custom: parse_custom_metadata(response)
           )
         end
       rescue StandardError
@@ -155,9 +163,11 @@ module ObjectStore
           # Return metadata
           Models::Metadata.new(
             content_type: response.headers["content-type"],
+            content_encoding: response.headers["content-encoding"],
             size: response.headers["content-length"]&.to_i,
             etag: response.headers["etag"],
-            last_modified: response.headers["last-modified"]
+            last_modified: response.headers["last-modified"],
+            custom: parse_custom_metadata(response)
           )
         end
       end
@@ -173,7 +183,8 @@ module ObjectStore
         response = @connection.delete("/objects/#{encode_key(key)}")
 
         handle_response(response) do |body|
-          Models::DeleteResponse.new(success: true, message: body["message"])
+          message = body.is_a?(Hash) ? body["message"] : nil
+          Models::DeleteResponse.new(success: true, message: message || "Object deleted successfully")
         end
       end
 
@@ -208,9 +219,13 @@ module ObjectStore
       # @return [Boolean] true if exists, false otherwise
       def exists?(key)
         response = @connection.head("/objects/#{encode_key(key)}")
-        response.status == 200
-      rescue ObjectStore::NotFoundError
-        false
+        return true if (200..299).cover?(response.status)
+        return false if response.status == 404
+
+        # Route any other non-2xx (notably 5xx) through the shared error
+        # handler so a server error raises rather than masquerading as "absent".
+        # HEAD has no body, so the handler's body parsing simply yields nothing.
+        handle_response(response) { false }
       end
 
       def get_metadata(key)
@@ -381,21 +396,33 @@ module ObjectStore
         handle_response(response) do |body|
           {
             success: true,
-            result: body["result"],
+            result: body["result"]&.transform_keys(&:to_sym),
             message: body["message"]
           }
         end
       end
 
       def get_replication_status(id)
-        response = @connection.get("/replication/policies/#{id}/status")
+        response = @connection.get("/replication/status/#{id}")
 
         handle_response(response) do |body|
+          # The server returns status fields flat at the top level (not nested
+          # under a "status" key).
           {
             success: true,
-            status: Models::ReplicationStatus.new(body["status"])
+            status: Models::ReplicationStatus.new(body)
           }
         end
+      end
+
+      # Close the underlying HTTP connection if one is held
+      #
+      # Closes the Faraday connection when the adapter supports it; otherwise
+      # this is a safe no-op. Safe to call multiple times.
+      #
+      # @return [void]
+      def close
+        @connection.close if @connection.respond_to?(:close)
       end
 
       private
@@ -410,6 +437,10 @@ module ObjectStore
           conn.adapter Faraday.default_adapter
           conn.options.timeout = @timeout
           # Note: open_timeout removed for compatibility with different Faraday versions
+
+          conn.headers["Authorization"] = "Bearer #{@token}" if @token
+          conn.headers["X-Tenant-ID"] = @tenant_id if @tenant_id
+          @extra_headers.each { |k, v| conn.headers[k.to_s] = v.to_s }
         end
       end
 
@@ -417,24 +448,52 @@ module ObjectStore
         URI.encode_www_form_component(key)
       end
 
+      # Parse the custom string->string metadata map from the X-Object-Metadata
+      # response header. Returns an empty hash when the header is absent or invalid.
+      def parse_custom_metadata(response)
+        header = response.headers["x-object-metadata"] || response.headers["X-Object-Metadata"]
+        return {} if header.nil? || header.empty?
+
+        parsed = JSON.parse(header)
+        parsed.is_a?(Hash) ? parsed : {}
+      rescue JSON::ParserError
+        {}
+      end
+
       def handle_response(response)
         case response.status
-        when 200, 201
-          body = parse_body(response)
+        when 200, 201, 204
+          # 204 No Content carries no body; present an empty hash so callers
+          # can use body["..."] uniformly. Other statuses keep the parsed body
+          # verbatim (get yields raw object bytes).
+          body = response.status == 204 ? {} : parse_body(response)
           yield(body)
         when 404
           raise ObjectStore::NotFoundError, "Resource not found"
         when 400
-          body = parse_body(response)
-          raise ObjectStore::ValidationError, body["message"] || "Bad request"
+          raise ObjectStore::ValidationError, error_message(response, "Bad request")
+        when 401
+          raise ObjectStore::AuthenticationError, error_message(response, "Unauthenticated")
+        when 403
+          raise ObjectStore::AuthorizationError, error_message(response, "Forbidden")
+        when 409
+          raise ObjectStore::AlreadyExistsError, error_message(response, "Already exists")
         when 413
           raise ObjectStore::ValidationError, "Request entity too large"
+        when 429
+          raise ObjectStore::RateLimitError, error_message(response, "Rate limited")
         when 500..599
-          body = parse_body(response)
-          raise ObjectStore::ServerError, body["message"] || "Server error"
+          raise ObjectStore::ServerError, error_message(response, "Server error")
         else
           raise ObjectStore::Error, "Unexpected response: #{response.status}"
         end
+      end
+
+      # Extract the server-provided error message from a response body,
+      # falling back to a generic default when the body is absent or not JSON.
+      def error_message(response, fallback)
+        body = parse_body(response)
+        (body.is_a?(Hash) && body["message"]) || fallback
       end
 
       def parse_body(response)

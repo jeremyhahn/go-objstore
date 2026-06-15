@@ -17,7 +17,7 @@ import (
 	"context"
 	"crypto/tls"
 	"flag"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -44,7 +44,7 @@ var (
 func main() {
 	flag.Parse()
 
-	log.Println("Starting QUIC/HTTP3 Object Storage Server...")
+	slog.Info("Starting QUIC/HTTP3 Object Storage Server")
 
 	// Initialize the objstore facade with simplified API
 	if err := objstore.Initialize(&objstore.FacadeConfig{
@@ -56,7 +56,8 @@ func main() {
 		},
 		DefaultBackend: "default",
 	}); err != nil {
-		log.Fatalf("Failed to initialize objstore facade: %v", err)
+		slog.Error("Failed to initialize objstore facade", "error", err)
+		os.Exit(1)
 	}
 
 	// Enable replication on the default backend
@@ -65,27 +66,30 @@ func main() {
 		PolicyFilePath:  policyPath,
 		RunInBackground: false,
 	}); err != nil {
-		log.Printf("Warning: Failed to enable replication: %v", err)
+		slog.Warn("Failed to enable replication", "error", err)
 	} else {
-		log.Printf("Replication enabled with policy file: %s", policyPath)
+		slog.Info("Replication enabled", "policy_file", policyPath)
 	}
 
 	// Configure TLS
 	var tlsConfig *tls.Config
 	var err error
 	if *enableSelfSigned {
-		log.Println("WARNING: Using self-signed certificate. DO NOT USE IN PRODUCTION!")
+		slog.Warn("Using self-signed certificate. DO NOT USE IN PRODUCTION!")
 		tlsConfig, err = quicserver.GenerateSelfSignedCert()
 		if err != nil {
-			log.Fatalf("Failed to generate self-signed certificate: %v", err)
+			slog.Error("Failed to generate self-signed certificate", "error", err)
+			os.Exit(1)
 		}
 	} else {
 		if *tlsCert == "" || *tlsKey == "" {
-			log.Fatal("TLS certificate and key are required. Use -tlscert and -tlskey flags, or -selfsigned for testing")
+			slog.Error("TLS certificate and key are required. Use -tlscert and -tlskey flags, or -selfsigned for testing")
+			os.Exit(1)
 		}
 		tlsConfig, err = quicserver.NewTLSConfig(*tlsCert, *tlsKey)
 		if err != nil {
-			log.Fatalf("Failed to load TLS configuration: %v", err)
+			slog.Error("Failed to load TLS configuration", "error", err)
+			os.Exit(1)
 		}
 	}
 
@@ -101,24 +105,16 @@ func main() {
 	// Create and start server
 	server, err := quicserver.New(opts)
 	if err != nil {
-		log.Fatalf("Failed to create QUIC server: %v", err)
+		slog.Error("Failed to create QUIC server", "error", err)
+		os.Exit(1)
 	}
 
 	if err := server.Start(); err != nil {
-		log.Fatalf("Failed to start QUIC server: %v", err)
+		slog.Error("Failed to start QUIC server", "error", err)
+		os.Exit(1)
 	}
 
-	log.Printf("QUIC/HTTP3 server listening on %s", server.Addr())
-	log.Printf("Storage backend: %s", *backend)
-	log.Printf("Protocol: HTTP/3 over QUIC (TLS 1.3)")
-	log.Println("")
-	log.Println("API Endpoints:")
-	log.Println("  PUT    /objects/{key}      - Store an object")
-	log.Println("  GET    /objects/{key}      - Retrieve an object")
-	log.Println("  DELETE /objects/{key}      - Delete an object")
-	log.Println("  HEAD   /objects/{key}      - Get object metadata")
-	log.Println("  GET    /objects            - List objects")
-	log.Println("")
+	slog.Info("QUIC/HTTP3 server listening", "addr", server.Addr(), "backend", *backend, "protocol", "HTTP/3 over QUIC (TLS 1.3)")
 
 	// Set up signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
@@ -126,8 +122,8 @@ func main() {
 
 	// Wait for interrupt signal
 	sig := <-sigChan
-	log.Printf("Received signal: %v", sig)
-	log.Println("Shutting down gracefully...")
+	slog.Info("Received signal", "signal", sig.String())
+	slog.Info("Shutting down gracefully")
 
 	// Create shutdown context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -136,8 +132,9 @@ func main() {
 	// Stop server
 	if err := server.Stop(ctx); err != nil {
 		cancel()
-		log.Fatalf("Error during shutdown: %v", err)
+		slog.Error("Error during shutdown", "error", err)
+		os.Exit(1)
 	}
 
-	log.Println("Server stopped successfully")
+	slog.Info("Server stopped successfully")
 }

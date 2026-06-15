@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="go-objstore-sdk",
-    version="0.1.0",
+    version="0.1.5-alpha",
     description="Python SDK for go-objstore with REST, gRPC, and QUIC/HTTP3 support",
     long_description=open("README.md").read() if __file__ else "",
     long_description_content_type="text/markdown",
@@ -12,10 +12,13 @@ setup(
     packages=find_packages(exclude=["tests", "tests.*"]),
     python_requires=">=3.9",
     install_requires=[
-        "requests>=2.31.0",
-        "grpcio>=1.60.0",
-        "grpcio-tools>=1.60.0",
-        "protobuf>=4.25.0",
+        "requests>=2.33.0",
+        "urllib3>=2.7.0",
+        "certifi>=2024.7.4",
+        "idna>=3.7",
+        "grpcio>=1.71.2",
+        "grpcio-tools>=1.71.2",
+        "protobuf>=5.29.6",
         "httpx[http3]>=0.26.0",
         "pydantic>=2.5.0",
         "tenacity>=8.2.3",
@@ -23,11 +26,11 @@ setup(
     ],
     extras_require={
         "dev": [
-            "pytest>=7.4.3",
+            "pytest>=9.0.3",
             "pytest-cov>=4.1.0",
             "pytest-asyncio>=0.23.2",
             "pytest-mock>=3.12.0",
-            "black>=23.12.0",
+            "black>=26.5.1",
             "flake8>=7.0.0",
             "mypy>=1.8.0",
             "isort>=5.13.2",

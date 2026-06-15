@@ -1,6 +1,8 @@
 import { RestClient } from './clients/rest-client';
 import { GrpcClient } from './clients/grpc-client';
 import { QuicClient } from './clients/quic-client';
+import { McpClient } from './clients/mcp-client';
+import { UnixClient } from './clients/unix-client';
 import {
   ObjectStoreClientConfig,
   IObjectStoreClient,
@@ -72,6 +74,20 @@ export class ObjectStoreClient implements IObjectStoreClient {
           throw new Error('QUIC configuration is required when using QUIC protocol');
         }
         this.client = new QuicClient(config.quic);
+        break;
+
+      case 'mcp':
+        if (!config.mcp) {
+          throw new Error('MCP configuration is required when using MCP protocol');
+        }
+        this.client = new McpClient(config.mcp);
+        break;
+
+      case 'unix':
+        if (!config.unix) {
+          throw new Error('Unix configuration is required when using Unix protocol');
+        }
+        this.client = new UnixClient(config.unix);
         break;
 
       default:

@@ -2,10 +2,11 @@
 
 import asyncio
 from enum import Enum
-from typing import Any, BinaryIO, Coroutine, Iterator, Optional, TypeVar, Union
+from typing import Any, BinaryIO, Coroutine, Dict, Iterator, Optional, TypeVar, Union
 
 from objstore.exceptions import ValidationError
 from objstore.grpc_client import GrpcClient
+from objstore.mcp_client import McpClient
 from objstore.models import (
     ApplyPoliciesResponse,
     ArchiveResponse,
@@ -26,6 +27,7 @@ from objstore.models import (
 )
 from objstore.quic_client import QuicClient
 from objstore.rest_client import RestClient
+from objstore.unix_client import UnixClient
 
 T = TypeVar("T")
 
@@ -36,6 +38,8 @@ class Protocol(str, Enum):
     REST = "rest"
     GRPC = "grpc"
     QUIC = "quic"
+    MCP = "mcp"
+    UNIX = "unix"
 
 
 class ObjectStoreClient:
@@ -70,19 +74,30 @@ class ObjectStoreClient:
         api_version: str = "v1",
         timeout: int = 30,
         max_retries: int = 3,
-        verify_ssl: bool = False,
+        verify_ssl: bool = True,
+        socket_path: Optional[str] = None,
+        token: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+        tenant_id: Optional[str] = None,
     ) -> None:
         """Initialize ObjectStore client.
 
         Args:
-            protocol: Protocol to use (REST, gRPC, or QUIC)
-            base_url: Base URL for REST/QUIC (e.g., "http://localhost:8080")
+            protocol: Protocol to use (REST, gRPC, QUIC, MCP, or UNIX)
+            base_url: Base URL for REST/QUIC/MCP (e.g., "http://localhost:8080")
             host: Hostname for gRPC (e.g., "localhost")
             port: Port for gRPC (e.g., 50051)
             api_version: API version for REST/QUIC
             timeout: Request timeout in seconds
             max_retries: Maximum number of retry attempts
-            verify_ssl: Whether to verify SSL certificates (QUIC only)
+            verify_ssl: Whether to verify SSL certificates (QUIC only). Defaults to True; disable only for testing against self-signed certificates.
+            socket_path: Unix domain socket path (UNIX protocol only)
+            token: Optional bearer token; sent as Authorization: Bearer on
+                   REST/QUIC/MCP and as gRPC call metadata on gRPC.
+            headers: Optional extra headers for REST/QUIC/MCP requests or
+                     gRPC call metadata entries.
+            tenant_id: Optional tenant identifier sent as X-Tenant-ID on
+                       REST/QUIC/MCP and as x-tenant-id on gRPC.
 
         Raises:
             ValidationError: If configuration is invalid
@@ -100,6 +115,9 @@ class ObjectStoreClient:
                 api_version=api_version,
                 timeout=timeout,
                 max_retries=max_retries,
+                token=token,
+                headers=headers,
+                tenant_id=tenant_id,
             )
         elif protocol == Protocol.GRPC:
             if not host:
@@ -107,7 +125,13 @@ class ObjectStoreClient:
             if not port:
                 port = 50051
             self._client = GrpcClient(
-                host=host, port=port, timeout=timeout, max_retries=max_retries
+                host=host,
+                port=port,
+                timeout=timeout,
+                max_retries=max_retries,
+                token=token,
+                headers=headers,
+                tenant_id=tenant_id,
             )
         elif protocol == Protocol.QUIC:
             if not base_url:
@@ -117,6 +141,25 @@ class ObjectStoreClient:
                 api_version=api_version,
                 timeout=timeout,
                 verify_ssl=verify_ssl,
+                token=token,
+                headers=headers,
+                tenant_id=tenant_id,
+            )
+        elif protocol == Protocol.MCP:
+            if not base_url:
+                base_url = "http://localhost:8081"
+            self._client = McpClient(
+                base_url=base_url,
+                timeout=timeout,
+                max_retries=max_retries,
+                token=token,
+                headers=headers,
+                tenant_id=tenant_id,
+            )
+        elif protocol == Protocol.UNIX:
+            self._client = UnixClient(
+                socket_path=socket_path or "/tmp/objstore.sock",
+                timeout=timeout,
             )
         else:
             raise ValidationError(f"Unsupported protocol: {protocol}")
@@ -242,6 +285,29 @@ class ObjectStoreClient:
                 loop.close()
         else:
             yield from self._client.get_stream(key)
+
+    def put_stream(
+        self,
+        key: str,
+        data: Union[bytes, BinaryIO],
+        metadata: Optional[Metadata] = None,
+    ) -> PutResponse:
+        """Upload an object from a stream or file-like object.
+
+        Args:
+            key: Object key/path
+            data: Byte stream or file-like object to upload
+            metadata: Optional metadata
+
+        Returns:
+            PutResponse with operation result
+
+        Raises:
+            ObjectStoreError: On failure
+        """
+        if self.protocol == Protocol.QUIC:
+            return self._run_async(self._client.put_stream(key, data, metadata))
+        return self._client.put_stream(key, data, metadata)
 
     def delete(self, key: str) -> DeleteResponse:
         """Delete an object.
@@ -530,6 +596,19 @@ class ObjectStoreClient:
                 self._event_loop = None
         else:
             self._client.close()
+
+    # ------------------------------------------------------------------
+    # Convenience aliases for the new protocols
+    # ------------------------------------------------------------------
+
+    @property
+    def is_async(self) -> bool:
+        """Return True when the underlying client is async (QUIC only).
+
+        Returns:
+            True if the underlying transport is asynchronous
+        """
+        return self.protocol == Protocol.QUIC
 
     def __enter__(self) -> "ObjectStoreClient":
         """Context manager entry."""

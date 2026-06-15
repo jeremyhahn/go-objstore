@@ -26,9 +26,6 @@ var (
 
 	// ErrInvalidCAPool is returned when the CA pool is invalid.
 	ErrInvalidCAPool = errors.New("invalid CA pool")
-
-	// ErrSelfSignedNotImplemented is returned when self-signed cert generation is attempted.
-	ErrSelfSignedNotImplemented = errors.New("self-signed certificate generation not implemented - use proper certificates")
 )
 
 // TLSMode defines the TLS configuration mode.
@@ -142,8 +139,13 @@ func (c *TLSConfig) Build() (*tls.Config, error) {
 		return nil, nil
 	}
 
+	minVersion := c.MinVersion
+	if minVersion == 0 {
+		minVersion = tls.VersionTLS12
+	}
+
 	config := &tls.Config{
-		MinVersion:         c.MinVersion,
+		MinVersion:         minVersion,
 		MaxVersion:         c.MaxVersion,
 		CipherSuites:       c.CipherSuites,
 		InsecureSkipVerify: c.InsecureSkipVerify, // #nosec G402 -- Configurable option for testing/development, defaults to false
@@ -223,14 +225,6 @@ func LoadMTLSConfigFromFiles(certFile, keyFile, caFile string) (*tls.Config, err
 		WithClientCAFile(caFile)
 
 	return tlsConfig.Build()
-}
-
-// CreateSelfSignedCert generates a self-signed certificate for testing purposes.
-// This should NEVER be used in production.
-func CreateSelfSignedCert() (certPEM, keyPEM []byte, err error) {
-	// This is a placeholder - in a real implementation, we'd use crypto/x509 to generate
-	// a self-signed certificate. For now, we'll return an error indicating this needs to be implemented.
-	return nil, nil, ErrSelfSignedNotImplemented
 }
 
 // ValidateClientCertificate validates a client certificate against the CA pool.

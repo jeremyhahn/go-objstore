@@ -16,7 +16,7 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -45,10 +45,11 @@ func main() {
 		},
 		DefaultBackend: "default",
 	}); err != nil {
-		log.Fatalf("Failed to initialize objstore facade: %v", err)
+		slog.Error("Failed to initialize objstore facade", "error", err)
+		os.Exit(1)
 	}
 
-	log.Printf("Initialized %s storage backend", *backend)
+	slog.Info("Initialized storage backend", "backend", *backend)
 
 	// Enable replication on the default backend
 	policyPath := *storagePath + "/.replication-policies.json"
@@ -56,9 +57,9 @@ func main() {
 		PolicyFilePath:  policyPath,
 		RunInBackground: false,
 	}); err != nil {
-		log.Printf("Warning: Failed to enable replication: %v", err)
+		slog.Warn("Failed to enable replication", "error", err)
 	} else {
-		log.Printf("Replication enabled with policy file: %s", policyPath)
+		slog.Info("Replication enabled", "policy_file", policyPath)
 	}
 
 	// Create server options
@@ -71,19 +72,21 @@ func main() {
 	if *tlsCert != "" && *tlsKey != "" {
 		tlsOpt, err := grpcserver.WithTLSFromFiles(*tlsCert, *tlsKey)
 		if err != nil {
-			log.Fatalf("Failed to configure TLS: %v", err)
+			slog.Error("Failed to configure TLS", "error", err)
+			os.Exit(1)
 		}
 		opts = append(opts, tlsOpt)
-		log.Println("TLS enabled")
+		slog.Info("TLS enabled")
 	}
 
 	// Create and start server
 	server, err := grpcserver.NewServer(opts...)
 	if err != nil {
-		log.Fatalf("Failed to create gRPC server: %v", err)
+		slog.Error("Failed to create gRPC server", "error", err)
+		os.Exit(1)
 	}
 
-	log.Printf("Starting gRPC server on %s", *addr)
+	slog.Info("Starting gRPC server", "addr", *addr)
 
 	// Start server in goroutine
 	errChan := make(chan error, 1)
@@ -99,11 +102,12 @@ func main() {
 
 	select {
 	case err := <-errChan:
-		log.Printf("Server error: %v", err)
+		slog.Error("Server error", "error", err)
 	case sig := <-sigChan:
-		log.Printf("Received signal: %v", sig)
+		slog.Info("Received signal", "signal", sig.String())
 	}
 
-	fmt.Println("\nShutting down gRPC server...")
-	fmt.Println("Server stopped")
+	slog.Info("Shutting down gRPC server")
+	server.Stop()
+	slog.Info("Server stopped")
 }

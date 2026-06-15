@@ -1,0 +1,88 @@
+# Dependabot configuration for go-objstore.
+#
+# Covers every dependency ecosystem that actually exists in the repo (the core
+# Go module, the per-language SDKs, and GitHub Actions). Updates are grouped and
+# weekly to keep PR volume low. Paths that no longer exist (e.g. the removed
+# JavaScript SDK) are intentionally absent so Dependabot stops scanning them.
+version: 2
+updates:
+  # ---- Go modules ----
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      go-modules:
+        patterns: ["*"]
+
+  - package-ecosystem: gomod
+    directory: "/api/sdks/go"
+    schedule:
+      interval: weekly
+    groups:
+      go-sdk:
+        patterns: ["*"]
+
+  - package-ecosystem: gomod
+    directory: "/examples/encryption"
+    schedule:
+      interval: weekly
+    groups:
+      examples:
+        patterns: ["*"]
+
+  # ---- TypeScript SDK (npm) ----
+  - package-ecosystem: npm
+    directory: "/api/sdks/typescript"
+    schedule:
+      interval: weekly
+    groups:
+      typescript-sdk:
+        patterns: ["*"]
+
+  # ---- Python SDK (pip) ----
+  - package-ecosystem: pip
+    directory: "/api/sdks/python"
+    schedule:
+      interval: weekly
+    groups:
+      python-sdk:
+        patterns: ["*"]
+
+  # ---- Ruby SDK (bundler) ----
+  - package-ecosystem: bundler
+    directory: "/api/sdks/ruby"
+    schedule:
+      interval: weekly
+    groups:
+      ruby-sdk:
+        patterns: ["*"]
+
+  # ---- Rust SDK (cargo) ----
+  - package-ecosystem: cargo
+    directory: "/api/sdks/rust"
+    schedule:
+      interval: weekly
+    groups:
+      rust-sdk:
+        patterns: ["*"]
+
+  # ---- C# SDK (nuget) ----
+  - package-ecosystem: nuget
+    directory: "/api/sdks/csharp"
+    schedule:
+      interval: weekly
+    groups:
+      csharp-sdk:
+        patterns: ["*"]
+
+  # ---- GitHub Actions ----
+  # Keeps workflow actions current (avoids the Node-20 deprecation churn).
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]

@@ -14,12 +14,17 @@
 package unix
 
 import (
+	"bytes"
 	"context"
+	"net"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
+	"github.com/jeremyhahn/go-objstore/pkg/server/jsonrpc"
+	"github.com/jeremyhahn/go-objstore/pkg/server/middleware"
 )
 
 func TestNewServer(t *testing.T) {
@@ -145,6 +150,69 @@ func TestServerStartShutdown(t *testing.T) {
 	}
 }
 
+// TestStartRefusesNonSocketPath verifies that Start refuses to remove a
+// SocketPath that exists but is not a Unix domain socket, leaving the file
+// intact.
+func TestStartRefusesNonSocketPath(t *testing.T) {
+	storage := NewMockStorage()
+	socketPath := tempSocketPath(t)
+	defer cleanupSocket(t, socketPath)
+
+	content := []byte("precious data")
+	if err := os.WriteFile(socketPath, content, 0600); err != nil {
+		t.Fatalf("failed to create regular file: %v", err)
+	}
+
+	server := createTestServer(t, storage, socketPath)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	err := server.Start(ctx)
+	if err == nil {
+		t.Fatal("expected error when socket path is a regular file")
+	}
+	if !strings.Contains(err.Error(), "is not a socket") {
+		t.Errorf("error should mention the path is not a socket, got: %v", err)
+	}
+
+	// The regular file must not have been deleted or modified.
+	got, readErr := os.ReadFile(socketPath)
+	if readErr != nil {
+		t.Fatalf("regular file was removed: %v", readErr)
+	}
+	if !bytes.Equal(got, content) {
+		t.Errorf("regular file content changed: got %q, want %q", got, content)
+	}
+}
+
+// TestShutdownSkipsNonSocketPath verifies that Shutdown does not delete a
+// SocketPath that is no longer a socket and does not fail on cleanup.
+func TestShutdownSkipsNonSocketPath(t *testing.T) {
+	storage := NewMockStorage()
+	socketPath := tempSocketPath(t)
+	defer cleanupSocket(t, socketPath)
+
+	server := createTestServer(t, storage, socketPath)
+
+	content := []byte("precious data")
+	if err := os.WriteFile(socketPath, content, 0600); err != nil {
+		t.Fatalf("failed to create regular file: %v", err)
+	}
+
+	if err := server.Shutdown(context.Background()); err != nil {
+		t.Errorf("shutdown error: %v", err)
+	}
+
+	got, readErr := os.ReadFile(socketPath)
+	if readErr != nil {
+		t.Fatalf("regular file was removed: %v", readErr)
+	}
+	if !bytes.Equal(got, content) {
+		t.Errorf("regular file content changed: got %q, want %q", got, content)
+	}
+}
+
 func TestServerShutdown(t *testing.T) {
 	storage := NewMockStorage()
 	socketPath := tempSocketPath(t)
@@ -177,6 +245,87 @@ func TestServerShutdown(t *testing.T) {
 		// Expected
 	case <-time.After(2 * time.Second):
 		t.Error("server shutdown timed out")
+	}
+}
+
+// TestFirstReadDeadline verifies that a client that connects and never sends
+// a request is disconnected after the configured read deadline — the deadline
+// must be armed before the first read, not after it.
+func TestFirstReadDeadline(t *testing.T) {
+	storage := NewMockStorage()
+	socketPath := tempSocketPath(t)
+	defer cleanupSocket(t, socketPath)
+
+	initTestFacade(t, storage)
+	server, err := NewServer(&ServerConfig{
+		SocketPath:   socketPath,
+		Backend:      "",
+		Logger:       &mockLogger{},
+		ReadDeadline: 200 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create server: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() { errCh <- server.Start(ctx) }()
+	time.Sleep(100 * time.Millisecond)
+
+	// Connect and send nothing. The server must close the connection once the
+	// first read deadline expires; observe that as a read returning (EOF or
+	// timeout-driven close) well before the test deadline.
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	buf := make([]byte, 1)
+	readDone := make(chan error, 1)
+	go func() {
+		_, err := conn.Read(buf)
+		readDone <- err
+	}()
+
+	select {
+	case err := <-readDone:
+		if err == nil {
+			t.Error("expected connection close, got data")
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("idle connection was not closed by the first-read deadline")
+	}
+}
+
+// TestUnixRateLimit verifies that a configured rate limit rejects burst
+// requests with the shared rate-limited JSON-RPC code.
+func TestUnixRateLimit(t *testing.T) {
+	storage := NewMockStorage()
+	initTestFacade(t, storage)
+	server, err := NewServer(&ServerConfig{
+		SocketPath:      tempSocketPath(t),
+		Logger:          &mockLogger{},
+		EnableRateLimit: true,
+		RateLimitConfig: &middleware.RateLimitConfig{RequestsPerSecond: 1, Burst: 1},
+	})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	defer server.Shutdown(context.Background())
+
+	req := []byte(`{"jsonrpc":"2.0","method":"health","params":{},"id":1}`)
+
+	first := server.processRequest(context.Background(), req)
+	if first.Error != nil {
+		t.Fatalf("first request should pass, got %+v", first.Error)
+	}
+
+	second := server.processRequest(context.Background(), req)
+	if second.Error == nil || second.Error.Code != jsonrpc.CodeRateLimited {
+		t.Errorf("second request should be rate limited with %d, got %+v", jsonrpc.CodeRateLimited, second.Error)
 	}
 }
 

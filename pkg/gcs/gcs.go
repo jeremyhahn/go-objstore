@@ -44,6 +44,7 @@ type gcsObject interface {
 	NewReader(ctx context.Context) (io.ReadCloser, error)
 	Delete(ctx context.Context) error
 	Attrs(ctx context.Context) (*storage.ObjectAttrs, error)
+	Update(ctx context.Context, uattrs storage.ObjectAttrsToUpdate) (*storage.ObjectAttrs, error)
 }
 
 type gcsBucket interface {
@@ -85,10 +86,13 @@ func (i iteratorWrapper) Next() (*storage.ObjectAttrs, error) {
 
 // Function variables to enable unit testing without real network I/O.
 var (
-	gcsNewWriterFn      = func(o *storage.ObjectHandle, ctx context.Context) io.WriteCloser { w := o.NewWriter(ctx); return w }
-	gcsNewReaderFn      = func(o *storage.ObjectHandle, ctx context.Context) (io.ReadCloser, error) { return o.NewReader(ctx) }
-	gcsDeleteFn         = func(o *storage.ObjectHandle, ctx context.Context) error { return o.Delete(ctx) }
-	gcsAttrsFn          = func(o *storage.ObjectHandle, ctx context.Context) (*storage.ObjectAttrs, error) { return o.Attrs(ctx) }
+	gcsNewWriterFn    = func(o *storage.ObjectHandle, ctx context.Context) io.WriteCloser { w := o.NewWriter(ctx); return w }
+	gcsNewReaderFn    = func(o *storage.ObjectHandle, ctx context.Context) (io.ReadCloser, error) { return o.NewReader(ctx) }
+	gcsDeleteFn       = func(o *storage.ObjectHandle, ctx context.Context) error { return o.Delete(ctx) }
+	gcsAttrsFn        = func(o *storage.ObjectHandle, ctx context.Context) (*storage.ObjectAttrs, error) { return o.Attrs(ctx) }
+	gcsUpdateObjectFn = func(o *storage.ObjectHandle, ctx context.Context, uattrs storage.ObjectAttrsToUpdate) (*storage.ObjectAttrs, error) {
+		return o.Update(ctx, uattrs)
+	}
 	gcsGetBucketAttrsFn = func(ctx context.Context, b *storage.BucketHandle) (*storage.BucketAttrs, error) { return b.Attrs(ctx) }
 	gcsUpdateBucketFn   = func(ctx context.Context, b *storage.BucketHandle, uattrs storage.BucketAttrsToUpdate) (*storage.BucketAttrs, error) {
 		return b.Update(ctx, uattrs)
@@ -104,6 +108,9 @@ func (o objectWrapper) NewReader(ctx context.Context) (io.ReadCloser, error) {
 func (o objectWrapper) Delete(ctx context.Context) error { return gcsDeleteFn(o.ObjectHandle, ctx) }
 func (o objectWrapper) Attrs(ctx context.Context) (*storage.ObjectAttrs, error) {
 	return gcsAttrsFn(o.ObjectHandle, ctx)
+}
+func (o objectWrapper) Update(ctx context.Context, uattrs storage.ObjectAttrsToUpdate) (*storage.ObjectAttrs, error) {
+	return gcsUpdateObjectFn(o.ObjectHandle, ctx, uattrs)
 }
 
 // GCS is a storage backend that stores files in Google Cloud Storage.
@@ -145,8 +152,14 @@ func (g *GCS) Configure(settings map[string]string) error {
 
 // Put stores an object in the backend.
 func (g *GCS) Put(key string, data io.Reader) error {
+	if err := common.ValidateKey(key); err != nil {
+		return err
+	}
 	w := g.client.Bucket(g.bucket).Object(key).NewWriter(context.Background())
 	if _, err := io.Copy(w, data); err != nil {
+		// Close the writer to release resources; ignore the close error since
+		// the copy error is the primary failure.
+		_ = w.Close()
 		return err
 	}
 	return w.Close()
@@ -154,11 +167,17 @@ func (g *GCS) Put(key string, data io.Reader) error {
 
 // Get retrieves an object from the backend.
 func (g *GCS) Get(key string) (io.ReadCloser, error) {
+	if err := common.ValidateKey(key); err != nil {
+		return nil, err
+	}
 	return g.client.Bucket(g.bucket).Object(key).NewReader(context.Background())
 }
 
 // Delete removes an object from the backend.
 func (g *GCS) Delete(key string) error {
+	if err := common.ValidateKey(key); err != nil {
+		return err
+	}
 	return g.client.Bucket(g.bucket).Object(key).Delete(context.Background())
 }
 
@@ -281,6 +300,11 @@ func (g *GCS) AddPolicy(policy common.LifecyclePolicy) error {
 }
 
 // RemovePolicy removes a lifecycle policy by updating GCS bucket lifecycle rules.
+// GCS lifecycle rules carry no identifiers, so the id must follow the
+// "rule-<index>" scheme that GetPolicies uses to synthesize policy IDs. The
+// identified rule's translated condition (prefix + age, the same condition
+// AddPolicy writes) determines which rule(s) are removed. An id that does not
+// resolve to an existing rule yields an error wrapping common.ErrPolicyNotFound.
 func (g *GCS) RemovePolicy(id string) error {
 	g.policiesMutex.Lock()
 	defer g.policiesMutex.Unlock()
@@ -294,16 +318,49 @@ func (g *GCS) RemovePolicy(id string) error {
 		return err
 	}
 
-	// If no lifecycle rules exist, nothing to remove
-	if len(attrs.Lifecycle.Rules) == 0 {
-		return nil
+	// Resolve the id to a rule using the same "rule-<index>" scheme as GetPolicies.
+	index := -1
+	for i := range attrs.Lifecycle.Rules {
+		if fmt.Sprintf("rule-%d", i) == id {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		return fmt.Errorf("%w: %s", common.ErrPolicyNotFound, id)
 	}
 
-	// Note: GCS doesn't have rule IDs, so we can't directly match by ID
-	// This is a limitation - we return without error but log a warning
-	// In practice, you'd need to identify rules by their conditions
-	// For now, we return nil to maintain compatibility
-	return nil
+	// Remove every rule matching the resolved rule's condition (prefix + age),
+	// mirroring the condition AddPolicy uses to translate a policy into a rule.
+	target := &attrs.Lifecycle.Rules[index]
+	prefix := rulePrefix(target)
+	age := target.Condition.AgeInDays
+
+	rules := make([]storage.LifecycleRule, 0, len(attrs.Lifecycle.Rules))
+	for i := range attrs.Lifecycle.Rules {
+		rule := &attrs.Lifecycle.Rules[i]
+		if rulePrefix(rule) == prefix && rule.Condition.AgeInDays == age {
+			continue
+		}
+		rules = append(rules, *rule)
+	}
+
+	_, err = bucket.Update(ctx, storage.BucketAttrsToUpdate{
+		Lifecycle: &storage.Lifecycle{
+			Rules: rules,
+		},
+	})
+
+	return err
+}
+
+// rulePrefix returns the first prefix of a lifecycle rule condition, or the
+// empty string when the rule has no prefix condition.
+func rulePrefix(rule *storage.LifecycleRule) string {
+	if len(rule.Condition.MatchesPrefix) > 0 {
+		return rule.Condition.MatchesPrefix[0]
+	}
+	return ""
 }
 
 // GetPolicies returns all lifecycle policies by fetching GCS bucket lifecycle rules.

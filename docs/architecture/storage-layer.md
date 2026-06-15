@@ -4,7 +4,10 @@ The storage layer provides a unified interface for object storage operations acr
 
 ## Storage Interface
 
-The `Storage` interface defines 14 methods organized into four categories:
+The `Storage` interface embeds `LifecycleManager` and defines 19 methods organized into five categories:
+
+### Configuration
+- `Configure` - Initialize backend with settings and credentials
 
 ### Basic Operations
 - `Put` - Store an object
@@ -23,6 +26,11 @@ Context-aware versions of basic operations that support cancellation and timeout
 - `PutWithMetadata` - Store an object with metadata
 - `GetMetadata` - Retrieve only object metadata
 - `UpdateMetadata` - Modify existing metadata
+
+### Lifecycle Management (Embedded)
+- `AddPolicy` - Add a retention or archival policy
+- `RemovePolicy` - Remove an existing policy
+- `GetPolicies` - Retrieve all policies
 
 ### Advanced Operations
 - `Exists` - Check if an object exists without retrieving it

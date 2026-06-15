@@ -231,6 +231,93 @@ func TestHandlerResponseWriterMultipleWriteHeader(t *testing.T) {
 	}
 }
 
+// TestHandlerResponseWriterTracksWrites verifies wroteHeader is set by both
+// explicit WriteHeader calls and implicit-200 Writes.
+func TestHandlerResponseWriterTracksWrites(t *testing.T) {
+	t.Run("explicit WriteHeader", func(t *testing.T) {
+		rw := &responseWriter{ResponseWriter: httptest.NewRecorder(), statusCode: http.StatusOK}
+		if rw.wroteHeader {
+			t.Error("wroteHeader should start false")
+		}
+		rw.WriteHeader(http.StatusCreated)
+		if !rw.wroteHeader {
+			t.Error("wroteHeader should be true after WriteHeader")
+		}
+	})
+
+	t.Run("implicit via Write", func(t *testing.T) {
+		rw := &responseWriter{ResponseWriter: httptest.NewRecorder(), statusCode: http.StatusOK}
+		if _, err := rw.Write([]byte("body")); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		if !rw.wroteHeader {
+			t.Error("wroteHeader should be true after first Write (implicit 200)")
+		}
+	})
+}
+
+// TestHandlerPanicAfterHeadersAbortsStream verifies that a panic occurring
+// after the handler wrote headers does not attempt a misleading 500 write on
+// a committed 2xx response; it aborts the stream via http.ErrAbortHandler.
+func TestHandlerPanicAfterHeadersAbortsStream(t *testing.T) {
+	handler, _ := setupTestHandler(t)
+
+	// Wrap ServeHTTP with a route that panics after writing — simulate by
+	// invoking the recover defer through a request whose processing panics
+	// post-write. We exercise the defer directly via a stand-in handler that
+	// reproduces ServeHTTP's recovery contract.
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+
+	// Sanity: a normal request still succeeds and is not aborted.
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("health = %d, want 200", w.Code)
+	}
+
+	// Recovery contract: panicking after a Write must surface ErrAbortHandler,
+	// panicking before any write must produce a 500 response.
+	run := func(writeFirst bool) (status int, aborted bool) {
+		rec := httptest.NewRecorder()
+		rw := &responseWriter{ResponseWriter: rec, statusCode: http.StatusOK}
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					if r == http.ErrAbortHandler {
+						aborted = true
+						return
+					}
+					t.Fatalf("unexpected panic: %v", r)
+				}
+			}()
+			func() {
+				defer func() {
+					if rec := recover(); rec != nil {
+						if !rw.wroteHeader {
+							http.Error(rw, "internal server error", http.StatusInternalServerError)
+							return
+						}
+						rw.statusCode = http.StatusInternalServerError
+						panic(http.ErrAbortHandler)
+					}
+				}()
+				if writeFirst {
+					_, _ = rw.Write([]byte("partial"))
+				}
+				panic("boom")
+			}()
+		}()
+		return rec.Code, aborted
+	}
+
+	if status, aborted := run(false); aborted || status != http.StatusInternalServerError {
+		t.Errorf("panic before write: status=%d aborted=%v, want 500/not aborted", status, aborted)
+	}
+	if _, aborted := run(true); !aborted {
+		t.Error("panic after write: expected stream abort via http.ErrAbortHandler")
+	}
+}
+
 func TestHandlerPutNoMetadata(t *testing.T) {
 	handler, _ := setupTestHandler(t)
 

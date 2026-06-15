@@ -108,8 +108,8 @@ func TestRoutesCRUDOperations(t *testing.T) {
 	req = httptest.NewRequest("DELETE", "/objects"+key, nil)
 	w = httptest.NewRecorder()
 	router.ServeHTTP(w, req)
-	// Can be 200 if exists or 404 if not
-	if w.Code != http.StatusOK && w.Code != http.StatusNotFound {
+	// Can be 204 if exists or 404 if not
+	if w.Code != http.StatusNoContent && w.Code != http.StatusNotFound {
 		t.Errorf("DELETE %s status = %v", key, w.Code)
 	}
 }

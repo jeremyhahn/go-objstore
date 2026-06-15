@@ -7,14 +7,11 @@ from typing import BinaryIO, Dict, Iterator, List, Optional, Union
 import requests
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from objstore._http import build_auth_headers, handle_http_error
 from objstore.exceptions import (
-    AuthenticationError,
     ConnectionError,
     ObjectNotFoundError,
-    ObjectStoreError,
-    ServerError,
     TimeoutError,
-    ValidationError,
 )
 from objstore.models import (
     ArchiveResponse,
@@ -48,6 +45,9 @@ class RestClient:
         api_version: str = "v1",
         timeout: int = 30,
         max_retries: int = 3,
+        token: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+        tenant_id: Optional[str] = None,
     ) -> None:
         """Initialize REST client.
 
@@ -56,12 +56,28 @@ class RestClient:
             api_version: API version to use
             timeout: Request timeout in seconds
             max_retries: Maximum number of retry attempts
+            token: Optional bearer token for Authorization header
+            headers: Optional dict of additional request headers
+            tenant_id: Optional tenant identifier (sent as X-Tenant-ID)
         """
         self.base_url = base_url.rstrip("/")
         self.api_version = api_version
         self.timeout = timeout
         self.max_retries = max_retries
+        self.token = token
+        self.extra_headers = headers or {}
+        self.tenant_id = tenant_id
         self.session = requests.Session()
+        self._apply_session_headers()
+
+    def _apply_session_headers(self) -> None:
+        """Apply auth and custom headers to the underlying session.
+
+        Called once on construction so every request inherits them.
+        """
+        self.session.headers.update(
+            build_auth_headers(self.token, self.tenant_id, self.extra_headers)
+        )
 
     def _url(self, path: str) -> str:
         """Construct full URL from path.
@@ -86,29 +102,32 @@ class RestClient:
         Raises:
             ObjectStoreError: For various error conditions
         """
-        if response.status_code == 404:
-            raise ObjectNotFoundError("Object not found")
-        elif response.status_code == 401:
-            raise AuthenticationError("Authentication failed")
-        elif response.status_code == 400:
-            try:
-                error_data = response.json()
-                message = error_data.get("message", "Validation error")
-            except Exception:
-                message = response.text or "Validation error"
-            raise ValidationError(message)
-        elif response.status_code >= 500:
-            try:
-                error_data = response.json()
-                message = error_data.get("message", "Server error")
-            except Exception:
-                message = response.text or "Server error"
-            raise ServerError(message, status_code=response.status_code)
-        else:
-            raise ObjectStoreError(
-                f"HTTP {response.status_code}: {response.text}",
-                status_code=response.status_code,
-            )
+        handle_http_error(response)
+
+    @staticmethod
+    def _parse_custom_header(response: requests.Response) -> Dict[str, str]:
+        """Parse the custom metadata map from the X-Object-Metadata header.
+
+        The server returns custom metadata as a JSON string->string object in
+        the X-Object-Metadata response header. A missing or malformed header
+        yields an empty map.
+
+        Args:
+            response: HTTP response
+
+        Returns:
+            Custom metadata map
+        """
+        header = response.headers.get("X-Object-Metadata")
+        if not header:
+            return {}
+        try:
+            parsed = json.loads(header)
+        except (ValueError, TypeError):
+            return {}
+        if not isinstance(parsed, dict):
+            return {}
+        return {str(k): str(v) for k, v in parsed.items()}
 
     @retry(
         stop=stop_after_attempt(3),
@@ -197,8 +216,10 @@ class RestClient:
             if response.status_code == 200:
                 metadata = Metadata(
                     content_type=response.headers.get("Content-Type"),
+                    content_encoding=response.headers.get("Content-Encoding"),
                     size=int(response.headers.get("Content-Length", 0)),
                     etag=response.headers.get("ETag"),
+                    custom=self._parse_custom_header(response),
                 )
                 return response.content, metadata
 
@@ -249,6 +270,83 @@ class RestClient:
         wait=wait_exponential(multiplier=1, min=1, max=10),
         reraise=True,
     )
+    def put_stream(
+        self,
+        key: str,
+        data: Union[bytes, BinaryIO],
+        metadata: Optional[Metadata] = None,
+        chunk_size: int = 8192,
+    ) -> PutResponse:
+        """Upload an object from a stream or file-like object.
+
+        Streams the data directly from the provided source without loading
+        the entire payload into memory, using chunked transfer encoding.
+
+        Args:
+            key: Object key/path
+            data: Byte stream or file-like object to upload
+            metadata: Optional metadata
+            chunk_size: Size of chunks to read from the source (bytes)
+
+        Returns:
+            PutResponse with operation result
+
+        Raises:
+            ObjectStoreError: On failure
+        """
+        url = self._url(f"objects/{key}")
+
+        def _chunked_iter(source: Union[bytes, BinaryIO]) -> Iterator[bytes]:
+            """Yield fixed-size chunks from a bytes or file-like source."""
+            if isinstance(source, bytes):
+                for i in range(0, len(source), chunk_size):
+                    yield source[i:i + chunk_size]
+            else:
+                while True:
+                    chunk = source.read(chunk_size)
+                    if not chunk:
+                        break
+                    yield chunk
+
+        try:
+            headers: Dict[str, str] = {}
+            if metadata:
+                if metadata.content_type:
+                    headers["Content-Type"] = metadata.content_type
+                if metadata.content_encoding:
+                    headers["Content-Encoding"] = metadata.content_encoding
+                if metadata.custom:
+                    headers["X-Object-Metadata"] = json.dumps(metadata.custom)
+
+            response = self.session.put(
+                url,
+                data=_chunked_iter(data),
+                headers=headers,
+                timeout=self.timeout,
+                stream=True,
+            )
+
+            if response.status_code == 201:
+                result = response.json()
+                return PutResponse(
+                    success=True,
+                    message=result.get("message", "Object uploaded successfully"),
+                    etag=result.get("data", {}).get("etag"),
+                )
+
+            self._handle_error(response)
+            return PutResponse(success=False, message="Upload failed")
+
+        except requests.exceptions.Timeout:
+            raise TimeoutError("Request timed out")
+        except requests.exceptions.ConnectionError as e:
+            raise ConnectionError(f"Connection failed: {str(e)}")
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        reraise=True,
+    )
     def delete(self, key: str) -> DeleteResponse:
         """Delete an object.
 
@@ -265,6 +363,11 @@ class RestClient:
 
         try:
             response = self.session.delete(url, timeout=self.timeout)
+
+            # The server returns 204 No Content (no body); tolerate 200 + JSON
+            # from older servers.
+            if response.status_code == 204:
+                return DeleteResponse(success=True, message="Object deleted successfully")
 
             if response.status_code == 200:
                 result = response.json()
@@ -379,7 +482,15 @@ class RestClient:
 
         try:
             response = self.session.head(url, timeout=self.timeout)
-            return ExistsResponse(exists=response.status_code == 200)
+
+            if response.status_code == 200:
+                return ExistsResponse(exists=True)
+
+            if response.status_code == 404:
+                return ExistsResponse(exists=False)
+
+            self._handle_error(response)
+            return ExistsResponse(exists=False)
 
         except requests.exceptions.Timeout:
             raise TimeoutError("Request timed out")
@@ -410,12 +521,22 @@ class RestClient:
 
             if response.status_code == 200:
                 data = response.json()
+                # Custom metadata is carried in the X-Object-Metadata response
+                # header (JSON string->string map). The /metadata/{key} body
+                # also returns the custom map under the "metadata" key, so fall
+                # back to that when the header is absent.
+                custom = self._parse_custom_header(response)
+                if not custom:
+                    body_custom = data.get("metadata")
+                    if isinstance(body_custom, dict):
+                        custom = {str(k): str(v) for k, v in body_custom.items()}
                 return Metadata(
-                    content_type=data.get("metadata", {}).get("content_type"),
-                    content_encoding=data.get("metadata", {}).get("content_encoding"),
+                    content_type=data.get("content_type")
+                    or response.headers.get("Content-Type"),
+                    content_encoding=response.headers.get("Content-Encoding"),
                     size=data.get("size"),
                     etag=data.get("etag"),
-                    custom=data.get("metadata", {}),
+                    custom=custom,
                 )
 
             self._handle_error(response)
@@ -455,16 +576,6 @@ class RestClient:
             )
 
             if response.status_code == 200:
-                result = response.json()
-                return PolicyResponse(
-                    success=True, message=result.get("message", "Metadata updated successfully")
-                )
-
-            # Server may return 201 if it creates a metadata object instead of updating
-            # This is an API inconsistency that should be fixed server-side
-            if response.status_code == 201:
-                # Check if the object exists first
-                # For now, treat this as success but it's not ideal
                 result = response.json()
                 return PolicyResponse(
                     success=True, message=result.get("message", "Metadata updated successfully")
@@ -859,14 +970,15 @@ class RestClient:
 
             if response.status_code == 200:
                 data = response.json()
-                return ReplicationPolicy(**data.get("policy", {}))
+                # The server responds with a bare ReplicationPolicyResponse
+                # object (no "policy" wrapper key).
+                return ReplicationPolicy(**data)
 
             self._handle_error(response)
             return ReplicationPolicy(
                 id="",
                 source_backend="",
                 destination_backend="",
-                check_interval_seconds=0,
             )
 
         except requests.exceptions.Timeout:
@@ -947,12 +1059,13 @@ class RestClient:
                 data = response.json()
                 from objstore.models import ReplicationStatus
 
-                status_data = data.get("status")
-                status = ReplicationStatus(**status_data) if status_data else None
+                # The server responds with a bare ReplicationStatusResponse
+                # object (no "status" wrapper key).
+                status = ReplicationStatus(**data)
                 return GetReplicationStatusResponse(
                     success=True,
                     status=status,
-                    message=data.get("message", "Status retrieved successfully"),
+                    message="Status retrieved successfully",
                 )
 
             self._handle_error(response)

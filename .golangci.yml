@@ -92,6 +92,12 @@ linters:
           - gocritic
         path: examples/
       - linters:
+          - err113
+          - errcheck
+          - gocritic
+          - gosec
+        path: tools/
+      - linters:
           - errcheck
         path: test/
         text: Error return value of .* is not checked
@@ -229,6 +235,11 @@ linters:
       - third_party$
       - builtin$
       - examples$
+      # SDK directories are linted by their own language toolchains. Exclude
+      # them (and any vendored node_modules Go sources, e.g. flatted) from the
+      # Go linter so local runs match GitHub CI, which never sees node_modules.
+      - api/sdks
+      - node_modules
 formatters:
   settings:
     gofmt:

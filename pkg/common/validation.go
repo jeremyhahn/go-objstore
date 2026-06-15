@@ -34,6 +34,14 @@ const (
 	MaxMetadataEntries = 100
 )
 
+const (
+	// fieldKey is the validation error field name for an object key.
+	fieldKey = "key"
+
+	// fieldMetadataKey is the validation error field name for a metadata key.
+	fieldMetadataKey = "metadata.key"
+)
+
 // ValidationError represents a validation error
 type ValidationError struct {
 	Field   string
@@ -47,6 +55,11 @@ func (e *ValidationError) Error() string {
 	return fmt.Sprintf("validation error: %s", e.Message)
 }
 
+// Unwrap reports validation failures as ErrInvalidArgument so Classify maps
+// them (and any error wrapping them) to CodeInvalidArgument on every
+// transport.
+func (e *ValidationError) Unwrap() error { return ErrInvalidArgument }
+
 // ValidateKey validates an object key for security issues
 // Returns error if the key:
 // - Is empty
@@ -58,7 +71,7 @@ func (e *ValidationError) Error() string {
 func ValidateKey(key string) error {
 	if key == "" {
 		return &ValidationError{
-			Field:   "key",
+			Field:   fieldKey,
 			Message: "key cannot be empty",
 		}
 	}
@@ -67,7 +80,7 @@ func ValidateKey(key string) error {
 	keyLen := len(key)
 	if keyLen > MaxKeyLength {
 		return &ValidationError{
-			Field:   "key",
+			Field:   fieldKey,
 			Message: fmt.Sprintf("key length exceeds maximum of %d bytes", MaxKeyLength),
 		}
 	}
@@ -75,7 +88,7 @@ func ValidateKey(key string) error {
 	// Check for Windows-style absolute paths (C:\, D:\, etc.)
 	if keyLen >= 2 && key[1] == ':' {
 		return &ValidationError{
-			Field:   "key",
+			Field:   fieldKey,
 			Message: "key cannot be an absolute path",
 		}
 	}
@@ -89,7 +102,7 @@ func ValidateKey(key string) error {
 		// Check for null bytes
 		if c == '\x00' {
 			return &ValidationError{
-				Field:   "key",
+				Field:   fieldKey,
 				Message: "key cannot contain null bytes",
 			}
 		}
@@ -97,7 +110,7 @@ func ValidateKey(key string) error {
 		// Check for control characters
 		if c == '\n' || c == '\r' || c == '\t' {
 			return &ValidationError{
-				Field:   "key",
+				Field:   fieldKey,
 				Message: fmt.Sprintf("key contains invalid character sequence: %q", string(c)),
 			}
 		}
@@ -108,14 +121,14 @@ func ValidateKey(key string) error {
 			// Check for double backslash
 			if i+1 < keyLen && key[i+1] == '\\' {
 				return &ValidationError{
-					Field:   "key",
+					Field:   fieldKey,
 					Message: `key contains invalid character sequence: "\\"`,
 				}
 			}
 			// Check for ".." with backslashes
 			if i+2 < keyLen && key[i+1] == '.' && key[i+2] == '.' {
 				return &ValidationError{
-					Field:   "key",
+					Field:   fieldKey,
 					Message: "key cannot contain path traversal sequences (..)",
 				}
 			}
@@ -125,14 +138,14 @@ func ValidateKey(key string) error {
 		if c == '/' {
 			if i+1 < keyLen && key[i+1] == '/' {
 				return &ValidationError{
-					Field:   "key",
+					Field:   fieldKey,
 					Message: `key contains invalid character sequence: "//"`,
 				}
 			}
 			// Check for "../" pattern
 			if i >= 2 && key[i-1] == '.' && key[i-2] == '.' && (i == 2 || key[i-3] == '/') {
 				return &ValidationError{
-					Field:   "key",
+					Field:   fieldKey,
 					Message: "key cannot contain path traversal sequences (..)",
 				}
 			}
@@ -140,7 +153,7 @@ func ValidateKey(key string) error {
 			if i+2 < keyLen && key[i+1] == '.' && key[i+2] == '.' {
 				if i+3 >= keyLen || key[i+3] == '/' {
 					return &ValidationError{
-						Field:   "key",
+						Field:   fieldKey,
 						Message: "key cannot contain path traversal sequences (..)",
 					}
 				}
@@ -152,7 +165,7 @@ func ValidateKey(key string) error {
 	if keyLen >= 2 && key[0] == '.' && key[1] == '.' {
 		if keyLen == 2 || key[2] == '/' || key[2] == '\\' {
 			return &ValidationError{
-				Field:   "key",
+				Field:   fieldKey,
 				Message: "key cannot contain path traversal sequences (..)",
 			}
 		}
@@ -161,7 +174,7 @@ func ValidateKey(key string) error {
 	// Check if key is valid UTF-8 (only if necessary)
 	if !utf8.ValidString(key) {
 		return &ValidationError{
-			Field:   "key",
+			Field:   fieldKey,
 			Message: "key must be valid UTF-8",
 		}
 	}
@@ -170,7 +183,7 @@ func ValidateKey(key string) error {
 	// Only do filepath.IsAbs if no backslashes (Windows check already done above)
 	if !hasBackslash && filepath.IsAbs(key) {
 		return &ValidationError{
-			Field:   "key",
+			Field:   fieldKey,
 			Message: "key cannot be an absolute path",
 		}
 	}
@@ -202,28 +215,38 @@ func ValidateMetadata(metadata map[string]string) error {
 		// Check key
 		if key == "" {
 			return &ValidationError{
-				Field:   "metadata.key",
+				Field:   fieldMetadataKey,
 				Message: "metadata key cannot be empty",
 			}
 		}
 
 		if len(key) > MaxMetadataKeyLength {
 			return &ValidationError{
-				Field:   "metadata.key",
+				Field:   fieldMetadataKey,
 				Message: fmt.Sprintf("metadata key '%s' exceeds maximum length of %d bytes", key, MaxMetadataKeyLength),
 			}
 		}
 
 		if strings.ContainsRune(key, '\x00') {
 			return &ValidationError{
-				Field:   "metadata.key",
+				Field:   fieldMetadataKey,
 				Message: "metadata key cannot contain null bytes",
+			}
+		}
+
+		// Reject ASCII control characters (CR, LF, tabs, DEL, etc.) as
+		// defense-in-depth against header reflection / injection when the
+		// metadata is later echoed back in response headers.
+		if containsControlChar(key) {
+			return &ValidationError{
+				Field:   fieldMetadataKey,
+				Message: "metadata key cannot contain control characters",
 			}
 		}
 
 		if !utf8.ValidString(key) {
 			return &ValidationError{
-				Field:   "metadata.key",
+				Field:   fieldMetadataKey,
 				Message: "metadata key must be valid UTF-8",
 			}
 		}
@@ -243,6 +266,16 @@ func ValidateMetadata(metadata map[string]string) error {
 			}
 		}
 
+		// Reject ASCII control characters (CR, LF, tabs, DEL, etc.) as
+		// defense-in-depth against header reflection / injection when the
+		// metadata is later echoed back in response headers.
+		if containsControlChar(value) {
+			return &ValidationError{
+				Field:   "metadata.value",
+				Message: "metadata value cannot contain control characters",
+			}
+		}
+
 		if !utf8.ValidString(value) {
 			return &ValidationError{
 				Field:   "metadata.value",
@@ -252,6 +285,19 @@ func ValidateMetadata(metadata map[string]string) error {
 	}
 
 	return nil
+}
+
+// containsControlChar reports whether s contains any ASCII control
+// character: the C0 range (0x00-0x1F, which includes CR, LF and tab) or
+// DEL (0x7F). It is used to reject metadata that could be reflected into
+// response headers and enable header injection.
+func containsControlChar(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c < 0x20 || c == 0x7F {
+			return true
+		}
+	}
+	return false
 }
 
 // SanitizeErrorMessage removes sensitive internal details from error messages

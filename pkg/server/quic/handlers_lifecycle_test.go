@@ -86,7 +86,7 @@ func (m *mockLifecycleStorage) Get(key string) (io.ReadCloser, error) {
 func (m *mockLifecycleStorage) GetWithContext(ctx context.Context, key string) (io.ReadCloser, error) {
 	content, exists := m.data[key]
 	if !exists {
-		return nil, errors.New("object not found")
+		return nil, common.ErrKeyNotFound
 	}
 	return io.NopCloser(bytes.NewReader(content)), nil
 }
@@ -94,14 +94,14 @@ func (m *mockLifecycleStorage) GetWithContext(ctx context.Context, key string) (
 func (m *mockLifecycleStorage) GetMetadata(ctx context.Context, key string) (*common.Metadata, error) {
 	metadata, exists := m.metadata[key]
 	if !exists {
-		return nil, errors.New("object not found")
+		return nil, common.ErrMetadataNotFound
 	}
 	return metadata, nil
 }
 
 func (m *mockLifecycleStorage) UpdateMetadata(ctx context.Context, key string, metadata *common.Metadata) error {
 	if _, exists := m.data[key]; !exists {
-		return errors.New("object not found")
+		return common.ErrKeyNotFound
 	}
 	m.metadata[key] = metadata
 	return nil
@@ -113,7 +113,7 @@ func (m *mockLifecycleStorage) Delete(key string) error {
 
 func (m *mockLifecycleStorage) DeleteWithContext(ctx context.Context, key string) error {
 	if _, exists := m.data[key]; !exists {
-		return errors.New("object not found")
+		return common.ErrKeyNotFound
 	}
 	delete(m.data, key)
 	delete(m.metadata, key)
@@ -160,7 +160,7 @@ func (m *mockLifecycleStorage) Archive(key string, destination common.Archiver) 
 		return m.archiveError
 	}
 	if _, exists := m.data[key]; !exists {
-		return errors.New("object not found")
+		return common.ErrKeyNotFound
 	}
 	return nil
 }
@@ -171,7 +171,7 @@ func (m *mockLifecycleStorage) AddPolicy(policy common.LifecyclePolicy) error {
 	}
 	for _, p := range m.policies {
 		if p.ID == policy.ID {
-			return errors.New("policy already exists")
+			return common.ErrAlreadyExists
 		}
 	}
 	m.policies = append(m.policies, policy)
@@ -188,7 +188,7 @@ func (m *mockLifecycleStorage) RemovePolicy(id string) error {
 			return nil
 		}
 	}
-	return errors.New("policy not found")
+	return common.ErrPolicyNotFound
 }
 
 func (m *mockLifecycleStorage) GetPolicies() ([]common.LifecyclePolicy, error) {

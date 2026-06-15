@@ -33,16 +33,23 @@ import (
 	"google.golang.org/grpc/reflection"
 )
 
+// Structured log field keys used across the gRPC server.
+const (
+	fieldError  = "error"
+	fieldMethod = "method"
+)
+
 // Server represents a gRPC server for object storage operations.
 type Server struct {
 	objstorepb.UnimplementedObjectStoreServer
 
-	backend    string // Backend name (empty = default)
-	opts       *ServerOptions
-	grpcServer *grpc.Server
-	listener   net.Listener
-	metrics    *MetricsCollector
-	mu         sync.RWMutex
+	backend     string // Backend name (empty = default)
+	opts        *ServerOptions
+	grpcServer  *grpc.Server
+	listener    net.Listener
+	metrics     *MetricsCollector
+	rateLimiter *middleware.RateLimiter
+	mu          sync.RWMutex
 }
 
 // NewServer creates a new gRPC server instance using the ObjstoreFacade.
@@ -100,10 +107,10 @@ func (s *Server) Start() error {
 	// Enable reflection if configured
 	if s.opts.EnableReflection {
 		reflection.Register(grpcServer)
-		s.opts.Logger.Info(context.TODO(), "gRPC server reflection enabled")
+		s.opts.Logger.Info(context.Background(), "gRPC server reflection enabled")
 	}
 
-	s.opts.Logger.Info(context.TODO(), "Starting gRPC server",
+	s.opts.Logger.Info(context.Background(), "Starting gRPC server",
 		adapters.Field{Key: "address", Value: s.opts.Address},
 	)
 
@@ -119,12 +126,16 @@ func (s *Server) Start() error {
 func (s *Server) Stop() {
 	s.mu.RLock()
 	grpcServer := s.grpcServer
+	limiter := s.rateLimiter
 	s.mu.RUnlock()
 
+	if limiter != nil {
+		limiter.Stop()
+	}
 	if grpcServer != nil {
-		s.opts.Logger.Info(context.TODO(), "Gracefully stopping gRPC server")
+		s.opts.Logger.Info(context.Background(), "Gracefully stopping gRPC server")
 		grpcServer.GracefulStop()
-		s.opts.Logger.Info(context.TODO(), "gRPC server stopped")
+		s.opts.Logger.Info(context.Background(), "gRPC server stopped")
 	}
 }
 
@@ -132,12 +143,16 @@ func (s *Server) Stop() {
 func (s *Server) ForceStop() {
 	s.mu.RLock()
 	grpcServer := s.grpcServer
+	limiter := s.rateLimiter
 	s.mu.RUnlock()
 
+	if limiter != nil {
+		limiter.Stop()
+	}
 	if grpcServer != nil {
-		s.opts.Logger.Warn(context.TODO(), "Force stopping gRPC server")
+		s.opts.Logger.Warn(context.Background(), "Force stopping gRPC server")
 		grpcServer.Stop()
-		s.opts.Logger.Info(context.TODO(), "gRPC server stopped")
+		s.opts.Logger.Info(context.Background(), "gRPC server stopped")
 	}
 }
 
@@ -166,20 +181,20 @@ func (s *Server) buildServerOptions() []grpc.ServerOption {
 	if s.opts.AdapterTLSConfig != nil {
 		tlsConfig, err := s.opts.AdapterTLSConfig.Build()
 		if err != nil {
-			s.opts.Logger.Error(context.TODO(), "Failed to build TLS config",
-				adapters.Field{Key: "error", Value: err.Error()},
+			s.opts.Logger.Error(context.Background(), "Failed to build TLS config",
+				adapters.Field{Key: fieldError, Value: err.Error()},
 			)
 		} else {
 			creds := credentials.NewTLS(tlsConfig)
 			opts = append(opts, grpc.Creds(creds))
-			s.opts.Logger.Info(context.TODO(), "gRPC TLS enabled",
+			s.opts.Logger.Info(context.Background(), "gRPC TLS enabled",
 				adapters.Field{Key: "tls_mode", Value: s.opts.AdapterTLSConfig.Mode},
 			)
 		}
 	} else if s.opts.TLSConfig != nil {
 		creds := credentials.NewTLS(s.opts.TLSConfig)
 		opts = append(opts, grpc.Creds(creds))
-		s.opts.Logger.Info(context.TODO(), "gRPC TLS enabled (legacy config)")
+		s.opts.Logger.Info(context.Background(), "gRPC TLS enabled (legacy config)")
 	}
 
 	// Set max concurrent streams
@@ -213,10 +228,16 @@ func (s *Server) buildServerOptions() []grpc.ServerOption {
 		streamInterceptors = append(streamInterceptors, middleware.RequestIDStreamInterceptor())
 	}
 
-	// Add rate limiting interceptors if enabled
+	// Add rate limiting interceptors if enabled. Unary and stream interceptors
+	// share one limiter so they draw from the same buckets; it is stopped in
+	// Stop/ForceStop.
 	if s.opts.EnableRateLimit {
-		unaryInterceptors = append(unaryInterceptors, middleware.RateLimitUnaryInterceptor(s.opts.RateLimitConfig, s.opts.Logger))
-		streamInterceptors = append(streamInterceptors, middleware.RateLimitStreamInterceptor(s.opts.RateLimitConfig, s.opts.Logger))
+		limiter := middleware.NewRateLimiter(s.opts.RateLimitConfig, s.opts.Logger)
+		s.mu.Lock()
+		s.rateLimiter = limiter
+		s.mu.Unlock()
+		unaryInterceptors = append(unaryInterceptors, limiter.UnaryInterceptor())
+		streamInterceptors = append(streamInterceptors, limiter.StreamInterceptor())
 	}
 
 	// Add audit interceptors if enabled (should be before auth to catch all requests)
@@ -228,6 +249,15 @@ func (s *Server) buildServerOptions() []grpc.ServerOption {
 	// Add authentication interceptors (always enabled, uses NoOpAuthenticator by default)
 	unaryInterceptors = append(unaryInterceptors, AuthenticationUnaryInterceptor(s.opts.Authenticator, s.opts.Logger))
 	streamInterceptors = append(streamInterceptors, AuthenticationStreamInterceptor(s.opts.Authenticator, s.opts.Logger))
+
+	// Add authorization interceptors (always enabled, uses NoOpAuthorizer by default).
+	// Runs after authentication so the principal is available in context.
+	authorizer := s.opts.Authorizer
+	if authorizer == nil {
+		authorizer = adapters.NewNoOpAuthorizer()
+	}
+	unaryInterceptors = append(unaryInterceptors, AuthorizationUnaryInterceptor(authorizer, s.opts.Logger))
+	streamInterceptors = append(streamInterceptors, AuthorizationStreamInterceptor(authorizer, s.opts.Logger))
 
 	// Add logging interceptors
 	if s.opts.EnableLogging {
