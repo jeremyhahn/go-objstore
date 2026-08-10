@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-08-10
+
+Version reconciliation. No functional change: the code in this release is
+the same tree that carried the 0.1.5-alpha stamp, plus package
+documentation.
+
+The workstation and dev server had diverged. The server carried test
+coverage work, a Go 1.26.4 bump and SDK parity; the workstation carried a
+release commit whose version stamping reverted VERSION and the eleven SDK
+manifests from 0.2.0 back to 0.1.5-alpha. The trees were reconciled in
+favour of the workstation, which was verified to contain all of the
+server's work, and the version is now restored to 0.2.0 -- the minor bump
+above the last published release, 0.1.5-alpha. No 0.2.0 tag had ever been
+cut, so nothing is superseded.
+
+### Added
+
+- Package-level doc.go for every package.
+
 ## [0.1.5-alpha] - 2026-06-15
 
 Cross-transport consistency, SDK hardening, and security fixes across the
