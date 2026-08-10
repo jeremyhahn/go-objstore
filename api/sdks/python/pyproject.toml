@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "go-objstore-sdk"
-version = "0.1.5-alpha"
+version = "0.2.0"
 description = "Python SDK for go-objstore with REST, gRPC, and QUIC/HTTP3 support"
 authors = ["Go ObjectStore Team"]
 license = "AGPL-3.0"

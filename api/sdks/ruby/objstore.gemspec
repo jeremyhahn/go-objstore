@@ -1,6 +1,6 @@
 Gem::Specification.new do |spec|
   spec.name          = "objstore"
-  spec.version       = "0.1.5-alpha"
+  spec.version       = "0.2.0"
   spec.authors       = ["Go ObjectStore Team"]
   spec.email         = ["info@go-objstore.dev"]
 
