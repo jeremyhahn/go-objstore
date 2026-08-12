@@ -46,13 +46,14 @@ coverage.txt
 coverage.out
 *.prof
 
-# Example binaries
+# Example binaries (anchored to repo root so they never match package dirs
+# such as pkg/storagefs/)
 examples/*/basic-usage
 examples/*/storagefs
 examples/*/encryption
 examples/*/lifecycle-policies
-basic-usage
-storagefs
+/basic-usage
+/storagefs
 
 # Server binaries built at repo root (use bin/ for release artifacts)
 /objstore

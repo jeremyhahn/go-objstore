@@ -1,6 +1,6 @@
 [package]
 name = "go-objstore"
-version = "0.2.0"
+version = "0.2.0-alpha"
 edition = "2021"
 authors = ["Go ObjectStore Contributors"]
 description = "Rust SDK for go-objstore with REST, gRPC, and QUIC/HTTP3 support"

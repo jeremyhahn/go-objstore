@@ -26,6 +26,9 @@ import (
 
 // Test rotate error paths
 func TestChangeLog_RotateError_FileCreate(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission test is not meaningful when running as root")
+	}
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "changelog.jsonl")
 

@@ -33,11 +33,14 @@ services:
 
   # Python SDK unit tests
   python-unit-tests:
+      # No source bind mount: the image is built from this SDK's source and
+      # already contains it, tests included. Mounting the tree over it is
+      # redundant on a normal host and impossible under a containerised CI
+      # runner, where the daemon is asked to mount a path that exists only
+      # inside the job container ("mkdir /workspace: file exists").
     build:
       context: .
       dockerfile: Dockerfile
-    volumes:
-      - .:/app
     command: pytest tests/unit/ -v --cov=objstore --cov-report=term-missing
     networks:
       - objstore-net

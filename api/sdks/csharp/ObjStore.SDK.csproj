@@ -7,7 +7,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>ObjStore.SDK</RootNamespace>
     <AssemblyName>ObjStore.SDK</AssemblyName>
-    <Version>0.2.0</Version>
+    <Version>0.2.0-alpha</Version>
     <Authors>Go-ObjStore Contributors</Authors>
     <Company>Go-ObjStore</Company>
     <Product>Go-ObjStore C# SDK</Product>

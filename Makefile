@@ -191,8 +191,11 @@ integration-test: integration-test-local integration-test-s3 integration-test-mi
 ## integration-test-local: Run local storage integration tests
 integration-test-local:
 	@echo "$(CYAN)$(BOLD)→ Running local storage integration tests...$(RESET)"
+# --build on every run: the source is baked into these images, so a cached
+# image from an earlier commit silently tests old code. That cost real
+# debugging time once already.
 	@cd test/integration/local && $(DOCKER_COMPOSE) down -v >/dev/null 2>&1 || true
-	@cd test/integration/local && $(DOCKER_COMPOSE) run --rm test
+	@cd test/integration/local && $(DOCKER_COMPOSE) run --build --rm test
 	@cd test/integration/local && $(DOCKER_COMPOSE) down -v
 	@echo "$(GREEN)✓ Local integration tests complete$(RESET)"
 
@@ -202,7 +205,7 @@ integration-test-s3:
 	@echo "$(CYAN)$(BOLD)→ Running S3/MinIO integration tests...$(RESET)"
 	@cd test/integration/s3 && $(DOCKER_COMPOSE) down -v >/dev/null 2>&1 || true
 	@cd test/integration/s3 && $(DOCKER_COMPOSE) up -d minio
-	@cd test/integration/s3 && $(DOCKER_COMPOSE) run --rm test
+	@cd test/integration/s3 && $(DOCKER_COMPOSE) run --build --rm test
 	@cd test/integration/s3 && $(DOCKER_COMPOSE) down -v
 	@echo "$(GREEN)✓ S3 integration tests complete$(RESET)"
 
@@ -212,7 +215,7 @@ integration-test-minio:
 	@echo "$(CYAN)$(BOLD)→ Running MinIO integration tests...$(RESET)"
 	@cd test/integration/minio && $(DOCKER_COMPOSE) down -v >/dev/null 2>&1 || true
 	@cd test/integration/minio && $(DOCKER_COMPOSE) up -d minio
-	@cd test/integration/minio && $(DOCKER_COMPOSE) run --rm test
+	@cd test/integration/minio && $(DOCKER_COMPOSE) run --build --rm test
 	@cd test/integration/minio && $(DOCKER_COMPOSE) down -v
 	@echo "$(GREEN)✓ MinIO integration tests complete$(RESET)"
 
@@ -222,7 +225,7 @@ integration-test-azure:
 	@echo "$(CYAN)$(BOLD)→ Running Azure/Azurite integration tests...$(RESET)"
 	@cd test/integration/azure && $(DOCKER_COMPOSE) down -v >/dev/null 2>&1 || true
 	@cd test/integration/azure && $(DOCKER_COMPOSE) up -d azurite
-	@cd test/integration/azure && $(DOCKER_COMPOSE) run --rm test
+	@cd test/integration/azure && $(DOCKER_COMPOSE) run --build --rm test
 	@cd test/integration/azure && $(DOCKER_COMPOSE) down -v
 	@echo "$(GREEN)✓ Azure integration tests complete$(RESET)"
 
@@ -232,7 +235,7 @@ integration-test-gcs:
 	@echo "$(CYAN)$(BOLD)→ Running GCS emulator integration tests...$(RESET)"
 	@cd test/integration/gcs && $(DOCKER_COMPOSE) down -v >/dev/null 2>&1 || true
 	@cd test/integration/gcs && $(DOCKER_COMPOSE) up -d fake-gcs
-	@cd test/integration/gcs && $(DOCKER_COMPOSE) run --rm test
+	@cd test/integration/gcs && $(DOCKER_COMPOSE) run --build --rm test
 	@cd test/integration/gcs && $(DOCKER_COMPOSE) down -v
 	@echo "$(GREEN)✓ GCS integration tests complete$(RESET)"
 
@@ -241,7 +244,7 @@ integration-test-gcs:
 integration-test-factory:
 	@echo "$(CYAN)$(BOLD)→ Running factory integration tests...$(RESET)"
 	@cd test/integration/factory && $(DOCKER_COMPOSE) down -v >/dev/null 2>&1 || true
-	@cd test/integration/factory && $(DOCKER_COMPOSE) run --rm test
+	@cd test/integration/factory && $(DOCKER_COMPOSE) run --build --rm test
 	@cd test/integration/factory && $(DOCKER_COMPOSE) down -v
 	@echo "$(GREEN)✓ Factory integration tests complete$(RESET)"
 
@@ -250,7 +253,7 @@ integration-test-factory:
 integration-test-replication:
 	@echo "$(CYAN)$(BOLD)→ Running replication integration tests...$(RESET)"
 	@cd test/integration/replication && $(DOCKER_COMPOSE) down -v >/dev/null 2>&1 || true
-	@cd test/integration/replication && $(DOCKER_COMPOSE) run --rm test
+	@cd test/integration/replication && $(DOCKER_COMPOSE) run --build --rm test
 	@cd test/integration/replication && $(DOCKER_COMPOSE) down -v
 	@echo "$(GREEN)✓ Replication integration tests complete$(RESET)"
 

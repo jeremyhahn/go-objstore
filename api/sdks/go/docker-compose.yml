@@ -31,11 +31,14 @@ services:
 
   # Go SDK unit tests
   go-unit-tests:
+      # No source bind mount: the image is built from this SDK's source and
+      # already contains it, tests included. Mounting the tree over it is
+      # redundant on a normal host and impossible under a containerised CI
+      # runner, where the daemon is asked to mount a path that exists only
+      # inside the job container ("mkdir /workspace: file exists").
     build:
       context: ../../..
       dockerfile: api/sdks/go/Dockerfile
-    volumes:
-      - ../../..:/workspace
     working_dir: /workspace/api/sdks/go
     command: go test -v -race -timeout=30s ./...
     networks:
@@ -53,8 +56,6 @@ services:
       - OBJSTORE_REST_URL=http://objstore-server:8080
       - OBJSTORE_GRPC_HOST=objstore-server:50051
       - OBJSTORE_QUIC_URL=https://objstore-server:4433
-    volumes:
-      - ../../..:/workspace
     working_dir: /workspace/api/sdks/go
     command: go test -v -timeout=120s -tags=integration .
     networks:

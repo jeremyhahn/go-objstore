@@ -17,6 +17,9 @@ COPY sdks/typescript/package*.json ./
 COPY sdks/typescript/tsconfig.json ./
 COPY sdks/typescript/tsconfig.cjs.json ./
 COPY sdks/typescript/tsconfig.esm.json ./
+# jest.config.js is required to run the tests. It used to arrive via a bind
+# mount of the source tree, which hid the fact that the image was incomplete.
+COPY sdks/typescript/jest.config.js ./
 
 # Install dependencies
 RUN npm ci
