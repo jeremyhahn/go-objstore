@@ -302,6 +302,9 @@ func TestRotate_SuccessfulBackup(t *testing.T) {
 
 // Test rotate rename failure
 func TestRotate_RenameFailure(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("rename error test is not meaningful when running as root")
+	}
 	tmpDir := t.TempDir()
 	logPath := filepath.Join(tmpDir, "changes.jsonl")
 
@@ -711,6 +714,9 @@ func TestRewriteFile_PreservesOrder(t *testing.T) {
 
 // Test rotate after rename failure tries to reopen original file
 func TestRotate_RenameFailure_Reopen(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("rename error test is not meaningful when running as root")
+	}
 	tmpDir := t.TempDir()
 	logPath := filepath.Join(tmpDir, "changes.jsonl")
 
@@ -1039,6 +1045,9 @@ func TestRewriteFile_EdgeCases(t *testing.T) {
 
 // Test rotate and then reopen file error path
 func TestRotate_ReopenErrorAfterRename(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("reopen error test is not meaningful when running as root")
+	}
 	tmpDir := t.TempDir()
 	logPath := filepath.Join(tmpDir, "changes.jsonl")
 
