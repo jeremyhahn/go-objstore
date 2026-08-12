@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -30,9 +31,16 @@ func TestServer_StartHTTP_Integration(t *testing.T) {
 	storage.PutWithContext(context.Background(), "test.txt", strings.NewReader("hello world"))
 	initTestFacade(t, storage)
 
+	// A fixed port is shared by every process on the host. On a CI runner
+	// where jobs run concurrently on the host network, a second copy of this
+	// suite binds it first and the requests below reach an unrelated server --
+	// which answers 405, not the JSON-RPC this test expects. Let the kernel
+	// pick a free port on loopback instead.
+	address := freeLoopbackAddr(t)
+
 	server, err := NewServer(&ServerConfig{
 		Mode:        ModeHTTP,
-		HTTPAddress: ":18080", // Use non-standard port
+		HTTPAddress: address,
 		Backend:     "",
 	})
 	if err != nil {
@@ -48,8 +56,10 @@ func TestServer_StartHTTP_Integration(t *testing.T) {
 		errChan <- server.Start(ctx)
 	}()
 
-	// Give server time to start
-	time.Sleep(100 * time.Millisecond)
+	// Wait for the listener rather than assuming it is up within a fixed
+	// sleep, which fails on a loaded runner and wastes time on an idle one.
+	endpoint := "http://" + address
+	waitForListener(t, address, errChan)
 
 	// Test initialize request
 	initReq := JSONRPCRequest{
@@ -59,7 +69,7 @@ func TestServer_StartHTTP_Integration(t *testing.T) {
 	}
 
 	reqBody, _ := json.Marshal(initReq)
-	resp, err := http.Post("http://localhost:18080", "application/json", bytes.NewBuffer(reqBody))
+	resp, err := http.Post(endpoint, "application/json", bytes.NewBuffer(reqBody))
 	if err != nil {
 		// In CI the server must come up; fail loudly instead of masking breakage.
 		if os.Getenv("CI") != "" {
@@ -101,7 +111,7 @@ func TestServer_StartHTTP_Integration(t *testing.T) {
 	toolsCallReq.Params = paramsJSON
 
 	reqBody, _ = json.Marshal(toolsCallReq)
-	resp, err = http.Post("http://localhost:18080", "application/json", bytes.NewBuffer(reqBody))
+	resp, err = http.Post(endpoint, "application/json", bytes.NewBuffer(reqBody))
 	if err != nil {
 		t.Errorf("failed to call tool: %v", err)
 	} else {
@@ -288,4 +298,38 @@ func (m *mockResponseWriter) Write(data []byte) (int, error) {
 
 func (m *mockResponseWriter) WriteHeader(statusCode int) {
 	m.statusCode = statusCode
+}
+
+// freeLoopbackAddr reserves a loopback port, releases it, and returns the
+// address. The gap between release and rebind is far smaller a risk than a
+// constant every concurrent run shares.
+func freeLoopbackAddr(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve a port: %v", err)
+	}
+	defer l.Close()
+	return l.Addr().String()
+}
+
+// waitForListener blocks until the server accepts connections, or fails the
+// test if it exits or never comes up.
+func waitForListener(t *testing.T, address string, errChan <-chan error) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case err := <-errChan:
+			t.Fatalf("server exited before it was ready: %v", err)
+		default:
+		}
+		conn, err := net.DialTimeout("tcp", address, 100*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("server did not start listening on %s", address)
 }
