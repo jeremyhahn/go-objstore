@@ -32,7 +32,12 @@ RUN if [ "$BUILD_BACKENDS" = "local" ]; then \
     fi
 
 # Stage 2: Create minimal runtime image
-FROM alpine:latest
+# Pinned to a minor tag, not :latest. An unpinned base makes the image's
+# security posture depend on the day it was built: the same Dockerfile
+# produced an image with 15 CRITICAL/HIGH OpenSSL CVEs (libcrypto3 3.5.5-r0)
+# and, days later, a clean one (3.5.7-r0). 3.24 still receives patch updates,
+# so this pins the line without freezing out fixes.
+FROM alpine:3.24
 
 # Install runtime dependencies
 RUN apk add --no-cache ca-certificates tzdata
