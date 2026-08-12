@@ -215,9 +215,13 @@ jobs:
       with:
         args: '-no-fail -fmt json -out gosec-results.json -exclude-dir=examples ./...'
 
+    # upload-artifact v4+ refuses to run against any server that is not
+    # github.com -- it detects one and reports "not currently supported on
+    # GHES". Gitea presents as such, so this step is GitHub-only. The scan
+    # itself has already run by this point; only the artifact is skipped.
     - name: Upload gosec results as artifact
       uses: actions/upload-artifact@v7
-      if: always()
+      if: always() && github.server_url == 'https://github.com'
       with:
         name: gosec-results
         path: gosec-results.json
