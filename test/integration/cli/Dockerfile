@@ -1,5 +1,5 @@
 # Dockerfile for CLI integration tests
-FROM golang:1.26.4-alpine
+FROM golang:1.26.5-alpine
 
 # Allow Go toolchain auto-upgrade
 ENV GOTOOLCHAIN=auto
