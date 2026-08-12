@@ -11,9 +11,9 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
+// Package objstore provides the high-level facade for go-objstore.
+//
+// The facade routes object operations to one or more configured storage
+// backends by key, presenting a single Storage-compatible API over them, and
+// wires optional lifecycle and replication management on top.
 package objstore
-
-// Version is the go-objstore Go SDK version.
-// It is kept in sync with the repository root VERSION file via
-// scripts/sync-version.sh (run `make version-sync`).
-const Version = "0.2.0-alpha"

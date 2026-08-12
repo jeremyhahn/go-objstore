@@ -11,9 +11,9 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package objstore
-
-// Version is the go-objstore Go SDK version.
-// It is kept in sync with the repository root VERSION file via
-// scripts/sync-version.sh (run `make version-sync`).
-const Version = "0.2.0-alpha"
+// Package rest implements the go-objstore REST/HTTP server.
+//
+// It exposes object, metadata, archive, lifecycle, and replication endpoints
+// with authentication, authorization, audit, and rate-limiting middleware and
+// an OpenAPI-documented surface.
+package rest

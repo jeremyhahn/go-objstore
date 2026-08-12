@@ -11,9 +11,8 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package objstore
-
-// Version is the go-objstore Go SDK version.
-// It is kept in sync with the repository root VERSION file via
-// scripts/sync-version.sh (run `make version-sync`).
-const Version = "0.2.0-alpha"
+// Package grpc implements the go-objstore gRPC server.
+//
+// It provides object, metadata, lifecycle, and replication handlers along with
+// authentication, authorization, audit, and rate-limiting interceptors.
+package grpc

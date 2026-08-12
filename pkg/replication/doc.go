@@ -11,9 +11,9 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package objstore
-
-// Version is the go-objstore Go SDK version.
-// It is kept in sync with the repository root VERSION file via
-// scripts/sync-version.sh (run `make version-sync`).
-const Version = "0.2.0-alpha"
+// Package replication provides change-log-based object replication.
+//
+// A watcher detects source changes and records them to a durable change log; a
+// syncer copies the affected objects to destination backends. A persistent
+// manager coordinates replication policies and resumes progress across restarts.
+package replication

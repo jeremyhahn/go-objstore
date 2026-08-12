@@ -11,9 +11,11 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package objstore
-
-// Version is the go-objstore Go SDK version.
-// It is kept in sync with the repository root VERSION file via
-// scripts/sync-version.sh (run `make version-sync`).
-const Version = "0.2.0-alpha"
+// Package common defines the core types, interfaces, and errors shared across
+// go-objstore.
+//
+// It declares the Storage and Archiver interfaces, object Metadata and list
+// options, the canonical error sentinels and the Classify taxonomy that maps
+// errors to a transport-independent class, key validation, encrypted-storage
+// wrappers, and lifecycle policy types.
+package common

@@ -11,9 +11,9 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package objstore
-
-// Version is the go-objstore Go SDK version.
-// It is kept in sync with the repository root VERSION file via
-// scripts/sync-version.sh (run `make version-sync`).
-const Version = "0.2.0-alpha"
+// Package cli implements the objstore command-line interface.
+//
+// It wires the cobra commands for object, metadata, archive, lifecycle-policy,
+// and replication operations, running them against either a local backend or a
+// remote server.
+package cli

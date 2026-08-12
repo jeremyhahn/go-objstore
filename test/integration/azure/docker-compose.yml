@@ -15,8 +15,6 @@ services:
       - azurite
     environment:
       - AZURE_ENDPOINT=http://azurite:10000
-    volumes:
-      - ../../..:/app
     working_dir: /app
 
 networks:

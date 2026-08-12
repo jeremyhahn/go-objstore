@@ -11,9 +11,8 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package objstore
-
-// Version is the go-objstore Go SDK version.
-// It is kept in sync with the repository root VERSION file via
-// scripts/sync-version.sh (run `make version-sync`).
-const Version = "0.2.0-alpha"
+// Package client provides the CLI's remote transport clients.
+//
+// Each client implements a common Client interface over one of the go-objstore
+// server protocols: REST, gRPC, QUIC/HTTP3, Unix socket, and MCP.
+package client

@@ -1,6 +1,6 @@
 {
   "name": "@go-objstore/client",
-  "version": "0.2.0",
+  "version": "0.2.0-alpha",
   "description": "Official TypeScript SDK for go-objstore with REST, gRPC, and QUIC/HTTP3 support. Ships compiled JavaScript (ESM + CJS) and type declarations, so it is also usable directly from plain JavaScript.",
   "main": "dist/cjs/index.js",
   "module": "dist/esm/index.js",

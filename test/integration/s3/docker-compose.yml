@@ -25,8 +25,6 @@ services:
       - AWS_ACCESS_KEY_ID=minioadmin
       - AWS_SECRET_ACCESS_KEY=minioadmin
       - S3_ENDPOINT=http://minio:9000
-    volumes:
-      - ../../..:/app
     working_dir: /app
 
 networks:

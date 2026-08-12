@@ -11,9 +11,9 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package objstore
-
-// Version is the go-objstore Go SDK version.
-// It is kept in sync with the repository root VERSION file via
-// scripts/sync-version.sh (run `make version-sync`).
-const Version = "0.2.0-alpha"
+// Package storagefs adapts a Storage backend to the standard io/fs interfaces.
+//
+// It presents stored objects as a navigable file system, supporting Open,
+// Create, ReadDir, Seek, and Stat so backends can be used wherever an fs.FS
+// (or a read-write file tree) is expected.
+package storagefs

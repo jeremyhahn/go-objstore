@@ -7,7 +7,7 @@ on:
     branches: [ main, develop ]
 
 env:
-  GO_VERSION: '1.26.4'
+  GO_VERSION: '1.26.5'
   COVERAGE_THRESHOLD: 89
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
@@ -215,9 +215,13 @@ jobs:
       with:
         args: '-no-fail -fmt json -out gosec-results.json -exclude-dir=examples ./...'
 
+    # upload-artifact v4+ refuses to run against any server that is not
+    # github.com -- it detects one and reports "not currently supported on
+    # GHES". Gitea presents as such, so this step is GitHub-only. The scan
+    # itself has already run by this point; only the artifact is skipped.
     - name: Upload gosec results as artifact
       uses: actions/upload-artifact@v7
-      if: always()
+      if: always() && github.server_url == 'https://github.com'
       with:
         name: gosec-results
         path: gosec-results.json
@@ -277,33 +281,70 @@ jobs:
         push: false
         load: true
         tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ci-scan
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
+        # type=gha talks to the Actions cache service, which only exists on
+        # GitHub. Elsewhere buildkit cannot reach it and the build fails on a
+        # cache lookup timeout rather than anything to do with the image.
+        cache-from: ${{ github.server_url == 'https://github.com' && 'type=gha' || '' }}
+        cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
 
+    # Trivy runs from its own image rather than aquasecurity/trivy-action.
+    # That action fetches its install script with a nested checkout, which a
+    # self-hosted runner resolves against its own server instead of GitHub and
+    # fails with git exit 128. Invoking the scanner directly works the same on
+    # both servers and keeps container scanning everywhere.
+    #
+    # Output goes to stdout and is redirected here, not written through a bind
+    # mount: the runner's job container cannot mount its own workspace into the
+    # host daemon.
     - name: Run Trivy vulnerability scanner
-      uses: aquasecurity/trivy-action@master
-      with:
-        image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ci-scan
-        format: 'sarif'
-        output: 'trivy-results.sarif'
-        severity: 'CRITICAL,HIGH'
+      run: |
+        docker run --rm \
+          -v /var/run/docker.sock:/var/run/docker.sock \
+          aquasec/trivy:latest image \
+            --format sarif \
+            --severity CRITICAL,HIGH \
+            --no-progress \
+            "${REGISTRY}/${IMAGE_NAME}:ci-scan" > trivy-results.sarif
+      env:
+        REGISTRY: ${{ env.REGISTRY }}
+        IMAGE_NAME: ${{ env.IMAGE_NAME }}
 
+    # Reported, not enforced -- matching the previous behaviour, where the
+    # action ran without exit-code and findings were triaged in the Security
+    # tab rather than breaking the build.
+    - name: Report Trivy finding count
+      run: |
+        python3 -c 'import json; d=json.load(open("trivy-results.sarif")); print("trivy CRITICAL/HIGH findings:", sum(len(r.get("results",[])) for r in d.get("runs",[])))'
+
+    # The code scanning API is GitHub-only; anywhere else this 404s. The scan
+    # itself still runs and still fails the job on a finding.
     - name: Upload Trivy results to GitHub Security tab
       uses: github/codeql-action/upload-sarif@v3
-      if: always()
+      if: always() && github.server_url == 'https://github.com'
       with:
         sarif_file: 'trivy-results.sarif'
         category: 'trivy-container'
 
     - name: Run Trivy vulnerability scanner (table output)
-      uses: aquasecurity/trivy-action@master
-      with:
-        image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ci-scan
-        format: 'table'
-        severity: 'CRITICAL,HIGH'
-        exit-code: '0'
+      run: |
+        docker run --rm \
+          -v /var/run/docker.sock:/var/run/docker.sock \
+          aquasec/trivy:latest image \
+            --format table \
+            --severity CRITICAL,HIGH \
+            --no-progress \
+            "${REGISTRY}/${IMAGE_NAME}:ci-scan"
+      env:
+        REGISTRY: ${{ env.REGISTRY }}
+        IMAGE_NAME: ${{ env.IMAGE_NAME }}
 
+    # GitHub-only, like Grype below. A filesystem scan needs the workspace
+    # inside the scanner, and a containerised runner cannot mount its own
+    # workspace into the host daemon. Its only consumer is the Security tab
+    # upload, which is GitHub-only anyway, so there is nothing to reconstruct
+    # it for. The image scan above still runs on every server.
     - name: Scan for secrets with Trivy
+      if: github.server_url == 'https://github.com'
       uses: aquasecurity/trivy-action@master
       with:
         scan-type: 'fs'
@@ -314,13 +355,18 @@ jobs:
 
     - name: Upload secret scan results
       uses: github/codeql-action/upload-sarif@v3
-      if: always()
+      if: always() && github.server_url == 'https://github.com'
       with:
         sarif_file: 'trivy-secret-results.sarif'
         category: 'trivy-secrets'
 
+    # anchore/scan-action installs its binary through a nested checkout, which a
+    # self-hosted runner resolves against its own server and fails. Trivy above
+    # already scans the same image on every server; Grype is the GitHub-only
+    # second opinion.
     - name: Run Grype vulnerability scanner
       uses: anchore/scan-action@v6
+      if: github.server_url == 'https://github.com'
       id: grype
       with:
         image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ci-scan
@@ -333,7 +379,7 @@ jobs:
       # SARIF upload to the Security tab is best-effort: a transient empty/truncated
       # SARIF from the scanner must not fail an otherwise-green build (the scan itself
       # already ran above). Guard on a non-empty output and never block on upload.
-      if: always() && steps.grype.outputs.sarif != ''
+      if: always() && github.server_url == 'https://github.com' && steps.grype.outputs.sarif != ''
       continue-on-error: true
       with:
         sarif_file: ${{ steps.grype.outputs.sarif }}

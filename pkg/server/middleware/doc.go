@@ -11,9 +11,8 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package objstore
-
-// Version is the go-objstore Go SDK version.
-// It is kept in sync with the repository root VERSION file via
-// scripts/sync-version.sh (run `make version-sync`).
-const Version = "0.2.0-alpha"
+// Package middleware provides transport-agnostic server middleware.
+//
+// It implements token-bucket rate limiting (global and per-client) and
+// request-ID propagation, with gin, HTTP, and gRPC adapters.
+package middleware

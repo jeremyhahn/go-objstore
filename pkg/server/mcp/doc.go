@@ -11,9 +11,8 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package objstore
-
-// Version is the go-objstore Go SDK version.
-// It is kept in sync with the repository root VERSION file via
-// scripts/sync-version.sh (run `make version-sync`).
-const Version = "0.2.0-alpha"
+// Package mcp implements the go-objstore Model Context Protocol server.
+//
+// It serves object operations as MCP tools and resources over both HTTP and
+// stdio, using the shared JSON-RPC error taxonomy.
+package mcp

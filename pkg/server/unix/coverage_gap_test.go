@@ -415,7 +415,11 @@ func TestHandleConnectionEmptyLine(t *testing.T) {
 	if _, err := conn.Write(append(reqBytes, '\n')); err != nil {
 		t.Fatalf("write ping: %v", err)
 	}
-	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	// Generous: the CI runner builds four jobs concurrently, and a two-second
+	// deadline turned this into an intermittent failure there while passing
+	// every time in isolation. A passing run does not wait, so the ceiling
+	// costs nothing.
+	_ = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
 	reader := bufio.NewReader(conn)
 	line, err := reader.ReadBytes('\n')
 	if err != nil {

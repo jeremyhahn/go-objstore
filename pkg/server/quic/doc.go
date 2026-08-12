@@ -11,9 +11,8 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package objstore
-
-// Version is the go-objstore Go SDK version.
-// It is kept in sync with the repository root VERSION file via
-// scripts/sync-version.sh (run `make version-sync`).
-const Version = "0.2.0-alpha"
+// Package quic implements the go-objstore server over QUIC/HTTP3.
+//
+// It mirrors the REST API surface and uses the shared cross-transport error
+// taxonomy so clients see consistent status codes across transports.
+package quic

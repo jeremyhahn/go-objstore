@@ -11,9 +11,9 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package objstore
-
-// Version is the go-objstore Go SDK version.
-// It is kept in sync with the repository root VERSION file via
-// scripts/sync-version.sh (run `make version-sync`).
-const Version = "0.2.0-alpha"
+// Package factory constructs storage backends and archivers from configuration.
+//
+// Backends and archivers register themselves by name (often behind build tags
+// so unused cloud SDKs are not linked) and are created on demand, keeping
+// backend selection decoupled from the rest of the library.
+package factory
