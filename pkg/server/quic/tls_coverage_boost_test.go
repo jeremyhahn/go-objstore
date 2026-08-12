@@ -353,6 +353,9 @@ func TestGenerateAndSaveSelfSignedCert_EmptyCertificates(t *testing.T) {
 
 // TestSaveCertificateToPEM_WriterError simulates writer error during PEM encoding
 func TestSaveCertificateToPEM_WriterError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permission test is not meaningful when running as root")
+	}
 	// This test verifies the error handling in pem.Encode by checking file operations
 	tmpDir := t.TempDir()
 

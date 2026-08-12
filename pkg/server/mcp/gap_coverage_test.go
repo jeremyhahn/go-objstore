@@ -26,6 +26,7 @@ import (
 	"encoding/pem"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -940,6 +941,15 @@ func TestServer_Start_Stdio(t *testing.T) {
 // TestServer_StartHTTP_DefaultAddress exercises the branch where HTTPAddress
 // is empty and the server falls back to the ":8081" default.
 func TestServer_StartHTTP_DefaultAddress(t *testing.T) {
+	// The default address is the fixed port :8081. A CI runner whose job
+	// containers share the host network can already have it bound, and that
+	// says nothing about the code under test.
+	if ln, err := net.Listen("tcp", ":8081"); err != nil {
+		t.Skipf("default address :8081 is already in use here: %v", err)
+	} else {
+		ln.Close()
+	}
+
 	storage := NewMockStorage()
 	initTestFacade(t, storage)
 
