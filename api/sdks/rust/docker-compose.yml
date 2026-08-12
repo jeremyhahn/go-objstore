@@ -33,11 +33,15 @@ services:
   # target (type/serde). The integration_* targets require a live server and are
   # intentionally excluded here so the unit suite needs no network.
   rust-unit-tests:
+      # No source bind mount: the image is built from this SDK's source and
+      # already contains it, tests included. Mounting the tree over it is
+      # redundant on a normal host and impossible under a containerised CI
+      # runner, where the daemon is asked to mount a path that exists only
+      # inside the job container ("mkdir /workspace: file exists").
     build:
       context: ../../..
       dockerfile: api/sdks/rust/Dockerfile
     volumes:
-      - .:/app
       - cargo-cache:/usr/local/cargo/registry
     command: cargo test --lib --test unit_tests
     networks:
@@ -61,7 +65,6 @@ services:
       - QUIC_HOST=objstore-server:4433
     command: cargo test --test integration_comprehensive -- --test-threads=1
     volumes:
-      - .:/app
       - cargo-cache:/usr/local/cargo/registry
     networks:
       - objstore-net
@@ -72,7 +75,6 @@ services:
       context: ../../..
       dockerfile: api/sdks/rust/Dockerfile.coverage
     volumes:
-      - .:/app
       - cargo-cache:/usr/local/cargo/registry
     command: cargo llvm-cov --lib --test unit_tests --summary-only
     networks:

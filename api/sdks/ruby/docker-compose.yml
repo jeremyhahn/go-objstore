@@ -31,11 +31,14 @@ services:
 
   # Ruby SDK unit tests
   ruby-unit-tests:
+      # No source bind mount: the image is built from this SDK's source and
+      # already contains it, tests included. Mounting the tree over it is
+      # redundant on a normal host and impossible under a containerised CI
+      # runner, where the daemon is asked to mount a path that exists only
+      # inside the job container ("mkdir /workspace: file exists").
     build:
       context: ../..
       dockerfile: sdks/ruby/Dockerfile
-    volumes:
-      - .:/app
     command: bundle exec rspec spec/unit --format documentation
     networks:
       - objstore-net
@@ -54,8 +57,6 @@ services:
       - OBJSTORE_GRPC_PORT=50051
       - OBJSTORE_QUIC_PORT=4433
       - INTEGRATION_TEST=1
-    volumes:
-      - .:/app
     command: bundle exec rspec spec/integration --format documentation --tag integration
     networks:
       - objstore-net

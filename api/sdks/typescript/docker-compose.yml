@@ -31,11 +31,15 @@ services:
 
   # TypeScript SDK unit tests
   typescript-unit-tests:
+      # No source bind mount: the image is built from this SDK's source and
+      # already contains it, tests included. Mounting the tree over it is
+      # redundant on a normal host and impossible under a containerised CI
+      # runner, where the daemon is asked to mount a path that exists only
+      # inside the job container ("mkdir /workspace: file exists").
     build:
       context: ../..
       dockerfile: sdks/typescript/Dockerfile
     volumes:
-      - .:/app
       - /app/node_modules
     command: npm run test:unit
     networks:
@@ -56,7 +60,6 @@ services:
       - OBJSTORE_QUIC_HOST=objstore-server
       - OBJSTORE_QUIC_PORT=4433
     volumes:
-      - .:/app
       - /app/node_modules
       - ../../proto:/app/proto  # Mount proto files for gRPC client
     command: npm run test:integration
