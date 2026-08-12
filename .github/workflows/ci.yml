@@ -5,6 +5,9 @@ on:
     branches: [ main, develop ]
   pull_request:
     branches: [ main, develop ]
+  # Lets a run be repeated without inventing a commit, which matters when a
+  # failure is the runner's rather than the code's.
+  workflow_dispatch:
 
 env:
   GO_VERSION: '1.26.5'
