@@ -287,13 +287,34 @@ jobs:
         cache-from: ${{ github.server_url == 'https://github.com' && 'type=gha' || '' }}
         cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
 
+    # Trivy runs from its own image rather than aquasecurity/trivy-action.
+    # That action fetches its install script with a nested checkout, which a
+    # self-hosted runner resolves against its own server instead of GitHub and
+    # fails with git exit 128. Invoking the scanner directly works the same on
+    # both servers and keeps container scanning everywhere.
+    #
+    # Output goes to stdout and is redirected here, not written through a bind
+    # mount: the runner's job container cannot mount its own workspace into the
+    # host daemon.
     - name: Run Trivy vulnerability scanner
-      uses: aquasecurity/trivy-action@master
-      with:
-        image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ci-scan
-        format: 'sarif'
-        output: 'trivy-results.sarif'
-        severity: 'CRITICAL,HIGH'
+      run: |
+        docker run --rm \
+          -v /var/run/docker.sock:/var/run/docker.sock \
+          aquasec/trivy:latest image \
+            --format sarif \
+            --severity CRITICAL,HIGH \
+            --no-progress \
+            "${REGISTRY}/${IMAGE_NAME}:ci-scan" > trivy-results.sarif
+      env:
+        REGISTRY: ${{ env.REGISTRY }}
+        IMAGE_NAME: ${{ env.IMAGE_NAME }}
+
+    # Reported, not enforced -- matching the previous behaviour, where the
+    # action ran without exit-code and findings were triaged in the Security
+    # tab rather than breaking the build.
+    - name: Report Trivy finding count
+      run: |
+        python3 -c 'import json; d=json.load(open("trivy-results.sarif")); print("trivy CRITICAL/HIGH findings:", sum(len(r.get("results",[])) for r in d.get("runs",[])))'
 
     # The code scanning API is GitHub-only; anywhere else this 404s. The scan
     # itself still runs and still fails the job on a finding.
