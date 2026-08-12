@@ -330,6 +330,10 @@ jobs:
     name: Build CLI Docker Image
     runs-on: ubuntu-latest
     needs: create-release
+    # ghcr.io and the GITHUB_TOKEN that authenticates to it exist only on
+    # GitHub; elsewhere the login is denied and the release fails after the
+    # binaries have already published. Skipped rather than failed off GitHub.
+    if: github.server_url == 'https://github.com'
     permissions:
       contents: read
       packages: write
@@ -401,6 +405,10 @@ jobs:
     name: Build Server Docker Image
     runs-on: ubuntu-latest
     needs: create-release
+    # ghcr.io and the GITHUB_TOKEN that authenticates to it exist only on
+    # GitHub; elsewhere the login is denied and the release fails after the
+    # binaries have already published. Skipped rather than failed off GitHub.
+    if: github.server_url == 'https://github.com'
     permissions:
       contents: read
       packages: write
