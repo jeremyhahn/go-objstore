@@ -16,4 +16,4 @@ package objstore
 // Version is the go-objstore Go SDK version.
 // It is kept in sync with the repository root VERSION file via
 // scripts/sync-version.sh (run `make version-sync`).
-const Version = "0.2.0-alpha"
+const Version = "0.2.1-alpha"

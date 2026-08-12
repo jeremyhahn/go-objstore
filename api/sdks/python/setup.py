@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="go-objstore-sdk",
-    version="0.2.0-alpha",
+    version="0.2.1-alpha",
     description="Python SDK for go-objstore with REST, gRPC, and QUIC/HTTP3 support",
     long_description=open("README.md").read() if __file__ else "",
     long_description_content_type="text/markdown",
