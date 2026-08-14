@@ -220,10 +220,33 @@ jobs:
         go-version: ${{ env.GO_VERSION }}
         cache: true
 
+    # gosec is installed and run on the runner's own toolchain rather than via
+    # the securego/gosec action, which is what ci-template v1 prescribes. That
+    # action is a docker action pinned to a golang:*-alpine image carrying
+    # whatever Go the gosec release was built against -- 2.28.0 ships go1.26.5
+    # with GOTOOLCHAIN=local. The moment go.mod moved to 1.26.6 every package
+    # load failed with "go.mod requires go >= 1.26.6", and gosec exits 1 on
+    # load errors exactly as it does on findings, so the gate went red with
+    # zero security issues and no way to tell the difference.
+    - name: Install gosec
+      run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+
+    # -tags mirrors the govulncheck step below. Without them the cloud backends
+    # (pkg/s3, pkg/glacier, pkg/azure, pkg/azurearchive) are gated out of the
+    # build and never scanned -- 129 files instead of 140.
+    #
+    # -stdout -verbose text puts findings in the job log. The JSON artifact is
+    # GitHub-only (see below), so on Gitea the log is the only place a failure
+    # is legible; writing solely to the file is what made this one opaque.
+    #
+    # No -severity/-confidence floor: this repo gates on low findings too.
+    # -exclude-generated is the only filter, and it drops nothing hand-written.
     - name: Run gosec security scanner
-      uses: securego/gosec@master
-      with:
-        args: '-exclude-generated -fmt json -out gosec-results.json -exclude-dir=examples ./...'
+      run: |
+        gosec -exclude-generated \
+          -tags local,awss3,gcpstorage,azureblob,glacier \
+          -fmt json -out gosec-results.json -stdout -verbose text \
+          -exclude-dir=examples ./...
 
     # upload-artifact v4+ refuses to run against any server that is not
     # github.com -- it detects one and reports "not currently supported on

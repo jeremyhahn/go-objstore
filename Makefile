@@ -606,6 +606,20 @@ install-security-tools:
 	@echo "$(GREEN)✓ govulncheck installed$(RESET)"
 	@echo "$(GREEN)$(BOLD)✓ All security tools installed successfully$(RESET)"
 
+# The build tags that gate the cloud backends into the build. gosec and
+# govulncheck both need them or they analyse 129 of the 140 files and the
+# S3/Glacier/Azure implementations go unscanned.
+SECURITY_TAGS = local,awss3,gcpstorage,azureblob,glacier
+
+# Kept identical to the gosec step in .github/workflows/ci.yml -- devops.md §8
+# makes `make security` the contract, so the two must not drift. test/ and
+# coverage/ are deliberately NOT excluded: CI scans them, so a developer must
+# too.
+GOSEC_ARGS = -exclude-generated \
+	-tags $(SECURITY_TAGS) \
+	-fmt json -out gosec-results.json -stdout -verbose text \
+	-exclude-dir=examples
+
 .PHONY: security
 ## security: Full devops.md §8 suite (gosec, govulncheck, go mod verify, trivy fs)
 # Container images are NOT scanned here -- `make trivy-image` builds and scans
@@ -616,9 +630,9 @@ security:
 	@echo "$(CYAN)  Running gosec...$(RESET)"
 	@GOPATH=$$(go env GOPATH); \
 	if [ -x "$$GOPATH/bin/gosec" ]; then \
-		cd $(PWD) && $$GOPATH/bin/gosec -exclude-generated -fmt json -out gosec-results.json -exclude-dir=examples -exclude-dir=test -exclude-dir=coverage ./... && echo "$(GREEN)✓ gosec passed$(RESET)"; \
+		cd $(PWD) && $$GOPATH/bin/gosec $(GOSEC_ARGS) ./... && echo "$(GREEN)✓ gosec passed$(RESET)"; \
 	elif command -v gosec > /dev/null 2>&1; then \
-		cd $(PWD) && gosec -exclude-generated -fmt json -out gosec-results.json -exclude-dir=examples -exclude-dir=test -exclude-dir=coverage ./... && echo "$(GREEN)✓ gosec passed$(RESET)"; \
+		cd $(PWD) && gosec $(GOSEC_ARGS) ./... && echo "$(GREEN)✓ gosec passed$(RESET)"; \
 	else \
 		echo "$(RED)✗ gosec not found$(RESET)"; \
 		echo "$(YELLOW)  Install: make install-security-tools$(RESET)"; \
@@ -628,15 +642,17 @@ security:
 	fi
 	@echo "$(CYAN)  Running govulncheck...$(RESET)"
 	@GOPATH=$$(go env GOPATH); \
+	export GOFLAGS="-tags=$(SECURITY_TAGS)"; \
 	if [ -x "$$GOPATH/bin/govulncheck" ]; then \
 		$$GOPATH/bin/govulncheck ./... && echo "$(GREEN)✓ govulncheck passed$(RESET)" || { echo "$(RED)✗ govulncheck found vulnerabilities (blocking, mirrors GitHub CI)$(RESET)"; exit 1; }; \
 	elif command -v govulncheck > /dev/null 2>&1; then \
 		govulncheck ./... && echo "$(GREEN)✓ govulncheck passed$(RESET)" || { echo "$(RED)✗ govulncheck found vulnerabilities (blocking, mirrors GitHub CI)$(RESET)"; exit 1; }; \
 	else \
-		echo "$(YELLOW)⚠ govulncheck not found (skipping)$(RESET)"; \
+		echo "$(RED)✗ govulncheck not found$(RESET)"; \
 		echo "$(YELLOW)  Install: make install-security-tools$(RESET)"; \
 		echo "$(YELLOW)  Or manually: go install golang.org/x/vuln/cmd/govulncheck@latest$(RESET)"; \
 		echo "$(YELLOW)  Note: You may need to add \$$GOPATH/bin to your PATH$(RESET)"; \
+		exit 1; \
 	fi
 	@echo "$(CYAN)  Verifying module integrity...$(RESET)"
 	@$(GO) mod verify || { echo "$(RED)✗ go mod verify failed$(RESET)"; exit 1; }
