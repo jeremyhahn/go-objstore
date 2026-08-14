@@ -1,2 +1,6 @@
 # Generated files
-libobjstore.h
+#
+# Anchored: `make lib` emits this header from cmd/objstorelib via
+# -buildmode=c-shared and moves it here (Makefile), and `make clean` removes it.
+# A bare `libobjstore.h` would match the name at any depth below this directory.
+/libobjstore.h

@@ -119,18 +119,26 @@ obj/
 *.gem
 
 # Local storage directories (for testing)
+#
+# Every pattern here is anchored to a path. A bare `storage/` was previously
+# listed under "Go workspace" below, which matched a directory named storage at
+# ANY depth -- it was hiding pkg/cli/storage/ (CLI runtime output, correct) but
+# would equally have hidden a real pkg/storage/ or internal/storage/ package
+# from `git add .` with no indication anything was missing.
 testdata/storage/
 testdata/temp/
 test-storage/
 test/integration/cli/storage/
 test/integration/server/storage/
 test/integration/*/storage/
+# Written by `objstore storage` commands run with a relative backend path,
+# which resolves against the package directory. Artifacts, not fixtures.
+/pkg/cli/storage/
 
 # Go workspace
 go.work
 go.work.sum
 gosec-results.json
-storage/
 
 # AI assistant / local tooling — never commit
 .serena/
