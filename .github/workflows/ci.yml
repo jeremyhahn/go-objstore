@@ -223,7 +223,7 @@ jobs:
     - name: Run gosec security scanner
       uses: securego/gosec@master
       with:
-        args: '-no-fail -fmt json -out gosec-results.json -exclude-dir=examples ./...'
+        args: '-exclude-generated -fmt json -out gosec-results.json -exclude-dir=examples ./...'
 
     # upload-artifact v4+ refuses to run against any server that is not
     # github.com -- it detects one and reports "not currently supported on

@@ -616,9 +616,9 @@ security:
 	@echo "$(CYAN)  Running gosec...$(RESET)"
 	@GOPATH=$$(go env GOPATH); \
 	if [ -x "$$GOPATH/bin/gosec" ]; then \
-		cd $(PWD) && $$GOPATH/bin/gosec -no-fail -fmt json -out gosec-results.json -exclude-dir=examples ./... && echo "$(GREEN)✓ gosec passed$(RESET)" || echo "$(YELLOW)⚠ gosec found issues (see gosec-results.json)$(RESET)"; \
+		cd $(PWD) && $$GOPATH/bin/gosec -exclude-generated -fmt json -out gosec-results.json -exclude-dir=examples -exclude-dir=test -exclude-dir=coverage ./... && echo "$(GREEN)✓ gosec passed$(RESET)"; \
 	elif command -v gosec > /dev/null 2>&1; then \
-		cd $(PWD) && gosec -no-fail -fmt json -out gosec-results.json -exclude-dir=examples ./... && echo "$(GREEN)✓ gosec passed$(RESET)" || echo "$(YELLOW)⚠ gosec found issues (see gosec-results.json)$(RESET)"; \
+		cd $(PWD) && gosec -exclude-generated -fmt json -out gosec-results.json -exclude-dir=examples -exclude-dir=test -exclude-dir=coverage ./... && echo "$(GREEN)✓ gosec passed$(RESET)"; \
 	else \
 		echo "$(RED)✗ gosec not found$(RESET)"; \
 		echo "$(YELLOW)  Install: make install-security-tools$(RESET)"; \
