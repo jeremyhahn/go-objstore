@@ -1,3 +1,8 @@
+# ci-template: v1 (customized)
+# Reconciled against software/templates/github-actions/ci.yml in the
+# automatethethings repo (devops.md §1/§8/§9). Divergence outside the
+# repo-specific blocks below is a defect.
+
 name: CI
 
 on:
@@ -190,10 +195,12 @@ jobs:
         go-version: ${{ env.GO_VERSION }}
         cache: true
 
+    # Latest action major and latest linter: devops.md §9. No version pin --
+    # an undocumented pin is a defect, and there is no reason to hold one here.
     - name: Run golangci-lint
       uses: golangci/golangci-lint-action@v9
       with:
-        version: v2.11.1
+        version: latest
         args: --timeout=10m
 
   security:
@@ -233,6 +240,76 @@ jobs:
       run: |
         go install golang.org/x/vuln/cmd/govulncheck@latest
         GOFLAGS="-tags=local,awss3,gcpstorage,azureblob,glacier" govulncheck ./...
+
+  # trivy fs -- dependency CVEs AND leaked secrets in the tree, gating on both
+  # servers (devops.md §8). This used to be a secret-only, GitHub-only,
+  # non-gating pass buried in the docker job; it scanned half of what §8
+  # requires on half the hosts. It lives in its own job now so the scanner runs
+  # on the runner itself rather than inside the docker job's container, which
+  # cannot mount its own workspace into the host daemon.
+  #
+  # Scoping mirrors the `security` target in the Makefile; keep the two
+  # identical. test/ and examples/ do not ship; coverage/ and bin/ are build
+  # output; **/vendor is gitignored language-SDK tooling absent from a CI
+  # checkout. api/sdks/* IS scanned -- those SDKs ship, so their lockfiles are
+  # in scope. There is no .trivyignore in this repo, so no --ignorefile.
+  trivy:
+    name: Trivy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    # Two paths for one gate. trivy-action's setup step cannot authenticate to
+    # github.com from a Gitea runner and upload-sarif has no GHES-compatible
+    # endpoint there, so the action path is guarded on the server URL and Gitea
+    # gates with the trivy CLI below. Both run the same fs scan at the same
+    # severity; only the SARIF upload is GitHub-only.
+    - name: Trivy scan (SARIF for code scanning)
+      if: github.server_url == 'https://github.com'
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: fs
+        scan-ref: .
+        scanners: vuln,secret
+        format: sarif
+        output: trivy-results.sarif
+        exit-code: 0
+        skip-dirs: test,examples,coverage,bin,**/vendor
+
+    - name: Upload Trivy SARIF
+      if: always() && github.server_url == 'https://github.com'
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: trivy-results.sarif
+        category: trivy-fs
+
+    - name: Trivy gate (fail on CRITICAL/HIGH)
+      if: github.server_url == 'https://github.com'
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: fs
+        scan-ref: .
+        scanners: vuln,secret
+        severity: CRITICAL,HIGH
+        exit-code: 1
+        format: table
+        skip-dirs: test,examples,coverage,bin,**/vendor
+
+    - name: Install Trivy CLI (Gitea)
+      if: github.server_url != 'https://github.com'
+      run: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+
+    - name: Trivy gate (Gitea)
+      if: github.server_url != 'https://github.com'
+      run: |
+        trivy fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 --format table \
+          --skip-dirs test --skip-dirs examples --skip-dirs coverage --skip-dirs bin \
+          --skip-dirs '**/vendor' .
 
   build:
     name: Build
@@ -346,27 +423,10 @@ jobs:
         REGISTRY: ${{ env.REGISTRY }}
         IMAGE_NAME: ${{ env.IMAGE_NAME }}
 
-    # GitHub-only, like Grype below. A filesystem scan needs the workspace
-    # inside the scanner, and a containerised runner cannot mount its own
-    # workspace into the host daemon. Its only consumer is the Security tab
-    # upload, which is GitHub-only anyway, so there is nothing to reconstruct
-    # it for. The image scan above still runs on every server.
-    - name: Scan for secrets with Trivy
-      if: github.server_url == 'https://github.com'
-      uses: aquasecurity/trivy-action@master
-      with:
-        scan-type: 'fs'
-        scan-ref: '.'
-        scanners: 'secret'
-        format: 'sarif'
-        output: 'trivy-secret-results.sarif'
-
-    - name: Upload secret scan results
-      uses: github/codeql-action/upload-sarif@v3
-      if: always() && github.server_url == 'https://github.com'
-      with:
-        sarif_file: 'trivy-secret-results.sarif'
-        category: 'trivy-secrets'
+    # The filesystem scan that used to sit here was secret-only, GitHub-only
+    # and non-gating. It now lives in the `trivy` job above, which runs on the
+    # runner itself (not inside this job's container), scans vuln,secret, and
+    # fails the build on CRITICAL/HIGH on both servers -- devops.md §8.
 
     # anchore/scan-action installs its binary through a nested checkout, which a
     # self-hosted runner resolves against its own server and fails. Trivy above
@@ -392,3 +452,29 @@ jobs:
       with:
         sarif_file: ${{ steps.grype.outputs.sarif }}
         category: 'grype'
+
+  # The single required check (devops.md §1). Every job above appears in BOTH
+  # the needs list and the results check -- a gate that can pass vacuously is
+  # worse than no gate. join(needs.*.result) is deliberately not used: it
+  # evaluates empty on Gitea and reports success while jobs fail.
+  ci-gate:
+    name: CI Gate
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [test, sdk-tests, conformance-test, integration-test, lint, security, trivy, build, docker]
+
+    steps:
+    - name: Fail closed on any non-success
+      run: |
+        check() { case "$2" in success) echo "OK   $1";; *) echo "FAIL $1 ($2)"; BAD=1;; esac; }
+        BAD=0
+        check test             "${{ needs.test.result }}"
+        check sdk-tests        "${{ needs.sdk-tests.result }}"
+        check conformance-test "${{ needs.conformance-test.result }}"
+        check integration-test "${{ needs.integration-test.result }}"
+        check lint             "${{ needs.lint.result }}"
+        check security         "${{ needs.security.result }}"
+        check trivy            "${{ needs.trivy.result }}"
+        check build            "${{ needs.build.result }}"
+        check docker           "${{ needs.docker.result }}"
+        exit $BAD
