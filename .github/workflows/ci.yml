@@ -17,8 +17,15 @@ on:
 env:
   GO_VERSION: '1.26.6'
   COVERAGE_THRESHOLD: 89
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  # The docker job builds with push: false / load: true and only ever scans the
+  # result, so this is a local image name and nothing more. It used to be
+  # ghcr.io/${{ github.repository }}, which named a registry that does not exist
+  # off GitHub (infra/gitea/docs/lessons.md) for an image that is never pushed
+  # anywhere. A bare tag scans identically on both servers and keeps the
+  # internal registry address out of a file that mirrors to a public repo.
+  # Release images are a different matter and are pushed by release.yml, whose
+  # ghcr jobs are guarded to github.com.
+  SCAN_IMAGE: 'objstore:ci-scan'
 
 jobs:
   test:
@@ -383,7 +390,7 @@ jobs:
         platforms: linux/amd64
         push: false
         load: true
-        tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ci-scan
+        tags: ${{ env.SCAN_IMAGE }}
         # type=gha talks to the Actions cache service, which only exists on
         # GitHub. Elsewhere buildkit cannot reach it and the build fails on a
         # cache lookup timeout rather than anything to do with the image.
@@ -407,10 +414,9 @@ jobs:
             --format sarif \
             --severity CRITICAL,HIGH \
             --no-progress \
-            "${REGISTRY}/${IMAGE_NAME}:ci-scan" > trivy-results.sarif
+            "${SCAN_IMAGE}" > trivy-results.sarif
       env:
-        REGISTRY: ${{ env.REGISTRY }}
-        IMAGE_NAME: ${{ env.IMAGE_NAME }}
+        SCAN_IMAGE: ${{ env.SCAN_IMAGE }}
 
     # Informational only; the gate is the table-output step below, which is
     # what actually fails the job. This line just makes the count visible in
@@ -441,10 +447,9 @@ jobs:
             --severity CRITICAL,HIGH \
             --exit-code 1 \
             --no-progress \
-            "${REGISTRY}/${IMAGE_NAME}:ci-scan"
+            "${SCAN_IMAGE}"
       env:
-        REGISTRY: ${{ env.REGISTRY }}
-        IMAGE_NAME: ${{ env.IMAGE_NAME }}
+        SCAN_IMAGE: ${{ env.SCAN_IMAGE }}
 
     # The filesystem scan that used to sit here was secret-only, GitHub-only
     # and non-gating. It now lives in the `trivy` job above, which runs on the
@@ -460,7 +465,7 @@ jobs:
       if: github.server_url == 'https://github.com'
       id: grype
       with:
-        image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:ci-scan
+        image: ${{ env.SCAN_IMAGE }}
         fail-build: false
         severity-cutoff: high
         output-format: sarif
