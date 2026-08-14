@@ -1,6 +1,6 @@
 module github.com/jeremyhahn/go-objstore/api/sdks/go
 
-go 1.26.5
+go 1.26.6
 
 require (
 	github.com/jeremyhahn/go-objstore v0.1.4-alpha
