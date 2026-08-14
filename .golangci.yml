@@ -10,15 +10,20 @@ run:
     - azurearchive
   tests: false
 linters:
+  # The six linters devops.md §8 makes mandatory are errcheck, staticcheck,
+  # unused, ineffassign, misspell and gocritic. errcheck, staticcheck, unused
+  # and ineffassign come from the "standard" default set; the rest are listed
+  # explicitly below. None of them may be moved back to `disable`.
   enable:
+    - errcheck
     - err113
     - goconst
-    - gosec
-    - misspell
-    - unconvert
-  disable:
     - gocritic
+    - gosec
+    - ineffassign
+    - misspell
     - staticcheck
+    - unconvert
     - unused
   settings:
     errcheck:
@@ -81,6 +86,14 @@ linters:
           - errcheck
           - gosec
         path: test/integration
+      # cgo synthesises identifiers such as __cgofn__cgo_<hash>_Cfunc__Cmalloc
+      # inside the preprocessed source and reports them at positions in this
+      # file. They are not ours to rename, and the reported line/column does not
+      # correspond to the code shown.
+      - linters:
+          - staticcheck
+        path: cmd/objstorelib/
+        text: ST1003
       - linters:
           - err113
           - errcheck

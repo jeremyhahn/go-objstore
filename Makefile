@@ -607,7 +607,10 @@ install-security-tools:
 	@echo "$(GREEN)$(BOLD)✓ All security tools installed successfully$(RESET)"
 
 .PHONY: security
-## security: Run security checks (gosec + govulncheck)
+## security: Full devops.md §8 suite (gosec, govulncheck, go mod verify, trivy fs)
+# Container images are NOT scanned here -- `make trivy-image` builds and scans
+# the release image, which needs a Docker daemon and several minutes. CI scans
+# the same image in the docker job.
 security:
 	@echo "$(CYAN)$(BOLD)→ Running security checks...$(RESET)"
 	@echo "$(CYAN)  Running gosec...$(RESET)"
@@ -635,7 +638,41 @@ security:
 		echo "$(YELLOW)  Or manually: go install golang.org/x/vuln/cmd/govulncheck@latest$(RESET)"; \
 		echo "$(YELLOW)  Note: You may need to add \$$GOPATH/bin to your PATH$(RESET)"; \
 	fi
+	@echo "$(CYAN)  Verifying module integrity...$(RESET)"
+	@$(GO) mod verify || { echo "$(RED)✗ go mod verify failed$(RESET)"; exit 1; }
+	@echo "$(GREEN)✓ go mod verify passed$(RESET)"
+	# test/ and examples/ do not ship. coverage/ and bin/ are build output.
+	# **/vendor is gitignored language-SDK tooling that is not in a CI checkout.
+	# api/sdks/* IS scanned: those SDKs ship, so their lockfiles are in scope.
+	@echo "$(CYAN)  Running trivy filesystem scan...$(RESET)"
+	@if command -v trivy > /dev/null 2>&1; then \
+		trivy fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 \
+			--skip-dirs test --skip-dirs examples --skip-dirs coverage --skip-dirs bin \
+			--skip-dirs '**/vendor' . \
+			&& echo "$(GREEN)✓ trivy fs passed$(RESET)" \
+			|| { echo "$(RED)✗ trivy found CRITICAL/HIGH findings$(RESET)"; exit 1; }; \
+	else \
+		echo "$(YELLOW)⚠ trivy not found - skipping filesystem scan$(RESET)"; \
+		echo "$(YELLOW)  Install: https://trivy.dev/latest/getting-started/installation/$(RESET)"; \
+	fi
 	@echo "$(GREEN)✓ Security checks complete$(RESET)"
+	@echo "$(YELLOW)Note: container images are scanned separately - run 'make trivy-image'$(RESET)"
+
+.PHONY: trivy-image
+## trivy-image: Build the release image and scan it with Trivy (CRITICAL/HIGH gate)
+# Mirrors the gate in the ci.yml docker job so the same failure reproduces
+# locally (devops.md §4). Builds the image, so it needs Docker and is not part
+# of `make security`.
+trivy-image: docker-build
+	@echo "$(CYAN)$(BOLD)→ Scanning container image with Trivy...$(RESET)"
+	@if command -v trivy > /dev/null 2>&1; then \
+		trivy image --severity CRITICAL,HIGH --exit-code 1 --no-progress $(PROJECT_NAME) \
+			&& echo "$(GREEN)✓ trivy image passed$(RESET)" \
+			|| { echo "$(RED)✗ trivy found CRITICAL/HIGH findings in $(PROJECT_NAME)$(RESET)"; exit 1; }; \
+	else \
+		echo "$(YELLOW)⚠ trivy not found - skipping image scan$(RESET)"; \
+		echo "$(YELLOW)  Install: https://trivy.dev/latest/getting-started/installation/$(RESET)"; \
+	fi
 
 .PHONY: ci
 ## ci: Run the full CI pipeline locally (mirrors .github/workflows/ci.yml, Go-core only; SDK suites run via test-sdks/test-sdks-all)
@@ -680,7 +717,8 @@ ci:
 	@echo "$(GREEN)$(BOLD)  ✓ CI Pipeline Passed!$(RESET)"
 	@echo "$(GREEN)$(BOLD)========================================$(RESET)"
 	@echo ""
-	@echo "$(YELLOW)Note: container image vulnerability scanning (Trivy/Grype) runs only in GitHub CI.$(RESET)"
+	@echo "$(YELLOW)Note: container image scanning is not part of this pipeline - run 'make trivy-image'$(RESET)"
+	@echo "$(YELLOW)      (CI gates the same image in the docker job; Grype is a GitHub-only second opinion).$(RESET)"
 
 .PHONY: pre-commit
 ## pre-commit: Run all pre-commit checks (format, vet, lint, test)
@@ -752,7 +790,8 @@ help:
 	@echo "  $(YELLOW)generate-proto$(RESET)               Generate protobuf code for gRPC"
 	@echo "  $(YELLOW)test$(RESET)                         Run unit tests"
 	@echo "  $(YELLOW)lint$(RESET)                         Run golangci-lint for code quality"
-	@echo "  $(YELLOW)security$(RESET)                     Run security checks (gosec + govulncheck)"
+	@echo "  $(YELLOW)security$(RESET)                     Full §8 suite: gosec, govulncheck, go mod verify, trivy fs"
+	@echo "  $(YELLOW)trivy-image$(RESET)                  Build the release image and scan it with Trivy (needs Docker)"
 	@echo "  $(YELLOW)pre-commit$(RESET)                   Run all pre-commit checks"
 	@echo "  $(YELLOW)integration-test$(RESET)             Run all integration tests (backends + CLI)"
 	@echo "  $(YELLOW)integration-test-local$(RESET)       Run local storage integration tests"

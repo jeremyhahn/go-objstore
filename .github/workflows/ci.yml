@@ -312,9 +312,9 @@ jobs:
         REGISTRY: ${{ env.REGISTRY }}
         IMAGE_NAME: ${{ env.IMAGE_NAME }}
 
-    # Reported, not enforced -- matching the previous behaviour, where the
-    # action ran without exit-code and findings were triaged in the Security
-    # tab rather than breaking the build.
+    # Informational only; the gate is the table-output step below, which is
+    # what actually fails the job. This line just makes the count visible in
+    # the log next to the SARIF that gets uploaded.
     - name: Report Trivy finding count
       run: |
         python3 -c 'import json; d=json.load(open("trivy-results.sarif")); print("trivy CRITICAL/HIGH findings:", sum(len(r.get("results",[])) for r in d.get("runs",[])))'
@@ -328,13 +328,18 @@ jobs:
         sarif_file: 'trivy-results.sarif'
         category: 'trivy-container'
 
-    - name: Run Trivy vulnerability scanner (table output)
+    # THE GATE (devops.md §8): every image this repo builds is scanned, and a
+    # CRITICAL/HIGH finding fails the job on both servers. The SARIF pass above
+    # is for the Security tab and deliberately does not gate -- it is
+    # GitHub-only plumbing. Reproduce locally with `make trivy-image`.
+    - name: Trivy image gate (fail on CRITICAL/HIGH)
       run: |
         docker run --rm \
           -v /var/run/docker.sock:/var/run/docker.sock \
           aquasec/trivy:latest image \
             --format table \
             --severity CRITICAL,HIGH \
+            --exit-code 1 \
             --no-progress \
             "${REGISTRY}/${IMAGE_NAME}:ci-scan"
       env:

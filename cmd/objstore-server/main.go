@@ -333,7 +333,7 @@ func main() {
 				defer wg.Done()
 				slog.Info("Starting Unix socket server", "socket", *unixSocket)
 				if err := server.Start(ctx); err != nil {
-					errChan <- fmt.Errorf("Unix socket server error: %w", err)
+					errChan <- fmt.Errorf("unix socket server error: %w", err)
 				}
 			}()
 		}

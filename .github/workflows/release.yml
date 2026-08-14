@@ -389,6 +389,34 @@ jobs:
           type=semver,pattern={{major}}
           type=raw,value=latest,enable={{is_default_branch}}
 
+    # devops.md §8: no image reaches a registry unscanned. Built amd64-only and
+    # loaded into the local daemon so Trivy can read it; the multi-arch push
+    # below reuses the same cache scope, so this costs a load, not a rebuild.
+    - name: Build CLI image for scanning
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: Dockerfile.cli
+        platforms: linux/amd64
+        push: false
+        load: true
+        tags: ${{ env.REGISTRY }}/jeremyhahn/objstore-cli:release-scan
+        cache-from: type=gha,scope=cli
+        cache-to: type=gha,mode=max,scope=cli
+
+    - name: Trivy image gate (fail on CRITICAL/HIGH)
+      run: |
+        docker run --rm \
+          -v /var/run/docker.sock:/var/run/docker.sock \
+          aquasec/trivy:latest image \
+            --format table \
+            --severity CRITICAL,HIGH \
+            --exit-code 1 \
+            --no-progress \
+            "${REGISTRY}/jeremyhahn/objstore-cli:release-scan"
+      env:
+        REGISTRY: ${{ env.REGISTRY }}
+
     - name: Build and push CLI image
       uses: docker/build-push-action@v5
       with:
@@ -463,6 +491,33 @@ jobs:
           type=semver,pattern={{major}}.{{minor}}
           type=semver,pattern={{major}}
           type=raw,value=latest,enable={{is_default_branch}}
+
+    # devops.md §8: no image reaches a registry unscanned. See the CLI job for
+    # why this builds amd64-only and loads rather than pushing.
+    - name: Build Server image for scanning
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: Dockerfile.server
+        platforms: linux/amd64
+        push: false
+        load: true
+        tags: ${{ env.REGISTRY }}/jeremyhahn/objstore-server:release-scan
+        cache-from: type=gha,scope=server
+        cache-to: type=gha,mode=max,scope=server
+
+    - name: Trivy image gate (fail on CRITICAL/HIGH)
+      run: |
+        docker run --rm \
+          -v /var/run/docker.sock:/var/run/docker.sock \
+          aquasec/trivy:latest image \
+            --format table \
+            --severity CRITICAL,HIGH \
+            --exit-code 1 \
+            --no-progress \
+            "${REGISTRY}/jeremyhahn/objstore-server:release-scan"
+      env:
+        REGISTRY: ${{ env.REGISTRY }}
 
     - name: Build and push Server image
       uses: docker/build-push-action@v5
