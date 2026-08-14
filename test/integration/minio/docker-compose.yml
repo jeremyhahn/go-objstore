@@ -5,9 +5,16 @@ services:
     environment:
       - MINIO_ROOT_USER=minioadmin
       - MINIO_ROOT_PASSWORD=minioadmin
+    # Ephemeral host ports. Nothing outside the compose network uses these --
+    # the test service reaches MinIO at minio:9000 by service name and the
+    # healthcheck runs inside the container -- so publishing them on fixed host
+    # ports bought nothing and cost a collision: this file and
+    # test/integration/s3/docker-compose.yml both claimed 9000 and 9001, on a
+    # runner that runs jobs concurrently. Docker picks a free port instead;
+    # `docker compose port minio 9000` reports it when a human wants to look.
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "9000"
+      - "9001"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 5s
