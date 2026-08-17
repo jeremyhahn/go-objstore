@@ -143,4 +143,3 @@ gosec-results.json
 # AI assistant / local tooling — never commit
 .serena/
 .claude/
-CLAUDE.md
