@@ -508,11 +508,13 @@ func (l *Local) ListWithContext(ctx context.Context, prefix string) ([]string, e
 	}
 
 	var keys []string
-	searchPath := filepath.Join(l.path, prefix)
 
-	// Check if the search path exists
-	if _, err := os.Stat(searchPath); os.IsNotExist(err) {
-		// If the path doesn't exist, return empty list (not an error)
+	// Prefixes are matched byte-wise against keys below, not resolved as
+	// filesystem paths, so a prefix ending mid key-component (e.g. "k0" for
+	// keys "k01", "k02") must not be short-circuited here. Only guard against
+	// a missing base directory, which yields an empty list rather than an
+	// error.
+	if _, err := os.Stat(l.path); os.IsNotExist(err) {
 		return keys, nil
 	}
 

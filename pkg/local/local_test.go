@@ -397,6 +397,93 @@ func TestLocal_List_EmptyDirectory(t *testing.T) {
 	}
 }
 
+// Prefixes are matched byte-wise against keys, not resolved as filesystem
+// paths, so a prefix that ends mid key-component still matches.
+func TestLocal_List_PartialKeyComponentPrefix(t *testing.T) {
+	tempDir := createTempDir(t)
+	defer cleanupTempDir(t, tempDir)
+
+	storage := local.New()
+	_ = storage.Configure(map[string]string{"path": tempDir})
+
+	for _, key := range []string{"k01", "k02", "k03", "j01", "x/k03", "x/k04", "x/j05"} {
+		if err := storage.Put(key, bytes.NewBufferString("data")); err != nil {
+			t.Fatalf("Put(%s) failed: %v", key, err)
+		}
+	}
+
+	tests := []struct {
+		name     string
+		prefix   string
+		expected []string
+	}{
+		{"top level partial", "k0", []string{"k01", "k02", "k03"}},
+		{"top level exact key", "k01", []string{"k01"}},
+		{"nested partial", "x/k", []string{"x/k03", "x/k04"}},
+		{"nested directory aligned", "x/", []string{"x/j05", "x/k03", "x/k04"}},
+		{"partial directory component", "x", []string{"x/j05", "x/k03", "x/k04"}},
+		{"no matches", "z", nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			keys, err := storage.List(tt.prefix)
+			if err != nil {
+				t.Fatalf("List(%q) failed: %v", tt.prefix, err)
+			}
+
+			sort.Strings(keys)
+			expected := append([]string(nil), tt.expected...)
+			sort.Strings(expected)
+
+			if len(keys) != len(expected) {
+				t.Fatalf("List(%q): expected %v, got %v", tt.prefix, expected, keys)
+			}
+			for i, key := range keys {
+				if key != expected[i] {
+					t.Errorf("List(%q): expected key %s, got %s", tt.prefix, expected[i], key)
+				}
+			}
+		})
+	}
+}
+
+// ListWithOptions must apply the same byte-prefix semantics as List.
+func TestLocal_ListWithOptions_PartialKeyComponentPrefix(t *testing.T) {
+	tempDir := createTempDir(t)
+	defer cleanupTempDir(t, tempDir)
+
+	storage := local.New()
+	_ = storage.Configure(map[string]string{"path": tempDir})
+
+	for _, key := range []string{"k01", "k02", "j01", "x/k03"} {
+		if err := storage.Put(key, bytes.NewBufferString("data")); err != nil {
+			t.Fatalf("Put(%s) failed: %v", key, err)
+		}
+	}
+
+	result, err := storage.ListWithOptions(context.Background(), &common.ListOptions{Prefix: "k0"})
+	if err != nil {
+		t.Fatalf("ListWithOptions failed: %v", err)
+	}
+
+	keys := make([]string, 0, len(result.Objects))
+	for _, obj := range result.Objects {
+		keys = append(keys, obj.Key)
+	}
+	sort.Strings(keys)
+
+	expected := []string{"k01", "k02"}
+	if len(keys) != len(expected) {
+		t.Fatalf("expected %v, got %v", expected, keys)
+	}
+	for i, key := range keys {
+		if key != expected[i] {
+			t.Errorf("expected key %s, got %s", expected[i], key)
+		}
+	}
+}
+
 // Test context cancellation for PutWithContext
 func TestLocal_PutWithContext_ContextCancelled(t *testing.T) {
 	tempDir := createTempDir(t)
