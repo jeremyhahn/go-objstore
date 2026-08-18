@@ -130,7 +130,7 @@ services:
     command: >
       sh -c '
         go build -buildvcs=false -tags "local awss3 minio gcpstorage azureblob glacier azurearchive" -o /usr/local/bin/objstore ./cmd/objstore &&
-        go test -v -tags "local awss3 minio gcpstorage azureblob glacier azurearchive" ./test/integration/server/... -timeout 15m
+        go test -v -tags "integration local awss3 minio gcpstorage azureblob glacier azurearchive" ./test/integration/server/... -timeout 15m
       '
 
 volumes:

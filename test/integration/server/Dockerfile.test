@@ -1,0 +1,27 @@
+# Dockerfile for the server integration test runner (gRPC, REST, QUIC, MCP).
+#
+# docker-compose.yml bind-mounts the repository over /app and overrides the
+# command, so this image only has to supply the toolchain and a warm module
+# cache; the source that actually gets built and tested is the bind mount.
+FROM golang:1.26.6-alpine
+
+# Allow Go toolchain auto-upgrade
+ENV GOTOOLCHAIN=auto
+
+# Build dependencies. ca-certificates is needed for the TLS/QUIC clients.
+RUN apk add --no-cache \
+    git \
+    bash \
+    ca-certificates
+
+WORKDIR /app
+
+# Copy go module files first so the module cache is baked into the image and
+# the bind-mounted run does not re-download on every invocation.
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Run the server integration tests by default. docker-compose overrides this
+# with a command that also builds the CLI from the bind-mounted source; keep
+# the two tag lists in sync.
+CMD ["go", "test", "-v", "-tags", "integration,local,awss3,minio,gcpstorage,azureblob,glacier,azurearchive", "./test/integration/server/...", "-timeout", "15m"]

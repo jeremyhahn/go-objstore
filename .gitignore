@@ -40,6 +40,9 @@ dist/
 *.dll
 *.exe
 *.test
+# `*.test` is meant for compiled Go test binaries, but it also swallows
+# test/integration/server/Dockerfile.test, which is real tracked source.
+!**/Dockerfile.test
 *.out
 coverage/
 coverage.txt

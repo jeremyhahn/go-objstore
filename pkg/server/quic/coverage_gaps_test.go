@@ -1262,9 +1262,8 @@ func TestHandleApplyPoliciesEncodeError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Replication handler encode error paths — need MockStorageWithReplication.
-// These tests are compiled only with the "local" build tag because
-// MockStorageWithReplication is defined there.
+// Replication handler encode error paths — need MockStorageWithReplication,
+// which is defined in handlers_replication_test.go.
 // ---------------------------------------------------------------------------
 
 func gapRepHandler(t *testing.T) *Handler {

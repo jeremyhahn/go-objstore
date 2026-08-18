@@ -276,7 +276,7 @@ docker-compose run --rm test go test -v ./test/integration/cli/... -run TestCLIP
 
 # Run specific server test
 cd test/integration/server
-docker-compose run --rm test go test -v ./test/integration/server/... -run TestGRPCPut
+docker-compose run --rm test go test -v -tags "integration local awss3 minio gcpstorage azureblob glacier azurearchive" ./test/integration/server/... -run TestGRPCPut
 ```
 
 ### Interactive Debugging
