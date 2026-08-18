@@ -33,7 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GOFIPS140: latest
-      GODEBUG: fips140=on
+      GODEBUG: fips140=only
 
     steps:
     - name: Checkout code
