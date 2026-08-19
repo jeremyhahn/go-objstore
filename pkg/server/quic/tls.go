@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
+	"github.com/jeremyhahn/go-objstore/pkg/enclave"
 )
 
 // NewTLSConfig creates a new TLS 1.3 configuration for QUIC.
@@ -168,6 +169,11 @@ func SaveCertificateToPEM(certFile, keyFile string, cert *tls.Certificate) error
 	}
 
 	privBytes := x509.MarshalPKCS1PrivateKey(privKey)
+	// The DER encoding of the private key is ordinary heap memory that the
+	// standard library never clears. Zeroize it as soon as it has been
+	// written, so the key does not linger in the heap after this returns.
+	defer enclave.Wipe(privBytes)
+
 	if err := pem.Encode(keyOut, &pem.Block{
 		Type:  "RSA PRIVATE KEY",
 		Bytes: privBytes,

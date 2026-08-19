@@ -64,7 +64,10 @@ func NewCommandContext(cfg *Config) (*CommandContext, error) {
 		ctx.Client = remoteClient
 	} else {
 		// Create local storage backend
-		settings := cfg.GetStorageSettings()
+		settings, err := cfg.StorageSettings()
+		if err != nil {
+			return nil, err
+		}
 		storage, err := factory.NewStorage(cfg.Backend, settings)
 		if err != nil {
 			return nil, err
@@ -272,7 +275,10 @@ func (ctx *CommandContext) ConfigCommand() *Config {
 // ArchiveCommand archives an object to archival storage.
 // Uses the current backend settings for the destination.
 func (ctx *CommandContext) ArchiveCommand(key, destinationBackend string) error {
-	settings := ctx.Config.GetStorageSettings()
+	settings, err := ctx.Config.StorageSettings()
+	if err != nil {
+		return err
+	}
 	return ctx.ArchiveCommandWithSettings(key, destinationBackend, settings)
 }
 
@@ -281,7 +287,11 @@ func (ctx *CommandContext) ArchiveCommand(key, destinationBackend string) error 
 func (ctx *CommandContext) ArchiveCommandWithSettings(key, destinationBackend string, destinationSettings map[string]string) error {
 	// If no custom settings provided, use backend settings
 	if len(destinationSettings) == 0 {
-		destinationSettings = ctx.Config.GetStorageSettings()
+		var err error
+		destinationSettings, err = ctx.Config.StorageSettings()
+		if err != nil {
+			return err
+		}
 	}
 
 	ctxBg := context.Background()

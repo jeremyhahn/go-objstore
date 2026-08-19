@@ -32,8 +32,13 @@ var (
 )
 
 func main() {
+	// Zeroize the backend credentials held in locked memory before the process
+	// leaves through either exit path.
+	defer func() { globalConfig.Destroy() }()
+
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		globalConfig.Destroy()
 		os.Exit(1)
 	}
 }
@@ -73,8 +78,12 @@ Configuration can be provided via:
 			return fmt.Errorf("failed to bind flags: %w", err)
 		}
 
-		// Get the configuration
-		globalConfig = cli.GetConfig(viperConfig)
+		// Get the configuration, holding the backend credentials in locked,
+		// zeroized memory rather than in plain strings.
+		globalConfig, err = cli.GetConfigProtected(viperConfig)
+		if err != nil {
+			return err
+		}
 
 		return nil
 	},

@@ -34,6 +34,11 @@ Optional at-rest encryption via a pluggable interface. Bring your own key manage
 
 [Read more about encryption](encryption.md)
 
+### Protected Memory
+Keys, credentials and other sensitive material are held in `MemoryEnclave` — locked, zeroized memory — for their whole lifetime rather than in plain strings or byte slices. Protected entry points are additive; the plain ones remain deprecated until a coordinated portfolio-wide release.
+
+[Read more about protected memory](protected-memory.md)
+
 ### Lifecycle Management
 Automatic data retention and archival policies. Define rules for deleting old objects or moving them to cheaper archival storage based on age and prefix patterns.
 

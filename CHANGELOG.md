@@ -4,6 +4,105 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `pkg/enclave`: `MemoryEnclave`, a region of locked, zeroized memory for
+  holding keys, credentials and other sensitive material for their whole
+  lifetime. Backed by memguard's `LockedBuffer` — `mlock`'d pages, guard
+  pages, canary, wiped on `Destroy`, core dumps disabled. It performs no
+  cryptography and never uses memguard's `Enclave`/`Seal` path, so it is clean
+  under `GODEBUG=fips140=only`, which CI enforces. Allocation failure under
+  `RLIMIT_MEMLOCK` returns `ErrLockedMemoryUnavailable` instead of aborting the
+  process. See `docs/architecture/protected-memory.md`.
+- `adapters.TLSConfig.WithServerKeyEnclave`, `ServerKeyEnclave` and `Destroy`:
+  supply the server private key in locked memory rather than a plain `[]byte`.
+- `cli.GetConfigProtected`, `Config.SetBackendKeyEnclave`,
+  `SetBackendSecretEnclave`, `SetBackendKeyFromString`,
+  `SetBackendSecretFromString`, `BackendKeyEnclave`, `BackendSecretEnclave`
+  and `Destroy`: hold the backend credentials in locked memory rather than in
+  plain strings.
+- `enclave.LockedMemoryError`: the typed error returned when locked memory
+  cannot be allocated. It carries memguard's diagnostic cause and reports
+  itself as `ErrLockedMemoryUnavailable` through `errors.Is`, so callers keep
+  matching the sentinel. Replaces a `fmt.Errorf` wrap, which the portfolio
+  error convention bans in library code.
+- `cli.Config.StorageSettings`: the error-returning replacement for
+  `GetStorageSettings`. It reports `enclave.ErrEnclaveDestroyed` when a
+  credential was placed in an enclave that has since been destroyed, instead
+  of silently substituting the deprecated plain field.
+
+### Changed
+
+- `TLSConfig.Build` reads a key file into a `MemoryEnclave` instead of calling
+  `tls.LoadX509KeyPair`, so the PEM-encoded key is never left in unprotected
+  heap memory. Behavior and errors are unchanged.
+- The `objstore` CLI loads its configuration with `GetConfigProtected` and
+  zeroizes the credentials on exit. Credentials are materialized as plain
+  strings only at the backend settings-map boundary.
+- `quic.SaveCertificateToPEM` zeroizes the DER encoding of the private key
+  after writing it.
+- `TLSConfig.WithServerCertFiles`, `WithServerCertPEM` and
+  `WithServerKeyEnclave` each select exactly one server-key source and clear
+  the others, destroying a superseded enclave and zeroizing a superseded
+  `ServerKeyPEM`. `WithServerCertPEM` copies the key it is given, so the
+  config wipes only memory it allocated and never the caller's array. `Build` ranks the enclave first, so reconfiguring a config
+  that already held one previously left it attached and kept serving the
+  superseded key — a certificate rotation that looked applied and was not.
+- `TLSConfig.WithServerKeyEnclave` now zeroizes and clears `ServerKeyPEM` when
+  it installs the enclave. Selecting the protected path previously left a
+  complete private key in ordinary heap memory for the config's lifetime,
+  merely unread — which made incremental migration off the deprecated API
+  ineffective. The wipe reaches the caller's backing array if it still holds
+  one.
+- Enclave allocation and borrows are coordinated process-wide. memguard's
+  allocation-failure path purges and **unmaps** every live buffer in the
+  process while holding only its own locks, so a per-enclave mutex could not
+  keep a borrow safe against an unrelated goroutine exhausting locked memory —
+  the borrowed pages went away underneath the reader and the process faulted.
+  Allocation now takes a package-wide lock exclusively and every borrow takes
+  it shared. `Destroy` takes it exclusively too — memguard's `Buffer.Destroy`
+  also panics, and therefore purges, when releasing pages fails — and `Size`
+  and `IsAlive` take it shared, because they read memguard state a purge
+  rewrites. A subprocess fault-injection test holds a borrow across a foreign
+  allocation failure; without the coordination it reproduces as a SIGSEGV.
+- `MemoryEnclave` holds its read lock across the whole of `WithBytes`,
+  `OpenString` and `EqualTo`, so `Destroy` blocks until in-flight borrows have
+  returned rather than unmapping pages a reader is still holding. `Open`, which
+  hands back a slice that outlives the lock, is documented as unsafe alongside
+  a concurrent `Destroy`; every consumer in this repository uses the scoped
+  forms.
+- `NewMemoryEnclave` wipes the caller's slice on every return path. memguard
+  wipes its source only after a successful allocation, so the secret previously
+  survived in the caller's memory when locked memory was exhausted — the exact
+  path `ErrLockedMemoryUnavailable` exists for.
+- The credential path fails CLOSED. Once an enclave has been selected it is the
+  only source: `Config.StorageSettings` and `TLSConfig.Build` return
+  `ErrEnclaveDestroyed` rather than reading the deprecated plain field, which
+  would otherwise authenticate with stale unprotected material after memguard
+  purged the enclave. The plain fields are still read normally when no enclave
+  was ever set.
+
+### Deprecated
+
+Nothing is removed and no exported signature changed; the plain-memory paths
+below keep working and are removed in the next major version. Where both are
+set, the enclave wins.
+
+- `adapters.TLSConfig.ServerKeyPEM` and `TLSConfig.WithServerCertPEM` — use
+  `WithServerKeyEnclave`.
+- `cli.Config.BackendKey` and `cli.Config.BackendSecret` — use
+  `GetConfigProtected` or the `SetBackend*` setters.
+- `cli.Config.GetStorageSettings` — its signature cannot report a destroyed
+  enclave. It now omits such a credential rather than substituting the plain
+  field, so the backend fails to authenticate; use `StorageSettings` to see
+  why.
+
+### Dependencies
+
+- Added `github.com/awnumar/memguard` v0.23.0 (and its `memcall` dependency).
+
 ## [0.2.0] - 2026-08-10
 
 Version reconciliation. No functional change: the code in this release is
