@@ -63,7 +63,7 @@ func TestLocal_PutWithContext(t *testing.T) {
 		}
 	})
 
-	t.Run("put with timeout context", func(t *testing.T) {
+	t.Run("put with expired deadline context", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
 		err := storage.Configure(map[string]string{"path": tmpDir})
@@ -71,10 +71,10 @@ func TestLocal_PutWithContext(t *testing.T) {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
+		// Use a deadline already in the past: context.WithDeadline sets Err()
+		// to DeadlineExceeded at construction, so there is no timer to race.
+		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 		defer cancel()
-
-		time.Sleep(2 * time.Millisecond) // Wait for timeout
 
 		data := bytes.NewReader([]byte("test data"))
 		err = storage.PutWithContext(ctx, "test/key", data)
