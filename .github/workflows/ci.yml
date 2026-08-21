@@ -329,10 +329,34 @@ jobs:
         name: gosec-results
         path: gosec-results.json
 
-    - name: Run govulncheck
+    # EVERY module in the tree, not just the root one (go-objstore#17).
+    # `govulncheck ./...` stops at the module boundary, and this repository has
+    # three modules: the root, api/sdks/go, and examples/encryption. Only the
+    # root was ever scanned.
+    #
+    # That was not a hypothetical gap. examples/encryption sat on x/net
+    # v0.55.0, x/text v0.37.0 and grpc v1.81.1 -- three HIGH advisories -- while
+    # this job reported green, because a tracked go.mod under a directory the
+    # scanners skip is a place CVEs can live indefinitely. (Those particular
+    # advisories were cleared by #15; this is what stops the next set.)
+    #
+    # The modules are DISCOVERED rather than listed, for the same reason the
+    # gate lists its jobs explicitly: a hand-maintained inventory drifts, and
+    # the drift is invisible until it strands something. A module added
+    # tomorrow is scanned the day it lands.
+    #
+    # Every module is scanned even after one fails, so a single finding does
+    # not hide the others; the job still fails if any did.
+    - name: Run govulncheck (every module in the tree)
       run: |
         go install golang.org/x/vuln/cmd/govulncheck@latest
-        GOFLAGS="-tags=local,awss3,gcpstorage,azureblob,glacier" govulncheck ./...
+        rc=0
+        for mod in $(find . -name go.mod -not -path '*/vendor/*' | sort); do
+          dir=$(dirname "$mod")
+          echo "=== govulncheck $dir ==="
+          ( cd "$dir" && GOFLAGS="-tags=local,awss3,gcpstorage,azureblob,glacier" govulncheck ./... ) || rc=1
+        done
+        exit $rc
 
   # STAGE 3 — the image is only worth building once the tree it packages has
   # passed the integration suites.

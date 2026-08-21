@@ -118,16 +118,22 @@ jobs:
         fi
 
   # trivy fs -- dependency CVEs AND leaked secrets in the tree, on both servers
-  # (devops.md §8). Scoping mirrors the `security` target in the Makefile; keep
-  # the two identical. test/ and examples/ do not ship; coverage/ and bin/ are
-  # build output; **/vendor is gitignored language-SDK tooling absent from a CI
-  # checkout. api/sdks/* IS scanned -- those SDKs ship, so their lockfiles are
-  # in scope. There is no .trivyignore in this repo, so no --ignorefile.
+  # (devops.md §8). test/ holds harnesses that ship in no release; coverage/
+  # and bin/ are build output; **/vendor is gitignored language-SDK tooling
+  # absent from a CI checkout. api/sdks/* IS scanned -- those SDKs ship, so
+  # their lockfiles are in scope. There is no .trivyignore here, so no
+  # --ignorefile.
   #
-  # The examples/ skip is a known hole with tracked advisories behind it
-  # (go-objstore#17): examples/encryption is a tracked Go module this scan
-  # never sees. It is removed there, once its dependencies are current -- not
-  # here, which would only make this job red for a finding already recorded.
+  # examples/ is NO LONGER skipped (go-objstore#17). It was, and that is
+  # precisely how examples/encryption -- a tracked Go module -- carried three
+  # HIGH advisories while every gate reported green. "Not shipped" is a reason
+  # to care less about a finding, not a reason to be unable to see it. Verified
+  # clean at the time of the change: `trivy fs --scanners vuln --severity
+  # CRITICAL,HIGH ./examples` reports 0.
+  #
+  # Do not re-add the skip to silence a finding. The per-push gate on the same
+  # module is govulncheck in ci.yml's `security` job, which iterates every
+  # go.mod in the tree.
   trivy:
     name: Trivy
     runs-on: ubuntu-latest
@@ -152,7 +158,7 @@ jobs:
         format: sarif
         output: trivy-results.sarif
         exit-code: 0
-        skip-dirs: test,examples,coverage,bin,**/vendor
+        skip-dirs: test,coverage,bin,**/vendor
 
     - name: Upload Trivy SARIF
       if: always() && github.server_url == 'https://github.com'
@@ -171,7 +177,7 @@ jobs:
         severity: CRITICAL,HIGH
         exit-code: 1
         format: table
-        skip-dirs: test,examples,coverage,bin,**/vendor
+        skip-dirs: test,coverage,bin,**/vendor
 
     # Retried with backoff: raw.githubusercontent.com intermittently answers a
     # Gitea runner with transient HTTP errors (curl exit 22), which failed the
@@ -192,5 +198,5 @@ jobs:
       if: github.server_url != 'https://github.com'
       run: |
         trivy fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 --format table \
-          --skip-dirs test --skip-dirs examples --skip-dirs coverage --skip-dirs bin \
+          --skip-dirs test --skip-dirs coverage --skip-dirs bin \
           --skip-dirs '**/vendor' .
