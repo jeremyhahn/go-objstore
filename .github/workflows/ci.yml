@@ -16,16 +16,26 @@
 # Note the direction reversed: `build` used to depend on `test` and
 # `security`, which put the cheapest signal last.
 #
-# `fips` and `trivy` moved to nightly.yml by the same ruling. Both were GREEN
-# here when they moved (run 3865 on 67aa52a) — the move is about cost, not
-# redness: `fips` is a second full run of the unit suite plus the coverage
-# gate under GODEBUG=fips140=only, and `trivy` downloads and runs a scanner
-# whose findings govulncheck already gates on for Go dependencies. Neither
-# earns a runner slot on every push while the queue is hours deep.
+# `fips` and `trivy` STAY ON THE PUSH PATH, in the expensive tier, and stay in
+# ci-gate. A first pass at v1.9 moved them to nightly.yml to buy queue
+# position; that was reverted the same night (agent-company ruling
+# 2026-08-21, decided identically for go-signal an hour earlier).
 #
-# RE-ARMING EITHER ONE IS THE WHOLE ACT, not half of it: move the job back
-# into this file, add it to ci-gate's `needs`, AND add a `check` call in the
-# gate loop. A job that can pass and is not required is a fail-open gate.
+# The nightly carve-out is for jobs that are KNOWN-RED and cannot clear from
+# inside the repo — a job burning 90 runner-minutes to re-report a finding
+# already written on an issue. Neither of these is that. Both PASS here (run
+# 3865 on 67aa52a, and re-verified locally before this commit), and a passing
+# gate carries signal: `fips` is the only thing standing between a
+# non-approved primitive on a regulated path and a green build, and
+# devops.md §8 makes `trivy` blocking outright. Weakening a gate that passes,
+# to buy queue position, trades away the signal and keeps the cost.
+#
+# Cost is a real problem; it is the STAGING above that addresses it, not
+# demoting gates. If either job later goes red for a reason this repo cannot
+# fix, moving it to nightly IS THE WHOLE ACT, not half of it: remove it from
+# this file, from ci-gate's `needs`, AND from the gate loop — and say on an
+# issue what would make it green again. A job that can pass and is not
+# required is a fail-open gate.
 
 name: CI
 
@@ -358,6 +368,163 @@ jobs:
         done
         exit $rc
 
+  # A GATE, not a nightly job (agent-company ruling 2026-08-21). It passes, and
+  # it is the only thing standing between a non-approved primitive on a
+  # regulated path and a green build.
+  #
+  # GOFIPS140 selects the Go Cryptographic Module at BUILD time; GODEBUG selects
+  # the enforcement level at RUN time, and both are needed. "only" rather than
+  # "on" (ratified 2026-08-17): "on" loads the module but still PERMITS
+  # non-approved algorithms, so a regulated path using MD5, SHA-1, or GCM with a
+  # caller-chosen IV passes silently and this job reports green on exactly the
+  # thing it exists to catch.
+  #
+  # If it goes red, the failure IS the finding: something on a tested path is
+  # using non-approved cryptography. Fix the call site, or — when an external
+  # format mandates the primitive — isolate it and record a cited exemption. Do
+  # NOT weaken this to "on", add continue-on-error, tag-gate the failing package
+  # out, or trim the package list.
+  fips:
+    name: FIPS
+    runs-on: ubuntu-latest
+    needs: [lint, build]
+    # This runs the whole unit suite a second time under the FIPS module, and
+    # `make test` carries -race (go-objstore#18), so give it room. It is a gate,
+    # not a background job — but a generous ceiling still beats a flaky one.
+    timeout-minutes: 60
+    env:
+      GOFIPS140: latest
+      GODEBUG: fips140=only
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Verify dependencies
+      run: go mod verify
+
+    - name: Verify version consistency
+      run: make version-check
+
+    # GODEBUG is a runtime setting and cannot fail a compile, but building
+    # against the module first keeps a genuine build break from being reported
+    # as a test failure.
+    - name: Build production packages (FIPS mode)
+      run: go build -tags="local awss3 minio gcpstorage azureblob glacier azurearchive" ./...
+
+    # Keep this invocation identical to the Test job so FIPS mode uses the same
+    # build tags, package scope, and dark-suite/integration exclusions. A FIPS
+    # job over a subset of the suite cannot tell you the product is FIPS-clean.
+    - name: Run unit tests with coverage
+      run: |
+        mkdir -p coverage
+        make test
+
+    - name: Check coverage threshold
+      run: |
+        COVERAGE=$(go tool cover -func=coverage/unit.out | grep total | awk '{print $3}' | sed 's/%//')
+        echo "Coverage: ${COVERAGE}%"
+        if (( $(echo "$COVERAGE < $COVERAGE_THRESHOLD" | bc -l) )); then
+          echo "Coverage ${COVERAGE}% is below threshold ${COVERAGE_THRESHOLD}%"
+          exit 1
+        fi
+
+  # trivy fs -- dependency CVEs AND leaked secrets in the tree. devops.md §8
+  # makes this BLOCKING on both servers; it is in ci-gate for that reason.
+  #
+  # It runs on the runner itself rather than inside the docker job's container,
+  # which cannot mount its own workspace into the host daemon.
+  #
+  # Scoping: test/ holds harnesses that ship in no release; coverage/ and bin/
+  # are build output; **/vendor is gitignored language-SDK tooling absent from a
+  # CI checkout. api/sdks/* IS scanned -- those SDKs ship, so their lockfiles
+  # are in scope. There is no .trivyignore in this repo, so no --ignorefile.
+  #
+  # examples/ is deliberately NOT skipped (go-objstore#17). It used to be, and
+  # that is precisely how examples/encryption -- a tracked Go module -- carried
+  # three HIGH advisories while every gate reported green. "Does not ship" is a
+  # reason to care less about a finding, not a reason to be unable to see it.
+  # Do not re-add the skip to silence a finding.
+  trivy:
+    name: Trivy
+    runs-on: ubuntu-latest
+    needs: [lint, build]
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    # Two paths for one gate. trivy-action's setup step cannot authenticate to
+    # github.com from a Gitea runner and upload-sarif has no GHES-compatible
+    # endpoint there, so the action path is guarded on the server URL and Gitea
+    # gates with the trivy CLI below. Both run the same fs scan at the same
+    # severity; only the SARIF upload is GitHub-only.
+    - name: Trivy scan (SARIF for code scanning)
+      if: github.server_url == 'https://github.com'
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: fs
+        scan-ref: .
+        scanners: vuln,secret
+        format: sarif
+        output: trivy-results.sarif
+        exit-code: 0
+        skip-dirs: test,coverage,bin,**/vendor
+
+    - name: Upload Trivy SARIF
+      if: always() && github.server_url == 'https://github.com'
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: trivy-results.sarif
+        category: trivy-fs
+
+    - name: Trivy gate (fail on CRITICAL/HIGH)
+      if: github.server_url == 'https://github.com'
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: fs
+        scan-ref: .
+        scanners: vuln,secret
+        severity: CRITICAL,HIGH
+        exit-code: 1
+        format: table
+        skip-dirs: test,coverage,bin,**/vendor
+
+    # Retried with backoff: raw.githubusercontent.com intermittently answers a
+    # Gitea runner with transient HTTP errors (curl exit 22), which failed the
+    # whole job on a fetch that succeeds seconds later. Now that this job gates
+    # again, one network blip would block every merge, so the retry is not
+    # optional. Do NOT "fix" a persistent failure by dropping the gate.
+    - name: Install Trivy CLI (Gitea)
+      if: github.server_url != 'https://github.com'
+      run: |
+        for i in 1 2 3 4 5; do
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin && exit 0
+          echo "trivy install attempt $i failed; retrying in $((i*10))s"
+          sleep $((i*10))
+        done
+        echo "trivy install failed after 5 attempts" >&2
+        exit 1
+
+    - name: Trivy gate (Gitea)
+      if: github.server_url != 'https://github.com'
+      run: |
+        trivy fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 --format table \
+          --skip-dirs test --skip-dirs coverage --skip-dirs bin \
+          --skip-dirs '**/vendor' .
+
   # STAGE 3 — the image is only worth building once the tree it packages has
   # passed the integration suites.
   docker:
@@ -482,14 +649,15 @@ jobs:
   # vacuously is worse than no gate. join(needs.*.result) is deliberately not
   # used: it evaluates empty on Gitea and reports success while jobs fail.
   #
-  # `fips` and `trivy` are absent because they are no longer in this workflow
-  # at all -- v1.9 moved both to nightly.yml, where they gate nothing. See the
-  # file header for what re-arming one requires.
+  # `fips` and `trivy` ARE here. They were briefly moved to nightly.yml and out
+  # of this list; that was reverted the same night (agent-company ruling
+  # 2026-08-21). Both pass, devops.md §8 makes trivy blocking, and a passing
+  # gate that nothing requires is a fail-open gate.
   ci-gate:
     name: CI Gate
     runs-on: ubuntu-latest
     if: always()
-    needs: [lint, build, test, sdk-tests, conformance-test, integration-test, security, docker]
+    needs: [lint, build, test, sdk-tests, conformance-test, integration-test, security, trivy, fips, docker]
 
     steps:
     - name: Fail closed on any non-success
@@ -501,6 +669,8 @@ jobs:
         RESULT_CONFORMANCE_TEST: ${{ needs.conformance-test.result }}
         RESULT_INTEGRATION_TEST: ${{ needs.integration-test.result }}
         RESULT_SECURITY: ${{ needs.security.result }}
+        RESULT_TRIVY: ${{ needs.trivy.result }}
+        RESULT_FIPS: ${{ needs.fips.result }}
         RESULT_DOCKER: ${{ needs.docker.result }}
       run: |
         # v1.9 SKIP-vs-FAIL: `skipped` is not the same as `failed`, and BOTH
@@ -524,5 +694,7 @@ jobs:
         check conformance-test "$RESULT_CONFORMANCE_TEST"
         check integration-test "$RESULT_INTEGRATION_TEST"
         check security         "$RESULT_SECURITY"
+        check trivy            "$RESULT_TRIVY"
+        check fips             "$RESULT_FIPS"
         check docker           "$RESULT_DOCKER"
         exit $status
