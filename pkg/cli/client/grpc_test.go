@@ -15,6 +15,7 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -31,7 +32,49 @@ import (
 
 const bufSize = 1024 * 1024
 
-var lis *bufconn.Listener
+// serveGRPC starts a bufconn-backed gRPC server for srv and returns a client
+// connection to it, registering its own teardown.
+//
+// Every call gets its OWN listener. This package used to share a single
+// package-level *bufconn.Listener that each setup reassigned and the dialer
+// goroutine read, which is four data races under -race and made pkg/cli/client
+// the only package in the tree that could not join the race gate (#18).
+//
+// The serve error travels back over a channel rather than being logged from
+// the goroutine: t.Logf after its test completes panics, and stopping the
+// server is exactly what makes Serve return.
+func serveGRPC(t *testing.T, srv objstorepb.ObjectStoreServer) *grpc.ClientConn {
+	t.Helper()
+
+	l := bufconn.Listen(bufSize)
+	s := grpc.NewServer()
+	objstorepb.RegisterObjectStoreServer(s, srv)
+
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- s.Serve(l) }()
+
+	t.Cleanup(func() {
+		s.Stop()
+		l.Close()
+		// Serve returns nil (or ErrServerStopped) once Stop lands; anything
+		// else is a genuine setup failure and must not vanish silently.
+		if err := <-serveErr; err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+			t.Errorf("gRPC test server exited with error: %v", err)
+		}
+	})
+
+	conn, err := grpc.DialContext(context.Background(), "bufnet",
+		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
+			return l.Dial()
+		}),
+		grpc.WithInsecure())
+	if err != nil {
+		t.Fatalf("Failed to dial bufnet: %v", err)
+	}
+
+	// The connection is the caller's to close; the server behind it is not.
+	return conn
+}
 
 // Mock gRPC server
 type mockGRPCServer struct {
@@ -203,47 +246,16 @@ func (s *mockGRPCServer) TriggerReplication(ctx context.Context, req *objstorepb
 	}, nil
 }
 
-func bufDialer(context.Context, string) (net.Conn, error) {
-	return lis.Dial()
-}
-
-func setupGRPCServer(t *testing.T) (*grpc.Server, func()) {
-	lis = bufconn.Listen(bufSize)
-	s := grpc.NewServer()
-	objstorepb.RegisterObjectStoreServer(s, &mockGRPCServer{})
-
-	go func() {
-		if err := s.Serve(lis); err != nil {
-			t.Logf("Server exited with error: %v", err)
-		}
-	}()
-
-	return s, func() {
-		s.Stop()
-		lis.Close()
-	}
-}
-
 func createGRPCTestClient(t *testing.T) (*GRPCClient, func()) {
-	_, cleanup := setupGRPCServer(t)
+	t.Helper()
 
-	ctx := context.Background()
-	conn, err := grpc.DialContext(ctx, "bufnet",
-		grpc.WithContextDialer(bufDialer),
-		grpc.WithInsecure())
-	if err != nil {
-		t.Fatalf("Failed to dial bufnet: %v", err)
-	}
-
+	conn := serveGRPC(t, &mockGRPCServer{})
 	client := &GRPCClient{
 		conn:   conn,
 		client: objstorepb.NewObjectStoreClient(conn),
 	}
 
-	return client, func() {
-		conn.Close()
-		cleanup()
-	}
+	return client, func() { conn.Close() }
 }
 
 func TestNewGRPCClient_InvalidURL(t *testing.T) {
@@ -559,25 +571,7 @@ func (s *mockErrorGRPCServer) Health(ctx context.Context, req *objstorepb.Health
 }
 
 func TestGRPCClient_Health_NotServing(t *testing.T) {
-	lis = bufconn.Listen(bufSize)
-	s := grpc.NewServer()
-	objstorepb.RegisterObjectStoreServer(s, &mockErrorGRPCServer{})
-
-	go func() {
-		if err := s.Serve(lis); err != nil {
-			t.Logf("Server exited with error: %v", err)
-		}
-	}()
-	defer s.Stop()
-	defer lis.Close()
-
-	ctx := context.Background()
-	conn, err := grpc.DialContext(ctx, "bufnet",
-		grpc.WithContextDialer(bufDialer),
-		grpc.WithInsecure())
-	if err != nil {
-		t.Fatalf("Failed to dial bufnet: %v", err)
-	}
+	conn := serveGRPC(t, &mockErrorGRPCServer{})
 	defer conn.Close()
 
 	client := &GRPCClient{
@@ -585,7 +579,7 @@ func TestGRPCClient_Health_NotServing(t *testing.T) {
 		client: objstorepb.NewObjectStoreClient(conn),
 	}
 
-	err = client.Health(context.Background())
+	err := client.Health(context.Background())
 	if err == nil {
 		t.Error("expected error when server not serving")
 	}
@@ -939,25 +933,7 @@ func (s *mockNilResultGRPCServer) TriggerReplication(ctx context.Context, req *o
 }
 
 func TestGRPCClient_TriggerReplication_NilResult(t *testing.T) {
-	lis = bufconn.Listen(bufSize)
-	s := grpc.NewServer()
-	objstorepb.RegisterObjectStoreServer(s, &mockNilResultGRPCServer{})
-
-	go func() {
-		if err := s.Serve(lis); err != nil {
-			t.Logf("Server exited with error: %v", err)
-		}
-	}()
-	defer s.Stop()
-	defer lis.Close()
-
-	ctx := context.Background()
-	conn, err := grpc.DialContext(ctx, "bufnet",
-		grpc.WithContextDialer(bufDialer),
-		grpc.WithInsecure())
-	if err != nil {
-		t.Fatalf("Failed to dial bufnet: %v", err)
-	}
+	conn := serveGRPC(t, &mockNilResultGRPCServer{})
 	defer conn.Close()
 
 	client := &GRPCClient{
@@ -965,7 +941,7 @@ func TestGRPCClient_TriggerReplication_NilResult(t *testing.T) {
 		client: objstorepb.NewObjectStoreClient(conn),
 	}
 
-	_, err = client.TriggerReplication(context.Background(), "test-policy")
+	_, err := client.TriggerReplication(context.Background(), "test-policy")
 	if err == nil {
 		t.Error("expected error when result is nil")
 	}
@@ -1060,25 +1036,7 @@ func (s *mockEmptyChunkGRPCServer) Get(req *objstorepb.GetRequest, stream objsto
 }
 
 func TestGRPCClient_Get_EmptyFirstChunk(t *testing.T) {
-	lis = bufconn.Listen(bufSize)
-	s := grpc.NewServer()
-	objstorepb.RegisterObjectStoreServer(s, &mockEmptyChunkGRPCServer{})
-
-	go func() {
-		if err := s.Serve(lis); err != nil {
-			t.Logf("Server exited with error: %v", err)
-		}
-	}()
-	defer s.Stop()
-	defer lis.Close()
-
-	ctx := context.Background()
-	conn, err := grpc.DialContext(ctx, "bufnet",
-		grpc.WithContextDialer(bufDialer),
-		grpc.WithInsecure())
-	if err != nil {
-		t.Fatalf("Failed to dial bufnet: %v", err)
-	}
+	conn := serveGRPC(t, &mockEmptyChunkGRPCServer{})
 	defer conn.Close()
 
 	client := &GRPCClient{
@@ -1128,25 +1086,7 @@ func (s *mockStreamErrorGRPCServer) Get(req *objstorepb.GetRequest, stream objst
 }
 
 func TestGRPCClient_Get_StreamError(t *testing.T) {
-	lis = bufconn.Listen(bufSize)
-	s := grpc.NewServer()
-	objstorepb.RegisterObjectStoreServer(s, &mockStreamErrorGRPCServer{})
-
-	go func() {
-		if err := s.Serve(lis); err != nil {
-			t.Logf("Server exited with error: %v", err)
-		}
-	}()
-	defer s.Stop()
-	defer lis.Close()
-
-	ctx := context.Background()
-	conn, err := grpc.DialContext(ctx, "bufnet",
-		grpc.WithContextDialer(bufDialer),
-		grpc.WithInsecure())
-	if err != nil {
-		t.Fatalf("Failed to dial bufnet: %v", err)
-	}
+	conn := serveGRPC(t, &mockStreamErrorGRPCServer{})
 	defer conn.Close()
 
 	client := &GRPCClient{

@@ -245,24 +245,28 @@ func TestServerShutdown(t *testing.T) {
 		t.Fatalf("NewServer() failed: %v", err)
 	}
 
-	// Start server in background
-	go func() {
-		// We expect this to fail since we're using port 0 and immediately shutting down
-		// This is fine for testing the shutdown mechanism
-		server.Start()
-	}()
-
-	// Give it a moment to start
-	time.Sleep(10 * time.Millisecond)
+	errChan := startServing(t, server)
 
 	// Test shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err = server.Shutdown(ctx)
-	// We don't check the error here because the server might not have fully started
-	// The important thing is that Shutdown() doesn't panic or hang
-	_ = err
+	if err := server.Shutdown(ctx); err != nil {
+		t.Errorf("Shutdown() = %v, want nil", err)
+	}
+
+	// The server is known to have been serving, so Shutdown must actually
+	// unblock Start. Previously this was unknowable — the sleep left it open
+	// whether Shutdown had raced ahead of a server that never started, so the
+	// test could only assert that Shutdown had not panicked.
+	select {
+	case err := <-errChan:
+		if err != http.ErrServerClosed {
+			t.Errorf("Start() = %v, want %v", err, http.ErrServerClosed)
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("Start() did not return after Shutdown")
+	}
 }
 
 func TestServerModes(t *testing.T) {

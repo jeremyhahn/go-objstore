@@ -46,6 +46,38 @@ func initTLSTestFacade(t *testing.T, storage common.Storage) {
 	}
 }
 
+// startServing runs Start in a goroutine and blocks until the server has
+// committed to serving, returning the channel that will carry Start's error.
+//
+// It replaces the `go Start(); time.Sleep(50ms)` barrier every server test in
+// this package used to open with. A sleep is not a happens-before edge, so
+// reading httpServer.TLSConfig after one is a genuine data race (#18), and
+// calling Shutdown after one is a coin flip: lose it and Shutdown runs against
+// a server that has not started, Start then blocks forever, and the test's
+// deadline branch logs instead of failing — a vacuous pass.
+//
+// The deadline below is a failure deadline, not a synchronization primitive:
+// it exists so a wedged server fails loudly rather than hanging until the
+// package -timeout. The barrier itself is the closed channel.
+func startServing(t *testing.T, s *Server) <-chan error {
+	t.Helper()
+	errChan := make(chan error, 1)
+	go func() { errChan <- s.Start() }()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	select {
+	case <-s.serving:
+	case err := <-errChan:
+		// Start bailed out before serving — a TLS build failure, say. Report
+		// its error rather than the timeout it would otherwise become.
+		t.Fatalf("Start() returned before serving: %v", err)
+	case <-ctx.Done():
+		t.Fatal("server did not begin serving within 10s")
+	}
+	return errChan
+}
+
 // Test server Start with TLS configuration
 func TestServerStartWithTLS(t *testing.T) {
 	// Create temporary certificate and key files
@@ -70,14 +102,7 @@ func TestServerStartWithTLS(t *testing.T) {
 		t.Fatalf("NewServer() with TLS config failed: %v", err)
 	}
 
-	// Start server in background
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- server.Start()
-	}()
-
-	// Give it a moment to potentially start (or fail)
-	time.Sleep(50 * time.Millisecond)
+	errChan := startServing(t, server)
 
 	// Shutdown immediately
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
@@ -123,12 +148,10 @@ func TestServerStartClampsTLSMinVersion(t *testing.T) {
 		t.Fatalf("NewServer() failed: %v", err)
 	}
 
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- server.Start()
-	}()
-	time.Sleep(50 * time.Millisecond)
+	errChan := startServing(t, server)
 
+	// Safe to read: startServing returned only after Start closed s.serving,
+	// which happens-after the TLSConfig assignment.
 	if server.httpServer.TLSConfig == nil {
 		t.Fatal("httpServer.TLSConfig not set after Start()")
 	}
@@ -163,13 +186,9 @@ func TestServerStartWithDisabledTLS(t *testing.T) {
 		t.Fatalf("NewServer() failed: %v", err)
 	}
 
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- server.Start()
-	}()
-
-	// Give the server time to start (a nil deref would panic here pre-fix).
-	time.Sleep(50 * time.Millisecond)
+	// A nil deref would panic in Start here pre-fix, which startServing surfaces
+	// as the goroutine never reaching its serve call.
+	errChan := startServing(t, server)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
@@ -310,14 +329,7 @@ func TestServerStartWithMTLS(t *testing.T) {
 		t.Fatalf("NewServer() with mTLS config failed: %v", err)
 	}
 
-	// Start server in background
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- server.Start()
-	}()
-
-	// Give it a moment
-	time.Sleep(50 * time.Millisecond)
+	errChan := startServing(t, server)
 
 	// Shutdown immediately
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)

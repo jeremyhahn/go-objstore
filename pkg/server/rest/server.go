@@ -18,6 +18,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -34,6 +35,22 @@ type Server struct {
 	handler     *Handler
 	config      *ServerConfig
 	rateLimiter *middleware.RateLimiter
+
+	// serving is closed by Start once httpServer is fully configured and the
+	// blocking serve call is about to be made. Closing a channel publishes
+	// every write the closing goroutine made beforehand, so this is the
+	// happens-before edge a caller needs before reading httpServer — notably
+	// httpServer.TLSConfig, which Start assigns.
+	//
+	// It means "Start has committed to serving", not "the listener is bound",
+	// and that is the guarantee callers actually need: http.Server makes the
+	// remainder deterministic, because Serve refuses to track a listener once
+	// shutdown has begun. A Shutdown issued after this point therefore either
+	// stops a running server or makes the imminent Serve return
+	// ErrServerClosed — never the silent no-op that racing Shutdown against
+	// an unstarted server produces.
+	serving     chan struct{}
+	servingOnce sync.Once
 }
 
 // ServerConfig holds server configuration
@@ -269,9 +286,19 @@ func NewServer(storage common.Storage, config *ServerConfig) (*Server, error) {
 		handler:     handler,
 		config:      config,
 		rateLimiter: rateLimiter,
+		serving:     make(chan struct{}),
 	}
 
 	return server, nil
+}
+
+// beginServing publishes the server's start-up state to anyone waiting on
+// serving. sync.Once is not defensive clutter: a second Start must fail on its
+// own terms — "address already in use", or ErrServerClosed after a Shutdown —
+// and closing an already-closed channel would turn that ordinary error into a
+// panic.
+func (s *Server) beginServing() {
+	s.servingOnce.Do(func() { close(s.serving) })
 }
 
 // Start starts the REST API server
@@ -297,6 +324,7 @@ func (s *Server) Start() error {
 			)
 
 			// ListenAndServeTLS requires empty cert/key params when using TLSConfig
+			s.beginServing()
 			return s.httpServer.ListenAndServeTLS("", "")
 		}
 	}
@@ -304,6 +332,7 @@ func (s *Server) Start() error {
 	s.config.Logger.Info(context.Background(), "Starting REST API server",
 		adapters.Field{Key: "address", Value: s.httpServer.Addr},
 	)
+	s.beginServing()
 	return s.httpServer.ListenAndServe()
 }
 

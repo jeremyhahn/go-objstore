@@ -172,11 +172,21 @@ generate-proto:
 	@echo "$(GREEN)✓ Protobuf code generated$(RESET)"
 
 .PHONY: test
-## test: Run unit tests (fast, in-memory, no system modifications)
+## test: Run unit tests under the race detector, with coverage
+#
+# -race is not optional here (go-objstore#18). This repository's product is
+# locked memory, storage pools and replication -- concurrency-sensitive code --
+# and the suite ran without the race detector anywhere, locally or in CI, which
+# is how a data race in the REST server's TLS start-up survived on main. It
+# rides in this target rather than a separate CI job so it costs no extra
+# runner slot: CI's `test` job and nightly's `fips` job both call `make test`,
+# so both gained race coverage.
+#
+# -covermode=atomic is required with -race and was already set.
 test:
-	@echo "$(CYAN)$(BOLD)→ Running unit tests with coverage...$(RESET)"
+	@echo "$(CYAN)$(BOLD)→ Running unit tests with coverage (race detector)...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
-	$(GO) test -tags="local awss3 minio gcpstorage azureblob glacier azurearchive" -coverprofile=$(COVERAGE_DIR)/unit.out -covermode=atomic ./pkg/...
+	$(GO) test -race -timeout=20m -tags="local awss3 minio gcpstorage azureblob glacier azurearchive" -coverprofile=$(COVERAGE_DIR)/unit.out -covermode=atomic ./pkg/...
 	@echo ""
 	@echo "$(CYAN)$(BOLD)→ Coverage Summary:$(RESET)"
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/unit.out | tail -1 | awk '{print "  $(GREEN)Total Coverage: " $$NF "$(RESET)"}' || true
