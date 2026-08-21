@@ -3,7 +3,7 @@
 # docker-compose.yml bind-mounts the repository over /app and overrides the
 # command, so this image only has to supply the toolchain and a warm module
 # cache; the source that actually gets built and tested is the bind mount.
-FROM golang:1.26.6-alpine
+FROM golang:1.26.7-alpine
 
 # Allow Go toolchain auto-upgrade
 ENV GOTOOLCHAIN=auto

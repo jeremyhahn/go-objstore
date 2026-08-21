@@ -116,7 +116,15 @@ func ObjstoreNewStorage(backendType *C.char, settingsKeys **C.char, settingsValu
 	// Build settings map
 	settings := make(map[string]string)
 	if settingsCount > 0 {
+		// #nosec G103 -- FFI boundary. settingsKeys/settingsValues are caller-owned
+		// arrays of C strings whose length only the caller knows; settingsCount is
+		// the C ABI's sole means of communicating it. The count is checked positive
+		// above, and both slices are read (never written) and never outlive this
+		// call. A count larger than the real allocation is a caller-contract
+		// violation that no callee-side check can detect.
 		keysSlice := unsafe.Slice(settingsKeys, settingsCount)
+		// #nosec G103 -- same array-length contract as keysSlice above; the two are
+		// parallel arrays indexed together under the same settingsCount.
 		valuesSlice := unsafe.Slice(settingsValues, settingsCount)
 		for i := 0; i < int(settingsCount); i++ {
 			key := C.GoString(keysSlice[i])
@@ -146,6 +154,12 @@ func ObjstorePut(handle C.int, key *C.char, data *C.char, dataLen C.int) C.int {
 	}
 
 	goKey := C.GoString(key)
+	// #nosec G103 -- FFI boundary. GoBytes COPIES dataLen bytes from caller memory
+	// into a Go-owned slice, so nothing here aliases the caller's buffer past the
+	// call. dataLen is caller-asserted, as the C ABI requires; a negative value
+	// panics inside gobytes rather than reading out of bounds, and a value larger
+	// than the real allocation is a caller-contract violation the callee cannot
+	// detect. Rejecting a negative length explicitly is tracked separately.
 	goData := C.GoBytes(unsafe.Pointer(data), dataLen)
 
 	reader := bytes.NewReader(goData)
@@ -196,6 +210,14 @@ func ObjstoreGet(handle C.int, key *C.char, buffer *C.char, bufferSize C.int) C.
 
 	// Copy to C buffer
 	if len(data) > 0 {
+		// #nosec G103 -- FFI boundary, and the one write into caller memory here.
+		// It is bounded on this side: the len(data) > bufferSize check above
+		// returns ErrBufferTooSmall before reaching this line, so the copy can
+		// never exceed the length the caller declared. (A negative bufferSize also
+		// cannot reach here — it fails that same check for any non-empty data, and
+		// empty data does not enter this branch.) The residual risk is a caller
+		// declaring a bufferSize larger than it allocated, which is a
+		// caller-contract violation no callee-side check can detect.
 		goBuffer := unsafe.Slice((*byte)(unsafe.Pointer(buffer)), bufferSize)
 		copy(goBuffer, data)
 	}
@@ -235,6 +257,11 @@ func ObjstoreClose(handle C.int) {
 
 //export ObjstoreFreeString
 func ObjstoreFreeString(str *C.char) {
+	// #nosec G103 -- FFI boundary, and the deallocation half of this library's
+	// ownership contract: every *C.char it hands out comes from C.CString (a
+	// malloc), so the caller must return it here or leak. Passing a foreign or
+	// already-freed pointer is undefined, and C offers no way to verify one —
+	// which is why this function exists rather than asking callers to free().
 	C.free(unsafe.Pointer(str))
 }
 

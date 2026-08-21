@@ -1,4 +1,4 @@
-FROM golang:1.26.6
+FROM golang:1.26.7
 
 RUN apt-get update && apt-get install -y ca-certificates curl netcat-openbsd && rm -rf /var/lib/apt/lists/*
 
