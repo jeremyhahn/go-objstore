@@ -1,7 +1,31 @@
-# ci-template: v1 (customized)
+# ci-template: v1.9 (customized)
 # Reconciled against software/templates/github-actions/ci.yml in the
 # automatethethings repo (devops.md §1/§8/§9). Divergence outside the
 # repo-specific blocks below is a defect.
+#
+# v1.9 (owner ruling 2026-08-20, FAIL-FAST STAGED PIPELINE). Gitea cannot
+# cancel in-flight jobs, so fail-fast comes from ORDERING instead:
+#
+#   stage 1 (fast tier)   lint, build              — minutes, no `needs`
+#   stage 2 (expensive)   test, sdk-tests, security, conformance-test,
+#                         integration-test         — `needs: [lint, build]`
+#   stage 3               docker                   — `needs: [build, integration-test]`
+#
+# A tree that does not compile or does not lint no longer occupies a runner
+# for the six-way SDK matrix and eight integration suites before saying so.
+# Note the direction reversed: `build` used to depend on `test` and
+# `security`, which put the cheapest signal last.
+#
+# `fips` and `trivy` moved to nightly.yml by the same ruling. Both were GREEN
+# here when they moved (run 3865 on 67aa52a) — the move is about cost, not
+# redness: `fips` is a second full run of the unit suite plus the coverage
+# gate under GODEBUG=fips140=only, and `trivy` downloads and runs a scanner
+# whose findings govulncheck already gates on for Go dependencies. Neither
+# earns a runner slot on every push while the queue is hours deep.
+#
+# RE-ARMING EITHER ONE IS THE WHOLE ACT, not half of it: move the job back
+# into this file, add it to ci-gate's `needs`, AND add a `check` call in the
+# gate loop. A job that can pass and is not required is a fail-open gate.
 
 name: CI
 
@@ -28,13 +52,11 @@ env:
   SCAN_IMAGE: 'objstore:ci-scan'
 
 jobs:
-  fips:
-    name: FIPS
+  # STAGE 1 — the fast tier. `lint` and `build` carry no `needs` and are the
+  # only jobs that start on a push; everything expensive stages behind them.
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
-    needs: [test, lint]  # v1.9 staged fail-fast: expensive tier gates on the fast tier (no cancel API — task #90)
-    env:
-      GOFIPS140: latest
-      GODEBUG: fips140=only
 
     steps:
     - name: Checkout code
@@ -46,45 +68,52 @@ jobs:
         go-version: ${{ env.GO_VERSION }}
         cache: true
 
-    - name: Download dependencies
-      run: go mod download
-
-    - name: Verify dependencies
-      run: go mod verify
-
-    - name: Verify version consistency
-      run: make version-check
-
-    - name: Build production packages (FIPS mode)
-      run: go build -tags="local awss3 minio gcpstorage azureblob glacier azurearchive" ./...
-
-    # Keep this invocation identical to the Test job so FIPS mode uses the
-    # same build tags, package scope, and dark-suite/integration exclusions.
-    - name: Run unit tests with coverage
-      run: |
-        mkdir -p coverage
-        make test
-
-    - name: Check coverage threshold
-      run: |
-        COVERAGE=$(go tool cover -func=coverage/unit.out | grep total | awk '{print $3}' | sed 's/%//')
-        echo "Coverage: ${COVERAGE}%"
-        if (( $(echo "$COVERAGE < $COVERAGE_THRESHOLD" | bc -l) )); then
-          echo "Coverage ${COVERAGE}% is below threshold ${COVERAGE_THRESHOLD}%"
-          exit 1
-        fi
-
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v6
+    # Latest action major, PINNED linter (devops.md §9 documented-pin clause;
+    # unpin tracker go-qrdb#42). `version: latest` resolved to golangci-lint
+    # v2.13.0, which panics under Go 1.26 -- "nilness: internal error:
+    # unhandled builtin recover" out of honnef.co/go/tools v0.8.0-rc.1 -- and
+    # takes the gate down with it. Under the v1.9 staged pipeline that is no
+    # longer one red job: every expensive job needs `lint`, so a linter
+    # release breaks the entire run. Unpin when an upstream release passes
+    # across the portfolio (tracked on go-qrdb#42).
+    - name: Run golangci-lint
+      uses: golangci/golangci-lint-action@v9
       with:
-        files: ./coverage/unit.out
-        flags: unittests
-        name: codecov-umbrella
-        fail_ci_if_error: false
+        version: v2.12.2
+        args: --timeout=10m
 
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    # STAGE 1. No `needs`: this is the compile check the rest of the pipeline
+    # stages behind, so it cannot wait on `test` or `security` the way it did
+    # before v1.9 — that ordering made the cheapest failure the slowest to
+    # report.
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    - name: Build CLI
+      run: make build-cli WITH_LOCAL=1 WITH_AWS=1 WITH_GCP=1 WITH_AZURE=1
+
+    - name: Build server
+      run: make build-server WITH_LOCAL=1 WITH_AWS=1 WITH_GCP=1 WITH_AZURE=1
+
+    - name: Build shared library
+      run: make lib WITH_LOCAL=1 WITH_AWS=1 WITH_GCP=1 WITH_AZURE=1
+
+  # STAGE 2 — the expensive tier, gated on the fast tier.
   test:
     name: Test
     runs-on: ubuntu-latest
+    needs: [lint, build]
 
     steps:
     - name: Checkout code
@@ -130,7 +159,7 @@ jobs:
   sdk-tests:
     name: SDK Tests (${{ matrix.sdk }})
     runs-on: ubuntu-latest
-    needs: [test, lint]  # v1.9 staged fail-fast: expensive tier gates on the fast tier (no cancel API — task #90)
+    needs: [lint, build]
     strategy:
       fail-fast: false
       matrix:
@@ -186,7 +215,7 @@ jobs:
   conformance-test:
     name: Cross-Protocol Conformance
     runs-on: ubuntu-latest
-    needs: test
+    needs: [lint, build]
 
     steps:
     - name: Checkout code
@@ -204,7 +233,7 @@ jobs:
   integration-test:
     name: Integration Tests
     runs-on: ubuntu-latest
-    needs: test
+    needs: [lint, build]
 
     steps:
     - name: Checkout code
@@ -243,32 +272,10 @@ jobs:
     - name: Run CLI integration tests
       run: make integration-test-cli
 
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v6
-
-    - name: Set up Go
-      uses: actions/setup-go@v6
-      with:
-        go-version: ${{ env.GO_VERSION }}
-        cache: true
-
-    # Latest action major and latest linter: devops.md §9. No version pin --
-    # an undocumented pin is a defect, and there is no reason to hold one here.
-    - name: Run golangci-lint
-      uses: golangci/golangci-lint-action@v9
-      with:
-        version: latest
-        args: --timeout=10m
-
   security:
     name: Security Scan
     runs-on: ubuntu-latest
-    needs: [test, lint]  # v1.9 staged fail-fast: expensive tier gates on the fast tier (no cancel API — task #90)
+    needs: [lint, build]
     permissions:
       contents: read
       security-events: write
@@ -327,101 +334,8 @@ jobs:
         go install golang.org/x/vuln/cmd/govulncheck@latest
         GOFLAGS="-tags=local,awss3,gcpstorage,azureblob,glacier" govulncheck ./...
 
-  # trivy fs -- dependency CVEs AND leaked secrets in the tree, gating on both
-  # servers (devops.md §8). This used to be a secret-only, GitHub-only,
-  # non-gating pass buried in the docker job; it scanned half of what §8
-  # requires on half the hosts. It lives in its own job now so the scanner runs
-  # on the runner itself rather than inside the docker job's container, which
-  # cannot mount its own workspace into the host daemon.
-  #
-  # Scoping mirrors the `security` target in the Makefile; keep the two
-  # identical. test/ and examples/ do not ship; coverage/ and bin/ are build
-  # output; **/vendor is gitignored language-SDK tooling absent from a CI
-  # checkout. api/sdks/* IS scanned -- those SDKs ship, so their lockfiles are
-  # in scope. There is no .trivyignore in this repo, so no --ignorefile.
-  trivy:
-    name: Trivy
-    runs-on: ubuntu-latest
-    needs: [test, lint]  # v1.9 staged fail-fast: expensive tier gates on the fast tier (no cancel API — task #90)
-    permissions:
-      contents: read
-      security-events: write
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v6
-
-    # Two paths for one gate. trivy-action's setup step cannot authenticate to
-    # github.com from a Gitea runner and upload-sarif has no GHES-compatible
-    # endpoint there, so the action path is guarded on the server URL and Gitea
-    # gates with the trivy CLI below. Both run the same fs scan at the same
-    # severity; only the SARIF upload is GitHub-only.
-    - name: Trivy scan (SARIF for code scanning)
-      if: github.server_url == 'https://github.com'
-      uses: aquasecurity/trivy-action@master
-      with:
-        scan-type: fs
-        scan-ref: .
-        scanners: vuln,secret
-        format: sarif
-        output: trivy-results.sarif
-        exit-code: 0
-        skip-dirs: test,examples,coverage,bin,**/vendor
-
-    - name: Upload Trivy SARIF
-      if: always() && github.server_url == 'https://github.com'
-      uses: github/codeql-action/upload-sarif@v3
-      with:
-        sarif_file: trivy-results.sarif
-        category: trivy-fs
-
-    - name: Trivy gate (fail on CRITICAL/HIGH)
-      if: github.server_url == 'https://github.com'
-      uses: aquasecurity/trivy-action@master
-      with:
-        scan-type: fs
-        scan-ref: .
-        scanners: vuln,secret
-        severity: CRITICAL,HIGH
-        exit-code: 1
-        format: table
-        skip-dirs: test,examples,coverage,bin,**/vendor
-
-    - name: Install Trivy CLI (Gitea)
-      if: github.server_url != 'https://github.com'
-      run: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
-
-    - name: Trivy gate (Gitea)
-      if: github.server_url != 'https://github.com'
-      run: |
-        trivy fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 --format table \
-          --skip-dirs test --skip-dirs examples --skip-dirs coverage --skip-dirs bin \
-          --skip-dirs '**/vendor' .
-
-  build:
-    name: Build
-    runs-on: ubuntu-latest
-    needs: [test, lint, security]
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v6
-
-    - name: Set up Go
-      uses: actions/setup-go@v6
-      with:
-        go-version: ${{ env.GO_VERSION }}
-        cache: true
-
-    - name: Build CLI
-      run: make build-cli WITH_LOCAL=1 WITH_AWS=1 WITH_GCP=1 WITH_AZURE=1
-
-    - name: Build server
-      run: make build-server WITH_LOCAL=1 WITH_AWS=1 WITH_GCP=1 WITH_AZURE=1
-
-    - name: Build shared library
-      run: make lib WITH_LOCAL=1 WITH_AWS=1 WITH_GCP=1 WITH_AZURE=1
-
+  # STAGE 3 — the image is only worth building once the tree it packages has
+  # passed the integration suites.
   docker:
     name: Build and Scan Docker Image
     runs-on: ubuntu-latest
@@ -509,9 +423,10 @@ jobs:
         SCAN_IMAGE: ${{ env.SCAN_IMAGE }}
 
     # The filesystem scan that used to sit here was secret-only, GitHub-only
-    # and non-gating. It now lives in the `trivy` job above, which runs on the
-    # runner itself (not inside this job's container), scans vuln,secret, and
-    # fails the build on CRITICAL/HIGH on both servers -- devops.md §8.
+    # and non-gating. It became its own `trivy` job (running on the runner
+    # itself rather than inside this job's container, scanning vuln,secret on
+    # both servers -- devops.md §8), and v1.9 moved that job to nightly.yml.
+    # The image scan below is unaffected and still gates here.
 
     # anchore/scan-action installs its binary through a nested checkout, which a
     # self-hosted runner resolves against its own server and fails. Trivy above
@@ -538,29 +453,52 @@ jobs:
         sarif_file: ${{ steps.grype.outputs.sarif }}
         category: 'grype'
 
-  # The single required check (devops.md §1). Every job above appears in BOTH
-  # the needs list and the results check -- a gate that can pass vacuously is
-  # worse than no gate. join(needs.*.result) is deliberately not used: it
-  # evaluates empty on Gitea and reports success while jobs fail.
+  # The single required check (devops.md §1). Every job in this workflow
+  # appears in BOTH the needs list and the check loop -- a gate that can pass
+  # vacuously is worse than no gate. join(needs.*.result) is deliberately not
+  # used: it evaluates empty on Gitea and reports success while jobs fail.
+  #
+  # `fips` and `trivy` are absent because they are no longer in this workflow
+  # at all -- v1.9 moved both to nightly.yml, where they gate nothing. See the
+  # file header for what re-arming one requires.
   ci-gate:
     name: CI Gate
     runs-on: ubuntu-latest
     if: always()
-    needs: [test, sdk-tests, conformance-test, integration-test, lint, security, trivy, build, docker, fips]
+    needs: [lint, build, test, sdk-tests, conformance-test, integration-test, security, docker]
 
     steps:
     - name: Fail closed on any non-success
+      env:
+        RESULT_LINT: ${{ needs.lint.result }}
+        RESULT_BUILD: ${{ needs.build.result }}
+        RESULT_TEST: ${{ needs.test.result }}
+        RESULT_SDK_TESTS: ${{ needs.sdk-tests.result }}
+        RESULT_CONFORMANCE_TEST: ${{ needs.conformance-test.result }}
+        RESULT_INTEGRATION_TEST: ${{ needs.integration-test.result }}
+        RESULT_SECURITY: ${{ needs.security.result }}
+        RESULT_DOCKER: ${{ needs.docker.result }}
       run: |
-        check() { case "$2" in success) echo "OK   $1";; *) echo "FAIL $1 ($2)"; BAD=1;; esac; }
-        BAD=0
-        check test             "${{ needs.test.result }}"
-        check sdk-tests        "${{ needs.sdk-tests.result }}"
-        check conformance-test "${{ needs.conformance-test.result }}"
-        check integration-test "${{ needs.integration-test.result }}"
-        check lint             "${{ needs.lint.result }}"
-        check security         "${{ needs.security.result }}"
-        check trivy            "${{ needs.trivy.result }}"
-        check build            "${{ needs.build.result }}"
-          check fips        "${{ needs.fips.result }}"
-        check docker           "${{ needs.docker.result }}"
-        exit $BAD
+        # v1.9 SKIP-vs-FAIL: `skipped` is not the same as `failed`, and BOTH
+        # fail the gate. Under the staged pipeline a skip means an upstream
+        # stage failed, so naming it keeps a blocked stage loud instead of
+        # letting a red gate read as a test failure while the tests never ran.
+        # An unreadable (empty) result fails closed rather than passing.
+        status=0
+        check() {
+          case "$2" in
+            success) echo "ok:   $1 = success" ;;
+            skipped) echo "SKIP: $1 (an upstream stage failed - see its job)"; status=1 ;;
+            "")      echo "FAIL: $1 result is unreadable - failing closed";     status=1 ;;
+            *)       echo "FAIL: $1 = $2";                                     status=1 ;;
+          esac
+        }
+        check lint             "$RESULT_LINT"
+        check build            "$RESULT_BUILD"
+        check test             "$RESULT_TEST"
+        check sdk-tests        "$RESULT_SDK_TESTS"
+        check conformance-test "$RESULT_CONFORMANCE_TEST"
+        check integration-test "$RESULT_INTEGRATION_TEST"
+        check security         "$RESULT_SECURITY"
+        check docker           "$RESULT_DOCKER"
+        exit $status
