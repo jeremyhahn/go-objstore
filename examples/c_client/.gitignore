@@ -4,3 +4,10 @@
 # -buildmode=c-shared and moves it here (Makefile), and `make clean` removes it.
 # A bare `libobjstore.h` would match the name at any depth below this directory.
 /libobjstore.h
+
+# The compiled test client and example, built by this directory's Makefile and
+# removed by its `clean` target. Anchored for the same reason as the header.
+# Without these, running the suite leaves multi-megabyte executables sitting
+# untracked next to their sources, one `git add .` away from the history.
+/test_objstore
+/simple_example

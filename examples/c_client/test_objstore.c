@@ -281,7 +281,86 @@ static int test_error_handling_small_buffer(int handle) {
     return 0;
 }
 
-/* Test 9: Binary data handling */
+/*
+ * Test 9: Error handling - negative lengths
+ *
+ * Every length in this API crosses as a signed int, so a caller that
+ * miscomputes one can hand us a negative value. Before these were validated,
+ * ObjstorePut passed dataLen straight to C.GoBytes, which panics on a negative
+ * length and aborts THIS process — the library's host — instead of returning
+ * an error code the caller could act on.
+ *
+ * That is what makes this test worth its runtime: without the guards it does
+ * not fail, it crashes the suite outright, and no later test reports at all.
+ */
+static int check_negative_length_error(const char *param) {
+    char *err = ObjstoreGetLastError();
+    if (err == NULL) {
+        PRINT_FAIL("Expected an error message but got none");
+        return -1;
+    }
+    /* The message must name the offending parameter: a caller holding only -1
+     * and a string cannot otherwise tell which argument it got wrong. */
+    if (strstr(err, param) == NULL) {
+        printf("       Error did not name '%s': %s\n", param, err);
+        ObjstoreFreeString(err);
+        PRINT_FAIL("Error message must identify the offending parameter");
+        return -1;
+    }
+    printf("       Expected error received: %s\n", err);
+    ObjstoreFreeString(err);
+    return 0;
+}
+
+static int test_negative_lengths(int handle) {
+    PRINT_TEST("Error Handling - Negative Lengths");
+
+    const char *key = "data/file2.txt";
+    const char *data = "test data";
+    char buffer[64];
+
+    /* Put with a negative dataLen: this is the one that used to panic. */
+    if (ObjstorePut(handle, (char *)key, (char *)data, -1) == 0) {
+        PRINT_FAIL("Put with negative dataLen should have failed");
+        return -1;
+    }
+    if (check_negative_length_error("dataLen") != 0) {
+        return -1;
+    }
+
+    /* Get with a negative bufferSize. */
+    if (ObjstoreGet(handle, (char *)key, buffer, -1) >= 0) {
+        PRINT_FAIL("Get with negative bufferSize should have failed");
+        return -1;
+    }
+    if (check_negative_length_error("bufferSize") != 0) {
+        return -1;
+    }
+
+    /* NewStorage with a negative settingsCount, which used to be swallowed by
+     * the `settingsCount > 0` guard and produce an empty settings map. */
+    if (ObjstoreNewStorage((char *)"memory", NULL, NULL, -1) >= 0) {
+        PRINT_FAIL("NewStorage with negative settingsCount should have failed");
+        return -1;
+    }
+    if (check_negative_length_error("settingsCount") != 0) {
+        return -1;
+    }
+
+    /* The guards must not have broken the valid path: a correct Put still
+     * works after all of the above. Without this the suite would still pass if
+     * the checks rejected everything. */
+    if (ObjstorePut(handle, (char *)key, (char *)data, (int)strlen(data)) != 0) {
+        print_objstore_error("Put with a valid length");
+        PRINT_FAIL("Put with a valid length must still succeed");
+        return -1;
+    }
+
+    PRINT_PASS("Negative lengths are rejected without aborting the process");
+    return 0;
+}
+
+/* Test 10: Binary data handling */
 static int test_binary_data(int handle) {
     PRINT_TEST("Binary Data Handling");
 
@@ -356,6 +435,9 @@ int main(void) {
     printf("\n");
 
     if (test_error_handling_small_buffer(handle) != 0) failed_tests++;
+    printf("\n");
+
+    if (test_negative_lengths(handle) != 0) failed_tests++;
     printf("\n");
 
     if (test_binary_data(handle) != 0) failed_tests++;

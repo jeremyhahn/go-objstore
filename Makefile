@@ -183,10 +183,18 @@ generate-proto:
 # so both gained race coverage.
 #
 # -covermode=atomic is required with -race and was already set.
+#
+# The package list is ./pkg/... plus cmd/objstorelib, NOT ./cmd/... . The
+# library shim is the only cmd package carrying tests, and its guards against
+# negative lengths from C are worth gating (go-objstore#25); the other six cmd
+# packages have no test files at all, so sweeping them in would add ~5 points of
+# uncovered statements to the denominator while gating nothing. Widening the
+# coverage gate to cover the binaries is a deliberate decision, not a side
+# effect of this list.
 test:
 	@echo "$(CYAN)$(BOLD)→ Running unit tests with coverage (race detector)...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
-	$(GO) test -race -timeout=20m -tags="local awss3 minio gcpstorage azureblob glacier azurearchive" -coverprofile=$(COVERAGE_DIR)/unit.out -covermode=atomic ./pkg/...
+	$(GO) test -race -timeout=20m -tags="local awss3 minio gcpstorage azureblob glacier azurearchive" -coverprofile=$(COVERAGE_DIR)/unit.out -covermode=atomic ./pkg/... ./cmd/objstorelib/...
 	@echo ""
 	@echo "$(CYAN)$(BOLD)→ Coverage Summary:$(RESET)"
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/unit.out | tail -1 | awk '{print "  $(GREEN)Total Coverage: " $$NF "$(RESET)"}' || true
@@ -782,6 +790,21 @@ clean:
 	@rm -rf api/sdks/csharp/bin api/sdks/csharp/obj api/sdks/csharp/Tests/bin api/sdks/csharp/Tests/obj 2>/dev/null || true
 	@rm -rf api/sdks/go/bin 2>/dev/null || true
 	@echo "$(GREEN)✓ Clean complete$(RESET)"
+
+.PHONY: lib-test
+## lib-test: Build the shared library and run the C API test suite against it
+#
+# The ONLY coverage that reaches the //export wrappers. `go test` refuses cgo in
+# test files ("use of cgo in test ... not supported"), so no Go test can call
+# ObjstorePut and friends with C arguments — a guard could be deleted from any
+# wrapper and every Go test would still pass (go-objstore#25).
+#
+# Depends on `lib` so the .so and its generated header are current; pass the
+# same WITH_* flags you would pass to `lib`.
+lib-test: lib
+	@echo "$(CYAN)$(BOLD)→ Running C API test suite...$(RESET)"
+	@$(MAKE) -C examples/c_client run
+	@echo "$(GREEN)✓ C API test suite passed$(RESET)"
 
 .PHONY: lib
 ## lib: Generate a shared object (.so) file for the library

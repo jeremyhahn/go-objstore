@@ -119,6 +119,16 @@ jobs:
     - name: Build shared library
       run: make lib WITH_LOCAL=1 WITH_AWS=1 WITH_GCP=1 WITH_AZURE=1
 
+    # The C API suite is the ONLY coverage that reaches the //export wrappers:
+    # `go test` refuses cgo in test files, so no Go test can call ObjstorePut
+    # with C arguments, and a guard could be deleted from any wrapper with every
+    # Go test still passing (go-objstore#25). It runs in THIS job because the
+    # step above has just built the .so and its header — putting it in `test`
+    # would mean building the shared library a second time for one second of
+    # test, and this job is already in ci-gate.
+    - name: Run C API test suite
+      run: make -C examples/c_client run
+
   # STAGE 2 — the expensive tier, gated on the fast tier.
   test:
     name: Test
