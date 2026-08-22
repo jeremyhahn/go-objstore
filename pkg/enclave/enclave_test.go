@@ -271,9 +271,19 @@ func TestMemoryEnclave_DestroyWaitsForInFlightReader(t *testing.T) {
 		_ = e.WithBytes(func(b []byte) error {
 			close(borrowed)
 			<-release
+			// Ordered from INSIDE the borrow, while the read lock is still
+			// held. Placed after WithBytes returns — where it used to be — it
+			// is ordered against nothing: the lock drops on return, so Destroy
+			// is free to take the write lock, finish, and increment first,
+			// leaving this store unexecuted when the assertion below reads it
+			// (#27; seen as "reader exited at 0 and Destroy at 1"). Here, the
+			// increment happens-before the lock is released, which
+			// happens-before Destroy can acquire it — so the ordering the
+			// assertion checks is the lock discipline itself rather than
+			// goroutine scheduling.
+			readerExit.Store(order.Add(1))
 			return nil
 		})
-		readerExit.Store(order.Add(1))
 	}()
 
 	<-borrowed
