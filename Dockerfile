@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 # Multi-stage build for go-objstore
 # Stage 1: Build the application
 FROM golang:1.26.7-alpine AS builder
@@ -10,7 +11,31 @@ WORKDIR /build
 
 # Copy go mod files first for better caching
 COPY go.mod go.sum ./
-RUN go mod download
+# go.mod pins the internal first-party module github.com/jeremyhahn/go-enclave,
+# published to the internal Gitea rather than github.com. Resolving it needs
+# GOPRIVATE plus git's insteadOf rewrite carrying a read-only token
+# (conventions/dependency-resolution.md §6), supplied as an OPTIONAL BuildKit
+# secret carrying ONLY the tokenised GIT_CONFIG_KEY_0 value. It is mounted on
+# tmpfs for this RUN alone and read via a quoted command substitution — never
+# sourced as shell, so a credential containing shell metacharacters is assigned
+# literally rather than executed. It is never a build arg or ENV (recoverable
+# via docker history) and never written to a layer. The public parts of the
+# rewrite are literals below; only the token-bearing key is secret. The mount
+# is optional, so the same Dockerfile still builds against the public proxy
+# when no secret is provided.
+#
+# The CI `docker` job supplies this secret. The SDK integration compose harness
+# also builds this image (its objstore-server service) but does NOT supply the
+# secret yet, so those builds cannot resolve go-enclave — tracked in issue #36.
+RUN --mount=type=secret,id=gomodauth \
+    set -eu; \
+    if [ -s /run/secrets/gomodauth ]; then \
+        export GOPRIVATE='github.com/jeremyhahn/*'; \
+        export GIT_CONFIG_COUNT=1; \
+        export GIT_CONFIG_KEY_0="$(cat /run/secrets/gomodauth)"; \
+        export GIT_CONFIG_VALUE_0='https://github.com/jeremyhahn/'; \
+    fi; \
+    go mod download
 
 # Copy source code
 COPY . .
@@ -39,8 +64,13 @@ RUN if [ "$BUILD_BACKENDS" = "local" ]; then \
 # so this pins the line without freezing out fixes.
 FROM alpine:3.24
 
-# Install runtime dependencies
-RUN apk add --no-cache ca-certificates tzdata
+# Install runtime dependencies, and upgrade the OpenSSL libraries to pull the
+# published patch for the base image's libcrypto3/libssl3. This realizes the
+# 3.24 pin note above ("still receives patch updates … without freezing out
+# fixes"): the base layer shipped 3.5.7-r0, one patch behind the fix for
+# CVE-2026-14456 (OpenSSL DoS, HIGH), which is published as 3.5.8-r0.
+RUN apk add --no-cache ca-certificates tzdata \
+    && apk upgrade --no-cache libcrypto3 libssl3
 
 # Create non-root user
 RUN adduser -D -u 1000 appuser

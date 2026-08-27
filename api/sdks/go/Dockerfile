@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.7
 # Dockerfile for Go SDK testing
 # Context must be the repository ROOT (the go.mod `replace` directive points the
 # parent module at ../../../, so the whole repo must be in the build context).
@@ -14,8 +15,27 @@ COPY . .
 
 WORKDIR /workspace/api/sdks/go
 
-# Resolve dependencies against the in-tree parent module via the replace directive
-RUN go mod download
+# Resolve dependencies against the in-tree parent module via the replace
+# directive. The parent (go-objstore) requires the internal module go-enclave,
+# published to Gitea rather than github.com, so resolving it needs GOPRIVATE plus
+# git's insteadOf rewrite carrying a read-only token
+# (conventions/dependency-resolution.md §6), supplied as an OPTIONAL BuildKit
+# secret (the file carries only the tokenised GIT_CONFIG_KEY_0 value, read via a
+# quoted command substitution — never sourced as shell). The mount is optional,
+# so the same Dockerfile still builds against the public proxy when none is
+# provided. This image is not built by CI today — the SDK test job runs go
+# test on the runner. No compose file supplies the gomodauth secret to it yet;
+# the SDK integration compose harness wiring is tracked in issue #36. The mount
+# is optional, so this stays inert (not a latent trap) until #36 wires compose.
+RUN --mount=type=secret,id=gomodauth \
+    set -eu; \
+    if [ -s /run/secrets/gomodauth ]; then \
+        export GOPRIVATE='github.com/jeremyhahn/*'; \
+        export GIT_CONFIG_COUNT=1; \
+        export GIT_CONFIG_KEY_0="$(cat /run/secrets/gomodauth)"; \
+        export GIT_CONFIG_VALUE_0='https://github.com/jeremyhahn/'; \
+    fi; \
+    go mod download
 
 # Default command runs unit tests (with race detector enabled via CGO)
 ENV CGO_ENABLED=1

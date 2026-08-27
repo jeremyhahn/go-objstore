@@ -21,7 +21,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jeremyhahn/go-objstore/pkg/enclave"
+	"github.com/jeremyhahn/go-enclave"
 )
 
 func newKeyEnclave(t *testing.T, keyPEM []byte) *enclave.MemoryEnclave {

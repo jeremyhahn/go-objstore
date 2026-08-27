@@ -268,6 +268,37 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
+    # go mod download runs inside the compose-built integration images, which
+    # cannot reach the internal Gitea on their own. The runner injects GOPRIVATE
+    # and the tokenised insteadOf rewrite into this job's process environment
+    # (conventions/dependency-resolution.md §6), but a job environment does not
+    # cross into a docker build. Stage it as a BuildKit secret file under
+    # RUNNER_TEMP — deliberately OUTSIDE every compose build context, so a
+    # `COPY . .` cannot bake it into a layer (.dockerignore lists gomodauth* as a
+    # second guard) — and hand its path to compose via GOMODAUTH_ENV. Read the
+    # variables straight from the shell environment, NEVER through ${{ env.X }}:
+    # that expression reads this workflow's own env: block, which does not define
+    # them, and would quietly write blanks (the build then dies on an
+    # unrelated-looking "unknown revision"). On GitHub none of these variables
+    # exist, the file is written empty, and each Dockerfile's secret mount is
+    # optional, so the same builds resolve from the public proxy.
+    - name: Stage module-fetch credentials
+      run: |
+        set -eu
+        umask 077
+        : > "${RUNNER_TEMP}/gomodauth.secret"
+        if [ -n "${GIT_CONFIG_KEY_0:-}" ]; then
+          # Write ONLY the tokenised insteadOf key, as raw data with no trailing
+          # newline — never as `export NAME=value` shell. Each Dockerfile reads
+          # it with a quoted command substitution, so a credential containing
+          # shell metacharacters is assigned literally, never parsed or executed.
+          printf '%s' "${GIT_CONFIG_KEY_0}" > "${RUNNER_TEMP}/gomodauth.secret"
+          echo "staged Gitea module credential"
+        else
+          echo "no Gitea credentials in this environment; resolving from the public proxy"
+        fi
+        echo "GOMODAUTH_ENV=${RUNNER_TEMP}/gomodauth.secret" >> "$GITHUB_ENV"
+
     - name: Run local storage integration tests
       run: make integration-test-local
 
@@ -291,6 +322,10 @@ jobs:
 
     - name: Run CLI integration tests
       run: make integration-test-cli
+
+    - name: Remove staged credentials
+      if: always()
+      run: rm -f "${RUNNER_TEMP}/gomodauth.secret"
 
   security:
     name: Security Scan
@@ -555,6 +590,32 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
+    # The root Dockerfile's `go mod download` resolves the internal first-party
+    # module go-enclave from Gitea, which the build container cannot reach on its
+    # own (conventions/dependency-resolution.md §6). Stage the credentials as a
+    # BuildKit secret file under RUNNER_TEMP, outside the build context, read
+    # straight from the shell environment (never ${{ env.X }}, which reads the
+    # workflow env: block and writes blanks). The path is exposed as a step
+    # OUTPUT, not env — build-push-action's secret-files is an expression context
+    # where ${{ env.X }} / ${{ runner.temp }} can resolve empty.
+    - name: Stage module-fetch credentials
+      id: gomodauth
+      run: |
+        set -eu
+        umask 077
+        : > "${RUNNER_TEMP}/gomodauth.secret"
+        if [ -n "${GIT_CONFIG_KEY_0:-}" ]; then
+          # Write ONLY the tokenised insteadOf key, as raw data with no trailing
+          # newline — never as `export NAME=value` shell. Each Dockerfile reads
+          # it with a quoted command substitution, so a credential containing
+          # shell metacharacters is assigned literally, never parsed or executed.
+          printf '%s' "${GIT_CONFIG_KEY_0}" > "${RUNNER_TEMP}/gomodauth.secret"
+          echo "staged Gitea module credential"
+        else
+          echo "no Gitea credentials in this environment; resolving from the public proxy"
+        fi
+        echo "path=${RUNNER_TEMP}/gomodauth.secret" >> "$GITHUB_OUTPUT"
+
     - name: Build Docker image for scanning
       uses: docker/build-push-action@v5
       with:
@@ -563,11 +624,17 @@ jobs:
         push: false
         load: true
         tags: ${{ env.SCAN_IMAGE }}
+        secret-files: |
+          gomodauth=${{ steps.gomodauth.outputs.path }}
         # type=gha talks to the Actions cache service, which only exists on
         # GitHub. Elsewhere buildkit cannot reach it and the build fails on a
         # cache lookup timeout rather than anything to do with the image.
         cache-from: ${{ github.server_url == 'https://github.com' && 'type=gha' || '' }}
         cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
+
+    - name: Remove staged credentials
+      if: always()
+      run: rm -f "${RUNNER_TEMP}/gomodauth.secret"
 
     # Trivy runs from its own image rather than aquasecurity/trivy-action.
     # That action fetches its install script with a nested checkout, which a

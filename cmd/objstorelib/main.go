@@ -54,7 +54,7 @@ func NewBufferTooSmallError(need, have int) error {
 // and a message cannot otherwise tell which argument it got wrong.
 //
 // A typed error rather than fmt.Errorf, per the repository's error conventions
-// and the LockedMemoryError precedent in pkg/enclave: the fields stay
+// and the LockedMemoryError precedent in go-enclave: the fields stay
 // programmatically reachable instead of being flattened into a string. (The
 // two constructors above predate that rule and are left alone here — converting
 // them is not this change's business.)

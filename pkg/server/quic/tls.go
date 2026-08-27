@@ -24,8 +24,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/jeremyhahn/go-enclave"
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
-	"github.com/jeremyhahn/go-objstore/pkg/enclave"
 )
 
 // NewTLSConfig creates a new TLS 1.3 configuration for QUIC.

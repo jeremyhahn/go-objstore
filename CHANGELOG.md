@@ -6,6 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- The locked-memory primitive moved out of this repository. `pkg/enclave` is
+  removed and its contents now ship as the Layer 0 module
+  `github.com/jeremyhahn/go-enclave` (v0.3.0-alpha), so libraries that do not
+  sit above go-objstore can consume it (issue #29, owner-ruled 2026-08-23;
+  adopted here in #30, re-pinned to v0.3.0-alpha per #31). The exported
+  surface is unchanged — same `package enclave`, same `MemoryEnclave`,
+  `LockedMemoryError`, `ErrLockedMemoryUnavailable` and `WithBytes` — so call
+  sites are identical and only the import path moves. v0.3.0-alpha backs the
+  enclave with `memcall` directly, so `github.com/awnumar/memguard` leaves
+  this repository's dependency graph entirely. **Consumers that imported
+  `github.com/jeremyhahn/go-objstore/pkg/enclave` must switch to
+  `github.com/jeremyhahn/go-enclave`.**
+
+### Build
+
+- Docker builds now fetch the internal first-party dependency go-enclave from
+  Gitea via an optional BuildKit secret (`--mount=type=secret,id=gomodauth`)
+  carrying the tokenised git `insteadOf` rewrite
+  (conventions/dependency-resolution.md §6). This is required because go-enclave
+  is go-objstore's first internal dependency: a plain `go mod download` inside a
+  container resolves it against public github.com, where it does not exist. The
+  root `Dockerfile`, every `test/integration/*` image and compose file, the
+  server compose and the SDK compose files are covered; the CI `integration-test`
+  and `docker` jobs stage the credential under `RUNNER_TEMP` (outside the build
+  context) and pass it through. The secret file holds **only** the tokenised
+  `GIT_CONFIG_KEY_0` value as raw text (never `export NAME=value` shell); each
+  Dockerfile assigns it with a quoted command substitution
+  (`GIT_CONFIG_KEY_0="$(cat …)"`), so a credential containing shell
+  metacharacters is assigned literally rather than executed. To run integration
+  tests locally, point `GOMODAUTH_ENV` at a file **outside this repository**
+  (the compose build context is the repo root; `.dockerignore` guards
+  `gomodauth*` at any depth as a backstop) containing that single line,
+  e.g. `url.http://x:<token>@<gitea-host>/jeremyhahn/.insteadOf`; unset,
+  `GOMODAUTH_ENV` defaults to an empty secret and resolves from the public proxy.
+
 ## [0.3.0-alpha] - 2026-08-19
 
 ### Added

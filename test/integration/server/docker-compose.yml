@@ -4,6 +4,8 @@ services:
     build:
       context: ../../..
       dockerfile: test/integration/server/Dockerfile.grpc
+      secrets:
+        - gomodauth
     # No host port publishing: the test runner connects in-network via the
     # service name (grpc-server:50051), and publishing collides with other
     # services on dev machines.
@@ -30,6 +32,8 @@ services:
     build:
       context: ../../..
       dockerfile: test/integration/server/Dockerfile.rest
+      secrets:
+        - gomodauth
     expose:
       - "8080"
     volumes:
@@ -54,6 +58,8 @@ services:
     build:
       context: ../../..
       dockerfile: test/integration/server/Dockerfile.quic
+      secrets:
+        - gomodauth
     expose:
       - "4433/udp"
     volumes:
@@ -75,6 +81,8 @@ services:
     build:
       context: ../../..
       dockerfile: test/integration/server/Dockerfile.mcp
+      secrets:
+        - gomodauth
     expose:
       - "8081"
     volumes:
@@ -100,6 +108,8 @@ services:
     build:
       context: ../../..
       dockerfile: test/integration/server/Dockerfile.test
+      secrets:
+        - gomodauth
     depends_on:
       grpc-server:
         condition: service_healthy
@@ -146,3 +156,14 @@ volumes:
 networks:
   test-network:
     name: objstore-server-test
+
+# The go mod download inside each build resolves the internal first-party
+# module go-enclave from Gitea via an optional BuildKit secret carrying the
+# read-only module token (conventions/dependency-resolution.md §6). The file is
+# supplied by the caller through GOMODAUTH_ENV — the CI integration-test job
+# stages it under RUNNER_TEMP, outside the build context. When GOMODAUTH_ENV is
+# unset it defaults to /dev/null (empty secret) and the build resolves from the
+# public proxy.
+secrets:
+  gomodauth:
+    file: ${GOMODAUTH_ENV:-/dev/null}

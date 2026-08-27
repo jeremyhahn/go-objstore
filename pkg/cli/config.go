@@ -21,7 +21,7 @@ import (
 
 	"github.com/spf13/viper"
 
-	"github.com/jeremyhahn/go-objstore/pkg/enclave"
+	"github.com/jeremyhahn/go-enclave"
 )
 
 // Config holds the CLI configuration settings.
@@ -268,11 +268,11 @@ func (c *Config) Destroy() {
 //
 // Once an enclave has been selected for this credential it is the ONLY source:
 // a destroyed enclave reports [enclave.ErrEnclaveDestroyed] rather than
-// falling back to the deprecated plain field. memguard purges every live
-// locked buffer when it runs out of lockable memory, so an enclave can be
-// destroyed without this package asking for it; authenticating with whatever
-// stale plaintext happened to be left in BackendKey at that moment would be a
-// fail-open. The deprecated field is read only when no enclave was ever set.
+// falling back to the deprecated plain field. An enclave can be destroyed
+// independently of this call — a rotation or a Config teardown elsewhere — so
+// authenticating with whatever stale plaintext happened to be left in
+// BackendKey at that moment would be a fail-open. The deprecated field is read
+// only when no enclave was ever set.
 func (c *Config) backendKeyValue() (string, error) {
 	if c.backendKeyEnclave != nil {
 		return c.backendKeyEnclave.OpenString()

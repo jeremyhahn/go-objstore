@@ -64,8 +64,8 @@ var (
 
 // CredentialUnavailableError reports that a backend credential is configured
 // but could not be read out of the locked memory holding it — the enclave was
-// destroyed, most often because memguard purged every locked buffer when the
-// process ran out of lockable memory.
+// destroyed, e.g. by a credential rotation or a Config teardown after the
+// protected path was chosen.
 //
 // It is deliberately NOT a fallback to the deprecated plain-string field:
 // authenticating with whatever stale value happens to sit there after the

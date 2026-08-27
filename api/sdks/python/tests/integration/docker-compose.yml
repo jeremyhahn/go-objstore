@@ -6,6 +6,8 @@ services:
     build:
       context: ../../../../..
       dockerfile: Dockerfile
+      secrets:
+        - gomodauth
       args:
         BUILD_TAGS: local
     ports:
@@ -49,3 +51,12 @@ services:
 
 volumes:
   objstore-data:
+
+# The go mod download inside the root-Dockerfile (objstore-server) build resolves
+# the internal go-enclave module from Gitea via an optional BuildKit secret
+# carrying the read-only module token (conventions/dependency-resolution.md §6);
+# the caller supplies the file path in GOMODAUTH_ENV. Unset, it defaults to
+# /dev/null and resolves from the public proxy.
+secrets:
+  gomodauth:
+    file: ${GOMODAUTH_ENV:-/dev/null}

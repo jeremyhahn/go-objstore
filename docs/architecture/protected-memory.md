@@ -4,13 +4,27 @@ Keys, passphrases, tokens and credentials live in protected storage for their
 whole lifetime in the process and are zeroized on release — never in a plain
 `[]byte` or `string`.
 
-The primitive is `pkg/enclave.MemoryEnclave`: a region of locked, zeroized
-memory backed by a memguard `LockedBuffer`. The bytes sit on `mlock`'d pages
-(never paged to swap), fenced by inaccessible guard pages, checked by a canary,
-and wiped when the enclave is destroyed. memguard disables core dumps
-process-wide when the package is imported.
+The primitive is `MemoryEnclave` from
+[`github.com/jeremyhahn/go-enclave`](http://198.51.100.91:3001/jeremyhahn/go-enclave):
+a region of locked, zeroized memory that go-enclave maps itself. The bytes sit
+on `mlock`'d pages (never paged to swap), fenced by inaccessible guard pages,
+preceded by a random canary, and wiped when the enclave is destroyed. Core dumps
+are kept out at two levels: `RLIMIT_CORE` is lowered process-wide on import (best
+effort, reported by `CoreDumpsDisabled` rather than assumed) and every enclave's
+pages are additionally marked `MADV_DONTDUMP`. As of go-enclave v0.3.0-alpha the
+mapping is done directly through `memcall`, with no memguard in the graph.
+
+The primitive lived in this repository as `pkg/enclave` until 2026-08-25. It was
+extracted to its own Layer 0 module (issue #29, owner-ruled 2026-08-23) so that
+libraries which do not sit above go-objstore can consume it; go-objstore is now
+an ordinary consumer. **go-enclave is the normative source for the mechanism.**
+What this document specifies is how *this repository* uses it — the sections
+below on borrow discipline are the contract go-objstore's own call sites honour,
+and go-enclave's own documentation governs if the two ever disagree.
 
 ```go
+import "github.com/jeremyhahn/go-enclave"
+
 e, err := enclave.NewMemoryEnclave(keyPEM) // keyPEM is wiped
 if err != nil {
     return err
@@ -35,28 +49,25 @@ discipline is a lock over the whole access, not a flag:
   enclave's read lock across the entire access.
 - `Destroy` takes the write lock, so it **blocks** until every in-flight borrow
   has returned. It never wipes memory a reader is still holding.
-- A package-wide `purgeMu` serializes every **purge-capable** operation against
-  every borrow. Purge-capable means allocation *and* `Destroy`: memguard's
-  `Buffer.Destroy` calls `core.Panic` if releasing the pages fails
-  (core/buffer.go:180-183), and Panic purges. Both take `purgeMu` exclusively.
-  memguard's allocation-failure path calls `core.Purge` before it panics, and
-  Purge destroys every live buffer in the process — ending in `memcall.Free`,
-  so the pages are unmapped — while holding only memguard's own locks. Without
-  this, a goroutine parked in `WithBytes` on one enclave could have its pages
-  unmapped by an unrelated goroutine exhausting locked memory on another, which
-  faults the process rather than returning an error. Allocation takes `purgeMu`
-  exclusively; borrows take it shared, so they still run concurrently with each
-  other. A subprocess fault-injection test parks a borrow across a foreign
-  allocation failure; without the coordination it reproduces as a SIGSEGV.
-- Consequently `fn` passed to `WithBytes` must not construct, destroy, or
-  borrow ANY enclave — not merely the one it is borrowing. Go's `RWMutex`
-  blocks new readers once a writer is queued, so a nested borrow of a second
-  enclave deadlocks against an allocation that began after the outer borrow.
-- `Open` stands outside all of this by construction: the slice it returns is
-  covered by no lock, so a purge can unmap it with no `Destroy` anywhere in
-  the picture. That is the third reason its documentation calls it unsafe.
-- `fn` passed to `WithBytes` must not call back into the same enclave: the read
-  lock is held for the duration of the call.
+- There is no process-wide coordination and no shared purge lock. Because
+  go-enclave maps its own memory, nothing in the process can unmap an enclave it
+  does not own: an allocation that hits the `RLIMIT_MEMLOCK` ceiling fails only
+  itself, returning `ErrLockedMemoryUnavailable`, and every other live enclave
+  keeps its pages. (Until go-enclave v0.3.0-alpha the pages came from memguard,
+  whose failure path purged — unmapped — every live locked buffer in the process
+  before panicking; a package-wide `purgeMu` existed solely to keep a borrow from
+  running on pages a foreign allocation failure had pulled out from under it.
+  That hazard, and the lock, are gone.)
+- `fn` passed to `WithBytes` must not call back into the **same** enclave: the
+  read lock is held for the duration of the call, so a nested `Destroy`
+  deadlocks and a nested read deadlocks whenever a `Destroy` is already waiting
+  for the write lock. It **may** construct, destroy or borrow **other** enclaves
+  — a restriction that existed before v0.3.0-alpha only because of the shared
+  purge lock, now removed.
+- `Open` stands outside the borrow lock by construction: the slice it returns is
+  covered by no lock, so a concurrent `Destroy` on this same enclave can unmap it
+  while a caller still reads. That is the reason its documentation calls it
+  unsafe.
 
 `Open` is the one exception, and is documented as such. It returns a slice
 aliasing the locked pages that is no longer covered by the lock, so it is safe
@@ -93,11 +104,11 @@ Once an enclave has been selected for a credential or key, it is the **only**
 source for it. A destroyed enclave reports `ErrEnclaveDestroyed`; it never
 falls back to the deprecated plain field beside it.
 
-This matters because an enclave can be destroyed without this code asking:
-memguard purges every live locked buffer when the process runs out of lockable
-memory (see *Failure behavior*). If a stale value were still sitting in
-`BackendKey` or `ServerKeyPEM` at that moment, a fallback would silently
-authenticate with unprotected material the caller believed it had replaced.
+This matters because an enclave can be destroyed independently of the code
+reading it — an explicit `Destroy` during credential rotation, or a `Config`
+teardown — after which the plain field beside it may still hold a stale value.
+If a fallback read that field, it would silently authenticate with unprotected
+material the caller believed it had replaced.
 
 - `cli.Config.StorageSettings` returns the error. `GetStorageSettings` cannot —
   its signature predates this — so it is deprecated and **omits** the
@@ -124,31 +135,37 @@ later audit a `grep`.
 
 ## FIPS
 
-A `MemoryEnclave` performs no cryptography. Only the memguard `LockedBuffer`
-path is used, never `Enclave`/`Seal`, whose sealing uses NaCl secretbox — not a
-FIPS 140-approved algorithm. The repository's CI runs the whole unit suite
-under `GODEBUG=fips140=only`, including this package.
+A `MemoryEnclave` performs no cryptography. It maps, locks and wipes memory; the
+only cryptographic primitive anywhere near it is `crypto/rand` filling the guard
+canary, a FIPS-approved DRBG. go-enclave v0.3.0-alpha dropped memguard entirely,
+so the non-approved NaCl secretbox that memguard's unused `Enclave`/`Seal` paths
+carried is no longer in the build graph. go-enclave's own CI covers the
+primitive under `GODEBUG=fips140=only`; this repository's FIPS job runs its whole
+unit suite — every consumer of the enclave included — under the same setting.
 
 ## Failure behavior
 
-`mlock` is bounded by `RLIMIT_MEMLOCK`. memguard aborts the process when it
-cannot lock its pages; a foundational library must not do that to its host, so
-`NewMemoryEnclave` converts the abort into a `*LockedMemoryError`, which
-carries memguard's own diagnostic — the failing address and the kernel errno,
-which is what separates a memlock ceiling from any other allocation failure.
-Callers match the `ErrLockedMemoryUnavailable` sentinel, which `errors.Is`
-reports for every `LockedMemoryError`; the struct is diagnostic, not contract. Note
-that memguard purges every live locked buffer before that abort, so enclaves
-elsewhere in the process report `ErrEnclaveDestroyed` afterwards. Deployments
-that hold many enclaves should raise `RLIMIT_MEMLOCK` accordingly.
+`mlock` is bounded by `RLIMIT_MEMLOCK`. When the kernel refuses to map or lock
+the pages — most often at that ceiling — `NewMemoryEnclave` releases whatever it
+had already taken and returns a `*LockedMemoryError` carrying the underlying
+`mmap`/`mlock`/`mprotect` cause and the kernel errno, which is what separates a
+memlock ceiling from any other allocation failure. Callers match the
+`ErrLockedMemoryUnavailable` sentinel, which `errors.Is` reports for every
+`LockedMemoryError`; the struct is diagnostic, not contract. The failure touches
+only the allocation that hit the ceiling: because go-enclave owns its mapping and
+nothing can purge it, enclaves elsewhere in the process are unaffected. (Before
+go-enclave v0.3.0-alpha the exhaustion path purged every live locked buffer, so
+unrelated enclaves reported `ErrEnclaveDestroyed` afterwards; that no longer
+happens.) Deployments that hold many enclaves should raise `RLIMIT_MEMLOCK`
+accordingly.
 
 The ownership contract holds on that path too: `NewMemoryEnclave` wipes the
-caller's slice before **every** return, failures included. memguard moves and
-wipes its source only after a successful allocation, so without an explicit
-wipe the secret would survive in the caller's memory on precisely the
-exhaustion path this handling exists for. A subprocess fault-injection test
-lowers `RLIMIT_MEMLOCK` to one page and asserts both the typed error and the
-wiped source.
+caller's slice before **every** return, failures included — so even on the
+mapping-failure path, where nothing was copied out, the secret does not survive
+in the caller's memory on precisely the resource-exhaustion case this handling
+exists for. A subprocess fault-injection test in go-enclave lowers
+`RLIMIT_MEMLOCK` to one page and asserts both the typed error and the wiped
+source.
 
 ## Migration status
 

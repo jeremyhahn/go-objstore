@@ -19,7 +19,7 @@ import (
 	"errors"
 	"os"
 
-	"github.com/jeremyhahn/go-objstore/pkg/enclave"
+	"github.com/jeremyhahn/go-enclave"
 )
 
 var (
@@ -269,11 +269,11 @@ func (c *TLSConfig) Build() (*tls.Config, error) {
 	switch {
 	case c.serverKeyEnclave != nil:
 		// Once an enclave has been selected for the private key it is the ONLY
-		// source. A destroyed enclave — memguard purges every locked buffer
-		// when it runs out of lockable memory, so this can happen without
-		// anyone here asking for it — reports itself rather than falling back
-		// to the deprecated ServerKeyPEM, which would serve TLS with stale,
-		// unprotected key material after the protected path was chosen.
+		// source. A destroyed enclave — it can be destroyed independently of
+		// this call, e.g. by a rotation or a teardown elsewhere — reports
+		// itself rather than falling back to the deprecated ServerKeyPEM, which
+		// would serve TLS with stale, unprotected key material after the
+		// protected path was chosen.
 		if len(c.ServerCertPEM) == 0 {
 			return nil, ErrInvalidCertificate
 		}

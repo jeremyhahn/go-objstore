@@ -4,6 +4,8 @@ services:
     build:
       context: ../../..
       dockerfile: Dockerfile
+      secrets:
+        - gomodauth
       args:
         BUILD_TAGS: local
     command: ["/app/objstore-server", "--quic-self-signed"]
@@ -39,6 +41,8 @@ services:
     build:
       context: ../../..
       dockerfile: api/sdks/go/Dockerfile
+      secrets:
+        - gomodauth
     working_dir: /workspace/api/sdks/go
     command: go test -v -race -timeout=30s ./...
     networks:
@@ -49,6 +53,8 @@ services:
     build:
       context: ../../..
       dockerfile: api/sdks/go/Dockerfile
+      secrets:
+        - gomodauth
     depends_on:
       objstore-server:
         condition: service_healthy
@@ -67,3 +73,14 @@ volumes:
 networks:
   objstore-net:
     driver: bridge
+
+# go mod download inside the objstore-server (root Dockerfile) and go-integration
+# builds resolves the internal go-enclave module from Gitea via an optional
+# BuildKit secret carrying the read-only module token (dependency-resolution.md
+# §6); the caller supplies the file path in GOMODAUTH_ENV. go-unit-tests does
+# not need it (module pruning keeps go-enclave out of its build), but declares
+# the secret for consistency. Unset GOMODAUTH_ENV defaults to /dev/null and
+# resolves from the public proxy.
+secrets:
+  gomodauth:
+    file: ${GOMODAUTH_ENV:-/dev/null}

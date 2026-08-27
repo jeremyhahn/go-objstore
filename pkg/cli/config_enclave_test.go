@@ -20,7 +20,7 @@ import (
 
 	"github.com/spf13/viper"
 
-	"github.com/jeremyhahn/go-objstore/pkg/enclave"
+	"github.com/jeremyhahn/go-enclave"
 )
 
 const (
@@ -294,11 +294,11 @@ func TestMaskEnclave_ShortMaterial(t *testing.T) {
 }
 
 // TestStorageSettings_DestroyedEnclaveDoesNotFallBack proves the credential
-// path fails CLOSED. memguard purges every live locked buffer when the process
-// runs out of lockable memory, so an enclave can be destroyed without this
-// package asking for it. If a stale value is still sitting in the deprecated
-// plain field at that moment, reading it would authenticate the backend with
-// unprotected credentials the caller believed it had replaced.
+// path fails CLOSED. An enclave can be destroyed independently of the read — an
+// explicit rotation or a Config teardown, as this test does below. If a stale
+// value is still sitting in the deprecated plain field at that moment, reading
+// it would authenticate the backend with unprotected credentials the caller
+// believed it had replaced.
 func TestStorageSettings_DestroyedEnclaveDoesNotFallBack(t *testing.T) {
 	cfg := &Config{Backend: "s3", BackendBucket: "b", BackendRegion: "us-east-1"}
 	if err := cfg.SetBackendKeyFromString(testAccessKey); err != nil {

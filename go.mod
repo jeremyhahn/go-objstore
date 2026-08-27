@@ -7,7 +7,6 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage v1.8.1
 	github.com/Azure/azure-storage-blob-go v0.15.0
-	github.com/awnumar/memguard v0.23.0
 	github.com/aws/aws-sdk-go v1.55.8
 	github.com/aws/aws-sdk-go-v2 v1.43.5
 	github.com/aws/aws-sdk-go-v2/config v1.32.36
@@ -17,6 +16,7 @@ require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/gin-gonic/gin v1.12.0
 	github.com/google/uuid v1.6.0
+	github.com/jeremyhahn/go-enclave v0.3.0-alpha
 	github.com/quic-go/quic-go v0.61.0
 	github.com/sourcegraph/jsonrpc2 v0.2.2
 	github.com/spf13/cobra v1.10.2
@@ -48,7 +48,7 @@ require (
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.59.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.59.0 // indirect
 	github.com/KyleBanks/depth v1.2.1 // indirect
-	github.com/awnumar/memcall v0.4.0 // indirect
+	github.com/awnumar/memcall v0.5.0 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.17 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.36 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.36 // indirect
