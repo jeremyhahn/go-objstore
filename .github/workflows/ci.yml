@@ -3,8 +3,8 @@
 # automatethethings repo (devops.md §1/§8/§9). Divergence outside the
 # repo-specific blocks below is a defect.
 #
-# v1.9 (owner ruling 2026-08-20, FAIL-FAST STAGED PIPELINE). Gitea cannot
-# cancel in-flight jobs, so fail-fast comes from ORDERING instead:
+# v1.9 (owner ruling 2026-08-20, FAIL-FAST STAGED PIPELINE). Fail-fast
+# WITHIN a run comes from ORDERING:
 #
 #   stage 1 (fast tier)   lint, build              — minutes, no `needs`
 #   stage 2 (expensive)   test, sdk-tests, security, conformance-test,
@@ -47,6 +47,36 @@ on:
   # Lets a run be repeated without inventing a commit, which matters when a
   # failure is the runner's rather than the code's.
   workflow_dispatch:
+
+# Superseded-run cancellation (issue #41). A newer push to a ref cancels the
+# older, now-pointless CI run on that same ref; the NEWEST run survives.
+# Ordering (above) and cancellation are complementary: ordering stops a bad
+# tree early within one run, cancellation stops runs nobody will read.
+#
+# This corrects the earlier header claim that "Gitea cannot cancel in-flight
+# jobs". `concurrency:` works on Gitea 1.27.1 (measured: go-netmon run 12242
+# cancelled while 12269 completed; go-recountly run 12261 went queued ->
+# cancelled on the newer push). The old evidence came from a job-level group
+# keyed on the repository alone, with cancel-in-progress: false, so every
+# task worker shared one saturated group; it said nothing about a ref-keyed
+# group that cancels. What IS true is narrower: this Gitea has no `cancel`
+# REST route (only rerun, rerun-failed-jobs, job rerun and DELETE), which is
+# why `concurrency:` is the only mechanism available to a workflow.
+# A human can still cancel a run through the session-authenticated web
+# route (software/scripts/gitea-cancel-run.sh in the automatethethings repo).
+#
+# - cancel-in-progress is the literal `true`: Gitea 1.27.1 does not evaluate
+#   expressions here, and any non-empty value is truthy.
+# - The group leads with github.workflow, so it can never cancel the separate
+#   Code Review workflow that also gates merges.
+# - Adoption boundary, expected once: Gitea groups a run by the workflow file
+#   of THAT run, so a run created before this block landed is in no group and
+#   the first push after adoption cannot supersede it.
+# - Workflow-level on purpose, and only in this file: nightly and release runs
+#   must never be cancelled mid-flight.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   GO_VERSION: '1.26.7'
