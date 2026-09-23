@@ -65,10 +65,13 @@ else
 	TAG_FLAGS :=
 endif
 
-# Version injection (read VERSION file; override pkg/version.Version at link time)
-VERSION := $(shell cat VERSION 2>/dev/null || echo "0.1.0-alpha")
+# Version injection (read VERSION file; override pkg/version.Version at link time).
+# Named BUILD_VERSION, not VERSION: `make release-alpha VERSION=vX.Y.Z-alpha` and
+# `make version-set VERSION=X.Y.Z` take VERSION as an explicit argument, and a
+# Makefile-level VERSION would shadow it (release-alpha template v2.3.6 (b)).
+BUILD_VERSION := $(shell cat VERSION 2>/dev/null || echo "0.1.0-alpha")
 VERSION_PKG := github.com/jeremyhahn/go-objstore/pkg/version
-VERSION_LDFLAGS := -X $(VERSION_PKG).Version=$(VERSION)
+VERSION_LDFLAGS := -X $(VERSION_PKG).Version=$(BUILD_VERSION)
 
 # Go parameters
 GO := go
@@ -878,6 +881,9 @@ help:
 	@echo "  $(YELLOW)version-bump-major$(RESET)           Bump major version (X.Y.Z -> X+1.0.0)"
 	@echo "  $(YELLOW)release$(RESET)                      Create git release tag based on VERSION file"
 	@echo "  $(YELLOW)release-push$(RESET)                 Push release tag to origin"
+	@echo "  $(YELLOW)release-alpha$(RESET)                Cut a signed -alpha release (VERSION=vX.Y.Z-alpha)"
+	@echo "  $(YELLOW)changelog-assemble$(RESET)           Fold changelog.d/ fragments into CHANGELOG.md (VERSION=vX.Y.Z-alpha; run by release-alpha)"
+	@echo "  $(YELLOW)test-release-alpha$(RESET)           Run the release path regression harnesses (template + repo wiring)"
 	@echo "  $(YELLOW)help$(RESET)                         Display this help message"
 	@echo ""
 	@echo "$(BOLD)Storage Backend Variables:$(RESET)"
@@ -945,31 +951,30 @@ show-backends:
 # Version Management
 # ==============================================================================
 
-# VERSION is defined near the top of this file (used for ldflags injection).
+# BUILD_VERSION is defined near the top of this file (used for ldflags injection).
 
 .PHONY: version
 ## version: Display current version
 version:
-	@echo "$(CYAN)$(BOLD)Current Version:$(RESET) $(VERSION)"
+	@echo "$(CYAN)$(BOLD)Current Version:$(RESET) $(BUILD_VERSION)"
 
 .PHONY: version-sync
 ## version-sync: Propagate the root VERSION to every SDK manifest
 version-sync:
-	@echo "$(CYAN)$(BOLD)→ Syncing VERSION ($(VERSION)) to all SDKs...$(RESET)"
+	@echo "$(CYAN)$(BOLD)→ Syncing VERSION ($(BUILD_VERSION)) to all SDKs...$(RESET)"
 	@bash ./scripts/sync-version.sh
 	@echo "$(GREEN)✓ SDK versions synced$(RESET)"
 
 .PHONY: version-check
 ## version-check: Verify every SDK manifest matches the root VERSION
 version-check:
-	@echo "$(CYAN)$(BOLD)→ Verifying SDK versions match VERSION ($(VERSION))...$(RESET)"
+	@echo "$(CYAN)$(BOLD)→ Verifying SDK versions match VERSION ($(BUILD_VERSION))...$(RESET)"
 	@bash ./scripts/check-version.sh
 	@echo "$(GREEN)✓ All SDK versions match$(RESET)"
 
-# version-set takes the new version via VERSION=X.Y.Z. Because the make
-# variable VERSION is always populated from the VERSION file, the argument is
-# only honored when it was provided on the command line; otherwise the target
-# errors instead of silently re-writing the file with the current value.
+# version-set takes the new version via VERSION=X.Y.Z. The argument is only
+# honored when it was provided on the command line; otherwise the target
+# errors instead of silently re-writing the file with a stale value.
 .PHONY: version-set
 ## version-set: Set root VERSION to X.Y.Z and sync all SDKs (usage: make version-set VERSION=X.Y.Z)
 version-set:
@@ -1028,11 +1033,11 @@ version-bump-major:
 .PHONY: release
 ## release: Create a release tag based on VERSION file
 release:
-	@echo "$(CYAN)$(BOLD)→ Creating release v$(VERSION)...$(RESET)"
+	@echo "$(CYAN)$(BOLD)→ Creating release v$(BUILD_VERSION)...$(RESET)"
 	@if [ -z "$$(git status --porcelain)" ]; then \
-		git tag -a "v$(VERSION)" -m "Release v$(VERSION)"; \
-		echo "$(GREEN)✓ Created release tag v$(VERSION)$(RESET)"; \
-		echo "$(CYAN)  To push the tag, run: git push origin v$(VERSION)$(RESET)"; \
+		git tag -a "v$(BUILD_VERSION)" -m "Release v$(BUILD_VERSION)"; \
+		echo "$(GREEN)✓ Created release tag v$(BUILD_VERSION)$(RESET)"; \
+		echo "$(CYAN)  To push the tag, run: git push origin v$(BUILD_VERSION)$(RESET)"; \
 	else \
 		echo "$(RED)✗ Working directory is not clean. Commit or stash changes first.$(RESET)"; \
 		exit 1; \
@@ -1041,9 +1046,9 @@ release:
 .PHONY: release-push
 ## release-push: Push release tag to origin
 release-push:
-	@echo "$(CYAN)$(BOLD)→ Pushing release v$(VERSION) to origin...$(RESET)"
-	@git push origin "v$(VERSION)"
-	@echo "$(GREEN)✓ Release v$(VERSION) pushed to origin$(RESET)"
+	@echo "$(CYAN)$(BOLD)→ Pushing release v$(BUILD_VERSION) to origin...$(RESET)"
+	@git push origin "v$(BUILD_VERSION)"
+	@echo "$(GREEN)✓ Release v$(BUILD_VERSION) pushed to origin$(RESET)"
 
 
 SUBMODULE_TAGS := 
@@ -1054,19 +1059,18 @@ export GOWORK=off
 # ---- dependency-resolution.md targets (2026-08-13 cutover) ----
 # SUBMODULE_TAGS lists nested modules tagged in lockstep with the root
 # (release-versioning.md P2). deps-latest runs before compiling in a
-# consumer repo; release-alpha publishes this repo's next -alpha tag to dev.
-# deps-latest picks the highest tag INCLUDING -alpha prereleases — bare
-# 'go get @latest' ignores prereleases and would downgrade to legacy v0.0.0.
+# consumer repo. deps-latest picks the highest tag INCLUDING -alpha
+# prereleases — bare 'go get @latest' ignores prereleases and would downgrade
+# to legacy v0.0.0.
 
-.PHONY: release-alpha deps-latest
+.PHONY: deps-latest
 
-release-alpha:
-	@V=$$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || echo v0.0.0-alpha); \
-	NEXT=$$(echo $$V | awk -F'[.-]' '{printf "v%s.%s.%d-alpha", substr($$1,2), $$2, $$3+1}'); \
-	echo $${NEXT#v} > VERSION && git add VERSION && git commit -q -m "chore(release): $$NEXT" || true; \
-	git tag $$NEXT; \
-	for s in $(SUBMODULE_TAGS); do git tag "$$s/$$NEXT"; done; \
-	git push dev HEAD --tags && echo "Tagged $$NEXT"
+# ---- release-alpha: see mk/release.mk (issue #32) ----
+# The signed -alpha release path: CHANGELOG fragment assembly, then the company
+# release-alpha template (vendored verbatim at mk/release-alpha.mk).
+#
+#   make release-alpha VERSION=vX.Y.Z-alpha
+include mk/release.mk
 
 deps-latest:
 	@GOWORK=off sh -c ' \
