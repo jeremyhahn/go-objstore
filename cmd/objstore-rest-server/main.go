@@ -15,34 +15,35 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
-	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/jeremyhahn/go-objstore/internal/serverconfig"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	restserver "github.com/jeremyhahn/go-objstore/pkg/server/rest"
 )
 
 func main() {
-	// Command line flags
-	host := flag.String("host", "localhost", "REST server host")
-	port := flag.Int("port", 8080, "REST server port")
-	backend := flag.String("backend", "local", "Storage backend (local, s3, gcs, azure)")
-	storagePath := flag.String("path", "/tmp/objstore", "Storage path for local backend")
-	metricsPublic := flag.Bool("metrics-public", false, "Expose /metrics without authorization")
-
-	flag.Parse()
+	cfg, err := serverconfig.Load(os.Args[0], os.Args[1:], serverconfig.RESTServerDefaults(), serverconfig.BindRESTServerFlags)
+	if errors.Is(err, flag.ErrHelp) {
+		os.Exit(0)
+	}
+	if err != nil {
+		slog.Error("Invalid configuration", "error", err)
+		os.Exit(2)
+	}
 
 	// Initialize the objstore facade with simplified API
 	if err := objstore.Initialize(&objstore.FacadeConfig{
 		BackendConfigs: map[string]objstore.BackendConfig{
 			"default": {
-				Type:     *backend,
-				Settings: map[string]string{"path": *storagePath},
+				Type:     cfg.Backend,
+				Settings: map[string]string{"path": cfg.Path},
 			},
 		},
 		DefaultBackend: "default",
@@ -51,10 +52,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	slog.Info("Initialized storage backend", "backend", *backend)
+	slog.Info("Initialized storage backend", "backend", cfg.Backend)
 
 	// Enable replication on the default backend
-	policyPath := *storagePath + "/.replication-policies.json"
+	policyPath := cfg.Path + "/.replication-policies.json"
 	if err := objstore.EnableReplication("", &objstore.ReplicationConfig{
 		PolicyFilePath:  policyPath,
 		RunInBackground: false,
@@ -65,10 +66,7 @@ func main() {
 	}
 
 	// Create server configuration
-	config := restserver.DefaultServerConfig()
-	config.Host = *host
-	config.Port = *port
-	config.MetricsPublic = *metricsPublic
+	config := cfg.RESTServerConfig(cfg.Middleware())
 
 	// Create and start server (storage param is nil since handler uses facade)
 	server, err := restserver.NewServer(nil, config)
@@ -83,7 +81,7 @@ func main() {
 	errChan := make(chan error, 1)
 	go func() {
 		if err := server.Start(); err != nil {
-			errChan <- fmt.Errorf("REST server error: %w", err)
+			errChan <- err
 		}
 	}()
 
@@ -93,7 +91,7 @@ func main() {
 
 	select {
 	case err := <-errChan:
-		slog.Error("Server error", "error", err)
+		slog.Error("Server error", "transport", "REST", "error", err)
 	case sig := <-sigChan:
 		slog.Info("Received signal", "signal", sig.String())
 	}

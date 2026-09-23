@@ -2,8 +2,10 @@
 
 Configuration reference for the QUIC/HTTP3 server.
 
-The QUIC server is configured with command-line flags. There is no configuration
-file. Two binaries serve QUIC/HTTP3:
+The QUIC server is configured with command-line flags, `OBJSTORE_*` environment
+variables and an optional YAML file (precedence: flags > environment > file >
+defaults); see [Server Configuration](servers.md) for the config keys and
+environment variables behind every flag below. Two binaries serve QUIC/HTTP3:
 
 - `objstore-quic-server` - standalone QUIC server
 - `objstore-server` - combined server (gRPC + REST + QUIC + MCP)

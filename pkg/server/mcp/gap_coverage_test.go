@@ -26,7 +26,6 @@ import (
 	"encoding/pem"
 	"io"
 	"math/big"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -938,44 +937,42 @@ func TestServer_Start_Stdio(t *testing.T) {
 // startHTTP – default address, health endpoint, TLS min-version enforcement
 // ---------------------------------------------------------------------------
 
-// TestServer_StartHTTP_DefaultAddress exercises the branch where HTTPAddress
-// is empty and the server falls back to the ":8081" default.
-func TestServer_StartHTTP_DefaultAddress(t *testing.T) {
-	// The default address is the fixed port :8081. A CI runner whose job
-	// containers share the host network can already have it bound, and that
-	// says nothing about the code under test.
-	if ln, err := net.Listen("tcp", ":8081"); err != nil {
-		t.Skipf("default address :8081 is already in use here: %v", err)
-	} else {
-		ln.Close()
+// TestDefaultServerConfig_HTTPAddress pins the defaults layer: the HTTP
+// listen address lives in DefaultServerConfig, not in the serving path.
+func TestDefaultServerConfig_HTTPAddress(t *testing.T) {
+	cfg := DefaultServerConfig()
+	if cfg.HTTPAddress != DefaultHTTPAddress {
+		t.Errorf("HTTPAddress = %q, want %q", cfg.HTTPAddress, DefaultHTTPAddress)
 	}
+	if cfg.Mode != ModeHTTP {
+		t.Errorf("Mode = %q, want %q", cfg.Mode, ModeHTTP)
+	}
+	if cfg.MaxBodySize != defaultMCPMaxBodySize {
+		t.Errorf("MaxBodySize = %d, want %d", cfg.MaxBodySize, defaultMCPMaxBodySize)
+	}
+}
 
+// TestNewServer_EmptyHTTPAddressTakesDefault verifies that NewServer fills an
+// empty HTTPAddress from the defaults layer and leaves a configured one alone,
+// so startHTTP only ever listens on the resolved value.
+func TestNewServer_EmptyHTTPAddressTakesDefault(t *testing.T) {
 	storage := NewMockStorage()
 	initTestFacade(t, storage)
 
-	server, err := NewServer(&ServerConfig{
-		Mode:        ModeHTTP,
-		HTTPAddress: "", // intentionally empty
-	})
+	server, err := NewServer(&ServerConfig{Mode: ModeHTTP})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
+	if got := server.config.HTTPAddress; got != DefaultServerConfig().HTTPAddress {
+		t.Errorf("HTTPAddress = %q, want the default %q", got, DefaultServerConfig().HTTPAddress)
+	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	errChan := make(chan error, 1)
-	go func() { errChan <- server.Start(ctx) }()
-
-	// Let it bind, then immediately cancel.
-	time.Sleep(60 * time.Millisecond)
-	cancel()
-
-	select {
-	case err := <-errChan:
-		if err != nil {
-			t.Errorf("unexpected error: %v", err)
-		}
-	case <-time.After(3 * time.Second):
-		t.Error("server did not stop in time")
+	configured, err := NewServer(&ServerConfig{Mode: ModeHTTP, HTTPAddress: "127.0.0.1:0"})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	if got := configured.config.HTTPAddress; got != "127.0.0.1:0" {
+		t.Errorf("HTTPAddress = %q, want the configured %q", got, "127.0.0.1:0")
 	}
 }
 

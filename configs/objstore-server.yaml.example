@@ -1,0 +1,56 @@
+# go-objstore server configuration (objstore-server and the single-transport
+# objstore-*-server binaries). Copy to a gitignored path and name it with
+# -config <file> or OBJSTORE_CONFIG=<file>.
+#
+# Precedence: flags > environment > this file > built-in defaults.
+# Every key is also an environment variable: OBJSTORE_ + the key path in
+# upper case joined with "_" (rest.host -> OBJSTORE_REST_HOST).
+#
+# Every key is commented out and shows its built-in default; uncomment only
+# what you change. Each binary reads the sections for the transports it
+# serves. Unknown keys are rejected at startup.
+
+# backend: local
+# path: /tmp/objstore
+
+# grpc:
+#   enabled: true
+#   addr: ":50051"
+#   tls_cert: ""
+#   tls_key: ""
+
+# rest:
+#   enabled: true
+#   host: 0.0.0.0
+#   port: 8080
+#   metrics_public: false
+
+# quic:
+#   enabled: true
+#   addr: ":4433"
+#   tls_cert: ""
+#   tls_key: ""
+#   self_signed: false
+#   max_body_size: 104857600
+#   read_timeout: 30s
+#   write_timeout: 30s
+#   idle_timeout: 1m0s
+#   max_streams: 100
+
+# mcp:
+#   enabled: true
+#   mode: http
+#   addr: ":8081"
+
+# unix:
+#   enabled: false
+#   socket: /var/run/objstore.sock
+
+# rate_limit:
+#   enabled: false
+#   rps: 100
+#   burst: 200
+#   per_client: false
+
+# audit:
+#   enabled: true

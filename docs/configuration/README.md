@@ -1,11 +1,11 @@
 # Configuration Overview
 
-This section covers configuration for all go-objstore components. Configuration is provided through command-line flags (servers), an optional YAML file plus flags (CLI), or programmatic Go APIs (library use).
+This section covers configuration for all go-objstore components. Configuration is provided through command-line flags, environment variables and an optional YAML file (servers and CLI), or programmatic Go APIs (library use).
 
 ## Configuration Methods
 
-### Command-Line Flags
-The server binaries (`objstore-server`, `objstore-grpc-server`, `objstore-rest-server`, `objstore-quic-server`, `objstore-mcp-server`) are configured entirely with command-line flags. They do not load configuration files.
+### Server Binaries
+The server binaries (`objstore-server`, `objstore-grpc-server`, `objstore-rest-server`, `objstore-quic-server`, `objstore-mcp-server`) are configured with command-line flags, `OBJSTORE_*` environment variables and an optional YAML file (`-config` or `OBJSTORE_CONFIG`). See [Server Configuration](servers.md).
 
 ### CLI Configuration File
 The `objstore` CLI optionally loads a YAML config file (`.objstore.yaml`) and supports `OBJECTSTORE_*` environment variable overrides. See [CLI Configuration](cli.md).
@@ -15,9 +15,9 @@ Applications embedding go-objstore configure components directly through Go APIs
 
 ## Configuration Hierarchy
 
-For the CLI, configuration follows a precedence order:
+Servers and the CLI follow the same precedence order:
 1. Command-line flags (highest precedence)
-2. Environment variables (`OBJECTSTORE_*`)
+2. Environment variables (`OBJSTORE_*` for servers, `OBJECTSTORE_*` for the CLI)
 3. Configuration file
 4. Built-in defaults (lowest precedence)
 
@@ -31,6 +31,7 @@ Configure backend type, credentials, and connection parameters.
 ### Servers
 Configure protocol-specific servers including ports, TLS, and authentication.
 
+[Server Configuration (file, environment, flags)](servers.md)
 [gRPC Server Configuration](grpc-server.md)
 [REST Server Configuration](rest-server.md)
 [QUIC Server Configuration](quic-server.md)

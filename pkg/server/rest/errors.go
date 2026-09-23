@@ -13,9 +13,37 @@
 
 package rest
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 var (
 	// ErrStorageRequired is returned when storage backend is required but not provided.
 	ErrStorageRequired = errors.New("storage backend is required")
 )
+
+// TrustedProxiesError is returned by NewServer when the configured trusted
+// proxies cannot be applied to the router (for example an invalid CIDR).
+type TrustedProxiesError struct {
+	Proxies []string
+	Err     error
+}
+
+func (e *TrustedProxiesError) Error() string {
+	return "rest: cannot configure trusted proxies [" + strings.Join(e.Proxies, ", ") + "]: " + e.Err.Error()
+}
+
+func (e *TrustedProxiesError) Unwrap() error { return e.Err }
+
+// HandlerInitError is returned by NewServer when the request handler cannot
+// be created, for example because the objstore facade is not initialized.
+type HandlerInitError struct {
+	Err error
+}
+
+func (e *HandlerInitError) Error() string {
+	return "rest: cannot create request handler: " + e.Err.Error()
+}
+
+func (e *HandlerInitError) Unwrap() error { return e.Err }

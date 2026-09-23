@@ -184,17 +184,19 @@ generate-proto:
 #
 # -covermode=atomic is required with -race and was already set.
 #
-# The package list is ./pkg/... plus cmd/objstorelib, NOT ./cmd/... . The
-# library shim is the only cmd package carrying tests, and its guards against
-# negative lengths from C are worth gating (go-objstore#25); the other six cmd
-# packages have no test files at all, so sweeping them in would add ~5 points of
-# uncovered statements to the denominator while gating nothing. Widening the
-# coverage gate to cover the binaries is a deliberate decision, not a side
-# effect of this list.
+# The package list is ./pkg/..., ./internal/... and cmd/objstorelib, NOT
+# ./cmd/... . The library shim is the only cmd package carrying tests, and its
+# guards against negative lengths from C are worth gating (go-objstore#25); the
+# other six cmd packages have no test files at all, so sweeping them in would
+# add ~5 points of uncovered statements to the denominator while gating
+# nothing. The server binaries' configuration contract (defaults, file, env,
+# flags and their precedence) lives in internal/serverconfig so that it IS
+# gated here (go-objstore#34). Widening the coverage gate to cover the binaries
+# is a deliberate decision, not a side effect of this list.
 test:
 	@echo "$(CYAN)$(BOLD)→ Running unit tests with coverage (race detector)...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
-	$(GO) test -race -timeout=20m -tags="local awss3 minio gcpstorage azureblob glacier azurearchive" -coverprofile=$(COVERAGE_DIR)/unit.out -covermode=atomic ./pkg/... ./cmd/objstorelib/...
+	$(GO) test -race -timeout=20m -tags="local awss3 minio gcpstorage azureblob glacier azurearchive" -coverprofile=$(COVERAGE_DIR)/unit.out -covermode=atomic ./pkg/... ./internal/... ./cmd/objstorelib/...
 	@echo ""
 	@echo "$(CYAN)$(BOLD)→ Coverage Summary:$(RESET)"
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/unit.out | tail -1 | awk '{print "  $(GREEN)Total Coverage: " $$NF "$(RESET)"}' || true

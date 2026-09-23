@@ -6,7 +6,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Added
+
+- The server binaries (`objstore-server` and the four `objstore-*-server`
+  binaries) resolve every setting through one viper-based configuration layer:
+  an optional YAML file (`-config` or `OBJSTORE_CONFIG`), `OBJSTORE_*`
+  environment variables and flags, with precedence flags > environment > file >
+  defaults (issue #34, owner ruling 2026-08-26). `objstore-server` gains
+  `-rest-host` / `OBJSTORE_REST_HOST` / `rest.host`: its REST listener was
+  previously pinned to `0.0.0.0`. See `docs/configuration/servers.md` and
+  `configs/objstore-server.yaml.example`.
+- `objstore-server` gains `-grpc-tls-cert` / `-grpc-tls-key` (and the
+  `grpc.tls_cert` / `grpc.tls_key` keys, `OBJSTORE_GRPC_TLS_*`), serving gRPC
+  over TLS as `objstore-grpc-server` already could. A TLS certificate without
+  its key (or the reverse) is rejected for gRPC and QUIC.
+- The standalone `objstore-grpc-server`, `objstore-rest-server`,
+  `objstore-quic-server` and `objstore-mcp-server` apply `rate_limit.*` and
+  `audit.enabled` (flags `-rate-limit*` and `-audit`, `OBJSTORE_RATE_LIMIT_*`,
+  `OBJSTORE_AUDIT_ENABLED`) exactly as `objstore-server` does.
+- `mcpserver.DefaultServerConfig()` and `mcpserver.DefaultHTTPAddress` carry
+  the MCP HTTP listen default, which `NewServer` applies to an empty
+  `HTTPAddress`; the serving path no longer holds its own fallback.
+
+### Fixed
+
+- The REST server built its listen address with `"%s:%d"`, so an IPv6 host
+  such as `::1` produced the unparseable `::1:8080`. It now uses
+  `net.JoinHostPort` (`[::1]:8080`).
+- `rest.NewServer` returns typed errors, `*rest.TrustedProxiesError`
+  (configured proxies, cause) and `*rest.HandlerInitError` (cause), instead of
+  `fmt.Errorf` strings; both unwrap to the underlying error.
+
 ### Changed
+
+- Audit logging now defaults to on for the standalone QUIC and MCP servers
+  (`audit.enabled`, default `true`), matching `objstore-server`; set
+  `-audit=false` to turn it off. When MCP runs in stdio mode, audit records
+  are written to standard error so they no longer mix into the JSON-RPC
+  stream on standard output (this also affected `objstore-server
+  -mcp-mode stdio`).
+
+- The server binaries now refuse to start on an invalid configuration
+  (unknown config-file key, malformed value, address that is not `host:port`,
+  invalid MCP mode, stray positional argument), reporting every problem and
+  exiting with status 2. `objstore-server` previously logged an invalid
+  `-mcp-mode` and ran without MCP.
 
 - The locked-memory primitive moved out of this repository. `pkg/enclave` is
   removed and its contents now ship as the Layer 0 module

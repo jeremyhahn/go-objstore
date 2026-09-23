@@ -16,8 +16,9 @@ package rest
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
+	"net"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -195,7 +196,7 @@ func NewServer(storage common.Storage, config *ServerConfig) (*Server, error) {
 	// X-Forwarded-For is not blindly trusted. This must be called before any
 	// middleware that reads ClientIP().
 	if err := router.SetTrustedProxies(config.TrustedProxies); err != nil {
-		return nil, fmt.Errorf("failed to configure trusted proxies: %w", err)
+		return nil, &TrustedProxiesError{Proxies: config.TrustedProxies, Err: err}
 	}
 
 	// Add recovery middleware (always enabled)
@@ -262,14 +263,15 @@ func NewServer(storage common.Storage, config *ServerConfig) (*Server, error) {
 	// Create handler (uses facade with default backend)
 	handler, err := NewHandler("")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create handler: %w", err)
+		return nil, &HandlerInitError{Err: err}
 	}
 
 	// Setup routes
 	SetupRoutes(router, handler)
 
-	// Create HTTP server
-	addr := fmt.Sprintf("%s:%d", config.Host, config.Port)
+	// Create HTTP server. JoinHostPort brackets an IPv6 host ("::1" →
+	// "[::1]:8080"), which a bare "%s:%d" would leave unparseable.
+	addr := net.JoinHostPort(config.Host, strconv.Itoa(config.Port))
 	httpServer := &http.Server{
 		Addr:              addr,
 		Handler:           router,

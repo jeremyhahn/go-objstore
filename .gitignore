@@ -146,3 +146,7 @@ gosec-results.json
 # AI assistant / local tooling — never commit
 .serena/
 .claude/
+
+# Server configuration: only the .example template is tracked
+configs/*.yaml
+!configs/*.yaml.example

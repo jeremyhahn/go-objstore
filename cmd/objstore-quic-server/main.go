@@ -16,6 +16,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"flag"
 	"log/slog"
 	"os"
@@ -23,26 +24,20 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jeremyhahn/go-objstore/internal/serverconfig"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	quicserver "github.com/jeremyhahn/go-objstore/pkg/server/quic"
 )
 
-var (
-	addr             = flag.String("addr", ":4433", "UDP address to listen on")
-	backend          = flag.String("backend", "local", "Storage backend type (local, s3, gcs, azure)")
-	storagePath      = flag.String("path", "./data", "Storage path (for local backend)")
-	tlsCert          = flag.String("tlscert", "", "Path to TLS certificate file")
-	tlsKey           = flag.String("tlskey", "", "Path to TLS private key file")
-	maxBodySize      = flag.Int64("maxbodysize", 100*1024*1024, "Maximum request body size in bytes")
-	readTimeout      = flag.Duration("readtimeout", 30*time.Second, "Read timeout")
-	writeTimeout     = flag.Duration("writetimeout", 30*time.Second, "Write timeout")
-	idleTimeout      = flag.Duration("idletimeout", 60*time.Second, "Idle timeout")
-	maxStreams       = flag.Int64("maxstreams", 100, "Maximum bidirectional streams per connection")
-	enableSelfSigned = flag.Bool("selfsigned", false, "Use self-signed certificate (for testing only)")
-)
-
 func main() {
-	flag.Parse()
+	cfg, err := serverconfig.Load(os.Args[0], os.Args[1:], serverconfig.QUICServerDefaults(), serverconfig.BindQUICServerFlags)
+	if errors.Is(err, flag.ErrHelp) {
+		os.Exit(0)
+	}
+	if err != nil {
+		slog.Error("Invalid configuration", "error", err)
+		os.Exit(2)
+	}
 
 	slog.Info("Starting QUIC/HTTP3 Object Storage Server")
 
@@ -50,8 +45,8 @@ func main() {
 	if err := objstore.Initialize(&objstore.FacadeConfig{
 		BackendConfigs: map[string]objstore.BackendConfig{
 			"default": {
-				Type:     *backend,
-				Settings: map[string]string{"path": *storagePath},
+				Type:     cfg.Backend,
+				Settings: map[string]string{"path": cfg.Path},
 			},
 		},
 		DefaultBackend: "default",
@@ -61,7 +56,7 @@ func main() {
 	}
 
 	// Enable replication on the default backend
-	policyPath := *storagePath + "/.replication-policies.json"
+	policyPath := cfg.Path + "/.replication-policies.json"
 	if err := objstore.EnableReplication("", &objstore.ReplicationConfig{
 		PolicyFilePath:  policyPath,
 		RunInBackground: false,
@@ -73,8 +68,7 @@ func main() {
 
 	// Configure TLS
 	var tlsConfig *tls.Config
-	var err error
-	if *enableSelfSigned {
+	if cfg.QUIC.SelfSigned {
 		slog.Warn("Using self-signed certificate. DO NOT USE IN PRODUCTION!")
 		tlsConfig, err = quicserver.GenerateSelfSignedCert()
 		if err != nil {
@@ -82,11 +76,11 @@ func main() {
 			os.Exit(1)
 		}
 	} else {
-		if *tlsCert == "" || *tlsKey == "" {
+		if cfg.QUIC.TLSCert == "" || cfg.QUIC.TLSKey == "" {
 			slog.Error("TLS certificate and key are required. Use -tlscert and -tlskey flags, or -selfsigned for testing")
 			os.Exit(1)
 		}
-		tlsConfig, err = quicserver.NewTLSConfig(*tlsCert, *tlsKey)
+		tlsConfig, err = quicserver.NewTLSConfig(cfg.QUIC.TLSCert, cfg.QUIC.TLSKey)
 		if err != nil {
 			slog.Error("Failed to load TLS configuration", "error", err)
 			os.Exit(1)
@@ -94,13 +88,9 @@ func main() {
 	}
 
 	// Create server options
-	opts := quicserver.DefaultOptions().
-		WithAddr(*addr).
+	opts := cfg.QUICOptions(cfg.Middleware()).
 		WithBackend(""). // Use default backend
-		WithTLSConfig(tlsConfig).
-		WithMaxRequestBodySize(*maxBodySize).
-		WithTimeouts(*readTimeout, *writeTimeout, *idleTimeout).
-		WithStreamLimits(*maxStreams, *maxStreams)
+		WithTLSConfig(tlsConfig)
 
 	// Create and start server
 	server, err := quicserver.New(opts)
@@ -114,7 +104,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	slog.Info("QUIC/HTTP3 server listening", "addr", server.Addr(), "backend", *backend, "protocol", "HTTP/3 over QUIC (TLS 1.3)")
+	slog.Info("QUIC/HTTP3 server listening", "addr", server.Addr(), "backend", cfg.Backend, "protocol", "HTTP/3 over QUIC (TLS 1.3)")
 
 	// Set up signal handling for graceful shutdown
 	sigChan := make(chan os.Signal, 1)

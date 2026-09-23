@@ -52,6 +52,13 @@ const (
 // requests (100 MB, matching the REST server default).
 const defaultMCPMaxBodySize int64 = 100 * 1024 * 1024
 
+// DefaultHTTPAddress is the defaults-layer listen address for HTTP mode. It
+// is the value DefaultServerConfig carries and NewServer applies when
+// ServerConfig.HTTPAddress is empty; deployments override it through their
+// configuration (for the objstore binaries: the mcp.addr key, the
+// OBJSTORE_MCP_ADDR environment variable, or the address flag).
+const DefaultHTTPAddress = ":8081"
+
 // ServerConfig holds the server configuration
 type ServerConfig struct {
 	Mode           ServerMode
@@ -106,6 +113,17 @@ type ServerConfig struct {
 	AuditLogger audit.AuditLogger
 }
 
+// DefaultServerConfig returns a ServerConfig holding the defaults layer: HTTP
+// mode on DefaultHTTPAddress with the default request body limit. Pluggable
+// adapters are left nil and are defaulted by NewServer.
+func DefaultServerConfig() *ServerConfig {
+	return &ServerConfig{
+		Mode:        ModeHTTP,
+		HTTPAddress: DefaultHTTPAddress,
+		MaxBodySize: defaultMCPMaxBodySize,
+	}
+}
+
 // Server is the main MCP server
 type Server struct {
 	config          *ServerConfig
@@ -128,9 +146,16 @@ func NewServer(config *ServerConfig) (*Server, error) {
 		config.ResourcePrefix = ""
 	}
 
+	defaults := DefaultServerConfig()
+
+	// Set default HTTP listen address if not provided
+	if config.HTTPAddress == "" {
+		config.HTTPAddress = defaults.HTTPAddress
+	}
+
 	// Set default max body size if not provided
 	if config.MaxBodySize <= 0 {
-		config.MaxBodySize = defaultMCPMaxBodySize
+		config.MaxBodySize = defaults.MaxBodySize
 	}
 
 	// Set default logger if not provided
@@ -212,9 +237,6 @@ func (s *Server) startStdio(ctx context.Context) error {
 // startHTTP starts the server in HTTP mode
 func (s *Server) startHTTP(ctx context.Context) error {
 	address := s.config.HTTPAddress
-	if address == "" {
-		address = ":8081"
-	}
 
 	// Create HTTP mux for routing
 	mux := http.NewServeMux()

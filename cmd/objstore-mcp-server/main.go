@@ -15,31 +15,34 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/jeremyhahn/go-objstore/internal/serverconfig"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	mcpserver "github.com/jeremyhahn/go-objstore/pkg/server/mcp"
 )
 
 func main() {
-	// Command line flags
-	mode := flag.String("mode", "http", "Server mode: stdio or http")
-	addr := flag.String("addr", ":8081", "HTTP server address (only for http mode)")
-	backend := flag.String("backend", "local", "Storage backend (local, s3, gcs, azure)")
-	storagePath := flag.String("path", "/tmp/objstore", "Storage path for local backend")
-
-	flag.Parse()
+	cfg, err := serverconfig.Load(os.Args[0], os.Args[1:], serverconfig.Defaults(), serverconfig.BindMCPServerFlags)
+	if errors.Is(err, flag.ErrHelp) {
+		os.Exit(0)
+	}
+	if err != nil {
+		slog.Error("Invalid configuration", "error", err)
+		os.Exit(2)
+	}
 
 	// Initialize the objstore facade with simplified API
 	if err := objstore.Initialize(&objstore.FacadeConfig{
 		BackendConfigs: map[string]objstore.BackendConfig{
 			"default": {
-				Type:     *backend,
-				Settings: map[string]string{"path": *storagePath},
+				Type:     cfg.Backend,
+				Settings: map[string]string{"path": cfg.Path},
 			},
 		},
 		DefaultBackend: "default",
@@ -48,10 +51,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	slog.Info("Initialized storage backend", "backend", *backend)
+	slog.Info("Initialized storage backend", "backend", cfg.Backend)
 
 	// Enable replication on the default backend
-	policyPath := *storagePath + "/.replication-policies.json"
+	policyPath := cfg.Path + "/.replication-policies.json"
 	if err := objstore.EnableReplication("", &objstore.ReplicationConfig{
 		PolicyFilePath:  policyPath,
 		RunInBackground: false,
@@ -61,23 +64,13 @@ func main() {
 		slog.Info("Replication enabled", "policy_file", policyPath)
 	}
 
-	// Configure MCP server
-	var serverMode mcpserver.ServerMode
-	switch *mode {
-	case "stdio":
-		serverMode = mcpserver.ModeStdio
-	case "http":
-		serverMode = mcpserver.ModeHTTP
-	default:
-		slog.Error("Invalid mode (must be 'stdio' or 'http')", "mode", *mode)
-		os.Exit(1)
+	// Configure MCP server (Load has already validated the mode)
+	config, err := cfg.MCPServerConfig(cfg.Middleware())
+	if err != nil {
+		slog.Error("Invalid MCP configuration", "error", err)
+		os.Exit(2)
 	}
-
-	config := &mcpserver.ServerConfig{
-		Mode:        serverMode,
-		HTTPAddress: *addr,
-		Backend:     "", // Use default backend
-	}
+	config.Backend = "" // Use default backend
 
 	server, err := mcpserver.NewServer(config)
 	if err != nil {
@@ -99,7 +92,7 @@ func main() {
 	}()
 
 	// Start server (slog writes to stderr, keeping stdout free for stdio JSON-RPC)
-	slog.Info("Starting MCP server", "mode", *mode)
+	slog.Info("Starting MCP server", "mode", config.Mode, "addr", config.HTTPAddress)
 	if err := server.Start(ctx); err != nil {
 		cancel()
 		slog.Error("Server error", "error", err)

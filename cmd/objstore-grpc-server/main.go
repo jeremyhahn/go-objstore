@@ -14,33 +14,34 @@
 package main
 
 import (
+	"errors"
 	"flag"
-	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/jeremyhahn/go-objstore/internal/serverconfig"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	grpcserver "github.com/jeremyhahn/go-objstore/pkg/server/grpc"
 )
 
 func main() {
-	// Command line flags
-	addr := flag.String("addr", ":50051", "gRPC server address")
-	backend := flag.String("backend", "local", "Storage backend (local, s3, gcs, azure)")
-	storagePath := flag.String("path", "/tmp/objstore", "Storage path for local backend")
-	tlsCert := flag.String("tls-cert", "", "TLS certificate file")
-	tlsKey := flag.String("tls-key", "", "TLS key file")
-
-	flag.Parse()
+	cfg, err := serverconfig.Load(os.Args[0], os.Args[1:], serverconfig.Defaults(), serverconfig.BindGRPCServerFlags)
+	if errors.Is(err, flag.ErrHelp) {
+		os.Exit(0)
+	}
+	if err != nil {
+		slog.Error("Invalid configuration", "error", err)
+		os.Exit(2)
+	}
 
 	// Initialize the objstore facade with simplified API
 	if err := objstore.Initialize(&objstore.FacadeConfig{
 		BackendConfigs: map[string]objstore.BackendConfig{
 			"default": {
-				Type:     *backend,
-				Settings: map[string]string{"path": *storagePath},
+				Type:     cfg.Backend,
+				Settings: map[string]string{"path": cfg.Path},
 			},
 		},
 		DefaultBackend: "default",
@@ -49,10 +50,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	slog.Info("Initialized storage backend", "backend", *backend)
+	slog.Info("Initialized storage backend", "backend", cfg.Backend)
 
 	// Enable replication on the default backend
-	policyPath := *storagePath + "/.replication-policies.json"
+	policyPath := cfg.Path + "/.replication-policies.json"
 	if err := objstore.EnableReplication("", &objstore.ReplicationConfig{
 		PolicyFilePath:  policyPath,
 		RunInBackground: false,
@@ -62,20 +63,14 @@ func main() {
 		slog.Info("Replication enabled", "policy_file", policyPath)
 	}
 
-	// Create server options
-	opts := []grpcserver.ServerOption{
-		grpcserver.WithAddress(*addr),
-		grpcserver.WithBackend(""), // Use default backend
+	// Create server options: address, and TLS when grpc.tls_cert/tls_key are set
+	opts, err := cfg.GRPCOptions(cfg.Middleware())
+	if err != nil {
+		slog.Error("Failed to configure gRPC server", "error", err)
+		os.Exit(1)
 	}
-
-	// Add TLS if certificates provided
-	if *tlsCert != "" && *tlsKey != "" {
-		tlsOpt, err := grpcserver.WithTLSFromFiles(*tlsCert, *tlsKey)
-		if err != nil {
-			slog.Error("Failed to configure TLS", "error", err)
-			os.Exit(1)
-		}
-		opts = append(opts, tlsOpt)
+	opts = append(opts, grpcserver.WithBackend("")) // Use default backend
+	if cfg.GRPCTLSEnabled() {
 		slog.Info("TLS enabled")
 	}
 
@@ -86,13 +81,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	slog.Info("Starting gRPC server", "addr", *addr)
+	slog.Info("Starting gRPC server", "addr", cfg.GRPC.Addr)
 
 	// Start server in goroutine
 	errChan := make(chan error, 1)
 	go func() {
 		if err := server.Start(); err != nil {
-			errChan <- fmt.Errorf("gRPC server error: %w", err)
+			errChan <- err
 		}
 	}()
 
@@ -102,7 +97,7 @@ func main() {
 
 	select {
 	case err := <-errChan:
-		slog.Error("Server error", "error", err)
+		slog.Error("Server error", "transport", "gRPC", "error", err)
 	case sig := <-sigChan:
 		slog.Info("Received signal", "signal", sig.String())
 	}

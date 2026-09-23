@@ -2,8 +2,10 @@
 
 Configuration reference for the REST API server.
 
-The REST server is configured with command-line flags. There is no configuration
-file. Two binaries serve the REST API:
+The REST server is configured with command-line flags, `OBJSTORE_*` environment
+variables and an optional YAML file (precedence: flags > environment > file >
+defaults); see [Server Configuration](servers.md) for the config keys and
+environment variables behind every flag below. Two binaries serve the REST API:
 
 - `objstore-rest-server` - standalone REST server
 - `objstore-server` - combined server (gRPC + REST + QUIC + MCP)
@@ -33,7 +35,8 @@ The combined server enables REST by default and uses these REST-related flags:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--rest` | `true` | Enable the REST server |
-| `--rest-port` | `8080` | REST server port (binds `0.0.0.0`) |
+| `--rest-host` | `0.0.0.0` | REST server host (interface to bind) |
+| `--rest-port` | `8080` | REST server port |
 | `--metrics-public` | `false` | Expose `/metrics` without authorization |
 | `--rate-limit` | `false` | Enable rate limiting on all transports |
 | `--rate-limit-rps` | `100` | Rate limit requests per second |
@@ -42,7 +45,7 @@ The combined server enables REST by default and uses these REST-related flags:
 | `--audit` | `true` | Enable audit logging on all transports |
 
 ```bash
-objstore-server --rest-port 8080 --backend local --path /var/lib/objstore
+objstore-server --rest-host 10.0.0.5 --rest-port 8080 --backend local --path /var/lib/objstore
 ```
 
 ## Built-in Defaults

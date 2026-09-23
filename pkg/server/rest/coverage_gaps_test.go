@@ -1102,8 +1102,15 @@ func TestNewServerHandlerCreationFailure(t *testing.T) {
 		Port: 8080,
 		Mode: gin.TestMode,
 	})
-	if err == nil {
-		t.Fatal("NewServer() with uninitialized facade: expected error, got nil")
+	var hie *HandlerInitError
+	if !errors.As(err, &hie) {
+		t.Fatalf("NewServer() with uninitialized facade: err = %v (%T), want *HandlerInitError", err, err)
+	}
+	if !errors.Is(err, objstore.ErrNotInitialized) {
+		t.Errorf("HandlerInitError does not unwrap to objstore.ErrNotInitialized: %v", err)
+	}
+	if !strings.Contains(err.Error(), "request handler") {
+		t.Errorf("message %q does not name the handler", err.Error())
 	}
 	// Re-initialize for subsequent tests.
 	initTestFacade(t, storage)
@@ -1156,8 +1163,18 @@ func TestNewServerTrustedProxiesError(t *testing.T) {
 		TrustedProxies: []string{"999.999.999.999/99"},
 	}
 	_, err := NewServer(storage, cfg)
-	if err == nil {
-		t.Fatal("NewServer() with invalid CIDR: expected error, got nil")
+	var tpe *TrustedProxiesError
+	if !errors.As(err, &tpe) {
+		t.Fatalf("NewServer() with invalid CIDR: err = %v (%T), want *TrustedProxiesError", err, err)
+	}
+	if len(tpe.Proxies) != 1 || tpe.Proxies[0] != "999.999.999.999/99" {
+		t.Errorf("TrustedProxiesError.Proxies = %v, want the configured CIDR", tpe.Proxies)
+	}
+	if tpe.Err == nil || errors.Unwrap(err) != tpe.Err {
+		t.Errorf("TrustedProxiesError does not unwrap to its cause: %v", err)
+	}
+	if !strings.Contains(err.Error(), "999.999.999.999/99") {
+		t.Errorf("message %q does not name the proxy", err.Error())
 	}
 }
 

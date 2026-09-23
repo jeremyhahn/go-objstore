@@ -2,8 +2,10 @@
 
 Configuration reference for the Model Context Protocol server.
 
-The MCP server is configured with command-line flags. There is no configuration
-file. Two binaries serve MCP:
+The MCP server is configured with command-line flags, `OBJSTORE_*` environment
+variables and an optional YAML file (precedence: flags > environment > file >
+defaults); see [Server Configuration](servers.md) for the config keys and
+environment variables behind every flag below. Two binaries serve MCP:
 
 - `objstore-mcp-server` - standalone MCP server
 - `objstore-server` - combined server (gRPC + REST + QUIC + MCP)

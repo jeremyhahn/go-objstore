@@ -2,8 +2,10 @@
 
 Configuration reference for the gRPC server.
 
-The gRPC server is configured with command-line flags. There is no configuration
-file. Two binaries serve gRPC:
+The gRPC server is configured with command-line flags, `OBJSTORE_*` environment
+variables and an optional YAML file (precedence: flags > environment > file >
+defaults); see [Server Configuration](servers.md) for the config keys and
+environment variables behind every flag below. Two binaries serve gRPC:
 
 - `objstore-grpc-server` - standalone gRPC server
 - `objstore-server` - combined server (gRPC + REST + QUIC + MCP)
@@ -37,6 +39,8 @@ the server listens in plaintext.
 |------|---------|-------------|
 | `--grpc` | `true` | Enable the gRPC server |
 | `--grpc-addr` | `:50051` | gRPC server address |
+| `--grpc-tls-cert` | — | gRPC TLS certificate file (set together with `--grpc-tls-key`) |
+| `--grpc-tls-key` | — | gRPC TLS key file (set together with `--grpc-tls-cert`) |
 | `--rate-limit` | `false` | Enable rate limiting on all transports |
 | `--rate-limit-rps` | `100` | Rate limit requests per second |
 | `--rate-limit-burst` | `200` | Rate limit burst size |

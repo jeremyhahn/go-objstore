@@ -900,6 +900,7 @@ Run all five server protocols simultaneously with a single binary:
 # Customize ports and addresses
 ./bin/objstore-server \
   --grpc-addr :50051 \
+  --rest-host 0.0.0.0 \
   --rest-port 8080 \
   --quic-addr :4433 \
   --mcp-addr :8081 \
@@ -908,6 +909,11 @@ Run all five server protocols simultaneously with a single binary:
 
 # Disable specific services
 ./bin/objstore-server --grpc=false --quic=false
+
+# Every setting is also an OBJSTORE_* environment variable or a key in an
+# optional YAML file (flags > env > file > defaults); see
+# docs/configuration/servers.md and configs/objstore-server.yaml.example
+OBJSTORE_REST_HOST=10.0.0.5 ./bin/objstore-server --config /etc/objstore/server.yaml
 
 # With production TLS for QUIC
 ./bin/objstore-server \
