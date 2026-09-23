@@ -383,8 +383,27 @@ jobs:
     # load failed with "go.mod requires go >= 1.26.6", and gosec exits 1 on
     # load errors exactly as it does on findings, so the gate went red with
     # zero security issues and no way to tell the difference.
-    - name: Install gosec
-      run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+    #
+    # On Gitea the runner image bakes gosec and govulncheck at pinned versions
+    # (/etc/ci-runner-tools.txt; pins live in agent-company's
+    # infra/gitea/ci-runner/Dockerfile), so nothing is installed there
+    # (go-objstore#38). A network `go install` was both a flake -- the
+    # IPv6/sum.golang.org dial fails the step even with the tool present --
+    # and a shadow: setup-go puts GOPATH/bin ahead of /usr/local/bin, so a
+    # fresh @latest build silently replaced the pinned one. To bump a version,
+    # ask agent-company to rebuild the image; do not add an install back.
+    # github.com runners carry no such image, so the install stays there only.
+    - name: Install gosec and govulncheck (github.com only; baked on Gitea)
+      if: github.server_url == 'https://github.com'
+      run: |
+        go install github.com/securego/gosec/v2/cmd/gosec@latest
+        go install golang.org/x/vuln/cmd/govulncheck@latest
+
+    - name: Report scanner versions
+      run: |
+        command -v gosec govulncheck
+        gosec -version
+        govulncheck -version
 
     # -tags mirrors the govulncheck step below. Without them the cloud backends
     # (pkg/s3, pkg/glacier, pkg/azure, pkg/azurearchive) are gated out of the
@@ -434,7 +453,6 @@ jobs:
     # not hide the others; the job still fails if any did.
     - name: Run govulncheck (every module in the tree)
       run: |
-        go install golang.org/x/vuln/cmd/govulncheck@latest
         rc=0
         for mod in $(find . -name go.mod -not -path '*/vendor/*' | sort); do
           dir=$(dirname "$mod")
