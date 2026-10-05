@@ -1,22 +1,21 @@
-# ci-template: v1.9 (customized)
+# ci-template: v1.15 (customized)
 # Reconciled against software/templates/github-actions/ci.yml in the
 # automatethethings repo (devops.md §1/§8/§9). Divergence outside the
 # repo-specific blocks below is a defect.
 #
-# v1.9 (owner ruling 2026-08-20, FAIL-FAST STAGED PIPELINE). Fail-fast
-# WITHIN a run comes from ORDERING:
+# v1.15 (2026-10-05, automatethethings#209/#211): push runs on main only.
+# automerge.yml v7 opens each merge train as a PR into main, so a train gets
+# its CI from the pull_request trigger like any PR.
 #
-#   stage 1 (fast tier)   lint, build              — minutes, no `needs`
-#   stage 2 (expensive)   test, sdk-tests, security, conformance-test,
-#                         integration-test         — `needs: [lint, build]`
-#   stage 3               docker                   — `needs: [build, integration-test]`
+# v1.14 (2026-10-04, automatethethings#207): EVERY JOB STARTS AT ONCE. No job
+# `needs` another except ci-gate, so a run takes as long as its slowest job.
+# This replaces v1.9's staged pipeline (lint/build first, the expensive tier
+# behind them, docker behind integration-test). CI Gate, the one required
+# check, still needs every job and fails closed on any result but success.
+# docker builds its own image from the Dockerfile and consumes nothing from
+# build or integration-test, so it starts at once too.
 #
-# A tree that does not compile or does not lint no longer occupies a runner
-# for the six-way SDK matrix and eight integration suites before saying so.
-# Note the direction reversed: `build` used to depend on `test` and
-# `security`, which put the cheapest signal last.
-#
-# `fips` and `trivy` STAY ON THE PUSH PATH, in the expensive tier, and stay in
+# `fips` and `trivy` STAY ON THE PUSH PATH, with every other job, and stay in
 # ci-gate. A first pass at v1.9 moved them to nightly.yml to buy queue
 # position; that was reverted the same night (agent-company ruling
 # 2026-08-21, decided identically for go-signal an hour earlier).
@@ -30,28 +29,27 @@
 # devops.md §8 makes `trivy` blocking outright. Weakening a gate that passes,
 # to buy queue position, trades away the signal and keeps the cost.
 #
-# Cost is a real problem; it is the STAGING above that addresses it, not
-# demoting gates. If either job later goes red for a reason this repo cannot
-# fix, moving it to nightly IS THE WHOLE ACT, not half of it: remove it from
-# this file, from ci-gate's `needs`, AND from the gate loop — and say on an
-# issue what would make it green again. A job that can pass and is not
+# Cost is a real problem, but demoting gates is not the answer to it. If
+# either job later goes red for a reason this repo cannot fix, moving it to
+# nightly IS THE WHOLE ACT, not half of it: remove it from this file, from
+# ci-gate's `needs`, AND from the gate loop — and say on an issue what would
+# make it green again. A job that can pass and is not
 # required is a fail-open gate.
 
 name: CI
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main ]
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main ]
   # Lets a run be repeated without inventing a commit, which matters when a
   # failure is the runner's rather than the code's.
   workflow_dispatch:
 
 # Superseded-run cancellation (issue #41). A newer push to a ref cancels the
 # older, now-pointless CI run on that same ref; the NEWEST run survives.
-# Ordering (above) and cancellation are complementary: ordering stops a bad
-# tree early within one run, cancellation stops runs nobody will read.
+# Cancellation stops runs nobody will read.
 #
 # This corrects the earlier header claim that "Gitea cannot cancel in-flight
 # jobs". `concurrency:` works on Gitea 1.27.1 (measured: go-netmon run 12242
@@ -92,8 +90,7 @@ env:
   SCAN_IMAGE: 'objstore:ci-scan'
 
 jobs:
-  # STAGE 1 — the fast tier. `lint` and `build` carry no `needs` and are the
-  # only jobs that start on a push; everything expensive stages behind them.
+  # Every job below starts at once (v1.14); only ci-gate has `needs`.
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -112,9 +109,7 @@ jobs:
     # unpin tracker go-qrdb#42). `version: latest` resolved to golangci-lint
     # v2.13.0, which panics under Go 1.26 -- "nilness: internal error:
     # unhandled builtin recover" out of honnef.co/go/tools v0.8.0-rc.1 -- and
-    # takes the gate down with it. Under the v1.9 staged pipeline that is no
-    # longer one red job: every expensive job needs `lint`, so a linter
-    # release breaks the entire run. Unpin when an upstream release passes
+    # takes the gate down with it. Unpin when an upstream release passes
     # across the portfolio (tracked on go-qrdb#42).
     #
     # Go 1.27 (issue #19): v2.12.2 cannot lint a `go 1.27.0` module. Its
@@ -135,10 +130,6 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    # STAGE 1. No `needs`: this is the compile check the rest of the pipeline
-    # stages behind, so it cannot wait on `test` or `security` the way it did
-    # before v1.9 — that ordering made the cheapest failure the slowest to
-    # report.
 
     steps:
     - name: Checkout code
@@ -169,11 +160,9 @@ jobs:
     - name: Run C API test suite
       run: make -C examples/c_client run
 
-  # STAGE 2 — the expensive tier, gated on the fast tier.
   test:
     name: Test
     runs-on: ubuntu-latest
-    needs: [lint, build]
 
     steps:
     - name: Checkout code
@@ -219,7 +208,6 @@ jobs:
   sdk-tests:
     name: SDK Tests (${{ matrix.sdk }})
     runs-on: ubuntu-latest
-    needs: [lint, build]
     strategy:
       fail-fast: false
       matrix:
@@ -275,7 +263,6 @@ jobs:
   conformance-test:
     name: Cross-Protocol Conformance
     runs-on: ubuntu-latest
-    needs: [lint, build]
 
     steps:
     - name: Checkout code
@@ -293,7 +280,6 @@ jobs:
   integration-test:
     name: Integration Tests
     runs-on: ubuntu-latest
-    needs: [lint, build]
 
     steps:
     - name: Checkout code
@@ -370,7 +356,6 @@ jobs:
   security:
     name: Security Scan
     runs-on: ubuntu-latest
-    needs: [lint, build]
     permissions:
       contents: read
       security-events: write
@@ -490,7 +475,6 @@ jobs:
   fips:
     name: FIPS
     runs-on: ubuntu-latest
-    needs: [lint, build]
     # This runs the whole unit suite a second time under the FIPS module, and
     # `make test` carries -race (go-objstore#18), so give it room. It is a gate,
     # not a background job — but a generous ceiling still beats a flaky one.
@@ -560,7 +544,6 @@ jobs:
   trivy:
     name: Trivy
     runs-on: ubuntu-latest
-    needs: [lint, build]
     permissions:
       contents: read
       security-events: write
@@ -628,12 +611,9 @@ jobs:
           --skip-dirs test --skip-dirs coverage --skip-dirs bin \
           --skip-dirs '**/vendor' .
 
-  # STAGE 3 — the image is only worth building once the tree it packages has
-  # passed the integration suites.
   docker:
     name: Build and Scan Docker Image
     runs-on: ubuntu-latest
-    needs: [build, integration-test]
     permissions:
       contents: read
       security-events: write
@@ -808,16 +788,15 @@ jobs:
         RESULT_FIPS: ${{ needs.fips.result }}
         RESULT_DOCKER: ${{ needs.docker.result }}
       run: |
-        # v1.9 SKIP-vs-FAIL: `skipped` is not the same as `failed`, and BOTH
-        # fail the gate. Under the staged pipeline a skip means an upstream
-        # stage failed, so naming it keeps a blocked stage loud instead of
-        # letting a red gate read as a test failure while the tests never ran.
-        # An unreadable (empty) result fails closed rather than passing.
+        # `skipped` is not the same as `failed`, and BOTH fail the gate. No
+        # job depends on another, so a skip means the job never ran (a
+        # cancelled or filtered run); naming it keeps that loud. An
+        # unreadable (empty) result fails closed rather than passing.
         status=0
         check() {
           case "$2" in
             success) echo "ok:   $1 = success" ;;
-            skipped) echo "SKIP: $1 (an upstream stage failed - see its job)"; status=1 ;;
+            skipped) echo "SKIP: $1 (job did not run - failing closed)";       status=1 ;;
             "")      echo "FAIL: $1 result is unreadable - failing closed";     status=1 ;;
             *)       echo "FAIL: $1 = $2";                                     status=1 ;;
           esac
