@@ -15,6 +15,7 @@ package main
 
 import (
 	"errors"
+	"math"
 	"strings"
 	"testing"
 )
@@ -102,5 +103,29 @@ func TestSetLastErrorRoundTrip(t *testing.T) {
 	setLastError(nil)
 	if lastError != "" {
 		t.Errorf("setLastError(nil) = %q, want it to clear the slot", lastError)
+	}
+}
+
+// A handle is a 32-bit C.int on the far side, so registerStorage must refuse
+// to issue one past math.MaxInt32 rather than let it truncate onto an earlier
+// handle.
+func TestRegisterStorageRefusesPastMaxInt32(t *testing.T) {
+	storageMutex.Lock()
+	saved := storageCounter
+	storageCounter = math.MaxInt32 - 1
+	storageMutex.Unlock()
+	t.Cleanup(func() {
+		storageMutex.Lock()
+		storageCounter = saved
+		storageMutex.Unlock()
+		unregisterStorage(math.MaxInt32)
+	})
+
+	handle, err := registerStorage("last")
+	if err != nil || handle != math.MaxInt32 {
+		t.Fatalf("registerStorage() = %d, %v; want %d, nil", handle, err, math.MaxInt32)
+	}
+	if _, err := registerStorage("one too many"); !errors.Is(err, ErrHandlesExhausted) {
+		t.Fatalf("registerStorage() past MaxInt32: err = %v, want ErrHandlesExhausted", err)
 	}
 }

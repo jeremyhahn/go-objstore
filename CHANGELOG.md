@@ -30,6 +30,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- C API (`libobjstore`): `ObjstoreNewStorage` returns -1 with
+  `ErrHandlesExhausted` once 2^31-1 handles have been issued, instead of
+  truncating the next handle to a 32-bit `C.int` that could alias an earlier
+  storage (#59). Found by gosec G115 once CI scanned the cgo package at all.
 - The REST server built its listen address with `"%s:%d"`, so an IPv6 host
   such as `::1` produced the unparseable `::1:8080`. It now uses
   `net.JoinHostPort` (`[::1]:8080`).

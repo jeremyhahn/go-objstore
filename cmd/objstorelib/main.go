@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"sync"
 	"unsafe"
 
@@ -37,6 +38,10 @@ var (
 
 	// ErrInvalidLength is returned when a caller passes a negative length or count
 	ErrInvalidLength = errors.New("invalid length")
+
+	// ErrHandlesExhausted is returned when every handle a C int can carry has
+	// been issued
+	ErrHandlesExhausted = errors.New("storage handle space exhausted")
 )
 
 // NewInvalidHandleError creates a new invalid handle error
@@ -96,19 +101,27 @@ func checkLength(param string, n int) bool {
 // Storage handle registry to manage Go objects from C
 var (
 	storageRegistry = make(map[int]any)
-	storageCounter  = 0
+	storageCounter  int32
 	storageMutex    sync.Mutex
 	lastError       string
 	lastErrorMutex  sync.Mutex
 )
 
-// registerStorage stores a Go storage object and returns a handle ID
-func registerStorage(storage any) int {
+// registerStorage stores a Go storage object and returns a handle ID.
+//
+// Handles cross the C boundary as a 32-bit C.int and are never reused, so the
+// counter is an int32 that refuses to pass math.MaxInt32. As a plain int it
+// would truncate onto an earlier handle and route the caller's operations to
+// another storage.
+func registerStorage(storage any) (int32, error) {
 	storageMutex.Lock()
 	defer storageMutex.Unlock()
+	if storageCounter == math.MaxInt32 {
+		return 0, ErrHandlesExhausted
+	}
 	storageCounter++
-	storageRegistry[storageCounter] = storage
-	return storageCounter
+	storageRegistry[int(storageCounter)] = storage
+	return storageCounter, nil
 }
 
 // getStorage retrieves a storage object by handle ID
@@ -195,7 +208,14 @@ func ObjstoreNewStorage(backendType *C.char, settingsKeys **C.char, settingsValu
 		return -1
 	}
 
-	handle := registerStorage(storage)
+	handle, err := registerStorage(storage)
+	if err != nil {
+		if closer, ok := storage.(io.Closer); ok {
+			_ = closer.Close()
+		}
+		setLastError(err)
+		return -1
+	}
 	setLastError(nil)
 	return C.int(handle)
 }
@@ -291,7 +311,15 @@ func ObjstoreGet(handle C.int, key *C.char, buffer *C.char, bufferSize C.int) C.
 	}
 
 	setLastError(nil)
-	return C.int(len(data))
+	// Already implied by len(data) <= bufferSize above. Stated against the
+	// int32 bounds so gosec G115 can prove the conversion; it cannot read
+	// #nosec in a cgo file.
+	n := len(data)
+	if n < math.MinInt32 || n > math.MaxInt32 {
+		setLastError(NewBufferTooSmallError(n, int(bufferSize)))
+		return -1
+	}
+	return C.int(n)
 }
 
 //export ObjstoreDelete
