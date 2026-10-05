@@ -79,7 +79,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GO_VERSION: '1.26.7'
+  GO_VERSION: '1.27.0'
   COVERAGE_THRESHOLD: 89
   # The docker job builds with push: false / load: true and only ever scans the
   # result, so this is a local image name and nothing more. It used to be
@@ -116,10 +116,20 @@ jobs:
     # longer one red job: every expensive job needs `lint`, so a linter
     # release breaks the entire run. Unpin when an upstream release passes
     # across the portfolio (tracked on go-qrdb#42).
+    #
+    # Go 1.27 (issue #19): v2.12.2 cannot lint a `go 1.27.0` module. Its
+    # prebuilt binary is built with go1.26 and refuses to load the config,
+    # and built from source under 1.27 its bundled staticcheck
+    # (honnef.co/go/tools v0.7.0) panics in buildir on the 1.27 stdlib.
+    # v2.13.2 is the version baked into the portfolio runner image and
+    # lints this tree clean under go1.27.0. `install-mode: goinstall`
+    # builds it with the job's own Go, so a prebuilt binary's Go version
+    # cannot fall behind the go directive again.
     - name: Run golangci-lint
       uses: golangci/golangci-lint-action@v9
       with:
-        version: v2.12.2
+        version: v2.13.2
+        install-mode: goinstall
         args: --timeout=10m
 
   build:

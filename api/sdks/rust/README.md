@@ -533,7 +533,7 @@ the original `tonic::Status` preserved.
 ### Prerequisites
 
 - Rust 1.70 or later
-- Go 1.26.4 or later (for running the server)
+- Go 1.27.0 or later (for running the server)
 - protoc (Protocol Buffers compiler)
 
 ### Setup

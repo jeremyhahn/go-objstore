@@ -2,7 +2,7 @@
 
 A unified object storage and file system abstraction library for Go.
 
-[![Go Version](https://img.shields.io/badge/go-1.26+-blue.svg)](https://golang.org)
+[![Go Version](https://img.shields.io/badge/go-1.27+-blue.svg)](https://golang.org)
 [![codecov](https://codecov.io/gh/jeremyhahn/go-objstore/branch/main/graph/badge.svg)](https://codecov.io/gh/jeremyhahn/go-objstore)
 [![Security](https://img.shields.io/badge/security-0%20issues-brightgreen.svg)](#test-coverage)
 [![AGPL-3.0 License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE-AGPL-3.txt)
@@ -704,7 +704,7 @@ go-objstore/
 
 ### Prerequisites
 
-- Go 1.26.4 or higher
+- Go 1.27.0 or higher
 - Docker (for integration tests)
 - Make
 

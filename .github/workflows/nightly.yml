@@ -37,10 +37,10 @@ permissions:
   security-events: write
 
 env:
-  # Kept in lockstep with ci.yml. Latest 1.26 patch (owner ruling 2026-08-20);
-  # 1.27.0 is BLOCKED for the portfolio (go-objstore#19). setup-go 'stable' is
-  # prohibited as a spec.
-  GO_VERSION: '1.26.7'
+  # Kept in lockstep with ci.yml. Go 1.27.0 is the portfolio standard (owner
+  # ruling 2026-09-01, go-objstore#19). setup-go 'stable' is prohibited as a
+  # spec.
+  GO_VERSION: '1.27.0'
 
 jobs:
   # Identical in scope to ci.yml's `trivy` job — keep the two in step. The only

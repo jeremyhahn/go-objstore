@@ -39,6 +39,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- Go toolchain 1.26.7 to 1.27.0 (portfolio standard, owner ruling
+  2026-09-01; issue #19): the `go` directive in every module (root,
+  `api/sdks/go`, `examples/encryption`), the CI/nightly/release `GO_VERSION`
+  pins, the Rust SDK workflow's `setup-go` pin (was 1.21), and every
+  `golang:` Dockerfile base. The Debian-based integration images now pin
+  `golang:1.27.0-bookworm` instead of an unqualified tag whose Debian
+  release floated; the alpine bases stay alpine (devops.md §9a, alpine
+  first). `go mod tidy` is a no-op in all three modules.
+  The CI linter moves from golangci-lint v2.12.2 to v2.13.2, built with
+  `go install` under the job's Go: v2.12.2 cannot lint a `go 1.27.0` module.
 - Audit logging now defaults to on for the standalone QUIC and MCP servers
   (`audit.enabled`, default `true`), matching `objstore-server`; set
   `-audit=false` to turn it off. When MCP runs in stdio mode, audit records
