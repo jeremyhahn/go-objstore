@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [0.4.0-alpha] - 2026-10-08
+
 ### Added
 
 - The server binaries (`objstore-server` and the four `objstore-*-server`
@@ -103,6 +105,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   `github.com/jeremyhahn/go-objstore/pkg/enclave` must switch to
   `github.com/jeremyhahn/go-enclave`.**
 
+- `make release-alpha` is the company release-alpha template v2.3.9, vendored
+  verbatim at `mk/release-alpha.mk`, replacing the v1 recipe (issue #32). The
+  version is now an explicit argument (`make release-alpha VERSION=vX.Y.Z-alpha`)
+  rather than a patch-only auto-increment; every git write signs through
+  `agent-git.sh` as `agent-go-objstore`; the tag is annotated; only the release
+  commit and that one tag are pushed, to `origin`; and the recipe fails closed
+  on a wrong branch, a dirty tree, an existing tag, an unreachable remote or a
+  missing CHANGELOG section. The Makefile's build version variable is renamed
+  `BUILD_VERSION` so it no longer shadows the `VERSION=` argument. The
+  repository's release wiring lives in `mk/release.mk`.
+- CHANGELOG entries are now `changelog.d/<issue>-<slug>.md` fragments
+  (release-versioning.md §5). `make release-alpha` first runs
+  `changelog-assemble`, which folds the fragments and any `## [Unreleased]`
+  content into the version's section, grouped by subsection, deletes the
+  consumed fragments and commits that, signed, before the tag is created.
+
 ### Build
 
 - Docker builds now fetch the internal first-party dependency go-enclave from
@@ -124,6 +142,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   `gomodauth*` at any depth as a backstop) containing that single line,
   e.g. `url.http://x:<token>@<gitea-host>/jeremyhahn/.insteadOf`; unset,
   `GOMODAUTH_ENV` defaults to an empty secret and resolves from the public proxy.
+
+- `make test-release-alpha` runs the template's own regression harness and
+  `mk/testdata/release-path-tests.sh`, which drives the repository's release
+  path against a throwaway remote: explicit-version refusal, wrapper arguments,
+  an annotated single tag, a failed commit leaving no tag and no push, the
+  assembled CHANGELOG in the tagged tree, and no command injection through any
+  release input.
 
 ## [0.3.0-alpha] - 2026-08-19
 
