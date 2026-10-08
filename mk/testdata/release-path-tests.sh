@@ -16,6 +16,8 @@
 #   6. An empty Unreleased section directly above the previous version heading
 #      assembles to nothing, never to a copy of that heading.
 #   7. The lockstep guard runs before assembly, even under make -j2.
+#   8. The release commit carries the SDK manifest versions synced to the new
+#      version (make version-sync), and version-check passes on it.
 #
 # Nothing here touches the caller's git config or any real remote: HOME and the
 # global config are private to each case, and AGENT_GIT is a stub that logs its
@@ -66,6 +68,9 @@ EOF
 	cat > Makefile <<EOF
 AGENT_GIT := $DIR/agent-git
 include $WIRING
+# Stubs for the targets the template recipe calls after writing VERSION; the
+# real ones are exercised by the sdk_lockstep case below.
+version-sync version-check: ; @:
 EOF
 	printf '0.0.1-alpha\n' > VERSION
 	mkdir changelog.d
@@ -144,6 +149,7 @@ full_release() (
 		"go-objstore rm -q -- changelog.d/10-b.md changelog.d/2-a.md" \
 		"go-objstore commit -m docs(changelog): assemble $PLAIN for $VER" \
 		"go-objstore add VERSION" \
+		"go-objstore add -u" \
 		"go-objstore commit -m chore(release): $VER" \
 		"go-objstore tag -a $VER -m $VER" \
 		"go-objstore push --atomic --no-follow-tags origin HEAD refs/tags/$VER")"
@@ -181,6 +187,53 @@ $expect_body"; return 1; }
 	ok "the tagged tree holds the assembled section, grouped by subsection, and no consumed fragment"
 )
 tally full_release
+
+echo "=== the release commit carries the synced SDK versions ==="
+# The real Makefile, scripts and SDK manifests (copied from this checkout) run
+# in the fixture, so version-sync and version-check are the repo's own targets.
+# Every manifest starts at the checkout's VERSION; the release must move all of
+# them to the new version inside the one signed release commit, leaving
+# version-check green on that commit (v0.4.0-alpha left main red).
+SDK_FILES="api/sdks/go/version.go api/sdks/python/setup.py api/sdks/python/pyproject.toml
+api/sdks/python/objstore/__init__.py api/sdks/ruby/lib/objstore/version.rb
+api/sdks/ruby/objstore.gemspec api/sdks/rust/Cargo.toml api/sdks/typescript/package.json
+api/sdks/typescript/package-lock.json api/sdks/csharp/ObjStore.SDK.csproj"
+sdk_lockstep() (
+	local name="sdk lockstep" repo f
+	repo="$(cd "$HERE/../.." && pwd)"
+	fixture sdk-lockstep
+	export AGENT_GIT="$DIR/agent-git"
+	cp "$repo/Makefile" Makefile
+	cp "$repo/VERSION" VERSION
+	mkdir -p mk scripts
+	cp "$repo"/mk/*.mk "$repo"/mk/*.sh mk/
+	cp "$repo/scripts/sync-version.sh" "$repo/scripts/check-version.sh" scripts/
+	for f in $SDK_FILES; do mkdir -p "$(dirname "$f")"; cp "$repo/$f" "$f"; done
+	make -s version-check >/dev/null 2>&1 || { bad "$name" "the fixture does not start with matching SDK versions"; return 1; }
+	fragment 1-a.md "$(printf '### Added\n\n- a')"; publish
+	: > "$DIR/wrapper.log"
+	if ! release VERSION="$VER"; then bad "$name" "recipe refused: $(tail -n3 "$ROOT/out")"; return 1; fi
+
+	# One release commit, signed through the wrapper, holding VERSION and every manifest.
+	grep -qx "go-objstore add -u" "$DIR/wrapper.log" || { bad "$name" "the synced manifests were never staged: $(cat "$DIR/wrapper.log")"; return 1; }
+	[ "$(git log -1 --format=%s)" = "chore(release): $VER" ] || { bad "$name" "HEAD is not the release commit: $(git log -1 --format=%s)"; return 1; }
+	local changed; changed="$(git diff-tree --no-commit-id --name-only -r HEAD | sort)"
+	local want; want="$(printf '%s\n' VERSION $SDK_FILES | sort)"
+	[ "$changed" = "$want" ] || { bad "$name" "the release commit changed:
+$changed
+want:
+$want"; return 1; }
+	[ -z "$(git status --porcelain)" ] || { bad "$name" "the working tree is dirty after the release: $(git status --porcelain | tr '\n' ' ')"; return 1; }
+	ok "the release commit holds VERSION and all ten SDK manifests, and leaves the tree clean"
+
+	# The published tag's tree passes the gate.
+	git fetch -q origin "refs/tags/$VER:refs/tags/fetched" || { bad "$name" "could not fetch the tag"; return 1; }
+	[ "$(git rev-parse 'refs/tags/fetched^{commit}')" = "$(git rev-parse HEAD)" ] || { bad "$name" "the tag is not the release commit"; return 1; }
+	git checkout -q --detach refs/tags/fetched || { bad "$name" "could not check out the tag"; return 1; }
+	make -s version-check >"$ROOT/out" 2>&1 || { bad "$name" "version-check fails on the release commit: $(tail -n5 "$ROOT/out")"; return 1; }
+	ok "version-check passes on the tagged release commit"
+)
+tally sdk_lockstep
 
 echo "=== a failed commit stops the release ==="
 # The stub fails the first commit it is asked for; no tag may exist anywhere

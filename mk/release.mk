@@ -11,13 +11,17 @@
 #                              section into the version's CHANGELOG section and
 #                              commits it, signed, BEFORE the tag exists
 #                              (release-versioning.md §5)
-#   3. the template recipe     writes VERSION, commits, creates the annotated
-#                              tag and pushes only the release commit and that tag
+#   3. the template recipe     writes VERSION, runs version-sync and version-check,
+#                              commits VERSION and the synced SDK manifests,
+#                              creates the annotated tag and pushes only the
+#                              release commit and that tag
 #
 # mk/release-alpha.mk is ../handbook/software/templates/make/release-alpha.mk
-# byte-for-byte, and mk/testdata/release-alpha-tests.sh is its own regression
-# harness. Update both by re-copying from the handbook, never by editing them
-# here; repo-specific behaviour lives in this file.
+# plus ONE local addition (version-sync and version-check after VERSION is
+# written, so the release commit carries the SDK versions; see its header), and
+# mk/testdata/release-alpha-tests.sh is its own regression harness. Update both
+# by re-copying from the handbook and re-applying that addition; other
+# repo-specific behaviour lives in this file.
 #
 # The version is explicit (release-versioning.md decides patch/minor/major),
 # every git write signs through agent-git.sh as agent-go-objstore, the tag is

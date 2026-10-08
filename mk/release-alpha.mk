@@ -14,6 +14,16 @@
 #      a ```` block would "close" it and re-admit the quoted heading.
 #  This header is on line 1 so the first line always names the CURRENT revision;
 #  v2.3.6-v2.3.8 were stamped lower down and #967 read this file as v2.3.5.
+# LOCAL ADDITION (go-objstore, NOT in the fleet template; the revision above is
+# unchanged): after VERSION is written the recipe runs this repo's own
+# `version-sync` and then `version-check` (the Makefile targets, never a copy), and
+# stages the synced SDK manifests with `add -u` beside VERSION, so the signed
+# release commit carries them. The tree is clean at that point (guard below), so
+# `add -u` stages exactly what the sync changed. v0.4.0-alpha cut a release commit
+# with VERSION alone and left main red on version-check until a manual
+# `make version-sync`. Adopters without those two targets must not take this.
+# Re-copying the template over this file drops it: re-apply it, and the stub
+# targets in mk/testdata/release-alpha-tests.sh and release-path-tests.sh.
 # release-alpha-template: v2.3.5 (guidance only). Two release-WORKFLOW safety
 # patterns from go-blockstore #8, for any repo whose pipeline re-validates VERSION
 # or splits validate/publish across jobs:
@@ -287,7 +297,10 @@ release-alpha:
 	  index($$0, ver) == 1 { f = 1 } \
 	  END { exit f ? 0 : 1 }' CHANGELOG.md || { echo "ERROR: CHANGELOG.md has no \"$$ver\" section heading. Matched LITERALLY and anchored at the line start, exactly as .github/workflows/release.yml matches it — an unanchored prose mention does not count, neither does a near-miss heading, and neither does a heading quoted inside a fenced code block"; exit 1; }
 	@printf '%s\n' "$${REL_VERSION#v}" > VERSION
+	@$(MAKE) --no-print-directory version-sync
+	@$(MAKE) --no-print-directory version-check
 	"$$REL_AGENT_GIT" "$$REL_REPO" add VERSION
+	"$$REL_AGENT_GIT" "$$REL_REPO" add -u
 	"$$REL_AGENT_GIT" "$$REL_REPO" commit -m "chore(release): $$REL_VERSION"
 	"$$REL_AGENT_GIT" "$$REL_REPO" tag -a "$$REL_VERSION" -m "$$REL_VERSION"
 	"$$REL_AGENT_GIT" "$$REL_REPO" push --atomic --no-follow-tags "$$REL_REMOTE" HEAD "refs/tags/$$REL_VERSION"

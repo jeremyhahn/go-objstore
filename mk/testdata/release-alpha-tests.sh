@@ -52,6 +52,10 @@ AGENT_GIT ?= $dir/agent-git
 REPO_NAME ?= fixture
 RELEASE_REMOTE ?= origin
 include $TEMPLATE
+# Stubs for the go-objstore local addition (see the header of release-alpha.mk):
+# the recipe calls the adopter's own version-sync and version-check. The real
+# targets are exercised by release-path-tests.sh.
+version-sync version-check: ; @:
 EOF
 	printf '0.0.1-alpha\n' > VERSION
 	printf '# Changelog\n' > CHANGELOG.md

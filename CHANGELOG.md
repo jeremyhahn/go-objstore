@@ -15,6 +15,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   vanished as absent; in-flight `.tmp-*` files are never returned as keys
   (issue #68).
 
+### Changed
+
+- The local provider's `ListWithOptions` returns an empty result, not an error,
+  when the storage directory does not exist, matching `List` and
+  `ListWithContext`, which already did (issue #68).
+
 ## [0.4.0-alpha] - 2026-10-08
 
 ### Added
