@@ -16,8 +16,10 @@ package local
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -518,22 +520,7 @@ func (l *Local) ListWithContext(ctx context.Context, prefix string) ([]string, e
 		return keys, nil
 	}
 
-	err := filepath.Walk(l.path, func(path string, info os.FileInfo, err error) error {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		if err != nil {
-			return err
-		}
-
-		// Skip directories and metadata files
-		if info.IsDir() || strings.HasSuffix(path, metadataSuffix) {
-			return nil
-		}
-
+	err := walkObjects(ctx, l.path, func(path string, _ fs.DirEntry) error {
 		// Get relative path from basePath
 		relPath, err := filepath.Rel(l.path, path)
 		if err != nil {
@@ -583,22 +570,7 @@ func (l *Local) ListWithOptions(ctx context.Context, opts *common.ListOptions) (
 	prefixMap := make(map[string]bool)
 	var allObjects []*common.ObjectInfo
 
-	err := filepath.Walk(l.path, func(path string, info os.FileInfo, err error) error {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		if err != nil {
-			return err
-		}
-
-		// Skip directories and metadata files
-		if info.IsDir() || strings.HasSuffix(path, metadataSuffix) {
-			return nil
-		}
-
+	err := walkObjects(ctx, l.path, func(path string, d fs.DirEntry) error {
 		// Get relative path from basePath
 		relPath, err := filepath.Rel(l.path, path)
 		if err != nil {
@@ -634,7 +606,15 @@ func (l *Local) ListWithOptions(ctx context.Context, opts *common.ListOptions) (
 		// Load metadata
 		metadata, err := l.loadMetadata(normalizedRel)
 		if err != nil {
-			// Create basic metadata if not found
+			// Create basic metadata if not found. The entry may have been
+			// removed since the directory was read; treat that as absent.
+			info, ierr := d.Info()
+			if ierr != nil {
+				if errors.Is(ierr, fs.ErrNotExist) {
+					return nil
+				}
+				return ierr
+			}
 			metadata = &common.Metadata{
 				Size:         info.Size(),
 				LastModified: info.ModTime(),
@@ -802,9 +782,41 @@ func (l *Local) loadMetadata(key string) (*common.Metadata, error) {
 //
 // write is invoked with the open temporary file. The final file is given the
 // supplied mode.
+// tmpFilePrefix is the name prefix of the in-flight files writeFileAtomic
+// creates before renaming them into place. They are never objects.
+const tmpFilePrefix = ".tmp-"
+
+// walkObjects walks root and calls fn for every object file, skipping
+// directories, metadata sidecars and in-flight temporary files. Entries that
+// vanish while the walk is in progress (a concurrent Put renaming its temp
+// file, a concurrent Delete) are treated as absent rather than failing the
+// whole walk; any other error aborts it.
+func walkObjects(ctx context.Context, root string, fn func(path string, d fs.DirEntry) error) error {
+	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			return err
+		}
+
+		if d.IsDir() || strings.HasSuffix(path, metadataSuffix) || strings.HasPrefix(d.Name(), tmpFilePrefix) {
+			return nil
+		}
+
+		return fn(path, d)
+	})
+}
+
 func writeFileAtomic(path string, mode os.FileMode, write func(io.Writer) error) error {
 	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".tmp-*") // #nosec G304 -- dir derived from a key validated by validateKey() to prevent directory traversal
+	tmp, err := os.CreateTemp(dir, tmpFilePrefix+"*") // #nosec G304 -- dir derived from a key validated by validateKey() to prevent directory traversal
 	if err != nil {
 		return err
 	}

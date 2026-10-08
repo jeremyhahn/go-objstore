@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- The local provider's `List`, `ListWithContext` and `ListWithOptions` no longer
+  fail with a "no such file or directory" error when a concurrent `Put` renames
+  its `.tmp-*` file (or an object is deleted) while the listing is walking the
+  directory. The walk now uses `filepath.WalkDir` and treats an entry that
+  vanished as absent; in-flight `.tmp-*` files are never returned as keys
+  (issue #68).
+
 ## [0.4.0-alpha] - 2026-10-08
 
 ### Added
