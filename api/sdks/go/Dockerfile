@@ -2,8 +2,8 @@
 # Dockerfile for Go SDK testing
 # Context must be the repository ROOT (the go.mod `replace` directive points the
 # parent module at ../../../, so the whole repo must be in the build context).
-# Image must satisfy the parent module's go directive (>= 1.27.0).
-FROM golang:1.27.0-alpine
+# Image must satisfy the parent module's go directive (>= 1.27.1).
+FROM golang:1.27.1-alpine
 
 # Build tools for CGO (race detector needs a C toolchain)
 RUN apk add --no-cache git make curl bash gcc musl-dev
@@ -23,10 +23,8 @@ WORKDIR /workspace/api/sdks/go
 # secret (the file carries only the tokenised GIT_CONFIG_KEY_0 value, read via a
 # quoted command substitution — never sourced as shell). The mount is optional,
 # so the same Dockerfile still builds against the public proxy when none is
-# provided. This image is not built by CI today — the SDK test job runs go
-# test on the runner. No compose file supplies the gomodauth secret to it yet;
-# the SDK integration compose harness wiring is tracked in issue #36. The mount
-# is optional, so this stays inert (not a latent trap) until #36 wires compose.
+# provided. The compose file passes it from GOMODAUTH_ENV, which the CI jobs
+# stage with the stage-gomodauth composite action.
 RUN --mount=type=secret,id=gomodauth \
     set -eu; \
     if [ -s /run/secrets/gomodauth ]; then \

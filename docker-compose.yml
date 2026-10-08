@@ -1,6 +1,8 @@
 services:
   minio:
-    image: quay.io/minio/minio:RELEASE.2024-09-22T00-33-43Z
+    # Built from source: the published MinIO images refuse anonymous pulls.
+    build:
+      context: test/integration/minio-server
     command: server /data --console-address ":9001"
     environment:
       - MINIO_ROOT_USER=minioadmin

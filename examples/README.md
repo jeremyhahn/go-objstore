@@ -184,21 +184,25 @@ storage.AddPolicy(archivePolicy)
 
 ### Prerequisites
 
-- Go 1.27.0 or higher
+- Go 1.27.1 or higher
 - For S3 examples: MinIO (optional)
 - For C examples: GCC compiler
 
 ### Setup MinIO for S3 Examples
 
 ```bash
+# The published MinIO images refuse anonymous pulls, so build the server from
+# source (from the repository root)
+docker build -t objstore-minio test/integration/minio-server
+
 # Run MinIO in Docker
 docker run -d -p 9000:9000 \
   -e MINIO_ROOT_USER=minioadmin \
   -e MINIO_ROOT_PASSWORD=minioadmin \
-  minio/minio server /data
+  objstore-minio server /data
 
-# Create a bucket
-docker exec <container-id> mc mb /data/demo-bucket
+# Create the demo-bucket bucket with any S3 client (for example mc or the
+# AWS CLI) against http://localhost:9000
 ```
 
 ### Building C Examples

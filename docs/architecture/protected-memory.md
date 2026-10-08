@@ -45,10 +45,15 @@ is returned to catch. Swapping the buffer handle under an atomic would keep
 `IsAlive` honest and still leave the borrower on freed memory, so the
 discipline is a lock over the whole access, not a flag:
 
-- `WithBytes`, `OpenString`, `EqualTo`, `Size`, `IsAlive` and `String` hold the
-  enclave's read lock across the entire access.
+- `WithBytes`, `EqualTo`, `Size`, `IsAlive` and `String` hold the
+  enclave's read lock across the entire access. Strings are read through
+  `WithBytes`; `OpenString` and `Open` no longer exist, and string material
+  comes in as `NewMemoryEnclave([]byte(s))`.
 - `Destroy` takes the write lock, so it **blocks** until every in-flight borrow
-  has returned. It never wipes memory a reader is still holding.
+  has returned. It never wipes memory a reader is still holding. It returns an
+  error (never panics): `ErrEnclaveCorrupted` when the guards were overwritten,
+  after the material is wiped. `Config.Destroy` and `TLSConfig.Destroy` return
+  that error.
 - There is no process-wide coordination and no shared purge lock. Because
   go-enclave maps its own memory, nothing in the process can unmap an enclave it
   does not own: an allocation that hits the `RLIMIT_MEMLOCK` ceiling fails only

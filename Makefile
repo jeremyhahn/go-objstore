@@ -227,7 +227,7 @@ integration-test-local:
 integration-test-s3:
 	@echo "$(CYAN)$(BOLD)→ Running S3/MinIO integration tests...$(RESET)"
 	@cd test/integration/s3 && $(DOCKER_COMPOSE) down -v >/dev/null 2>&1 || true
-	@cd test/integration/s3 && $(DOCKER_COMPOSE) up -d minio
+	@cd test/integration/s3 && $(DOCKER_COMPOSE) up -d --build minio
 	@cd test/integration/s3 && $(DOCKER_COMPOSE) run --build --rm test
 	@cd test/integration/s3 && $(DOCKER_COMPOSE) down -v
 	@echo "$(GREEN)✓ S3 integration tests complete$(RESET)"
@@ -237,7 +237,7 @@ integration-test-s3:
 integration-test-minio:
 	@echo "$(CYAN)$(BOLD)→ Running MinIO integration tests...$(RESET)"
 	@cd test/integration/minio && $(DOCKER_COMPOSE) down -v >/dev/null 2>&1 || true
-	@cd test/integration/minio && $(DOCKER_COMPOSE) up -d minio
+	@cd test/integration/minio && $(DOCKER_COMPOSE) up -d --build minio
 	@cd test/integration/minio && $(DOCKER_COMPOSE) run --build --rm test
 	@cd test/integration/minio && $(DOCKER_COMPOSE) down -v
 	@echo "$(GREEN)✓ MinIO integration tests complete$(RESET)"

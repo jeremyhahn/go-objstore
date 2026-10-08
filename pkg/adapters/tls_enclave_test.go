@@ -52,7 +52,7 @@ func TestTLSConfig_WithServerKeyEnclave(t *testing.T) {
 	if config.ServerKeyPEM != nil {
 		t.Error("ServerKeyPEM must stay empty on the protected path")
 	}
-	if !config.ServerKeyEnclave().EqualTo(keyCopy) {
+	if eq, err := config.ServerKeyEnclave().EqualTo(keyCopy); err != nil || !eq {
 		t.Error("enclave does not hold the key")
 	}
 	// NewMemoryEnclave takes ownership, so the caller's slice is wiped.

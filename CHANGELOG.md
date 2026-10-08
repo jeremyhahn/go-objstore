@@ -43,6 +43,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- go-enclave v0.3.0-alpha to v0.8.0-alpha (issue #66) in the root,
+  `api/sdks/go` and `examples/encryption` modules, with `go` 1.27.1 and
+  `golang.org/x/sys` v0.48.0. `NewMemoryEnclaveFromString` and `OpenString` are
+  removed upstream: `cli.Config` brings string credentials in as
+  `NewMemoryEnclave([]byte(s))` and reads them through `WithBytes`.
+  `Destroy` now returns an error, so `cli.Config.Destroy`,
+  `cli.Config.SetBackendKeyEnclave`, `cli.Config.SetBackendSecretEnclave` and
+  `adapters.TLSConfig.Destroy` return `error` (a failure while replacing an
+  enclave in the `TLSConfig` builder chain is reported by its `Destroy`), and
+  `cmd/objstore` reports a failed credential release on exit.
+  go-enclave v0.8.0-alpha requires Go 1.27.1, so every CI, nightly and release
+  `GO_VERSION`, the `golang:` image bases (root, Go SDK and integration
+  Dockerfiles), the Rust SDK workflow's `setup-go` pin and the documented
+  minimum Go version move from 1.27.0 to 1.27.1.
+  The credential staging for docker builds that run `go mod download` is now
+  one composite action (`.github/actions/stage-gomodauth`) used by the
+  integration-test, SDK-test and Docker-scan jobs, so the `sdk-tests` job
+  supplies the `gomodauth` secret too. `api/sdks/go/go.mod` no longer lists
+  go-enclave: the SDK imports nothing from it, so `go mod tidy` does not want it.
+  The S3 and MinIO integration tests (and the root `docker-compose.yml`) build
+  MinIO from source at `RELEASE.2025-10-15T17-29-55Z` through the one
+  `test/integration/minio-server/Dockerfile`, because the published MinIO
+  images now refuse anonymous pulls; `integration-test-s3` and
+  `integration-test-minio` bring the service up with `--build`.
 - Go toolchain 1.26.7 to 1.27.0 (portfolio standard, owner ruling
   2026-09-01; issue #19): the `go` directive in every module (root,
   `api/sdks/go`, `examples/encryption`), the CI/nightly/release `GO_VERSION`

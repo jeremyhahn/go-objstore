@@ -32,15 +32,22 @@ var (
 )
 
 func main() {
-	// Zeroize the backend credentials held in locked memory before the process
-	// leaves through either exit path.
-	defer func() { globalConfig.Destroy() }()
+	os.Exit(run())
+}
 
+// run executes the command and zeroizes the backend credentials held in
+// locked memory before the process leaves through either exit path.
+func run() int {
+	code := 0
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		globalConfig.Destroy()
-		os.Exit(1)
+		code = 1
 	}
+	if err := globalConfig.Destroy(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		code = 1
+	}
+	return code
 }
 
 var rootCmd = &cobra.Command{

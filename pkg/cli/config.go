@@ -14,6 +14,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -168,12 +169,10 @@ func GetConfigProtected(v *viper.Viper) (*Config, error) {
 
 	// Both setters clear the plain field they read from.
 	if err := cfg.SetBackendKeyFromString(cfg.BackendKey); err != nil {
-		cfg.Destroy()
-		return nil, err
+		return nil, errors.Join(err, cfg.Destroy())
 	}
 	if err := cfg.SetBackendSecretFromString(cfg.BackendSecret); err != nil {
-		cfg.Destroy()
-		return nil, err
+		return nil, errors.Join(err, cfg.Destroy())
 	}
 
 	return cfg, nil
@@ -182,38 +181,40 @@ func GetConfigProtected(v *viper.Viper) (*Config, error) {
 // SetBackendKeyEnclave sets the backend access key from a locked memory
 // enclave and clears the deprecated plain field. The Config TAKES OWNERSHIP of
 // the enclave; any previously held one is destroyed.
-func (c *Config) SetBackendKeyEnclave(e *enclave.MemoryEnclave) {
+func (c *Config) SetBackendKeyEnclave(e *enclave.MemoryEnclave) error {
+	var err error
 	if c.backendKeyEnclave != nil && c.backendKeyEnclave != e {
-		c.backendKeyEnclave.Destroy()
+		err = c.backendKeyEnclave.Destroy()
 	}
 	c.backendKeyEnclave = e
 	c.BackendKey = ""
+	return err
 }
 
 // SetBackendSecretEnclave sets the backend secret access key from a locked
 // memory enclave and clears the deprecated plain field. The Config TAKES
 // OWNERSHIP of the enclave; any previously held one is destroyed.
-func (c *Config) SetBackendSecretEnclave(e *enclave.MemoryEnclave) {
+func (c *Config) SetBackendSecretEnclave(e *enclave.MemoryEnclave) error {
+	var err error
 	if c.backendSecretEnclave != nil && c.backendSecretEnclave != e {
-		c.backendSecretEnclave.Destroy()
+		err = c.backendSecretEnclave.Destroy()
 	}
 	c.backendSecretEnclave = e
 	c.BackendSecret = ""
+	return err
 }
 
 // SetBackendKeyFromString enclaves key, or clears the credential when key is
 // empty. See NewMemoryEnclaveFromString for the caveat on string sources.
 func (c *Config) SetBackendKeyFromString(key string) error {
 	if key == "" {
-		c.SetBackendKeyEnclave(nil)
-		return nil
+		return c.SetBackendKeyEnclave(nil)
 	}
-	e, err := enclave.NewMemoryEnclaveFromString(key)
+	e, err := enclave.NewMemoryEnclave([]byte(key))
 	if err != nil {
 		return err
 	}
-	c.SetBackendKeyEnclave(e)
-	return nil
+	return c.SetBackendKeyEnclave(e)
 }
 
 // SetBackendSecretFromString enclaves secret, or clears the credential when
@@ -221,15 +222,13 @@ func (c *Config) SetBackendKeyFromString(key string) error {
 // sources.
 func (c *Config) SetBackendSecretFromString(secret string) error {
 	if secret == "" {
-		c.SetBackendSecretEnclave(nil)
-		return nil
+		return c.SetBackendSecretEnclave(nil)
 	}
-	e, err := enclave.NewMemoryEnclaveFromString(secret)
+	e, err := enclave.NewMemoryEnclave([]byte(secret))
 	if err != nil {
 		return err
 	}
-	c.SetBackendSecretEnclave(e)
-	return nil
+	return c.SetBackendSecretEnclave(e)
 }
 
 // BackendKeyEnclave returns the enclave holding the backend access key, or
@@ -248,16 +247,17 @@ func (c *Config) BackendSecretEnclave() *enclave.MemoryEnclave {
 // a nil *Config, and safe to defer. The deprecated plain-string fields are
 // cleared as well, though a Go string cannot actually be wiped — that is
 // precisely why they are deprecated.
-func (c *Config) Destroy() {
+func (c *Config) Destroy() error {
 	if c == nil {
-		return
+		return nil
 	}
-	c.backendKeyEnclave.Destroy()
+	keyErr := c.backendKeyEnclave.Destroy()
 	c.backendKeyEnclave = nil
-	c.backendSecretEnclave.Destroy()
+	secretErr := c.backendSecretEnclave.Destroy()
 	c.backendSecretEnclave = nil
 	c.BackendKey = ""
 	c.BackendSecret = ""
+	return errors.Join(keyErr, secretErr)
 }
 
 // backendKeyValue materializes the backend access key as a plain string.
@@ -275,16 +275,26 @@ func (c *Config) Destroy() {
 // only when no enclave was ever set.
 func (c *Config) backendKeyValue() (string, error) {
 	if c.backendKeyEnclave != nil {
-		return c.backendKeyEnclave.OpenString()
+		return enclaveString(c.backendKeyEnclave)
 	}
 	return c.BackendKey, nil
+}
+
+// enclaveString copies the enclave's contents into a string through a borrow.
+func enclaveString(e *enclave.MemoryEnclave) (string, error) {
+	var s string
+	err := e.WithBytes(func(b []byte) error {
+		s = string(b)
+		return nil
+	})
+	return s, err
 }
 
 // backendSecretValue materializes the backend secret access key as a plain
 // string. Same boundary caveat and same no-fallback rule as backendKeyValue.
 func (c *Config) backendSecretValue() (string, error) {
 	if c.backendSecretEnclave != nil {
-		return c.backendSecretEnclave.OpenString()
+		return enclaveString(c.backendSecretEnclave)
 	}
 	return c.BackendSecret, nil
 }

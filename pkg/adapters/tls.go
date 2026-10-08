@@ -73,6 +73,10 @@ type TLSConfig struct {
 	// the enclave API, never copied out of the struct by a consumer.
 	serverKeyEnclave *enclave.MemoryEnclave
 
+	// releaseErr collects the errors from destroying a replaced enclave in
+	// the builder chain, which has no error return. Destroy reports it.
+	releaseErr error
+
 	// ClientCAFile is the path to the CA certificate file for validating client certificates.
 	ClientCAFile string
 
@@ -123,7 +127,7 @@ func NewTLSConfig() *TLSConfig {
 // install.
 func (c *TLSConfig) selectServerKeySource(keepEnclave *enclave.MemoryEnclave) {
 	if c.serverKeyEnclave != nil && c.serverKeyEnclave != keepEnclave {
-		c.serverKeyEnclave.Destroy()
+		c.releaseErr = errors.Join(c.releaseErr, c.serverKeyEnclave.Destroy())
 	}
 	c.serverKeyEnclave = nil
 
@@ -211,11 +215,13 @@ func (c *TLSConfig) ServerKeyEnclave() *enclave.MemoryEnclave {
 // idempotent and safe to defer. The deprecated ServerKeyPEM field is wiped
 // too, so that a caller migrating away from it does not leave the old copy
 // behind; the certificate and CA fields are public data and are left alone.
-func (c *TLSConfig) Destroy() {
-	c.serverKeyEnclave.Destroy()
+func (c *TLSConfig) Destroy() error {
+	err := errors.Join(c.releaseErr, c.serverKeyEnclave.Destroy())
+	c.releaseErr = nil
 	c.serverKeyEnclave = nil
 	enclave.Wipe(c.ServerKeyPEM)
 	c.ServerKeyPEM = nil
+	return err
 }
 
 // WithClientCAFile enables mTLS with client CA from file.
@@ -387,7 +393,7 @@ func keyPairFromEnclave(certPEM []byte, keyEnclave *enclave.MemoryEnclave) (tls.
 // never wiped; this reads it into a MemoryEnclave instead, so the PEM-encoded
 // key exists in unprotected memory for no longer than the read itself and is
 // zeroized as soon as the pair is parsed.
-func loadKeyPairProtected(certFile, keyFile string) (tls.Certificate, error) {
+func loadKeyPairProtected(certFile, keyFile string) (cert tls.Certificate, err error) {
 	certPEM, err := os.ReadFile(certFile) // #nosec G304 -- TLS certificate paths are controlled by application configuration
 	if err != nil {
 		return tls.Certificate{}, err
@@ -405,7 +411,11 @@ func loadKeyPairProtected(certFile, keyFile string) (tls.Certificate, error) {
 	if err != nil {
 		return tls.Certificate{}, err
 	}
-	defer keyEnclave.Destroy()
+	defer func() {
+		if derr := keyEnclave.Destroy(); derr != nil {
+			err = errors.Join(err, derr)
+		}
+	}()
 
 	return keyPairFromEnclave(certPEM, keyEnclave)
 }

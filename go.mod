@@ -1,6 +1,6 @@
 module github.com/jeremyhahn/go-objstore
 
-go 1.27.0
+go 1.27.1
 
 require (
 	cloud.google.com/go/storage v1.64.0
@@ -16,7 +16,7 @@ require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/gin-gonic/gin v1.12.0
 	github.com/google/uuid v1.6.0
-	github.com/jeremyhahn/go-enclave v0.3.0-alpha
+	github.com/jeremyhahn/go-enclave v0.8.0-alpha
 	github.com/quic-go/quic-go v0.61.0
 	github.com/sourcegraph/jsonrpc2 v0.2.2
 	github.com/spf13/cobra v1.10.2
@@ -24,7 +24,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/swaggo/files v1.0.1
 	github.com/swaggo/gin-swagger v1.6.1
-	golang.org/x/sys v0.47.0
+	golang.org/x/sys v0.48.0
 	golang.org/x/time v0.15.0
 	google.golang.org/api v0.293.0
 	google.golang.org/grpc v1.83.2

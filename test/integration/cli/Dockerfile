@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # Dockerfile for CLI integration tests
-FROM golang:1.27.0-alpine
+FROM golang:1.27.1-alpine
 
 # Allow Go toolchain auto-upgrade
 ENV GOTOOLCHAIN=auto

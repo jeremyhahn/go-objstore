@@ -77,7 +77,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GO_VERSION: '1.27.0'
+  GO_VERSION: '1.27.1'
   COVERAGE_THRESHOLD: 89
   # The docker job builds with push: false / load: true and only ever scans the
   # result, so this is a local image name and nothing more. It used to be
@@ -112,12 +112,12 @@ jobs:
     # takes the gate down with it. Unpin when an upstream release passes
     # across the portfolio (tracked on go-qrdb#42).
     #
-    # Go 1.27 (issue #19): v2.12.2 cannot lint a `go 1.27.0` module. Its
+    # Go 1.27 (issue #19): v2.12.2 cannot lint a `go 1.27.1` module. Its
     # prebuilt binary is built with go1.26 and refuses to load the config,
     # and built from source under 1.27 its bundled staticcheck
     # (honnef.co/go/tools v0.7.0) panics in buildir on the 1.27 stdlib.
     # v2.13.2 is the version baked into the portfolio runner image and
-    # lints this tree clean under go1.27.0. `install-mode: goinstall`
+    # lints this tree clean under go1.27.1. `install-mode: goinstall`
     # builds it with the job's own Go, so a prebuilt binary's Go version
     # cannot fall behind the go directive again.
     - name: Run golangci-lint
@@ -257,8 +257,18 @@ jobs:
       with:
         dotnet-version: '9.0.x'
 
+    # The SDK test images build the server from the root Dockerfile, whose
+    # go mod download resolves the internal go-enclave module (exports
+    # GOMODAUTH_ENV, which the SDK compose files read).
+    - name: Stage module-fetch credentials
+      uses: ./.github/actions/stage-gomodauth
+
     - name: Run ${{ matrix.sdk }} SDK unit tests
       run: make -C api/sdks test-${{ matrix.sdk }}
+
+    - name: Remove staged credentials
+      if: always()
+      run: rm -f "${RUNNER_TEMP}/gomodauth.secret"
 
   conformance-test:
     name: Cross-Protocol Conformance
@@ -294,36 +304,10 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
-    # go mod download runs inside the compose-built integration images, which
-    # cannot reach the internal Gitea on their own. The runner injects GOPRIVATE
-    # and the tokenised insteadOf rewrite into this job's process environment
-    # (conventions/dependency-resolution.md §6), but a job environment does not
-    # cross into a docker build. Stage it as a BuildKit secret file under
-    # RUNNER_TEMP — deliberately OUTSIDE every compose build context, so a
-    # `COPY . .` cannot bake it into a layer (.dockerignore lists gomodauth* as a
-    # second guard) — and hand its path to compose via GOMODAUTH_ENV. Read the
-    # variables straight from the shell environment, NEVER through ${{ env.X }}:
-    # that expression reads this workflow's own env: block, which does not define
-    # them, and would quietly write blanks (the build then dies on an
-    # unrelated-looking "unknown revision"). On GitHub none of these variables
-    # exist, the file is written empty, and each Dockerfile's secret mount is
-    # optional, so the same builds resolve from the public proxy.
+    # The compose-built integration images run go mod download; stage the
+    # module-fetch credentials for them (exports GOMODAUTH_ENV).
     - name: Stage module-fetch credentials
-      run: |
-        set -eu
-        umask 077
-        : > "${RUNNER_TEMP}/gomodauth.secret"
-        if [ -n "${GIT_CONFIG_KEY_0:-}" ]; then
-          # Write ONLY the tokenised insteadOf key, as raw data with no trailing
-          # newline — never as `export NAME=value` shell. Each Dockerfile reads
-          # it with a quoted command substitution, so a credential containing
-          # shell metacharacters is assigned literally, never parsed or executed.
-          printf '%s' "${GIT_CONFIG_KEY_0}" > "${RUNNER_TEMP}/gomodauth.secret"
-          echo "staged Gitea module credential"
-        else
-          echo "no Gitea credentials in this environment; resolving from the public proxy"
-        fi
-        echo "GOMODAUTH_ENV=${RUNNER_TEMP}/gomodauth.secret" >> "$GITHUB_ENV"
+      uses: ./.github/actions/stage-gomodauth
 
     - name: Run local storage integration tests
       run: make integration-test-local
@@ -698,30 +682,13 @@ jobs:
       uses: docker/setup-buildx-action@v3
 
     # The root Dockerfile's `go mod download` resolves the internal first-party
-    # module go-enclave from Gitea, which the build container cannot reach on its
-    # own (conventions/dependency-resolution.md §6). Stage the credentials as a
-    # BuildKit secret file under RUNNER_TEMP, outside the build context, read
-    # straight from the shell environment (never ${{ env.X }}, which reads the
-    # workflow env: block and writes blanks). The path is exposed as a step
-    # OUTPUT, not env — build-push-action's secret-files is an expression context
-    # where ${{ env.X }} / ${{ runner.temp }} can resolve empty.
+    # module go-enclave from Gitea (conventions/dependency-resolution.md §6).
+    # The path is read from the action's OUTPUT, not env — build-push-action's
+    # secret-files is an expression context where ${{ env.X }} /
+    # ${{ runner.temp }} can resolve empty.
     - name: Stage module-fetch credentials
       id: gomodauth
-      run: |
-        set -eu
-        umask 077
-        : > "${RUNNER_TEMP}/gomodauth.secret"
-        if [ -n "${GIT_CONFIG_KEY_0:-}" ]; then
-          # Write ONLY the tokenised insteadOf key, as raw data with no trailing
-          # newline — never as `export NAME=value` shell. Each Dockerfile reads
-          # it with a quoted command substitution, so a credential containing
-          # shell metacharacters is assigned literally, never parsed or executed.
-          printf '%s' "${GIT_CONFIG_KEY_0}" > "${RUNNER_TEMP}/gomodauth.secret"
-          echo "staged Gitea module credential"
-        else
-          echo "no Gitea credentials in this environment; resolving from the public proxy"
-        fi
-        echo "path=${RUNNER_TEMP}/gomodauth.secret" >> "$GITHUB_OUTPUT"
+      uses: ./.github/actions/stage-gomodauth
 
     - name: Build Docker image for scanning
       uses: docker/build-push-action@v5

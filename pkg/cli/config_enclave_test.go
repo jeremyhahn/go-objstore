@@ -52,10 +52,10 @@ func TestGetConfigProtected(t *testing.T) {
 	if cfg.BackendSecret != "" {
 		t.Errorf("deprecated BackendSecret = %q, want empty", cfg.BackendSecret)
 	}
-	if !cfg.BackendKeyEnclave().EqualTo([]byte(testAccessKey)) {
+	if eq, err := cfg.BackendKeyEnclave().EqualTo([]byte(testAccessKey)); err != nil || !eq {
 		t.Error("access key not held in the enclave")
 	}
-	if !cfg.BackendSecretEnclave().EqualTo([]byte(testSecretKey)) {
+	if eq, err := cfg.BackendSecretEnclave().EqualTo([]byte(testSecretKey)); err != nil || !eq {
 		t.Error("secret key not held in the enclave")
 	}
 	// Non-credential settings are untouched.
@@ -133,10 +133,10 @@ func TestSetBackendCredentialsFromString(t *testing.T) {
 	if cfg.BackendKey != "" || cfg.BackendSecret != "" {
 		t.Error("deprecated fields not cleared by the protected setters")
 	}
-	if !cfg.BackendKeyEnclave().EqualTo([]byte(testAccessKey)) {
+	if eq, err := cfg.BackendKeyEnclave().EqualTo([]byte(testAccessKey)); err != nil || !eq {
 		t.Error("access key not enclaved")
 	}
-	if !cfg.BackendSecretEnclave().EqualTo([]byte(testSecretKey)) {
+	if eq, err := cfg.BackendSecretEnclave().EqualTo([]byte(testSecretKey)); err != nil || !eq {
 		t.Error("secret key not enclaved")
 	}
 
@@ -176,13 +176,13 @@ func TestSetBackendCredentialsFromString_Empty(t *testing.T) {
 func TestSetBackendCredentialEnclave_ReplacesPrevious(t *testing.T) {
 	cfg := &Config{}
 
-	firstKey, err := enclave.NewMemoryEnclaveFromString("first-key")
+	firstKey, err := enclave.NewMemoryEnclave([]byte("first-key"))
 	if err != nil {
-		t.Fatalf("NewMemoryEnclaveFromString: %v", err)
+		t.Fatalf("NewMemoryEnclave: %v", err)
 	}
-	firstSecret, err := enclave.NewMemoryEnclaveFromString("first-secret")
+	firstSecret, err := enclave.NewMemoryEnclave([]byte("first-secret"))
 	if err != nil {
-		t.Fatalf("NewMemoryEnclaveFromString: %v", err)
+		t.Fatalf("NewMemoryEnclave: %v", err)
 	}
 	cfg.SetBackendKeyEnclave(firstKey)
 	cfg.SetBackendSecretEnclave(firstSecret)
@@ -279,9 +279,9 @@ func TestDisplayConfig_EnclavedAndPlainAgree(t *testing.T) {
 }
 
 func TestMaskEnclave_ShortMaterial(t *testing.T) {
-	short, err := enclave.NewMemoryEnclaveFromString("ab")
+	short, err := enclave.NewMemoryEnclave([]byte("ab"))
 	if err != nil {
-		t.Fatalf("NewMemoryEnclaveFromString: %v", err)
+		t.Fatalf("NewMemoryEnclave: %v", err)
 	}
 	defer short.Destroy()
 

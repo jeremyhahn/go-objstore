@@ -210,7 +210,7 @@ Integration tests use Docker containers for cloud service emulation:
 
 **MinIO (S3 Compatible)**
 ```yaml
-image: quay.io/minio/minio:latest
+build: test/integration/minio-server  # MinIO built from source at a pinned release tag
 ports: 9000:9000, 9001:9001
 credentials: minioadmin/minioadmin
 ```
@@ -444,7 +444,7 @@ jobs:
       - uses: actions/checkout@v3
       - uses: actions/setup-go@v4
         with:
-          go-version: '1.27.0'
+          go-version: '1.27.1'
       - name: Run unit tests
         run: make test
       - name: Check coverage
