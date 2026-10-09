@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -63,9 +64,22 @@ func TestProcessEvents_AllEventTypes(t *testing.T) {
 	err = os.Remove(testFile)
 	require.NoError(t, err)
 
-	event = <-watcher.Events()
-	assert.Equal(t, testFile, event.Path)
-	assert.Equal(t, "delete", event.Operation)
+	// A single write can surface several fsnotify Write events, and the
+	// watcher does not promise to coalesce them, so trailing "put" events
+	// may precede the delete. Consume them until the delete arrives.
+	timeout := time.After(10 * time.Second)
+	for {
+		select {
+		case event = <-watcher.Events():
+		case <-timeout:
+			t.Fatal("timed out waiting for delete event")
+		}
+		assert.Equal(t, testFile, event.Path)
+		if event.Operation == "delete" {
+			break
+		}
+		assert.Equal(t, "put", event.Operation)
+	}
 }
 
 // TestProcessEvents_ErrorRecovery tests that the watcher recovers from errors.
@@ -186,6 +200,40 @@ func TestConvertEvent_AllOperations(t *testing.T) {
 		// Some systems may not send chmod events, so this is not necessarily an error
 	case <-time.After(300 * time.Millisecond):
 		t.Log("No chmod event received (expected)")
+	}
+}
+
+// TestConvertEvent_CombinedOps verifies that destructive bits win when
+// fsnotify coalesces operations into one event.
+func TestConvertEvent_CombinedOps(t *testing.T) {
+	watcher, err := NewFSNotifyWatcher(FSNotifyWatcherConfig{
+		Logger:        adapters.NewNoOpLogger(),
+		DebounceDelay: 50 * time.Millisecond,
+	})
+	require.NoError(t, err)
+	defer watcher.Stop()
+
+	tests := []struct {
+		name string
+		op   fsnotify.Op
+		want string
+	}{
+		{"write|rename", fsnotify.Write | fsnotify.Rename, "delete"},
+		{"create|remove", fsnotify.Create | fsnotify.Remove, "delete"},
+		{"write|remove", fsnotify.Write | fsnotify.Remove, "delete"},
+		{"create|rename", fsnotify.Create | fsnotify.Rename, "delete"},
+		{"chmod|rename", fsnotify.Chmod | fsnotify.Rename, "delete"},
+		{"chmod|remove", fsnotify.Chmod | fsnotify.Remove, "delete"},
+		{"create|write", fsnotify.Create | fsnotify.Write, "put"},
+		{"write|chmod", fsnotify.Write | fsnotify.Chmod, "put"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := watcher.convertEvent(fsnotify.Event{Name: "/x/f.txt", Op: tt.op})
+			require.NotNil(t, got)
+			assert.Equal(t, tt.want, got.Operation)
+		})
 	}
 }
 

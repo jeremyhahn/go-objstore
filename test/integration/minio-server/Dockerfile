@@ -13,7 +13,7 @@
 # The one place the MinIO release is pinned. Bump it here and nowhere else.
 ARG MINIO_TAG=RELEASE.2025-10-15T17-29-55Z
 
-FROM golang:1.27.1-alpine AS builder
+FROM golang:1.27.2-alpine AS builder
 
 ARG MINIO_TAG
 
