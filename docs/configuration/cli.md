@@ -29,7 +29,7 @@ output-format: json
 | `--config` | (none) | Config file (default is `$HOME/.objstore.yaml`) |
 | `--server` | (none) | Server URL for remote operations (e.g., `http://localhost:8080`) |
 | `--server-protocol` | `rest` | Server protocol: `rest`, `grpc`, or `quic` |
-| `--backend` | `local` | Storage backend (`local`, `s3`, `minio`, `gcs`, `azure`) |
+| `--backend` | `local` | Storage backend (`local`, `s3`, `gcs`, `azure`) |
 | `--backend-path` | `./storage` | Path for local backend |
 | `--backend-bucket` | (none) | Bucket name for cloud backends |
 | `--backend-region` | (none) | Region for cloud backends |

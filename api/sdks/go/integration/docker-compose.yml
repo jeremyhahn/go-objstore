@@ -3,6 +3,7 @@ version: '3.8'
 services:
   # gRPC server
   grpc-server:
+    init: true
     image: ghcr.io/jeremyhahn/go-objstore:latest
     build:
       context: ../../../..
@@ -27,6 +28,7 @@ services:
 
   # REST server
   rest-server:
+    init: true
     image: ghcr.io/jeremyhahn/go-objstore:latest
     build:
       context: ../../../..
@@ -51,6 +53,7 @@ services:
 
   # QUIC server
   quic-server:
+    init: true
     image: ghcr.io/jeremyhahn/go-objstore:latest
     build:
       context: ../../../..

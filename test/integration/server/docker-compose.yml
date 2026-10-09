@@ -1,6 +1,7 @@
 services:
   # gRPC server instance
   grpc-server:
+    init: true
     build:
       context: ../../..
       dockerfile: test/integration/server/Dockerfile.grpc
@@ -29,6 +30,7 @@ services:
 
   # REST server instance
   rest-server:
+    init: true
     build:
       context: ../../..
       dockerfile: test/integration/server/Dockerfile.rest
@@ -55,6 +57,7 @@ services:
 
   # QUIC server instance
   quic-server:
+    init: true
     build:
       context: ../../..
       dockerfile: test/integration/server/Dockerfile.quic
@@ -78,6 +81,7 @@ services:
 
   # MCP server instance (stdio mode testing via HTTP)
   mcp-server:
+    init: true
     build:
       context: ../../..
       dockerfile: test/integration/server/Dockerfile.mcp
@@ -144,8 +148,8 @@ services:
     # run the server integration tests.
     command: >
       sh -c '
-        go build -buildvcs=false -tags "local awss3 minio gcpstorage azureblob glacier azurearchive" -o /usr/local/bin/objstore ./cmd/objstore &&
-        go test -v -tags "integration local awss3 minio gcpstorage azureblob glacier azurearchive" ./test/integration/server/... -timeout 15m
+        go build -buildvcs=false -tags "local awss3 gcpstorage azureblob glacier azurearchive" -o /usr/local/bin/objstore ./cmd/objstore &&
+        go test -v -tags "integration local awss3 gcpstorage azureblob glacier azurearchive" ./test/integration/server/... -timeout 15m
       '
 
 volumes:

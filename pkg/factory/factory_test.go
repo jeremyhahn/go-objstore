@@ -268,26 +268,6 @@ func TestFactory_NewStorage_Azure_Config(t *testing.T) {
 	}
 }
 
-func TestFactory_NewStorage_MinIO_Config(t *testing.T) {
-	storage, err := NewStorage("minio", map[string]string{
-		"bucket":    "test-bucket",
-		"endpoint":  "http://localhost:9000",
-		"accessKey": "minioadmin",
-		"secretKey": "minioadmin",
-	})
-
-	if err != nil {
-		if !errors.Is(err, ErrUnknownBackend) {
-			t.Fatalf("expected ErrUnknownBackend or success, got: %v", err)
-		}
-		return
-	}
-
-	if storage == nil {
-		t.Fatalf("NewStorage succeeded but returned nil storage")
-	}
-}
-
 func TestS3(t *testing.T) {
 	bucket := os.Getenv("AWS_BUCKET")
 	region := os.Getenv("AWS_REGION")
@@ -529,10 +509,6 @@ func TestFactory_NewStorage_ConfigureErrors(t *testing.T) {
 		{"gcs missing bucket", "gcs", map[string]string{}},
 		{"azure missing account", "azure", map[string]string{"containerName": "test"}},
 		{"local missing path", "local", map[string]string{}},
-		{"minio missing bucket", "minio", map[string]string{"endpoint": "http://localhost:9000", "accessKey": "minioadmin", "secretKey": "minioadmin"}},
-		{"minio missing endpoint", "minio", map[string]string{"bucket": "test-bucket", "accessKey": "minioadmin", "secretKey": "minioadmin"}},
-		{"minio missing accessKey", "minio", map[string]string{"bucket": "test-bucket", "endpoint": "http://localhost:9000", "secretKey": "minioadmin"}},
-		{"minio missing secretKey", "minio", map[string]string{"bucket": "test-bucket", "endpoint": "http://localhost:9000", "accessKey": "minioadmin"}},
 	}
 
 	for _, tt := range tests {

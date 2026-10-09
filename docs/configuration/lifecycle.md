@@ -136,5 +136,5 @@ When available, native implementation is preferred.
 ### Backends without Native Support
 Application-level policy evaluation for:
 - Local filesystem
-- MinIO (unless configured)
+- S3-compatible endpoints without native lifecycle support (unless configured)
 - Custom backends

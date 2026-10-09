@@ -45,7 +45,7 @@ RUN --mount=type=secret,id=gomodauth \
 COPY . .
 
 # Build the CLI binary with all backends
-RUN go build -tags "local awss3 minio gcpstorage azureblob glacier azurearchive" -o /usr/local/bin/objstore ./cmd/objstore
+RUN go build -tags "local awss3 gcpstorage azureblob glacier azurearchive" -o /usr/local/bin/objstore ./cmd/objstore
 
 # Create test storage directory
 RUN mkdir -p /test-storage
@@ -55,4 +55,4 @@ ENV OBJECTSTORE_BACKEND=local
 ENV OBJECTSTORE_BACKEND_PATH=/test-storage
 
 # Run tests by default with integration tag
-CMD ["go", "test", "-v", "-tags", "integration,local,awss3,minio,gcpstorage,azureblob,glacier,azurearchive", "./test/integration/cli/...", "-timeout", "10m"]
+CMD ["go", "test", "-v", "-tags", "integration,local,awss3,gcpstorage,azureblob,glacier,azurearchive", "./test/integration/cli/...", "-timeout", "10m"]

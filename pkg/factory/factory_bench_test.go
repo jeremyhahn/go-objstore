@@ -49,22 +49,3 @@ func BenchmarkNewStorage_S3(b *testing.B) {
 		}
 	}
 }
-
-func BenchmarkNewStorage_MinIO(b *testing.B) {
-	settings := map[string]string{
-		"bucket":    "test-bucket",
-		"endpoint":  "http://localhost:9000",
-		"accessKey": "minioadmin",
-		"secretKey": "minioadmin",
-	}
-
-	b.ReportAllocs()
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
-		_, err := NewStorage("minio", settings)
-		if err != nil {
-			b.Fatal(err)
-		}
-	}
-}

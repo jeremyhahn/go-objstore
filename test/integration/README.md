@@ -9,7 +9,7 @@ This test suite provides end-to-end testing of all go-objstore components in iso
 - **Isolation**: Each test suite runs in its own container environment
 - **Reproducibility**: Tests use consistent, versioned dependencies
 - **Parallelization**: Tests can run concurrently without interference
-- **Real Services**: Tests use actual service implementations (MinIO, Azurite, fake-gcs-server)
+- **Real Services**: Tests use actual service implementations (Floci, Azurite, fake-gcs-server)
 
 ## Test Organization
 
@@ -17,7 +17,7 @@ This test suite provides end-to-end testing of all go-objstore components in iso
 test/integration/
 ├── common/          # Shared test utilities and helpers
 ├── local/           # Local filesystem backend tests
-├── s3/              # AWS S3/MinIO backend tests
+├── s3/              # AWS S3 backend tests (run against Floci)
 ├── azure/           # Azure Blob/Azurite backend tests
 ├── gcs/             # Google Cloud Storage tests
 ├── factory/         # Factory pattern and common interface tests
@@ -166,7 +166,7 @@ make test-servers
 # Local filesystem tests
 make integration-test-local
 
-# S3/MinIO tests
+# S3 tests (Floci)
 make integration-test-s3
 
 # Azure Blob/Azurite tests
@@ -276,7 +276,7 @@ docker-compose run --rm test go test -v ./test/integration/cli/... -run TestCLIP
 
 # Run specific server test
 cd test/integration/server
-docker-compose run --rm test go test -v -tags "integration local awss3 minio gcpstorage azureblob glacier azurearchive" ./test/integration/server/... -run TestGRPCPut
+docker-compose run --rm test go test -v -tags "integration local awss3 gcpstorage azureblob glacier azurearchive" ./test/integration/server/... -run TestGRPCPut
 ```
 
 ### Interactive Debugging

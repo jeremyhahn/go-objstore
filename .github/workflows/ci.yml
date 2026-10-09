@@ -312,11 +312,8 @@ jobs:
     - name: Run local storage integration tests
       run: make integration-test-local
 
-    - name: Run S3/MinIO integration tests
+    - name: Run S3/Floci integration tests
       run: make integration-test-s3
-
-    - name: Run MinIO integration tests
-      run: make integration-test-minio
 
     - name: Run Azure/Azurite integration tests
       run: make integration-test-azure
@@ -559,7 +556,7 @@ jobs:
     # against the module first keeps a genuine build break from being reported
     # as a test failure.
     - name: Build production packages (FIPS mode)
-      run: go build -tags="local awss3 minio gcpstorage azureblob glacier azurearchive" ./...
+      run: go build -tags="local awss3 gcpstorage azureblob glacier azurearchive" ./...
 
     # Keep this invocation identical to the Test job so FIPS mode uses the same
     # build tags, package scope, and dark-suite/integration exclusions. A FIPS

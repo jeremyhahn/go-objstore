@@ -29,7 +29,7 @@ cd "$PROJECT_ROOT"
 echo -e "${BLUE}Running pre-commit checks...${NC}\n"
 
 # Build tags for all backends
-BUILD_TAGS="local awss3 minio gcpstorage azureblob glacier azurearchive"
+BUILD_TAGS="local awss3 gcpstorage azureblob glacier azurearchive"
 
 # 1. Check if gofmt is needed
 echo -e "${BLUE}→ Checking code formatting with gofmt...${NC}"

@@ -1,6 +1,15 @@
+# Project name: never the directory name ("go"), which collides with every other
+# checkout's api/sdks/go on a shared daemon. The Makefile exports a stable
+# per-checkout COMPOSE_PROJECT_NAME (../compose-project.mk); the default covers
+# a bare compose run. No host ports are published: the tests reach
+# objstore-server over the compose network, so concurrent projects cannot
+# collide on a host port.
+name: ${COMPOSE_PROJECT_NAME:-objstore-sdk-go}
+
 services:
   # Go ObjectStore server with local storage backend
   objstore-server:
+    init: true
     build:
       context: ../../..
       dockerfile: Dockerfile
@@ -9,10 +18,6 @@ services:
       args:
         BUILD_TAGS: local
     command: ["/app/objstore-server", "--quic-self-signed"]
-    ports:
-      - "18080:8080"    # REST
-      - "15051:50051"  # gRPC
-      - "14433:4433"    # QUIC
     environment:
       - STORAGE_BACKEND=local
       - STORAGE_PATH=/data

@@ -3,7 +3,6 @@ run:
   build-tags:
     - local
     - awss3
-    - minio
     - gcpstorage
     - azureblob
     - glacier
@@ -239,7 +238,7 @@ linters:
       - linters:
           - staticcheck
           - unused
-        path: pkg/(s3|minio)/
+        path: pkg/s3/
       - linters:
           - gocritic
           - staticcheck

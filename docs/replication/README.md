@@ -313,7 +313,7 @@ manager.SetDestinationEncrypterFactory("triple-encrypted-backup", destFactory)
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `id` | string | Yes | Unique identifier for the policy |
-| `source_backend` | string | Yes | Source backend type (local, s3, gcs, azure, minio) |
+| `source_backend` | string | Yes | Source backend type (local, s3, gcs, azure) |
 | `source_settings` | map[string]string | Yes | Backend-specific configuration |
 | `source_prefix` | string | No | Filter objects by key prefix |
 | `destination_backend` | string | Yes | Destination backend type |
@@ -342,14 +342,15 @@ Settings: map[string]string{
 }
 ```
 
-**MinIO Backend:**
+**S3-Compatible Endpoint (s3 backend with `endpoint`):**
 ```go
 Settings: map[string]string{
-    "bucket":    "my-bucket",
-    "endpoint":  "http://localhost:9000",
-    "accessKey": "minioadmin",
-    "secretKey": "minioadmin",
-    "region":    "us-east-1",
+    "bucket":         "my-bucket",
+    "endpoint":       "http://localhost:4566",
+    "forcePathStyle": "true",
+    "accessKey":      "test",
+    "secretKey":      "test",
+    "region":         "us-east-1",
 }
 ```
 
@@ -696,7 +697,7 @@ All storage backends support replication:
 - Amazon S3
 - Google Cloud Storage (GCS)
 - Azure Blob Storage
-- MinIO (S3-compatible)
+- S3-compatible services (the s3 backend with its `endpoint` option)
 
 ---
 

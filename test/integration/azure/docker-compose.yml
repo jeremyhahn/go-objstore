@@ -1,5 +1,7 @@
 services:
   azurite:
+    # PID 1 must reap children and stop on SIGTERM, or `down` hits a zombie.
+    init: true
     image: mcr.microsoft.com/azure-storage/azurite:3.33.0
     command: azurite --blobHost 0.0.0.0 --blobPort 10000 --location /data --silent
     environment:

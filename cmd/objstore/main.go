@@ -15,6 +15,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -32,19 +33,23 @@ var (
 )
 
 func main() {
-	os.Exit(run())
+	// os.Exit skips deferred calls, so the exit code is computed by run, which
+	// zeroizes the backend credentials before returning on every path.
+	os.Exit(run(rootCmd.Execute, func() error { return globalConfig.Destroy() }, os.Stderr))
 }
 
-// run executes the command and zeroizes the backend credentials held in
-// locked memory before the process leaves through either exit path.
-func run() int {
+// run executes the command, then destroys the locked-memory backend
+// credentials. It returns the process exit code: 1 when the command failed or
+// when the credentials could not be destroyed, so a failed zeroization is
+// never reported as success.
+func run(execute, destroy func() error, stderr io.Writer) int {
 	code := 0
-	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+	if err := execute(); err != nil {
+		fmt.Fprintln(stderr, err)
 		code = 1
 	}
-	if err := globalConfig.Destroy(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+	if err := destroy(); err != nil {
+		fmt.Fprintf(stderr, "failed to destroy backend credentials: %v\n", err)
 		code = 1
 	}
 	return code
@@ -58,7 +63,6 @@ var rootCmd = &cobra.Command{
 Supported Storage Backends:
   - local      : Local filesystem storage
   - s3         : AWS S3
-  - minio      : MinIO (S3-compatible)
   - gcs        : Google Cloud Storage
   - azure      : Azure Blob Storage
 
@@ -583,10 +587,10 @@ var replicationAddCmd = &cobra.Command{
 	Short: "Add a replication policy",
 	Long: `Add a replication policy to automatically replicate objects between backends.
 
-Source and destination backends can be: local, s3, minio, gcs, azure.
+Source and destination backends can be: local, s3, gcs, azure.
 Use --source-* and --dest-* flags to configure backend-specific settings.`,
 	Example: `  objstore replication add backup-to-s3 local s3 --dest-bucket my-bucket --interval 1h
-  objstore replication add mirror minio s3 --source-bucket src --dest-bucket dst
+  objstore replication add mirror local s3 --source-bucket src --dest-bucket dst
   objstore replication add logs-archive local glacier --prefix logs/ --interval 24h`,
 	Args: cobra.ExactArgs(3),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -847,7 +851,7 @@ Use "{{.CommandPath}} [command] --help" for more information about a command.{{e
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.objstore.yaml)")
 	rootCmd.PersistentFlags().String("server", "", "server URL for remote operations (e.g., http://localhost:8080)")
 	rootCmd.PersistentFlags().String("server-protocol", "rest", "server protocol: rest, grpc, or quic")
-	rootCmd.PersistentFlags().String("backend", "local", "storage backend (local, s3, minio, gcs, azure)")
+	rootCmd.PersistentFlags().String("backend", "local", "storage backend (local, s3, gcs, azure)")
 	rootCmd.PersistentFlags().String("backend-path", "./storage", "path for local backend")
 	rootCmd.PersistentFlags().String("backend-bucket", "", "bucket name for cloud backends")
 	rootCmd.PersistentFlags().String("backend-region", "", "region for cloud backends")

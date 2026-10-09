@@ -1,6 +1,7 @@
 services:
   # Go ObjectStore server with local storage backend
   objstore-server:
+    init: true
     build:
       context: ../../..
       dockerfile: Dockerfile
@@ -9,10 +10,6 @@ services:
       args:
         BUILD_TAGS: local
     command: ["/app/objstore-server", "--quic-self-signed"]
-    ports:
-      - "18380:8080"    # REST
-      - "15351:50051"  # gRPC
-      - "14733:4433"    # QUIC
     environment:
       - STORAGE_BACKEND=local
       - STORAGE_PATH=/data

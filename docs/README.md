@@ -20,7 +20,7 @@ Understand the design and components of go-objstore.
 Configure go-objstore components for your environment.
 
 - [Overview](configuration/README.md) - Configuration methods and patterns
-- [Storage Backends](configuration/storage-backends.md) - Local, S3, GCS, Azure, MinIO
+- [Storage Backends](configuration/storage-backends.md) - Local, S3, GCS, Azure
 - [gRPC Server](configuration/grpc-server.md) - gRPC server configuration
 - [REST Server](configuration/rest-server.md) - REST API server configuration
 - [QUIC Server](configuration/quic-server.md) - QUIC/HTTP3 server configuration
@@ -150,7 +150,6 @@ go-objstore/
 │   ├── s3/           # S3 backend
 │   ├── gcs/          # GCS backend
 │   ├── azure/        # Azure backend
-│   ├── minio/        # MinIO backend
 │   ├── storagefs/    # Filesystem abstraction
 │   ├── replication/  # Replication engine
 │   ├── audit/        # Audit logging

@@ -45,19 +45,19 @@ func GenerateRandomData(size int) []byte {
 	return data
 }
 
-// CreateMinIOBucket creates a bucket in MinIO for testing
-func CreateMinIOBucket(t *testing.T, bucket string) {
+// CreateS3Bucket creates a bucket on the Floci S3 endpoint for testing
+func CreateS3Bucket(t *testing.T, bucket string) {
 	t.Helper()
 	endpoint := os.Getenv("S3_ENDPOINT")
 	if endpoint == "" {
-		endpoint = "http://minio:9000"
+		endpoint = "http://floci:4566"
 	}
 
 	ctx := context.Background()
 	cfg, err := config.LoadDefaultConfig(ctx,
 		config.WithRegion("us-east-1"),
 		config.WithCredentialsProvider(
-			credentials.NewStaticCredentialsProvider("minioadmin", "minioadmin", ""),
+			credentials.NewStaticCredentialsProvider("test", "test", ""),
 		),
 	)
 	if err != nil {

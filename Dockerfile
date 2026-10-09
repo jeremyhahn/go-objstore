@@ -48,8 +48,8 @@ ARG BUILD_BACKENDS="all"
 # Note: Makefile defaults to all backends enabled, so no flags needed for "all"
 RUN if [ "$BUILD_BACKENDS" = "local" ]; then \
         echo "Building with LOCAL backend only..." && \
-        make build-cli WITH_LOCAL=1 WITH_AWS_S3=0 WITH_MINIO=0 WITH_GCP_STORAGE=0 WITH_AZURE_BLOB=0 WITH_GLACIER=0 WITH_AZURE_ARCHIVE=0 && \
-        make build-server WITH_LOCAL=1 WITH_AWS_S3=0 WITH_MINIO=0 WITH_GCP_STORAGE=0 WITH_AZURE_BLOB=0 WITH_GLACIER=0 WITH_AZURE_ARCHIVE=0; \
+        make build-cli WITH_LOCAL=1 WITH_AWS_S3=0 WITH_GCP_STORAGE=0 WITH_AZURE_BLOB=0 WITH_GLACIER=0 WITH_AZURE_ARCHIVE=0 && \
+        make build-server WITH_LOCAL=1 WITH_AWS_S3=0 WITH_GCP_STORAGE=0 WITH_AZURE_BLOB=0 WITH_GLACIER=0 WITH_AZURE_ARCHIVE=0; \
     else \
         echo "Building with ALL backends (using Makefile defaults)..." && \
         make build-cli && \

@@ -32,9 +32,6 @@ var (
 	// ErrBackendRegionRequired is returned when backend-region is required but not set.
 	ErrBackendRegionRequired = errors.New("backend-region is required")
 
-	// ErrBackendURLRequired is returned when backend-url is required but not set.
-	ErrBackendURLRequired = errors.New("backend-url is required")
-
 	// ErrUnsupportedBackend is returned when an unsupported backend is specified.
 	ErrUnsupportedBackend = errors.New("unsupported backend")
 

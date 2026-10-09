@@ -57,13 +57,21 @@ func TestLifecycle_Run_DeletesOldFiles(t *testing.T) {
 
 	// speed up interval and run
 	memManager.interval = 10 * time.Millisecond
+	processed := make(chan struct{}, 1)
+	memManager.onProcessed = func() {
+		select {
+		case processed <- struct{}{}:
+		default:
+		}
+	}
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	done := make(chan struct{})
 	go func() { memManager.Run(ctx, ll); close(done) }()
 
-	// wait a bit and verify deletion
-	time.Sleep(50 * time.Millisecond)
+	// wait for the first completed Process pass, then stop the loop
+	<-processed
+	cancel()
+	<-done
 	if _, err := os.Stat(p); !os.IsNotExist(err) {
 		t.Fatalf("expected file deleted, got err=%v", err)
 	}

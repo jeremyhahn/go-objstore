@@ -45,16 +45,13 @@ All backends implement the complete interface, ensuring consistent behavior acro
 Stores objects as files in a directory tree. Simple, fast, and useful for development and testing. Supports all operations including metadata stored in extended attributes or sidecar files.
 
 ### Amazon S3
-Integrates with AWS S3 and S3-compatible services like MinIO. Uses the AWS SDK for Go v2. Supports all S3 features including metadata, multipart uploads, and lifecycle policies.
+Integrates with AWS S3 and S3-compatible services through the `endpoint` option. Uses the AWS SDK for Go v2. Supports all S3 features including metadata, multipart uploads, and lifecycle policies.
 
 ### Google Cloud Storage
 Integrates with GCS using the official Google Cloud client library. Supports GCS-specific features like storage classes and Cloud IAM integration.
 
 ### Azure Blob Storage
 Integrates with Azure Blob Storage using the Azure SDK for Go. Supports blob metadata, access tiers, and Azure-specific authentication methods.
-
-### MinIO
-While technically S3-compatible, MinIO is often used as a separate backend for on-premises deployments. Uses the same implementation as S3 backend.
 
 ### Archive Backends
 AWS Glacier and Azure Archive are append-only backends used as lifecycle policy destinations. Objects written to these backends cannot be retrieved immediately and have different cost characteristics.
@@ -190,6 +187,5 @@ Backends are conditionally compiled using build tags:
 - `awss3` - Amazon S3 backend
 - `gcs` - Google Cloud Storage backend
 - `azureblob` - Azure Blob Storage backend
-- `minio` - MinIO backend
 
 This reduces binary size when only specific backends are needed and reduces attack surface.

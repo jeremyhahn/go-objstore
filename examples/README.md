@@ -185,24 +185,18 @@ storage.AddPolicy(archivePolicy)
 ### Prerequisites
 
 - Go 1.27.2 or higher
-- For S3 examples: MinIO (optional)
+- For S3 examples: Floci, a local AWS emulator (optional)
 - For C examples: GCC compiler
 
-### Setup MinIO for S3 Examples
+### Setup Floci for S3 Examples
 
 ```bash
-# The published MinIO images refuse anonymous pulls, so build the server from
-# source (from the repository root)
-docker build -t objstore-minio test/integration/minio-server
+# Run Floci in Docker (S3 on port 4566; any non-empty credentials work)
+docker run -d -p 4566:4566 floci/floci
 
-# Run MinIO in Docker
-docker run -d -p 9000:9000 \
-  -e MINIO_ROOT_USER=minioadmin \
-  -e MINIO_ROOT_PASSWORD=minioadmin \
-  objstore-minio server /data
-
-# Create the demo-bucket bucket with any S3 client (for example mc or the
-# AWS CLI) against http://localhost:9000
+# Create a bucket
+AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test \
+  aws --endpoint-url http://localhost:4566 s3 mb s3://demo-bucket
 ```
 
 ### Building C Examples
@@ -339,7 +333,7 @@ func main() {
 - For local backend, ensure directory exists and is writable
 
 **"Connection refused" with S3**
-- Ensure MinIO is running if using local S3
+- Ensure Floci is running if using local S3
 - Check endpoint URL is correct
 - Verify network connectivity
 

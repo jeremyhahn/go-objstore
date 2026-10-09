@@ -4,7 +4,6 @@ run:
   build-tags:
     - local
     - awss3
-    - minio
     - gcpstorage
     - azureblob
     - glacier
@@ -225,7 +224,7 @@ issues:
         - gocritic
         - staticcheck
         - unconvert
-    - path: 'pkg/(s3|minio)/'
+    - path: 'pkg/s3/'
       linters:
         - unused
         - staticcheck

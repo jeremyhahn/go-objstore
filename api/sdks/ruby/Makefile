@@ -1,5 +1,7 @@
 .PHONY: build test clean coverage integration-test install lint format docker-build docker-test-unit docker-test-integration docker-test help
 
+include ../compose-project.mk
+
 # Variables
 RUBY := ruby
 BUNDLE := bundle

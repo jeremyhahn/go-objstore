@@ -38,7 +38,7 @@ RUN --mount=type=secret,id=gomodauth \
 COPY . .
 
 # Build MCP server with all backends
-RUN go build -tags "local awss3 minio gcpstorage azureblob glacier azurearchive" -o /usr/local/bin/objstore-mcp-server ./cmd/objstore-mcp-server
+RUN go build -tags "local awss3 gcpstorage azureblob glacier azurearchive" -o /usr/local/bin/objstore-mcp-server ./cmd/objstore-mcp-server
 
 # Create storage directory
 RUN mkdir -p /tmp/objstore

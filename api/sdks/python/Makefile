@@ -1,5 +1,7 @@
 .PHONY: help install build test clean coverage lint format integration-test docker-test docker-build docker-test-unit docker-test-integration generate-proto
 
+include ../compose-project.mk
+
 # Default target
 help:
 	@echo "Go-ObjStore Python SDK - Available targets:"

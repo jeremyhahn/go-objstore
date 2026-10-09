@@ -48,7 +48,6 @@ Select a storage backend based on your needs:
 - `s3` - Amazon S3 or S3-compatible
 - `gcs` - Google Cloud Storage
 - `azure` - Azure Blob Storage
-- `minio` - On-premises object storage
 
 ### Create Storage Instance
 Use the factory with backend type and configuration map.

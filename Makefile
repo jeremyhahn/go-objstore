@@ -9,7 +9,6 @@
 # Default: All backends enabled for production builds and releases
 WITH_LOCAL ?= 1
 WITH_AWS_S3 ?= 1
-WITH_MINIO ?= 1
 WITH_GCP_STORAGE ?= 1
 WITH_AZURE_BLOB ?= 1
 WITH_GLACIER ?= 1
@@ -41,9 +40,6 @@ ifeq ($(WITH_LOCAL),1)
 endif
 ifeq ($(WITH_AWS_S3),1)
 	BUILD_TAGS += awss3
-endif
-ifeq ($(WITH_MINIO),1)
-	BUILD_TAGS += minio
 endif
 ifeq ($(WITH_GCP_STORAGE),1)
 	BUILD_TAGS += gcpstorage
@@ -96,7 +92,7 @@ COVERAGE_DIR := coverage
 COVERAGE_THRESHOLD := 89
 
 # Test coverage packages
-PKG_COVER := github.com/jeremyhahn/go-objstore/pkg/adapters,github.com/jeremyhahn/go-objstore/pkg/azure,github.com/jeremyhahn/go-objstore/pkg/azurearchive,github.com/jeremyhahn/go-objstore/pkg/local,github.com/jeremyhahn/go-objstore/pkg/s3,github.com/jeremyhahn/go-objstore/pkg/minio,github.com/jeremyhahn/go-objstore/pkg/factory,github.com/jeremyhahn/go-objstore/pkg/glacier,github.com/jeremyhahn/go-objstore/pkg/gcs,github.com/jeremyhahn/go-objstore/pkg/storagefs,github.com/jeremyhahn/go-objstore/pkg/cli,github.com/jeremyhahn/go-objstore/pkg/server/grpc,github.com/jeremyhahn/go-objstore/pkg/server/rest,github.com/jeremyhahn/go-objstore/pkg/server/quic,github.com/jeremyhahn/go-objstore/pkg/server/mcp
+PKG_COVER := github.com/jeremyhahn/go-objstore/pkg/adapters,github.com/jeremyhahn/go-objstore/pkg/azure,github.com/jeremyhahn/go-objstore/pkg/azurearchive,github.com/jeremyhahn/go-objstore/pkg/local,github.com/jeremyhahn/go-objstore/pkg/s3,github.com/jeremyhahn/go-objstore/pkg/factory,github.com/jeremyhahn/go-objstore/pkg/glacier,github.com/jeremyhahn/go-objstore/pkg/gcs,github.com/jeremyhahn/go-objstore/pkg/storagefs,github.com/jeremyhahn/go-objstore/pkg/cli,github.com/jeremyhahn/go-objstore/pkg/server/grpc,github.com/jeremyhahn/go-objstore/pkg/server/rest,github.com/jeremyhahn/go-objstore/pkg/server/quic,github.com/jeremyhahn/go-objstore/pkg/server/mcp
 
 # Color output (ANSI escape codes)
 RESET := \033[0m
@@ -199,7 +195,7 @@ generate-proto:
 test:
 	@echo "$(CYAN)$(BOLD)→ Running unit tests with coverage (race detector)...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
-	$(GO) test -race -timeout=20m -tags="local awss3 minio gcpstorage azureblob glacier azurearchive" -coverprofile=$(COVERAGE_DIR)/unit.out -covermode=atomic ./pkg/... ./internal/... ./cmd/objstorelib/...
+	$(GO) test -race -timeout=20m -tags="local awss3 gcpstorage azureblob glacier azurearchive" -coverprofile=$(COVERAGE_DIR)/unit.out -covermode=atomic ./pkg/... ./internal/... ./cmd/objstorelib/...
 	@echo ""
 	@echo "$(CYAN)$(BOLD)→ Coverage Summary:$(RESET)"
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/unit.out | tail -1 | awk '{print "  $(GREEN)Total Coverage: " $$NF "$(RESET)"}' || true
@@ -207,7 +203,7 @@ test:
 
 .PHONY: integration-test
 ## integration-test: Run all integration tests (all backends + CLI + replication)
-integration-test: integration-test-local integration-test-s3 integration-test-minio integration-test-azure integration-test-gcs integration-test-factory integration-test-replication integration-test-cli
+integration-test: integration-test-local integration-test-s3 integration-test-azure integration-test-gcs integration-test-factory integration-test-replication integration-test-cli
 	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
 
 .PHONY: integration-test-local
@@ -217,76 +213,66 @@ integration-test-local:
 # --build on every run: the source is baked into these images, so a cached
 # image from an earlier commit silently tests old code. That cost real
 # debugging time once already.
-	@cd test/integration/local && $(DOCKER_COMPOSE) down -v >/dev/null 2>&1 || true
+	@cd test/integration/local && $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30 >/dev/null 2>&1 || true
 	@cd test/integration/local && $(DOCKER_COMPOSE) run --build --rm test
-	@cd test/integration/local && $(DOCKER_COMPOSE) down -v
+	@cd test/integration/local && $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30
 	@echo "$(GREEN)✓ Local integration tests complete$(RESET)"
 
 .PHONY: integration-test-s3
-## integration-test-s3: Run S3/MinIO integration tests
+## integration-test-s3: Run S3 integration tests against Floci
 integration-test-s3:
-	@echo "$(CYAN)$(BOLD)→ Running S3/MinIO integration tests...$(RESET)"
-	@cd test/integration/s3 && $(DOCKER_COMPOSE) down -v >/dev/null 2>&1 || true
-	@cd test/integration/s3 && $(DOCKER_COMPOSE) up -d --build minio
+	@echo "$(CYAN)$(BOLD)→ Running S3 integration tests (Floci)...$(RESET)"
+	@cd test/integration/s3 && $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30 >/dev/null 2>&1 || true
+	@cd test/integration/s3 && $(DOCKER_COMPOSE) up -d --wait floci
 	@cd test/integration/s3 && $(DOCKER_COMPOSE) run --build --rm test
-	@cd test/integration/s3 && $(DOCKER_COMPOSE) down -v
+	@cd test/integration/s3 && $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30
 	@echo "$(GREEN)✓ S3 integration tests complete$(RESET)"
-
-.PHONY: integration-test-minio
-## integration-test-minio: Run MinIO integration tests
-integration-test-minio:
-	@echo "$(CYAN)$(BOLD)→ Running MinIO integration tests...$(RESET)"
-	@cd test/integration/minio && $(DOCKER_COMPOSE) down -v >/dev/null 2>&1 || true
-	@cd test/integration/minio && $(DOCKER_COMPOSE) up -d --build minio
-	@cd test/integration/minio && $(DOCKER_COMPOSE) run --build --rm test
-	@cd test/integration/minio && $(DOCKER_COMPOSE) down -v
-	@echo "$(GREEN)✓ MinIO integration tests complete$(RESET)"
 
 .PHONY: integration-test-azure
 ## integration-test-azure: Run Azure/Azurite integration tests
 integration-test-azure:
 	@echo "$(CYAN)$(BOLD)→ Running Azure/Azurite integration tests...$(RESET)"
-	@cd test/integration/azure && $(DOCKER_COMPOSE) down -v >/dev/null 2>&1 || true
+	@cd test/integration/azure && $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30 >/dev/null 2>&1 || true
 	@cd test/integration/azure && $(DOCKER_COMPOSE) up -d azurite
 	@cd test/integration/azure && $(DOCKER_COMPOSE) run --build --rm test
-	@cd test/integration/azure && $(DOCKER_COMPOSE) down -v
+	@cd test/integration/azure && $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30
 	@echo "$(GREEN)✓ Azure integration tests complete$(RESET)"
 
 .PHONY: integration-test-gcs
 ## integration-test-gcs: Run GCS emulator integration tests
 integration-test-gcs:
 	@echo "$(CYAN)$(BOLD)→ Running GCS emulator integration tests...$(RESET)"
-	@cd test/integration/gcs && $(DOCKER_COMPOSE) down -v >/dev/null 2>&1 || true
+	@cd test/integration/gcs && $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30 >/dev/null 2>&1 || true
 	@cd test/integration/gcs && $(DOCKER_COMPOSE) up -d fake-gcs
 	@cd test/integration/gcs && $(DOCKER_COMPOSE) run --build --rm test
-	@cd test/integration/gcs && $(DOCKER_COMPOSE) down -v
+	@cd test/integration/gcs && $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30
 	@echo "$(GREEN)✓ GCS integration tests complete$(RESET)"
 
 .PHONY: integration-test-factory
 ## integration-test-factory: Run factory/common integration tests
 integration-test-factory:
 	@echo "$(CYAN)$(BOLD)→ Running factory integration tests...$(RESET)"
-	@cd test/integration/factory && $(DOCKER_COMPOSE) down -v >/dev/null 2>&1 || true
+	@cd test/integration/factory && $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30 >/dev/null 2>&1 || true
 	@cd test/integration/factory && $(DOCKER_COMPOSE) run --build --rm test
-	@cd test/integration/factory && $(DOCKER_COMPOSE) down -v
+	@cd test/integration/factory && $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30
 	@echo "$(GREEN)✓ Factory integration tests complete$(RESET)"
 
 .PHONY: integration-test-replication
 ## integration-test-replication: Run replication integration tests
 integration-test-replication:
 	@echo "$(CYAN)$(BOLD)→ Running replication integration tests...$(RESET)"
-	@cd test/integration/replication && $(DOCKER_COMPOSE) down -v >/dev/null 2>&1 || true
+	@cd test/integration/replication && $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30 >/dev/null 2>&1 || true
 	@cd test/integration/replication && $(DOCKER_COMPOSE) run --build --rm test
-	@cd test/integration/replication && $(DOCKER_COMPOSE) down -v
+	@cd test/integration/replication && $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30
 	@echo "$(GREEN)✓ Replication integration tests complete$(RESET)"
 
 .PHONY: integration-test-cli
 ## integration-test-cli: Run CLI integration tests in Docker
 integration-test-cli:
 	@echo "$(CYAN)$(BOLD)→ Running CLI integration tests...$(RESET)"
-	@cd test/integration/cli && $(DOCKER_COMPOSE) down -v >/dev/null 2>&1 || true
+	@cd test/integration/cli && $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30 >/dev/null 2>&1 || true
 	@cd test/integration/cli && $(DOCKER_COMPOSE) up --build --abort-on-container-exit --exit-code-from test
-	@cd test/integration/cli && $(DOCKER_COMPOSE) down -v
+	@cd test/integration/cli && $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30
 	@echo "$(GREEN)✓ CLI integration tests complete$(RESET)"
 
 .PHONY: test-cli
@@ -300,8 +286,8 @@ test-servers:
 	@echo "$(CYAN)  Generating test certificates...$(RESET)"
 	@cd test/integration/server && bash generate-certs.sh
 	@echo "$(CYAN)  Starting server test environment...$(RESET)"
-	@cd test/integration/server && $(DOCKER_COMPOSE) down -v >/dev/null 2>&1 || true
-	@cd test/integration/server && $(DOCKER_COMPOSE) up --build --abort-on-container-exit --exit-code-from test; status=$$?; $(DOCKER_COMPOSE) down -v; exit $$status
+	@cd test/integration/server && $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30 >/dev/null 2>&1 || true
+	@cd test/integration/server && $(DOCKER_COMPOSE) up --build --abort-on-container-exit --exit-code-from test; status=$$?; $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30; exit $$status
 	@echo "$(GREEN)✓ Server integration tests complete$(RESET)"
 
 .PHONY: integration-test-all
@@ -466,7 +452,7 @@ test-cloud-azure:
 
 .PHONY: bench
 ## bench: Run all benchmarks
-bench: bench-local bench-s3 bench-minio bench-gcs bench-azure bench-factory bench-common bench-storagefs
+bench: bench-local bench-s3 bench-gcs bench-azure bench-factory bench-common bench-storagefs
 	@echo "$(GREEN)$(BOLD)✓ All benchmarks complete!$(RESET)"
 
 .PHONY: bench-local
@@ -482,13 +468,6 @@ bench-s3:
 	@echo "$(CYAN)$(BOLD)→ Running S3 storage benchmarks...$(RESET)"
 	@$(GO) test -bench=. -benchmem -tags=awss3 ./pkg/s3
 	@echo "$(GREEN)✓ S3 benchmarks complete$(RESET)"
-
-.PHONY: bench-minio
-## bench-minio: Run MinIO storage benchmarks
-bench-minio:
-	@echo "$(CYAN)$(BOLD)→ Running MinIO storage benchmarks...$(RESET)"
-	@$(GO) test -bench=. -benchmem -tags=minio ./pkg/minio
-	@echo "$(GREEN)✓ MinIO benchmarks complete$(RESET)"
 
 .PHONY: bench-gcs
 ## bench-gcs: Run GCS storage benchmarks
@@ -530,10 +509,10 @@ bench-storagefs:
 ## coverage-check: Check per-package coverage and highlight packages under 90%
 coverage-check:
 	@echo "$(CYAN)$(BOLD)=== Package Coverage Report ===$(RESET)"
-	@echo "$(CYAN)Using build tags: local,awss3,minio,gcpstorage,azureblob,glacier,azurearchive$(RESET)"
+	@echo "$(CYAN)Using build tags: local,awss3,gcpstorage,azureblob,glacier,azurearchive$(RESET)"
 	@echo ""
 	@for pkg in $$($(GO) list ./pkg/...); do \
-		output=$$($(GO) test -tags="local,awss3,minio,gcpstorage,azureblob,glacier,azurearchive" -cover "$$pkg" 2>/dev/null); \
+		output=$$($(GO) test -tags="local,awss3,gcpstorage,azureblob,glacier,azurearchive" -cover "$$pkg" 2>/dev/null); \
 		if echo "$$output" | grep -q "no statements"; then \
 			printf "%-70s %6s\n" "$$pkg" "  N/A"; \
 		else \
@@ -545,7 +524,7 @@ coverage-check:
 	@echo "$(CYAN)$(BOLD)=== Packages Under 90% ===$(RESET)"
 	@UNDER_90=0; \
 	for pkg in $$($(GO) list ./pkg/...); do \
-		output=$$($(GO) test -tags="local,awss3,minio,gcpstorage,azureblob,glacier,azurearchive" -cover "$$pkg" 2>/dev/null); \
+		output=$$($(GO) test -tags="local,awss3,gcpstorage,azureblob,glacier,azurearchive" -cover "$$pkg" 2>/dev/null); \
 		if echo "$$output" | grep -q "no statements"; then \
 			continue; \
 		fi; \
@@ -850,7 +829,6 @@ help:
 	@echo "  $(YELLOW)integration-test$(RESET)             Run all integration tests (backends + CLI)"
 	@echo "  $(YELLOW)integration-test-local$(RESET)       Run local storage integration tests"
 	@echo "  $(YELLOW)integration-test-s3$(RESET)          Run S3 integration tests"
-	@echo "  $(YELLOW)integration-test-minio$(RESET)       Run MinIO integration tests"
 	@echo "  $(YELLOW)integration-test-azure$(RESET)       Run Azure integration tests"
 	@echo "  $(YELLOW)integration-test-gcs$(RESET)         Run GCS integration tests"
 	@echo "  $(YELLOW)integration-test-replication$(RESET) Run replication integration tests"
@@ -890,7 +868,6 @@ help:
 	@echo "  Control which storage backends are included in the build:"
 	@echo "  $(GREEN)WITH_LOCAL=1/0$(RESET)        Local disk storage (default: $(WITH_LOCAL))"
 	@echo "  $(GREEN)WITH_AWS_S3=1/0$(RESET)       Amazon S3 storage (default: $(WITH_AWS_S3))"
-	@echo "  $(GREEN)WITH_MINIO=1/0$(RESET)        MinIO S3-compatible storage (default: $(WITH_MINIO))"
 	@echo "  $(GREEN)WITH_GCP_STORAGE=1/0$(RESET)  Google Cloud Storage (default: $(WITH_GCP_STORAGE))"
 	@echo "  $(GREEN)WITH_AZURE_BLOB=1/0$(RESET)   Azure Blob Storage (default: $(WITH_AZURE_BLOB))"
 	@echo "  $(GREEN)WITH_GLACIER=1/0$(RESET)      AWS Glacier archival (default: $(WITH_GLACIER))"
@@ -936,7 +913,6 @@ show-backends:
 	@echo ""
 	@echo "  $(BOLD)Cloud Storage Backends:$(RESET)"
 	@if [ "$(WITH_AWS_S3)" = "1" ]; then echo "    ✓ AWS S3"; else echo "    ✗ AWS S3"; fi
-	@if [ "$(WITH_MINIO)" = "1" ]; then echo "    ✓ MinIO"; else echo "    ✗ MinIO"; fi
 	@if [ "$(WITH_GCP_STORAGE)" = "1" ]; then echo "    ✓ Google Cloud Storage"; else echo "    ✗ Google Cloud Storage"; fi
 	@if [ "$(WITH_AZURE_BLOB)" = "1" ]; then echo "    ✓ Azure Blob Storage"; else echo "    ✗ Azure Blob Storage"; fi
 	@echo ""

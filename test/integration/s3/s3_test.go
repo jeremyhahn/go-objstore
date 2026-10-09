@@ -26,22 +26,22 @@ import (
 
 func TestS3_BasicOps(t *testing.T) {
 	bucket := "objstore-test"
-	testcommon.CreateMinIOBucket(t, bucket)
+	testcommon.CreateS3Bucket(t, bucket)
 
 	st, err := factory.NewStorage("s3", map[string]string{
 		"bucket":         bucket,
 		"region":         "us-east-1",
-		"endpoint":       "http://minio:9000",
+		"endpoint":       "http://floci:4566",
 		"forcePathStyle": "true",
-		"accessKey":      "minioadmin",
-		"secretKey":      "minioadmin",
+		"accessKey":      "test",
+		"secretKey":      "test",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	key := "it/s3.txt"
-	data := []byte("hello minio")
+	data := []byte("hello s3")
 	if err := st.Put(key, bytes.NewReader(data)); err != nil {
 		t.Fatal(err)
 	}
@@ -61,15 +61,15 @@ func TestS3_BasicOps(t *testing.T) {
 
 func TestS3_EmptyFile(t *testing.T) {
 	bucket := "objstore-s3-empty"
-	testcommon.CreateMinIOBucket(t, bucket)
+	testcommon.CreateS3Bucket(t, bucket)
 
 	st, err := factory.NewStorage("s3", map[string]string{
 		"bucket":         bucket,
 		"region":         "us-east-1",
-		"endpoint":       "http://minio:9000",
+		"endpoint":       "http://floci:4566",
 		"forcePathStyle": "true",
-		"accessKey":      "minioadmin",
-		"secretKey":      "minioadmin",
+		"accessKey":      "test",
+		"secretKey":      "test",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -93,15 +93,15 @@ func TestS3_EmptyFile(t *testing.T) {
 
 func TestS3_SpecialCharacters(t *testing.T) {
 	bucket := "objstore-s3-special"
-	testcommon.CreateMinIOBucket(t, bucket)
+	testcommon.CreateS3Bucket(t, bucket)
 
 	st, err := factory.NewStorage("s3", map[string]string{
 		"bucket":         bucket,
 		"region":         "us-east-1",
-		"endpoint":       "http://minio:9000",
+		"endpoint":       "http://floci:4566",
 		"forcePathStyle": "true",
-		"accessKey":      "minioadmin",
-		"secretKey":      "minioadmin",
+		"accessKey":      "test",
+		"secretKey":      "test",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -132,15 +132,15 @@ func TestS3_SpecialCharacters(t *testing.T) {
 
 func TestS3_ErrorHandling(t *testing.T) {
 	bucket := "objstore-s3-errors"
-	testcommon.CreateMinIOBucket(t, bucket)
+	testcommon.CreateS3Bucket(t, bucket)
 
 	st, err := factory.NewStorage("s3", map[string]string{
 		"bucket":         bucket,
 		"region":         "us-east-1",
-		"endpoint":       "http://minio:9000",
+		"endpoint":       "http://floci:4566",
 		"forcePathStyle": "true",
-		"accessKey":      "minioadmin",
-		"secretKey":      "minioadmin",
+		"accessKey":      "test",
+		"secretKey":      "test",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -160,15 +160,15 @@ func TestS3_ErrorHandling(t *testing.T) {
 
 func TestS3_Lifecycle(t *testing.T) {
 	bucket := "objstore-s3-lifecycle"
-	testcommon.CreateMinIOBucket(t, bucket)
+	testcommon.CreateS3Bucket(t, bucket)
 
 	st, err := factory.NewStorage("s3", map[string]string{
 		"bucket":         bucket,
 		"region":         "us-east-1",
-		"endpoint":       "http://minio:9000",
+		"endpoint":       "http://floci:4566",
 		"forcePathStyle": "true",
-		"accessKey":      "minioadmin",
-		"secretKey":      "minioadmin",
+		"accessKey":      "test",
+		"secretKey":      "test",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -186,15 +186,15 @@ func TestS3_Lifecycle(t *testing.T) {
 // TestS3_ComprehensiveSuite runs the complete test suite for all interface methods
 func TestS3_ComprehensiveSuite(t *testing.T) {
 	bucket := "objstore-s3-comprehensive"
-	testcommon.CreateMinIOBucket(t, bucket)
+	testcommon.CreateS3Bucket(t, bucket)
 
 	st, err := factory.NewStorage("s3", map[string]string{
 		"bucket":         bucket,
 		"region":         "us-east-1",
-		"endpoint":       "http://minio:9000",
+		"endpoint":       "http://floci:4566",
 		"forcePathStyle": "true",
-		"accessKey":      "minioadmin",
-		"secretKey":      "minioadmin",
+		"accessKey":      "test",
+		"secretKey":      "test",
 	})
 	if err != nil {
 		t.Fatal(err)

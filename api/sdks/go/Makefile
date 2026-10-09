@@ -10,6 +10,10 @@ GOLINT=golangci-lint
 COVERAGE_FILE=coverage.txt
 COVERAGE_HTML=coverage.html
 
+# Per-checkout Docker Compose project name (stable, so `clean` removes what an
+# interrupted run left behind); see ../compose-project.mk.
+include ../compose-project.mk
+
 # Default target
 all: build test
 

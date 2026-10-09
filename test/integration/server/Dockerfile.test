@@ -45,4 +45,4 @@ RUN --mount=type=secret,id=gomodauth \
 # Run the server integration tests by default. docker-compose overrides this
 # with a command that also builds the CLI from the bind-mounted source; keep
 # the two tag lists in sync.
-CMD ["go", "test", "-v", "-tags", "integration,local,awss3,minio,gcpstorage,azureblob,glacier,azurearchive", "./test/integration/server/...", "-timeout", "15m"]
+CMD ["go", "test", "-v", "-tags", "integration,local,awss3,gcpstorage,azureblob,glacier,azurearchive", "./test/integration/server/...", "-timeout", "15m"]

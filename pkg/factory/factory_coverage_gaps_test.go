@@ -173,7 +173,7 @@ func TestNewStorage_Memory(t *testing.T) {
 }
 
 // TestIsStorageBackendRegistered_ConditionalBackends checks that conditionally
-// compiled storage backends (s3, gcs, azure, minio) are registered if and only
+// compiled storage backends (s3, gcs, azure) are registered if and only
 // if they appear in ListStorageBackends.
 func TestIsStorageBackendRegistered_ConditionalBackends(t *testing.T) {
 	all := ListStorageBackends()
@@ -182,7 +182,7 @@ func TestIsStorageBackendRegistered_ConditionalBackends(t *testing.T) {
 		present[b] = true
 	}
 
-	for _, name := range []string{"s3", "gcs", "azure", "minio"} {
+	for _, name := range []string{"s3", "gcs", "azure"} {
 		got := IsStorageBackendRegistered(name)
 		if got != present[name] {
 			t.Errorf("IsStorageBackendRegistered(%q) = %v but ListStorageBackends presence = %v",

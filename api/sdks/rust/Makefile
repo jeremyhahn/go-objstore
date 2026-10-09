@@ -1,5 +1,7 @@
 .PHONY: build test clean coverage docker-coverage integration-test docker-test docker-build docker-test-unit docker-test-integration fmt clippy check all
 
+include ../compose-project.mk
+
 # Default target
 all: fmt clippy build test
 

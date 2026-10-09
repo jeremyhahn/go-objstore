@@ -105,7 +105,6 @@ storage.Put("greeting.txt", bytes.NewReader(data))
 |---------|------|----------|
 | Local | Storage | Development, testing, local archives |
 | S3 | Storage | AWS object storage, high availability |
-| MinIO | Storage | Self-hosted S3-compatible object storage |
 | GCS | Storage | Google Cloud object storage |
 | Azure Blob | Storage | Microsoft Azure object storage |
 | Memory | Storage | Unit tests, ephemeral/in-memory |
@@ -134,24 +133,11 @@ storage, _ := factory.NewStorage("memory", map[string]string{})
 storage, _ := factory.NewStorage("s3", map[string]string{
     "region": "us-east-1",
     "bucket": "my-bucket",
-    // Optional: for custom endpoints (MinIO, LocalStack)
-    "endpoint":       "http://localhost:9000",
+    // Optional: point at an S3-compatible endpoint (for example Floci or LocalStack)
+    "endpoint":       "http://localhost:4566",
     "forcePathStyle": "true",
-    "accessKey":      "minioadmin",
-    "secretKey":      "minioadmin",
-})
-```
-
-### MinIO
-
-```go
-storage, _ := factory.NewStorage("minio", map[string]string{
-    "bucket":    "my-bucket",
-    "endpoint":  "http://localhost:9000",
-    "accessKey": "minioadmin",
-    "secretKey": "minioadmin",
-    // Optional: defaults to "us-east-1"
-    "region":    "us-east-1",
+    "accessKey":      "test",
+    "secretKey":      "test",
 })
 ```
 
@@ -664,7 +650,6 @@ go-objstore/
 │   ├── s3/                    # Amazon S3 backend
 │   ├── gcs/                   # Google Cloud Storage backend
 │   ├── azure/                 # Azure Blob Storage backend
-│   ├── minio/                 # MinIO S3-compatible backend
 │   ├── glacier/               # AWS Glacier archiver
 │   ├── azurearchive/          # Azure Archive archiver
 │   ├── storagefs/             # Filesystem abstraction
@@ -744,7 +729,6 @@ make integration-test-local
 make integration-test-s3
 make integration-test-azure
 make integration-test-gcs
-make integration-test-minio
 make integration-test-factory
 
 # Run CLI integration tests

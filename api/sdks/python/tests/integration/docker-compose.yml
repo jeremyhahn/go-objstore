@@ -3,6 +3,7 @@ version: '3.8'
 services:
   # Go ObjectStore server with local storage backend
   objstore-server:
+    init: true
     build:
       context: ../../../../..
       dockerfile: Dockerfile

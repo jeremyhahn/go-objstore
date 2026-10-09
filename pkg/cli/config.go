@@ -180,7 +180,8 @@ func GetConfigProtected(v *viper.Viper) (*Config, error) {
 
 // SetBackendKeyEnclave sets the backend access key from a locked memory
 // enclave and clears the deprecated plain field. The Config TAKES OWNERSHIP of
-// the enclave; any previously held one is destroyed.
+// the enclave; any previously held one is destroyed. e is installed whatever
+// the result: the error is the replaced enclave's release report.
 func (c *Config) SetBackendKeyEnclave(e *enclave.MemoryEnclave) error {
 	var err error
 	if c.backendKeyEnclave != nil && c.backendKeyEnclave != e {
@@ -193,7 +194,9 @@ func (c *Config) SetBackendKeyEnclave(e *enclave.MemoryEnclave) error {
 
 // SetBackendSecretEnclave sets the backend secret access key from a locked
 // memory enclave and clears the deprecated plain field. The Config TAKES
-// OWNERSHIP of the enclave; any previously held one is destroyed.
+// OWNERSHIP of the enclave; any previously held one is destroyed. e is
+// installed whatever the result: the error is the replaced enclave's release
+// report.
 func (c *Config) SetBackendSecretEnclave(e *enclave.MemoryEnclave) error {
 	var err error
 	if c.backendSecretEnclave != nil && c.backendSecretEnclave != e {
@@ -205,7 +208,8 @@ func (c *Config) SetBackendSecretEnclave(e *enclave.MemoryEnclave) error {
 }
 
 // SetBackendKeyFromString enclaves key, or clears the credential when key is
-// empty. See NewMemoryEnclaveFromString for the caveat on string sources.
+// empty. The string itself is immutable and cannot be wiped, so the caller's
+// copy of it stays in ordinary memory; only the enclave's copy is protected.
 func (c *Config) SetBackendKeyFromString(key string) error {
 	if key == "" {
 		return c.SetBackendKeyEnclave(nil)
@@ -218,8 +222,8 @@ func (c *Config) SetBackendKeyFromString(key string) error {
 }
 
 // SetBackendSecretFromString enclaves secret, or clears the credential when
-// secret is empty. See NewMemoryEnclaveFromString for the caveat on string
-// sources.
+// secret is empty. The same caveat on string sources applies as for
+// SetBackendKeyFromString.
 func (c *Config) SetBackendSecretFromString(secret string) error {
 	if secret == "" {
 		return c.SetBackendSecretEnclave(nil)
@@ -247,6 +251,10 @@ func (c *Config) BackendSecretEnclave() *enclave.MemoryEnclave {
 // a nil *Config, and safe to defer. The deprecated plain-string fields are
 // cleared as well, though a Go string cannot actually be wiped — that is
 // precisely why they are deprecated.
+//
+// The error joins both enclaves' release reports. The material is wiped
+// whatever they say, and a discarded error loses nothing: the next
+// [enclave.WipeAll] retries a refused release and reports a corrupt enclave.
 func (c *Config) Destroy() error {
 	if c == nil {
 		return nil
@@ -280,16 +288,6 @@ func (c *Config) backendKeyValue() (string, error) {
 	return c.BackendKey, nil
 }
 
-// enclaveString copies the enclave's contents into a string through a borrow.
-func enclaveString(e *enclave.MemoryEnclave) (string, error) {
-	var s string
-	err := e.WithBytes(func(b []byte) error {
-		s = string(b)
-		return nil
-	})
-	return s, err
-}
-
 // backendSecretValue materializes the backend secret access key as a plain
 // string. Same boundary caveat and same no-fallback rule as backendKeyValue.
 func (c *Config) backendSecretValue() (string, error) {
@@ -297,6 +295,20 @@ func (c *Config) backendSecretValue() (string, error) {
 		return enclaveString(c.backendSecretEnclave)
 	}
 	return c.BackendSecret, nil
+}
+
+// enclaveString copies the enclave's material out as a string, or reports
+// [enclave.ErrEnclaveDestroyed]. The copy is taken inside the borrow, so a
+// concurrent Destroy waits rather than unmapping the pages mid-read.
+func enclaveString(e *enclave.MemoryEnclave) (string, error) {
+	var s string
+	if err := e.WithBytes(func(b []byte) error {
+		s = string(b)
+		return nil
+	}); err != nil {
+		return "", err
+	}
+	return s, nil
 }
 
 // hasBackendKey reports whether a backend access key is configured, without
@@ -601,13 +613,6 @@ func ValidateConfig(cfg *Config) error {
 		}
 		if cfg.BackendRegion == "" {
 			return ErrBackendRegionRequired
-		}
-	case "minio":
-		if cfg.BackendBucket == "" {
-			return ErrBackendBucketRequired
-		}
-		if cfg.BackendURL == "" {
-			return ErrBackendURLRequired
 		}
 	case "gcs":
 		if cfg.BackendBucket == "" {

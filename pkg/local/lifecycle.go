@@ -34,6 +34,11 @@ type LifecycleManager struct {
 	policies map[string]common.LifecyclePolicy
 	mutex    sync.RWMutex
 	interval time.Duration
+
+	// onProcessed, when set before Run starts, is called after each
+	// scheduled Process pass completes. It lets tests observe a pass
+	// instead of sleeping for one.
+	onProcessed func()
 }
 
 // NewLifecycleManager creates a new in-memory lifecycle manager.
@@ -83,6 +88,9 @@ func (lm *LifecycleManager) Run(ctx context.Context, storage *Local) {
 			return
 		case <-ticker.C:
 			lm.Process(storage)
+			if lm.onProcessed != nil {
+				lm.onProcessed()
+			}
 		}
 	}
 }

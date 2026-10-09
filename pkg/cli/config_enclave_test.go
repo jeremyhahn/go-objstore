@@ -52,10 +52,10 @@ func TestGetConfigProtected(t *testing.T) {
 	if cfg.BackendSecret != "" {
 		t.Errorf("deprecated BackendSecret = %q, want empty", cfg.BackendSecret)
 	}
-	if eq, err := cfg.BackendKeyEnclave().EqualTo([]byte(testAccessKey)); err != nil || !eq {
+	if held, err := cfg.BackendKeyEnclave().EqualTo([]byte(testAccessKey)); err != nil || !held {
 		t.Error("access key not held in the enclave")
 	}
-	if eq, err := cfg.BackendSecretEnclave().EqualTo([]byte(testSecretKey)); err != nil || !eq {
+	if held, err := cfg.BackendSecretEnclave().EqualTo([]byte(testSecretKey)); err != nil || !held {
 		t.Error("secret key not held in the enclave")
 	}
 	// Non-credential settings are untouched.
@@ -133,10 +133,10 @@ func TestSetBackendCredentialsFromString(t *testing.T) {
 	if cfg.BackendKey != "" || cfg.BackendSecret != "" {
 		t.Error("deprecated fields not cleared by the protected setters")
 	}
-	if eq, err := cfg.BackendKeyEnclave().EqualTo([]byte(testAccessKey)); err != nil || !eq {
+	if held, err := cfg.BackendKeyEnclave().EqualTo([]byte(testAccessKey)); err != nil || !held {
 		t.Error("access key not enclaved")
 	}
-	if eq, err := cfg.BackendSecretEnclave().EqualTo([]byte(testSecretKey)); err != nil || !eq {
+	if held, err := cfg.BackendSecretEnclave().EqualTo([]byte(testSecretKey)); err != nil || !held {
 		t.Error("secret key not enclaved")
 	}
 
@@ -184,8 +184,12 @@ func TestSetBackendCredentialEnclave_ReplacesPrevious(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewMemoryEnclave: %v", err)
 	}
-	cfg.SetBackendKeyEnclave(firstKey)
-	cfg.SetBackendSecretEnclave(firstSecret)
+	if err := cfg.SetBackendKeyEnclave(firstKey); err != nil {
+		t.Fatalf("SetBackendKeyEnclave: %v", err)
+	}
+	if err := cfg.SetBackendSecretEnclave(firstSecret); err != nil {
+		t.Fatalf("SetBackendSecretEnclave: %v", err)
+	}
 
 	if err := cfg.SetBackendKeyFromString(testAccessKey); err != nil {
 		t.Fatalf("SetBackendKeyFromString: %v", err)
@@ -221,8 +225,12 @@ func TestConfigDestroy(t *testing.T) {
 	key := cfg.BackendKeyEnclave()
 	secret := cfg.BackendSecretEnclave()
 
-	cfg.Destroy()
-	cfg.Destroy() // idempotent
+	if err := cfg.Destroy(); err != nil {
+		t.Errorf("Destroy: %v", err)
+	}
+	if err := cfg.Destroy(); err != nil { // idempotent
+		t.Errorf("second Destroy: %v", err)
+	}
 
 	if key.IsAlive() || secret.IsAlive() {
 		t.Error("credentials still alive after Destroy")

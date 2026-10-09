@@ -38,7 +38,7 @@ RUN --mount=type=secret,id=gomodauth \
 COPY . .
 
 # Build REST server with all backends
-RUN go build -tags "local awss3 minio gcpstorage azureblob glacier azurearchive" -o /usr/local/bin/objstore-server ./cmd/objstore-server
+RUN go build -tags "local awss3 gcpstorage azureblob glacier azurearchive" -o /usr/local/bin/objstore-server ./cmd/objstore-server
 
 # Create storage directory
 RUN mkdir -p /tmp/objstore

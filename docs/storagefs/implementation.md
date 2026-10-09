@@ -139,7 +139,7 @@ All paths normalized to:
 ### Integration Test Results
 ```
 ✅ Local Storage:        4 tests passing
-✅ S3/MinIO:            4 tests passing
+✅ S3/Floci:            4 tests passing
 ✅ Azure/Azurite:       3 tests passing
 ⏭️  GCS/Fake:           5 tests skipped (emulator issue)
 ✅ Archive Operations:  5 tests passing

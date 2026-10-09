@@ -116,7 +116,7 @@ func findOrBuildCLI(projectRoot string) (string, error) {
 
 	// Build with all backend tags
 	cmd := exec.Command("go", "build",
-		"-tags", "local awss3 minio gcpstorage azureblob glacier azurearchive",
+		"-tags", "local awss3 gcpstorage azureblob glacier azurearchive",
 		"-o", binPath,
 		"./cmd/objstore",
 	)

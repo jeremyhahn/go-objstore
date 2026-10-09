@@ -1,5 +1,7 @@
 services:
   fake-gcs:
+    # PID 1 must reap children and stop on SIGTERM, or `down` hits a zombie.
+    init: true
     image: fsouza/fake-gcs-server:1.49.1
     command: ["-scheme", "http", "-port", "4443", "-backend", "memory", "-public-host", "fake-gcs:4443"]
     ports:

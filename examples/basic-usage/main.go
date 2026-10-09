@@ -35,8 +35,8 @@ func main() {
 	fmt.Println("1. Local Storage")
 	localStorageExample()
 
-	// Example 2: S3 storage (MinIO for local development)
-	fmt.Println("\n2. S3 Storage (MinIO)")
+	// Example 2: S3 storage (Floci for local development)
+	fmt.Println("\n2. S3 Storage (Floci)")
 	s3StorageExample()
 
 	// Example 3: Context-aware operations
@@ -93,20 +93,20 @@ func localStorageExample() {
 }
 
 func s3StorageExample() {
-	// For this example to work, you need MinIO running locally:
-	// docker run -p 9000:9000 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin minio/minio server /data
+	// For this example to work, you need the Floci AWS emulator running locally:
+	// docker run -p 4566:4566 floci/floci
 
 	storage, err := factory.NewStorage("s3", map[string]string{
 		"bucket":         "demo-bucket",
 		"region":         "us-east-1",
-		"endpoint":       "http://localhost:9000",
+		"endpoint":       "http://localhost:4566",
 		"forcePathStyle": "true",
-		"accessKey":      "minioadmin",
-		"secretKey":      "minioadmin",
+		"accessKey":      "test",
+		"secretKey":      "test",
 	})
 
 	if err != nil {
-		fmt.Printf("  ⚠ Skipping S3 example (MinIO not running): %v\n", err)
+		fmt.Printf("  ⚠ Skipping S3 example (Floci not running): %v\n", err)
 		return
 	}
 

@@ -1,5 +1,7 @@
 .PHONY: help install build clean test test-unit test-integration coverage lint format proto docs all docker-build docker-test-unit docker-test-integration docker-test
 
+include ../compose-project.mk
+
 # Default target
 help:
 	@echo "TypeScript SDK for go-objstore"

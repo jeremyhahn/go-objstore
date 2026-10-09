@@ -3,6 +3,7 @@ version: '3.8'
 services:
   # Go-ObjStore server for integration tests
   objstore:
+    init: true
     build:
       context: ../../..
       dockerfile: Dockerfile

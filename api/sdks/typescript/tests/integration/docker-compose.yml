@@ -2,6 +2,7 @@ version: '3.8'
 
 services:
   objstore-rest:
+    init: true
     image: go-objstore:latest
     container_name: objstore-rest-test
     build:
@@ -29,6 +30,7 @@ services:
       - objstore-test
 
   objstore-grpc:
+    init: true
     image: go-objstore:latest
     container_name: objstore-grpc-test
     build:
@@ -56,6 +58,7 @@ services:
       - objstore-test
 
   objstore-quic:
+    init: true
     image: go-objstore:latest
     container_name: objstore-quic-test
     build:

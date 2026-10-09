@@ -9,7 +9,7 @@ objstore has comprehensive test coverage with unit tests, integration tests with
 ### Coverage Goals
 
 The project maintains comprehensive test coverage across all core packages:
-- **Storage backends**: High coverage (S3, Local, Azure, GCS, MinIO)
+- **Storage backends**: High coverage (S3, Local, Azure, GCS)
 - **Archive backends**: High coverage (Glacier, Azure Archive)
 - **Core infrastructure**: High coverage (Factory, CLI, Server)
 - **Filesystem abstraction**: Good coverage (StorageFS)
@@ -68,7 +68,6 @@ make integration-test-local
 make integration-test-s3
 make integration-test-gcs
 make integration-test-azure
-make integration-test-minio
 make integration-test-factory
 
 # Run CLI integration tests only
@@ -107,12 +106,12 @@ make coverage-check
 make integration-test
 
 # This will:
-# 1. Start emulators (MinIO, Azurite, fake-gcs-server) in Docker
+# 1. Start emulators (Floci, Azurite, fake-gcs-server) in Docker
 # 2. Run tests with -tags=integration
 # 3. Clean up all resources
 
 # Specific backend tests
-make integration-test-s3        # S3 with MinIO
+make integration-test-s3        # S3 with Floci
 make integration-test-gcs       # GCS with fake-gcs-server
 make integration-test-azure     # Azure with Azurite
 make integration-test-local     # Local filesystem
@@ -185,8 +184,6 @@ go-objstore/
         ├── azure/
         │   ├── azure_test.go     # Emulator tests (tag: integration)
         │   └── azure_real_cloud_test.go # Real cloud tests (tag: cloud_integration)
-        ├── minio/
-        │   └── minio_test.go     # MinIO-specific tests
         ├── local/
         │   └── local_test.go     # Local filesystem tests
         ├── cli/
@@ -208,11 +205,12 @@ go-objstore/
 
 Integration tests use Docker containers for cloud service emulation:
 
-**MinIO (S3 Compatible)**
+**Floci (S3 Compatible AWS emulator)**
 ```yaml
-build: test/integration/minio-server  # MinIO built from source at a pinned release tag
-ports: 9000:9000, 9001:9001
-credentials: minioadmin/minioadmin
+image: floci/floci@sha256:e97cd0c1dc2aa14e7697fb5ef5018404c4d6345169dbd276315f0bed2c7b0520 # 2.2.0
+port: 4566:4566
+health: /usr/local/bin/healthcheck.sh (GET /_floci/health; the image has no wget)
+credentials: test/test (any non-empty pair is accepted)
 ```
 
 **Azurite (Azure Compatible)**
@@ -236,11 +234,11 @@ scheme: http
 Integration tests use these environment variables:
 
 ```bash
-# S3/MinIO
+# S3 (Floci)
 AWS_REGION=us-east-1
-AWS_ACCESS_KEY_ID=minioadmin
-AWS_SECRET_ACCESS_KEY=minioadmin
-S3_ENDPOINT=http://localhost:9000
+AWS_ACCESS_KEY_ID=test
+AWS_SECRET_ACCESS_KEY=test
+S3_ENDPOINT=http://localhost:4566
 
 # GCS Emulator
 STORAGE_EMULATOR_HOST=http://localhost:4443
@@ -475,7 +473,7 @@ make integration-test
 **Port conflicts**
 ```bash
 # Check for processes using test ports
-lsof -i :9000   # MinIO
+lsof -i :4566   # Floci
 lsof -i :10000  # Azurite
 lsof -i :4443   # fake-gcs-server
 

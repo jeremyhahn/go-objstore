@@ -57,19 +57,6 @@ Considerations:
 - Network costs
 - Consistency model
 
-### MinIO
-Best for:
-- On-premises deployments
-- S3-compatible interface
-- Private cloud
-- Data sovereignty
-
-Considerations:
-- Infrastructure management
-- Clustering and redundancy
-- Resource requirements
-- Backup strategy
-
 ## Common Patterns
 
 ### Development vs Production

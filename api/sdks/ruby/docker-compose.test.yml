@@ -2,6 +2,7 @@ version: '3.8'
 
 services:
   objstore-rest:
+    init: true
     image: ghcr.io/jeremyhahn/go-objstore:latest
     container_name: objstore-rest-test
     ports:
@@ -23,6 +24,7 @@ services:
       retries: 3
 
   objstore-grpc:
+    init: true
     image: ghcr.io/jeremyhahn/go-objstore:latest
     container_name: objstore-grpc-test
     ports:
@@ -44,6 +46,7 @@ services:
       retries: 3
 
   objstore-quic:
+    init: true
     image: ghcr.io/jeremyhahn/go-objstore:latest
     container_name: objstore-quic-test
     ports:

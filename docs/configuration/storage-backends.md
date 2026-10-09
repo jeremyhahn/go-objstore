@@ -57,13 +57,14 @@ config:
 ```
 
 ### S3-Compatible Services
-For MinIO or other S3-compatible services:
+An S3-compatible service (for example the Floci local emulator) is configured
+with the s3 provider's `endpoint` option:
 ```yaml
 backend: s3
 config:
   region: us-east-1
   bucket: data
-  endpoint: https://minio.example.com:9000
+  endpoint: https://s3.example.com:9000
   forcePathStyle: "true"
 ```
 
@@ -127,31 +128,6 @@ config:
   accountKey: base64_encoded_key==
   containerName: application-data
   max_retries: 5
-```
-
-## MinIO
-
-**Backend Type**: `minio` or use `s3` with custom endpoint
-
-### Required Parameters
-- `endpoint` - MinIO server endpoint
-- `accessKey` - MinIO access key
-- `secretKey` - MinIO secret key
-- `bucket` - Bucket name
-- `useSSL` - Use SSL/TLS (true/false)
-
-### Optional Parameters
-- `region` - Region (default: us-east-1)
-
-### Example Configuration
-```yaml
-backend: minio
-config:
-  endpoint: localhost:9000
-  accessKey: minioadmin
-  secretKey: minioadmin
-  bucket: test-bucket
-  useSSL: false
 ```
 
 ## AWS Glacier
@@ -237,7 +213,7 @@ Use `glacier` or `azurearchive` for:
 - Compliance requirements
 
 ### On-Premises
-Use `minio` or `local` for:
+Use `local`, or `s3` with a custom `endpoint`, for:
 - Data sovereignty requirements
 - Existing infrastructure
 - Air-gapped environments

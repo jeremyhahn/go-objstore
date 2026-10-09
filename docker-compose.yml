@@ -1,16 +1,32 @@
 services:
-  minio:
-    # Built from source: the published MinIO images refuse anonymous pulls.
-    build:
-      context: test/integration/minio-server
-    command: server /data --console-address ":9001"
+  floci:
+    init: true
+    image: floci/floci@sha256:e97cd0c1dc2aa14e7697fb5ef5018404c4d6345169dbd276315f0bed2c7b0520 # 2.2.0
     environment:
-      - MINIO_ROOT_USER=minioadmin
-      - MINIO_ROOT_PASSWORD=minioadmin
+      - FLOCI_HOSTNAME=floci
+      # S3 only: these services spawn containers through the Docker daemon,
+      # which this stack does not give Floci (socket errors otherwise).
+      - FLOCI_SERVICES_LAMBDA_ENABLED=false
+      - FLOCI_SERVICES_ECS_ENABLED=false
+      - FLOCI_SERVICES_EC2_ENABLED=false
+      - FLOCI_SERVICES_EKS_ENABLED=false
+      - FLOCI_SERVICES_RDS_ENABLED=false
+      - FLOCI_SERVICES_ELASTICACHE_ENABLED=false
+      - FLOCI_SERVICES_MSK_ENABLED=false
+      - FLOCI_SERVICES_OPENSEARCH_ENABLED=false
+      - FLOCI_SERVICES_CODEBUILD_ENABLED=false
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "4566:4566"
+    healthcheck:
+      # The image ships no wget; its own probe is a bash /dev/tcp GET of
+      # /_floci/health. start_period covers the ~20s native start.
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
   azurite:
+    init: true
     image: mcr.microsoft.com/azure-storage/azurite:3.33.0
     command: azurite --blobHost 0.0.0.0 --blobPort 10000 --location /data
     environment:
@@ -18,6 +34,7 @@ services:
     ports:
       - "10000:10000"
   fake-gcs:
+    init: true
     image: fsouza/fake-gcs-server:1.49.1
     command: ["-scheme", "http", "-port", "4443", "-backend", "memory", "-public-host", "fake-gcs:4443"]
     ports:
@@ -31,15 +48,19 @@ services:
       - .:/app
     environment:
       - AWS_REGION=us-east-1
-      - AWS_ACCESS_KEY_ID=minioadmin
-      - AWS_SECRET_ACCESS_KEY=minioadmin
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - S3_ENDPOINT=http://floci:4566
       - STORAGE_EMULATOR_HOST=http://fake-gcs:4443
       - GOTOOLCHAIN=auto
       - PKG_COVER=${PKG_COVER:-go-objstore/pkg/azure,go-objstore/pkg/azurearchive,go-objstore/pkg/local,go-objstore/pkg/s3,go-objstore/pkg/factory,go-objstore/pkg/glacier,go-objstore/pkg/gcs}
     depends_on:
-      - minio
-      - azurite
-      - fake-gcs
+      floci:
+        condition: service_healthy
+      azurite:
+        condition: service_started
+      fake-gcs:
+        condition: service_started
     entrypoint: /app/docker-entrypoint.sh
 
 networks:

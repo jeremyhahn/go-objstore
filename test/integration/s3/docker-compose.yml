@@ -1,27 +1,40 @@
 services:
-  minio:
-    # Built from source: the published MinIO images refuse anonymous pulls.
-    build:
-      context: ../minio-server
-    command: server /data --console-address ":9001"
+  floci:
+    # PID 1 must reap children and stop on SIGTERM, or `down` hits a zombie.
+    init: true
+    image: floci/floci@sha256:e97cd0c1dc2aa14e7697fb5ef5018404c4d6345169dbd276315f0bed2c7b0520 # 2.2.0
     environment:
-      - MINIO_ROOT_USER=minioadmin
-      - MINIO_ROOT_PASSWORD=minioadmin
-    # Ephemeral host ports. Nothing outside the compose network uses these --
-    # the test service reaches MinIO at minio:9000 by service name and the
-    # healthcheck runs inside the container -- so publishing them on fixed host
-    # ports bought nothing and cost a collision: this file and
-    # test/integration/minio/docker-compose.yml both claimed 9000 and 9001, on a
-    # runner that runs jobs concurrently. Docker picks a free port instead;
-    # `docker compose port minio 9000` reports it when a human wants to look.
+      # Hostname Floci puts in the URLs it returns; the test service reaches
+      # Floci at floci:4566 by service name.
+      - FLOCI_HOSTNAME=floci
+      # S3 only: these services spawn containers through the Docker daemon,
+      # which this stack does not give Floci (socket errors otherwise).
+      - FLOCI_SERVICES_LAMBDA_ENABLED=false
+      - FLOCI_SERVICES_ECS_ENABLED=false
+      - FLOCI_SERVICES_EC2_ENABLED=false
+      - FLOCI_SERVICES_EKS_ENABLED=false
+      - FLOCI_SERVICES_RDS_ENABLED=false
+      - FLOCI_SERVICES_ELASTICACHE_ENABLED=false
+      - FLOCI_SERVICES_MSK_ENABLED=false
+      - FLOCI_SERVICES_OPENSEARCH_ENABLED=false
+      - FLOCI_SERVICES_CODEBUILD_ENABLED=false
+    # Ephemeral host port. Nothing outside the compose network uses it -- the
+    # test service reaches Floci by service name and the healthcheck runs inside
+    # the container -- so publishing it on a fixed host port would only invite a
+    # collision on a runner that runs jobs concurrently. Docker picks a free
+    # port instead; `docker compose port floci 4566` reports it when a human
+    # wants to look.
     ports:
-      - "9000"
-      - "9001"
+      - "4566"
+    # Floci's documented health endpoint, the same probe its image ships.
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      # The image ships no wget; its own probe is a bash /dev/tcp GET of
+      # /_floci/health. start_period covers the ~20s native start.
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
       interval: 5s
-      timeout: 5s
+      timeout: 3s
       retries: 5
+      start_period: 30s
 
   test:
     build:
@@ -30,12 +43,14 @@ services:
       secrets:
         - gomodauth
     depends_on:
-      - minio
+      floci:
+        condition: service_healthy
     environment:
       - AWS_REGION=us-east-1
-      - AWS_ACCESS_KEY_ID=minioadmin
-      - AWS_SECRET_ACCESS_KEY=minioadmin
-      - S3_ENDPOINT=http://minio:9000
+      # Test-only credentials; Floci accepts any non-empty pair.
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - S3_ENDPOINT=http://floci:4566
     working_dir: /app
 
 networks:

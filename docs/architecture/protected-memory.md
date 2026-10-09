@@ -11,8 +11,10 @@ on `mlock`'d pages (never paged to swap), fenced by inaccessible guard pages,
 preceded by a random canary, and wiped when the enclave is destroyed. Core dumps
 are kept out at two levels: `RLIMIT_CORE` is lowered process-wide on import (best
 effort, reported by `CoreDumpsDisabled` rather than assumed) and every enclave's
-pages are additionally marked `MADV_DONTDUMP`. As of go-enclave v0.3.0-alpha the
-mapping is done directly through `memcall`, with no memguard in the graph.
+pages are additionally marked `MADV_DONTDUMP` (and, on Linux, `MADV_DONTFORK`,
+so a forked child has no mapping there). This repository builds against
+go-enclave v0.8.0-alpha, which maps the pages itself with `golang.org/x/sys`;
+there is no memguard or memcall in the module graph.
 
 The primitive lived in this repository as `pkg/enclave` until 2026-08-25. It was
 extracted to its own Layer 0 module (issue #29, owner-ruled 2026-08-23) so that
@@ -29,7 +31,7 @@ e, err := enclave.NewMemoryEnclave(keyPEM) // keyPEM is wiped
 if err != nil {
     return err
 }
-defer e.Destroy()
+defer func() { _ = e.Destroy() }() // wipes first; a refused release is retried by WipeAll
 
 err = e.WithBytes(func(key []byte) error {
     cert, err := tls.X509KeyPair(certPEM, key)
@@ -58,26 +60,26 @@ discipline is a lock over the whole access, not a flag:
   go-enclave maps its own memory, nothing in the process can unmap an enclave it
   does not own: an allocation that hits the `RLIMIT_MEMLOCK` ceiling fails only
   itself, returning `ErrLockedMemoryUnavailable`, and every other live enclave
-  keeps its pages. (Until go-enclave v0.3.0-alpha the pages came from memguard,
-  whose failure path purged — unmapped — every live locked buffer in the process
-  before panicking; a package-wide `purgeMu` existed solely to keep a borrow from
-  running on pages a foreign allocation failure had pulled out from under it.
-  That hazard, and the lock, are gone.)
+  keeps its pages.
 - `fn` passed to `WithBytes` must not call back into the **same** enclave: the
   read lock is held for the duration of the call, so a nested `Destroy`
   deadlocks and a nested read deadlocks whenever a `Destroy` is already waiting
   for the write lock. It **may** construct, destroy or borrow **other** enclaves
-  — a restriction that existed before v0.3.0-alpha only because of the shared
-  purge lock, now removed.
-- `Open` stands outside the borrow lock by construction: the slice it returns is
-  covered by no lock, so a concurrent `Destroy` on this same enclave can unmap it
-  while a caller still reads. That is the reason its documentation calls it
-  unsafe.
-
-`Open` is the one exception, and is documented as such. It returns a slice
-aliasing the locked pages that is no longer covered by the lock, so it is safe
-only where the caller can establish that no `Destroy` runs concurrently. Prefer
-`WithBytes` — every consumer in this repository uses the scoped forms.
+  — there is no shared purge lock to forbid it.
+- `MemoryEnclave` has no accessor that returns a slice outliving the lock: the
+  old `Open`, `OpenString` and `NewMemoryEnclaveFromString` were removed in
+  go-enclave v0.8.0-alpha for exactly that reason. Every read is a `WithBytes`
+  borrow, and string material enters through `NewMemoryEnclave([]byte(s))`.
+- An enclave built by `NewMemoryEnclave` is frozen (read-only): a write through
+  the `WithBytes` view faults. `EqualTo` returns `(bool, error)` — a destroyed
+  enclave is `ErrEnclaveDestroyed`, never a bare `false`.
+- `Destroy` returns an error: `nil`, `ErrReleasedWithoutWipe`,
+  `ErrLockedMemoryUnavailable` (a refused release; the next `Destroy` or
+  `WipeAll` retries) or `ErrEnclaveCorrupted`. The material is wiped in every
+  case. `cli.Config.Destroy` and `adapters.TLSConfig.Destroy` return it, and
+  `cli.Config.SetBackendKeyEnclave` / `SetBackendSecretEnclave` return the
+  report of the enclave they replaced. The fluent `TLSConfig.With*` setters have
+  no error to return, so they discard it; the next `WipeAll` still reports it.
 
 ## Selecting the protected path removes the plain copy
 
@@ -128,7 +130,7 @@ ever set; the rule closes a fallback, not the compatibility path.
 ## Naming
 
 The type is `MemoryEnclave`, and derived names come from it
-(`NewMemoryEnclave`, `Open`, `Destroy`, `WithServerKeyEnclave`,
+(`NewMemoryEnclave`, `WithBytes`, `Destroy`, `WithServerKeyEnclave`,
 `BackendKeyEnclave`). The name describes the mechanism — a region of locked
 memory.
 
@@ -142,9 +144,9 @@ later audit a `grep`.
 
 A `MemoryEnclave` performs no cryptography. It maps, locks and wipes memory; the
 only cryptographic primitive anywhere near it is `crypto/rand` filling the guard
-canary, a FIPS-approved DRBG. go-enclave v0.3.0-alpha dropped memguard entirely,
-so the non-approved NaCl secretbox that memguard's unused `Enclave`/`Seal` paths
-carried is no longer in the build graph. go-enclave's own CI covers the
+canary, a FIPS-approved DRBG. go-enclave has no memguard in its graph, so the
+non-approved NaCl secretbox that memguard's unused `Enclave`/`Seal` paths
+carried is not in this repository's build graph. go-enclave's own CI covers the
 primitive under `GODEBUG=fips140=only`; this repository's FIPS job runs its whole
 unit suite — every consumer of the enclave included — under the same setting.
 
@@ -158,10 +160,8 @@ memlock ceiling from any other allocation failure. Callers match the
 `ErrLockedMemoryUnavailable` sentinel, which `errors.Is` reports for every
 `LockedMemoryError`; the struct is diagnostic, not contract. The failure touches
 only the allocation that hit the ceiling: because go-enclave owns its mapping and
-nothing can purge it, enclaves elsewhere in the process are unaffected. (Before
-go-enclave v0.3.0-alpha the exhaustion path purged every live locked buffer, so
-unrelated enclaves reported `ErrEnclaveDestroyed` afterwards; that no longer
-happens.) Deployments that hold many enclaves should raise `RLIMIT_MEMLOCK`
+nothing can purge it, enclaves elsewhere in the process are unaffected.
+Deployments that hold many enclaves should raise `RLIMIT_MEMLOCK`
 accordingly.
 
 The ownership contract holds on that path too: `NewMemoryEnclave` wipes the
@@ -203,7 +203,7 @@ Read the boundary list as part of the guarantee, not as a footnote to it.
 These are boundaries with APIs this repository does not own. They are recorded
 here rather than silently left:
 
-- **Backend `Configure(map[string]string)`** — `pkg/s3`, `pkg/minio`,
+- **Backend `Configure(map[string]string)`** — `pkg/s3`,
   `pkg/azure`, `pkg/azurearchive` receive credentials as plain map values and
   hand them to vendor SDK credential types (`credentials.NewStaticCredentials`,
   `azblob.NewSharedKeyCredential`) that keep plain copies. `cli.Config`

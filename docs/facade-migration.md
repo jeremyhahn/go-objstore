@@ -31,7 +31,7 @@ The facade pattern provides a centralized, secure API for object storage operati
                           ↓
 ┌─────────────────────────────────────────────────────────┐
 │                Storage Backends                         │
-│    (Local, S3, MinIO, GCS, Azure, etc.)                │
+│    (Local, S3, GCS, Azure, etc.)                       │
 └─────────────────────────────────────────────────────────┘
 ```
 

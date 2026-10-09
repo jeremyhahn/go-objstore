@@ -1016,13 +1016,13 @@ func TestFormatConfigJSON_WithBackendPath(t *testing.T) {
 
 func TestFormatConfigText_WithBackendURL(t *testing.T) {
 	cfg := &Config{
-		Backend:       "minio",
+		Backend:       "s3",
 		BackendBucket: "bucket",
-		BackendURL:    "http://minio.local:9000",
+		BackendURL:    "http://s3.local:9000",
 		OutputFormat:  "text",
 	}
 	out := formatConfigText(cfg)
-	if !strings.Contains(out, "Backend URL: http://minio.local:9000") {
+	if !strings.Contains(out, "Backend URL: http://s3.local:9000") {
 		t.Errorf("expected Backend URL in text output, got: %s", out)
 	}
 }
@@ -1033,11 +1033,11 @@ func TestFormatConfigText_WithBackendURL(t *testing.T) {
 
 func TestFormatConfigTable_WithBackendURL(t *testing.T) {
 	cfg := &Config{
-		Backend:    "minio",
-		BackendURL: "http://minio.local:9000",
+		Backend:    "s3",
+		BackendURL: "http://s3.local:9000",
 	}
 	out := formatConfigTable(cfg)
-	if !strings.Contains(out, "minio.local") {
+	if !strings.Contains(out, "s3.local") {
 		t.Errorf("expected URL in table output, got: %s", out)
 	}
 }
@@ -1048,50 +1048,12 @@ func TestFormatConfigTable_WithBackendURL(t *testing.T) {
 
 func TestFormatConfigJSON_WithBackendURL(t *testing.T) {
 	cfg := &Config{
-		Backend:    "minio",
-		BackendURL: "http://minio.local:9000",
+		Backend:    "s3",
+		BackendURL: "http://s3.local:9000",
 	}
 	out := formatConfigJSON(cfg)
 	if !strings.Contains(out, `"backend_url"`) {
 		t.Errorf("expected backend_url in JSON output, got: %s", out)
-	}
-}
-
-// -------------------------------------------------------------------
-// ValidateConfig – minio branches
-// -------------------------------------------------------------------
-
-func TestValidateConfig_MinioMissingBucket(t *testing.T) {
-	cfg := &Config{
-		Backend:      "minio",
-		BackendURL:   "http://localhost:9000",
-		OutputFormat: "text",
-	}
-	if err := ValidateConfig(cfg); !errors.Is(err, ErrBackendBucketRequired) {
-		t.Errorf("expected ErrBackendBucketRequired, got %v", err)
-	}
-}
-
-func TestValidateConfig_MinioMissingURL(t *testing.T) {
-	cfg := &Config{
-		Backend:       "minio",
-		BackendBucket: "mybucket",
-		OutputFormat:  "text",
-	}
-	if err := ValidateConfig(cfg); !errors.Is(err, ErrBackendURLRequired) {
-		t.Errorf("expected ErrBackendURLRequired, got %v", err)
-	}
-}
-
-func TestValidateConfig_MinioValid(t *testing.T) {
-	cfg := &Config{
-		Backend:       "minio",
-		BackendBucket: "mybucket",
-		BackendURL:    "http://localhost:9000",
-		OutputFormat:  "text",
-	}
-	if err := ValidateConfig(cfg); err != nil {
-		t.Errorf("expected valid minio config, got %v", err)
 	}
 }
 

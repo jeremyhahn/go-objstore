@@ -7,7 +7,7 @@ go-objstore is a unified object storage abstraction library built around a consi
 ### Storage Layer
 The foundation is the `Storage` interface, which defines 19 methods for object operations organized into five categories: configuration, basic operations, context-aware operations, metadata operations, lifecycle management, and archival. All backends implement this interface completely, ensuring consistent behavior whether you're using local filesystem or cloud storage.
 
-Backends include local filesystem, Amazon S3, Google Cloud Storage, Azure Blob Storage, MinIO, AWS Glacier, and Azure Archive.
+Backends include local filesystem, Amazon S3, Google Cloud Storage, Azure Blob Storage, AWS Glacier, and Azure Archive.
 
 [Read more about the storage layer](storage-layer.md)
 
@@ -65,7 +65,7 @@ The factory pattern abstracts backend creation. The facade uses the factory inte
 Custom logging, authentication, and TLS configuration are injected through adapter interfaces. This allows integration with existing systems without modifying core code.
 
 ### Comprehensive Testing
-All functionality is tested at both unit and integration levels. Integration tests use Docker to spin up real services (MinIO, Azurite, GCS emulator) for testing against actual implementations.
+All functionality is tested at both unit and integration levels. Integration tests use Docker to spin up real services (Floci, Azurite, GCS emulator) for testing against actual implementations.
 
 ## Data Flow
 

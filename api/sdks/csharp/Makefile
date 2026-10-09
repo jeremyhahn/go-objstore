@@ -1,5 +1,7 @@
 .PHONY: help build test clean coverage integration-test restore format lint docker-build docker-test-unit docker-test-integration docker-test
 
+include ../compose-project.mk
+
 # Default target
 help:
 	@echo "Go-ObjStore C# SDK - Available targets:"
