@@ -39,7 +39,7 @@ check_client() {
     return $all_present
 }
 
-cd /home/jhahn/sources/go-objstore/api/sdks/python
+cd "$(dirname "${BASH_SOURCE[0]}")"
 
 overall_result=0
 

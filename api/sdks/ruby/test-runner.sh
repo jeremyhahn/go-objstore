@@ -6,7 +6,7 @@
 set -e
 
 RUBY_VERSION="3.2"
-SDK_DIR="/home/jhahn/sources/go-objstore/api/sdks/ruby"
+SDK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "Ruby SDK Test Runner"
 echo "===================="

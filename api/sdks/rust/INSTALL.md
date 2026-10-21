@@ -55,7 +55,7 @@ The first build will:
 3. Compile the SDK
 
 ```bash
-cd /home/jhahn/sources/go-objstore/api/sdks/rust
+cd ./api/sdks/rust
 
 # Build in debug mode
 cargo build
@@ -93,11 +93,11 @@ Integration tests require a running go-objstore server.
 
 ```bash
 # Ensure go-objstore is built
-cd /home/jhahn/sources/go-objstore
+cd .
 make build
 
 # Run Docker integration tests
-cd /home/jhahn/sources/go-objstore/api/sdks/rust
+cd ./api/sdks/rust
 ./scripts/docker-test.sh
 ```
 
@@ -105,11 +105,11 @@ cd /home/jhahn/sources/go-objstore/api/sdks/rust
 
 ```bash
 # Terminal 1: Start server
-cd /home/jhahn/sources/go-objstore
+cd .
 ./go-objstore serve
 
 # Terminal 2: Run tests
-cd /home/jhahn/sources/go-objstore/api/sdks/rust
+cd ./api/sdks/rust
 cargo test --test integration_test -- --ignored
 ```
 
@@ -130,11 +130,11 @@ open coverage/index.html
 
 ```bash
 # Ensure server is running first
-cd /home/jhahn/sources/go-objstore
+cd .
 ./go-objstore serve
 
 # In another terminal
-cd /home/jhahn/sources/go-objstore/api/sdks/rust
+cd ./api/sdks/rust
 
 # Run REST example
 cargo run --example rest_client

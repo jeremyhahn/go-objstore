@@ -1,0 +1,7 @@
+# Development tooling is never published: every archive git builds (git archive,
+# the source tarball a forge serves for a tag) omits these paths.
+# docs/release/public-releasability.md; internal/labstrings enforces the list.
+CLAUDE.md export-ignore
+AGENTS.md export-ignore
+.claude/** export-ignore
+.serena/** export-ignore

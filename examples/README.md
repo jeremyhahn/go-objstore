@@ -203,7 +203,7 @@ AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test \
 
 ```bash
 # First build the shared library from project root
-cd /home/jhahn/sources/go-objstore
+cd .
 make lib
 
 # Then build C examples

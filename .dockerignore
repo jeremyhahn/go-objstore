@@ -2,6 +2,12 @@
 # Build contexts are the repo root (server + Go/Rust SDK images). Exclude VCS,
 # docs, and all language build/test artifacts that are regenerated inside images.
 
+# Development tooling: never in a build context (see .gitattributes).
+**/CLAUDE.md
+**/AGENTS.md
+.claude/
+.serena/
+
 # VCS / CI / editor / OS
 .git/
 .github/

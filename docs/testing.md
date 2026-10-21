@@ -19,6 +19,8 @@ The project maintains comprehensive test coverage across all core packages:
 
 For current coverage statistics, check the [Codecov dashboard](https://codecov.io/gh/jeremyhahn/go-objstore) or run `make coverage-report` locally.
 
+`make test` also runs the public-releasability gate (`internal/labstrings`); see [release/public-releasability.md](release/public-releasability.md).
+
 ## Test Types
 
 ### 1. Unit Tests
