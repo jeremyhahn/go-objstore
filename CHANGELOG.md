@@ -6,6 +6,94 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [0.5.0-alpha] - 2026-10-21
+
+### Changed
+
+- Published files no longer name the private development fleet or its owner
+  (issue #51). A test-only gate, `internal/labstrings`, enforces it under
+  `make test`; `.gitattributes` and `.dockerignore` keep the agent development
+  tooling out of archives and image build contexts. See
+  `docs/release/public-releasability.md`.
+
+- Adopted `github.com/jeremyhahn/go-enclave` v0.8.0-alpha (was v0.3.0-alpha),
+  issue #63. The module graph has no memguard or memcall in the root module,
+  `api/sdks/go` or `examples/encryption`. go-enclave requires Go 1.27.1, so the
+  `go` directive, the CI `GO_VERSION`, the Dockerfile base images and the
+  documented minimum Go version move from 1.27.0 to 1.27.1.
+- **BREAKING:** `cli.Config.Destroy` and `adapters.TLSConfig.Destroy` now return
+  an `error`, the enclave release report that go-enclave v0.8.0-alpha's
+  `MemoryEnclave.Destroy` returns. `cli.Config.SetBackendKeyEnclave` and
+  `SetBackendSecretEnclave` return the same report for the enclave they
+  replaced. A `defer cfg.Destroy()` still compiles; the material is wiped
+  whatever the error says.
+- The credential read path copies a secret out through `WithBytes` instead of the
+  removed `MemoryEnclave.OpenString`, and `SetBackendKeyFromString` /
+  `SetBackendSecretFromString` build their enclaves with
+  `NewMemoryEnclave([]byte(s))` instead of the removed
+  `NewMemoryEnclaveFromString`.
+- `docs/architecture/protected-memory.md` describes the v0.8.0-alpha
+  contract: no slice-returning accessor, frozen enclaves, `EqualTo` returning
+  `(bool, error)`, and `Destroy` returning an error.
+
+- The S3 integration suite and the root integration compose file run against
+  Floci (`floci/floci` 2.2.0, pinned by digest; S3 on port 4566, health check
+  the image's `/usr/local/bin/healthcheck.sh`, Docker-backed services disabled)
+  instead of MinIO.
+
+- Importing a storage backend no longer links gin, the mongo bson codec or
+  ugorji (issue #72). `pkg/local` imported `pkg/audit`, whose HTTP and gRPC
+  middleware pulled those into every consumer (go-xkms `xkey` among them). The
+  audit contract (`AuditLogger`, `AuditEvent`, `EventType` and its constants,
+  `Result` and its constants, `NoOpAuditLogger`, `NewNoOpAuditLogger`) moved to
+  the new dependency-free `pkg/auditlog`; `pkg/audit` keeps the slog-backed
+  logger and the middleware and implements that interface. Code that names the
+  moved identifiers changes its import from `pkg/audit` to `pkg/auditlog`
+  (`audit.AuditLogger` is now `auditlog.AuditLogger`, and so on); the
+  constructors `audit.NewDefaultAuditLogger`, `audit.NewAuditLogger` and the
+  middleware are unchanged. Behaviour is unchanged. A test in
+  `internal/depguard` fails if any backend package's dependency graph includes
+  gin, mongo-driver, ugorji, `pkg/audit` or `pkg/server`.
+
+- **BREAKING:** Adopted `github.com/jeremyhahn/go-enclave` v0.9.0-alpha (was
+  v0.8.0-alpha), issue #88, which makes the memory enclave's type internal.
+  `adapters.TLSConfig.WithServerKeyEnclave` and `ServerKeyEnclave`, and
+  `cli.Config.SetBackendKeyEnclave`, `SetBackendSecretEnclave`,
+  `BackendKeyEnclave` and `BackendSecretEnclave` take and return
+  `enclave.ByteAccess`, was `*enclave.MemoryEnclave`; build one with
+  `enclave.NewMemory`. go-enclave's requirement raises `golang.org/x/sys` to
+  v0.49.0. `docs/architecture/protected-memory.md` uses the new names.
+
+### Removed
+
+- **BREAKING:** the `minio` storage provider is gone, issue #65: `pkg/minio`,
+  the `minio` build tag, `WITH_MINIO`, the `minio` factory registration, the
+  `minio` value of the CLI `--backend` flag and of the replication backend
+  arguments, `integration-test-minio` and `bench-minio`, and
+  `test/integration/minio`. MinIO is no longer open source, so go-objstore no
+  longer supports it. An S3-compatible endpoint is reached through the `s3`
+  provider's `endpoint` option. `cli.ErrBackendURLRequired` is removed with its
+  only user.
+
+### Security
+
+- `golang.org/x/net` moves from v0.58.0 to v0.60.0 in the root, `api/sdks/go`
+  and `examples/encryption` modules (issues #77 and #82), clearing
+  GO-2026-6617, GO-2026-6612, GO-2026-6611, GO-2026-6610 and GO-2026-6603. The
+  repository builds with Go 1.27.2 (issue #82).
+
+- The repository builds with Go 1.27.3 (go.mod, CI workflows and images),
+  fixing CVE-2026-111943 (stdlib) and GO-2026-6809 (crypto/x509).
+
+### Fixed
+
+- Concurrent CI jobs on one Docker host no longer tear each other's integration
+  stacks down. Every integration target and `test-servers` runs under its own
+  compose project (`COMPOSE_PROJECT`, `objstore-<GITHUB_RUN_ID>-<GITHUB_JOB>`
+  plus a per-target suffix), the compose files no longer pin network names, and
+  the Azurite and fake-gcs host port mappings are gone (the tests reach them by
+  service name).
+
 ## [0.4.1-alpha] - 2026-10-09
 
 ### Fixed
