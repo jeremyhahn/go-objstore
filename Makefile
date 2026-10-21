@@ -54,9 +54,20 @@ ifeq ($(WITH_AZURE_ARCHIVE),1)
 	BUILD_TAGS += azurearchive
 endif
 
+# GO_BUILD_TAGS is the tag set the ci-template passes to lint, build, test,
+# security and integration-test (handbook devcontainer.md §6). It defaults to
+# the repository's current tags (every backend); override it on the command
+# line (`make build GO_BUILD_TAGS="local awss3"`). Space- or comma-separated.
+GO_BUILD_TAGS ?= $(strip $(BUILD_TAGS))
+export GO_BUILD_TAGS
+EMPTY :=
+SPACE := $(EMPTY) $(EMPTY)
+COMMA := ,
+GO_BUILD_TAGS_CSV := $(subst $(SPACE),$(COMMA),$(strip $(GO_BUILD_TAGS)))
+
 # Build tag flags for go commands
-ifneq ($(BUILD_TAGS),)
-	TAG_FLAGS := -tags "$(BUILD_TAGS)"
+ifneq ($(strip $(GO_BUILD_TAGS)),)
+	TAG_FLAGS := -tags "$(GO_BUILD_TAGS)"
 else
 	TAG_FLAGS :=
 endif
@@ -75,6 +86,11 @@ GOBUILD := $(GO) build $(TAG_FLAGS) -ldflags "$(VERSION_LDFLAGS)"
 GOTEST := $(GO) test $(TAG_FLAGS)
 GOMOD := $(GO) mod
 GOCLEAN := $(GO) clean
+
+# Gate tools: scripts/require-tool.sh fails closed (non-zero, install hint) when
+# a tool is absent, so no gate passes vacuously (go-objstore#37).
+REQUIRE_TOOL := scripts/require-tool.sh
+GOLANGCI_LINT_VERSION ?= 2.14.0
 
 # Docker Compose (use v2 syntax for GitHub Actions compatibility)
 DOCKER_COMPOSE := docker compose
@@ -132,7 +148,7 @@ deps:
 ## build: Build CLI, server, and shared library
 build:
 	@echo "$(CYAN)$(BOLD)→ Building the library packages...$(RESET)"
-	@echo "$(CYAN)  Build tags: $(BUILD_TAGS)$(RESET)"
+	@echo "$(CYAN)  Build tags: $(GO_BUILD_TAGS)$(RESET)"
 	@$(GOBUILD) ./...
 	@echo "$(GREEN)✓ Library packages compiled$(RESET)"
 	@$(MAKE) --no-print-directory build-cli
@@ -144,7 +160,7 @@ build:
 ## build-cli: Build the CLI tool
 build-cli:
 	@echo "$(CYAN)$(BOLD)→ Building CLI tool...$(RESET)"
-	@echo "$(CYAN)  Build tags: $(BUILD_TAGS)$(RESET)"
+	@echo "$(CYAN)  Build tags: $(GO_BUILD_TAGS)$(RESET)"
 	@mkdir -p $(BIN_DIR)
 	@$(GOBUILD) -o $(BIN_DIR)/objstore ./cmd/objstore
 	@echo "$(GREEN)✓ CLI built: $(BIN_DIR)/objstore$(RESET)"
@@ -153,7 +169,7 @@ build-cli:
 ## build-server: Build all server binaries (all-in-one and individual)
 build-server:
 	@echo "$(CYAN)$(BOLD)→ Building server binaries...$(RESET)"
-	@echo "$(CYAN)  Build tags: $(BUILD_TAGS)$(RESET)"
+	@echo "$(CYAN)  Build tags: $(GO_BUILD_TAGS)$(RESET)"
 	@mkdir -p $(BIN_DIR)
 	@$(GOBUILD) -o $(BIN_DIR)/objstore-server ./cmd/objstore-server
 	@$(GOBUILD) -o $(BIN_DIR)/objstore-grpc-server ./cmd/objstore-grpc-server
@@ -202,7 +218,7 @@ generate-proto:
 test:
 	@echo "$(CYAN)$(BOLD)→ Running unit tests with coverage (race detector)...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
-	$(GO) test -race -timeout=20m -tags="local awss3 gcpstorage azureblob glacier azurearchive" -coverprofile=$(COVERAGE_DIR)/unit.out -covermode=atomic ./pkg/... ./internal/... ./cmd/objstorelib/...
+	$(GO) test -race -timeout=20m $(TAG_FLAGS) -coverprofile=$(COVERAGE_DIR)/unit.out -covermode=atomic ./pkg/... ./internal/... ./cmd/objstorelib/...
 	@echo ""
 	@echo "$(CYAN)$(BOLD)→ Coverage Summary:$(RESET)"
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/unit.out | tail -1 | awk '{print "  $(GREEN)Total Coverage: " $$NF "$(RESET)"}' || true
@@ -516,10 +532,10 @@ bench-storagefs:
 ## coverage-check: Check per-package coverage and highlight packages under 90%
 coverage-check:
 	@echo "$(CYAN)$(BOLD)=== Package Coverage Report ===$(RESET)"
-	@echo "$(CYAN)Using build tags: local,awss3,gcpstorage,azureblob,glacier,azurearchive$(RESET)"
+	@echo "$(CYAN)Using build tags: $(GO_BUILD_TAGS_CSV)$(RESET)"
 	@echo ""
 	@for pkg in $$($(GO) list ./pkg/...); do \
-		output=$$($(GO) test -tags="local,awss3,gcpstorage,azureblob,glacier,azurearchive" -cover "$$pkg" 2>/dev/null); \
+		output=$$($(GO) test -tags="$(GO_BUILD_TAGS_CSV)" -cover "$$pkg" 2>/dev/null); \
 		if echo "$$output" | grep -q "no statements"; then \
 			printf "%-70s %6s\n" "$$pkg" "  N/A"; \
 		else \
@@ -531,7 +547,7 @@ coverage-check:
 	@echo "$(CYAN)$(BOLD)=== Packages Under 90% ===$(RESET)"
 	@UNDER_90=0; \
 	for pkg in $$($(GO) list ./pkg/...); do \
-		output=$$($(GO) test -tags="local,awss3,gcpstorage,azureblob,glacier,azurearchive" -cover "$$pkg" 2>/dev/null); \
+		output=$$($(GO) test -tags="$(GO_BUILD_TAGS_CSV)" -cover "$$pkg" 2>/dev/null); \
 		if echo "$$output" | grep -q "no statements"; then \
 			continue; \
 		fi; \
@@ -585,23 +601,15 @@ docker-test: docker-build
 .PHONY: lint
 ## lint: Run golangci-lint for code quality analysis
 lint:
-	@echo "$(CYAN)$(BOLD)→ Running golangci-lint...$(RESET)"
-	@GOPATH=$$(go env GOPATH); \
-	BIN=""; \
-	for cand in "$$GOPATH/bin/golangci-lint" $$(command -v golangci-lint 2>/dev/null) /usr/local/bin/golangci-lint /usr/bin/golangci-lint; do \
-		[ -x "$$cand" ] || continue; \
-		ver=$$("$$cand" version 2>/dev/null | grep -oE 'version v?[0-9]+' | grep -oE '[0-9]+' | head -1); \
-		if [ "$$ver" = "2" ]; then BIN="$$cand"; break; fi; \
-	done; \
-	if [ -n "$$BIN" ]; then \
-		echo "$(CYAN)  Using $$BIN$(RESET)"; \
-		"$$BIN" run --timeout=10m && \
-		echo "$(GREEN)✓ Linting passed$(RESET)"; \
-	else \
-		echo "$(RED)✗ golangci-lint v2 not found (config is version: \"2\")$(RESET)"; \
-		echo "$(YELLOW)  Install: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b \$$(go env GOPATH)/bin$(RESET)"; \
-		exit 1; \
-	fi
+	@echo "$(CYAN)$(BOLD)→ Running golangci-lint $(GOLANGCI_LINT_VERSION)...$(RESET)"
+	@BIN=$$($(REQUIRE_TOOL) golangci-lint $(GOLANGCI_LINT_VERSION)) || { echo "$(RED)✗ golangci-lint $(GOLANGCI_LINT_VERSION) required$(RESET)"; exit 1; }; \
+	echo "$(CYAN)  Using $$BIN$(RESET)"; \
+	"$$BIN" run --timeout=10m --build-tags "$(GO_BUILD_TAGS_CSV)" && \
+	echo "$(GREEN)✓ Linting passed$(RESET)"
+	@echo "$(CYAN)$(BOLD)→ Running actionlint...$(RESET)"
+	@BIN=$$($(REQUIRE_TOOL) actionlint) || { echo "$(RED)✗ actionlint required$(RESET)"; exit 1; }; \
+	"$$BIN" .github/workflows/*.yml && \
+	echo "$(GREEN)✓ actionlint passed$(RESET)"
 
 .PHONY: install-security-tools
 ## install-security-tools: Install security scanning tools (gosec, govulncheck)
@@ -618,14 +626,14 @@ install-security-tools:
 # The build tags that gate the cloud backends into the build. gosec and
 # govulncheck both need them or they analyse 129 of the 140 files and the
 # S3/Glacier/Azure implementations go unscanned.
-SECURITY_TAGS = local,awss3,gcpstorage,azureblob,glacier
+# An explicit GO_BUILD_TAGS overrides the default.
+SECURITY_TAGS = $(if $(filter file,$(origin GO_BUILD_TAGS)),local$(COMMA)awss3$(COMMA)gcpstorage$(COMMA)azureblob$(COMMA)glacier,$(GO_BUILD_TAGS_CSV))
 
 # Kept identical to the gosec step in .github/workflows/ci.yml -- devops.md §8
 # makes `make security` the contract, so the two must not drift. test/ and
 # coverage/ are deliberately NOT excluded: CI scans them, so a developer must
-# too.
-GOSEC_ARGS = -exclude-generated \
-	-tags $(SECURITY_TAGS) \
+# too. No -exclude-generated: CI does not pass it.
+GOSEC_ARGS = -tags $(SECURITY_TAGS) \
 	-fmt json -out gosec-results.json -stdout -verbose text \
 	-exclude-dir=examples
 
@@ -670,16 +678,12 @@ security:
 	# **/vendor is gitignored language-SDK tooling that is not in a CI checkout.
 	# api/sdks/* IS scanned: those SDKs ship, so their lockfiles are in scope.
 	@echo "$(CYAN)  Running trivy filesystem scan...$(RESET)"
-	@if command -v trivy > /dev/null 2>&1; then \
-		trivy fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 \
-			--skip-dirs test --skip-dirs examples --skip-dirs coverage --skip-dirs bin \
-			--skip-dirs '**/vendor' . \
-			&& echo "$(GREEN)✓ trivy fs passed$(RESET)" \
-			|| { echo "$(RED)✗ trivy found CRITICAL/HIGH findings$(RESET)"; exit 1; }; \
-	else \
-		echo "$(YELLOW)⚠ trivy not found - skipping filesystem scan$(RESET)"; \
-		echo "$(YELLOW)  Install: https://trivy.dev/latest/getting-started/installation/$(RESET)"; \
-	fi
+	@BIN=$$($(REQUIRE_TOOL) trivy) || { echo "$(RED)✗ trivy required for the filesystem scan$(RESET)"; exit 1; }; \
+	"$$BIN" fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 \
+		--skip-dirs test --skip-dirs examples --skip-dirs coverage --skip-dirs bin \
+		--skip-dirs '**/vendor' . \
+		&& echo "$(GREEN)✓ trivy fs passed$(RESET)" \
+		|| { echo "$(RED)✗ trivy found CRITICAL/HIGH findings$(RESET)"; exit 1; }
 	@echo "$(GREEN)✓ Security checks complete$(RESET)"
 	@echo "$(YELLOW)Note: container images are scanned separately - run 'make trivy-image'$(RESET)"
 
@@ -690,14 +694,10 @@ security:
 # of `make security`.
 trivy-image: docker-build
 	@echo "$(CYAN)$(BOLD)→ Scanning container image with Trivy...$(RESET)"
-	@if command -v trivy > /dev/null 2>&1; then \
-		trivy image --severity CRITICAL,HIGH --exit-code 1 --no-progress $(PROJECT_NAME) \
-			&& echo "$(GREEN)✓ trivy image passed$(RESET)" \
-			|| { echo "$(RED)✗ trivy found CRITICAL/HIGH findings in $(PROJECT_NAME)$(RESET)"; exit 1; }; \
-	else \
-		echo "$(YELLOW)⚠ trivy not found - skipping image scan$(RESET)"; \
-		echo "$(YELLOW)  Install: https://trivy.dev/latest/getting-started/installation/$(RESET)"; \
-	fi
+	@BIN=$$($(REQUIRE_TOOL) trivy) || { echo "$(RED)✗ trivy required for the image scan$(RESET)"; exit 1; }; \
+	"$$BIN" image --severity CRITICAL,HIGH --exit-code 1 --no-progress $(PROJECT_NAME) \
+		&& echo "$(GREEN)✓ trivy image passed$(RESET)" \
+		|| { echo "$(RED)✗ trivy found CRITICAL/HIGH findings in $(PROJECT_NAME)$(RESET)"; exit 1; }
 
 .PHONY: ci
 ## ci: Run the full CI pipeline locally (mirrors .github/workflows/ci.yml, Go-core only; SDK suites run via test-sdks/test-sdks-all)
@@ -801,7 +801,7 @@ lib-test: lib
 ## lib: Generate a shared object (.so) file for the library
 lib:
 	@echo "$(CYAN)$(BOLD)→ Building shared library...$(RESET)"
-	@echo "$(CYAN)  Build tags: $(BUILD_TAGS)$(RESET)"
+	@echo "$(CYAN)  Build tags: $(GO_BUILD_TAGS)$(RESET)"
 	@mkdir -p $(BIN_DIR)
 	@$(GO) build $(TAG_FLAGS) -ldflags "$(VERSION_LDFLAGS)" -buildmode=c-shared -o $(BIN_DIR)/libobjstore.so ./cmd/objstorelib
 	@mv $(BIN_DIR)/libobjstore.h examples/c_client/libobjstore.h

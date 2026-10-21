@@ -31,21 +31,21 @@ jobs:
       id: get_version
       run: |
         VERSION=${GITHUB_REF#refs/tags/v}
-        echo "version=${VERSION}" >> $GITHUB_OUTPUT
+        echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
         echo "Version: ${VERSION}"
 
     - name: Generate changelog
       id: changelog
       run: |
         # Get previous tag
-        PREV_TAG=$(git describe --abbrev=0 --tags $(git rev-list --tags --skip=1 --max-count=1) 2>/dev/null || echo "")
+        PREV_TAG=$(git describe --abbrev=0 --tags "$(git rev-list --tags --skip=1 --max-count=1)" 2>/dev/null || echo "")
 
         if [ -z "$PREV_TAG" ]; then
           echo "First release - generating full changelog"
           CHANGELOG=$(git log --pretty=format:"* %s (%h)" --no-merges)
         else
           echo "Generating changelog from ${PREV_TAG} to ${GITHUB_REF_NAME}"
-          CHANGELOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"* %s (%h)" --no-merges)
+          CHANGELOG=$(git log "${PREV_TAG}..HEAD" --pretty=format:"* %s (%h)" --no-merges)
         fi
 
         # Save changelog to file
@@ -179,10 +179,8 @@ jobs:
         # Determine file extension and archive type
         if [ "$GOOS" = "windows" ]; then
           BINARY_NAME="objstore${FIPS_SUFFIX}.exe"
-          ARCHIVE_EXT="zip"
         else
           BINARY_NAME="objstore${FIPS_SUFFIX}"
-          ARCHIVE_EXT="tar.gz"
         fi
 
         # Build CLI binary
@@ -269,7 +267,7 @@ jobs:
           ./cmd/objstorelib
 
         # Generate header file (same for both)
-        cp libobjstore-${VERSION}-linux-${GOARCH}.h libobjstore.h 2>/dev/null || true
+        cp "libobjstore-${VERSION}-linux-${GOARCH}.h" libobjstore.h 2>/dev/null || true
 
         # Create checksums
         sha256sum "libobjstore-${VERSION}-linux-${GOARCH}.so" > "libobjstore-${VERSION}-linux-${GOARCH}.so.sha256"
@@ -547,13 +545,13 @@ jobs:
           TAG_NAME=${GITHUB_REF#refs/tags/}
 
           # Download all release assets
-          gh release download ${TAG_NAME} --pattern "*.sha256" --dir checksums || true
+          gh release download "${TAG_NAME}" --pattern "*.sha256" --dir checksums || true
 
       - name: Create master checksums file
         run: |
           if [ -d checksums ]; then
             cd checksums
-            cat *.sha256 > ../checksums.txt 2>/dev/null || echo "No checksums found" > ../checksums.txt
+            cat ./*.sha256 > ../checksums.txt 2>/dev/null || echo "No checksums found" > ../checksums.txt
             cd ..
           else
             echo "No checksums directory found" > checksums.txt

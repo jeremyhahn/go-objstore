@@ -408,6 +408,25 @@ func TestS3_RealCloud(t *testing.T) {
 }
 ```
 
+## Local Gates Fail Closed
+
+No local gate passes vacuously. `scripts/require-tool.sh` backs these targets and
+exits non-zero with an install hint when a tool is missing:
+
+- `make lint` needs golangci-lint v2.14.0 (the version baked into the CI image)
+  and `actionlint`, which checks `.github/workflows/*.yml`.
+- `make security` needs gosec, govulncheck and `trivy` (filesystem scan).
+  `GOSEC_ARGS` matches the gosec step in `ci.yml`.
+- `make trivy-image` needs `trivy` and Docker.
+
+`scripts/require-tool_test.sh` proves the behaviour: a missing or wrong-version
+tool fails, a present one passes.
+
+`GO_BUILD_TAGS` is the tag set the CI template passes to `lint`, `build`, `test`,
+`coverage-check`, `security` and `integration-test`. It defaults to every backend
+tag; override it with `make build GO_BUILD_TAGS="local awss3"`. The integration
+Dockerfiles under `test/integration/` still pin their own tags.
+
 ## Build Tags
 
 The project uses Go build tags to separate test types:
