@@ -38,7 +38,7 @@ Optional at-rest encryption via a pluggable interface. Bring your own key manage
 [Read more about encryption](encryption.md)
 
 ### Protected Memory
-Keys, credentials and other sensitive material are held in `MemoryEnclave` — locked, zeroized memory — for their whole lifetime rather than in plain strings or byte slices. Protected entry points are additive; the plain ones remain deprecated until a coordinated portfolio-wide release.
+Keys, credentials and other sensitive material are held in a go-enclave memory enclave (`enclave.ByteAccess`) — locked, zeroized memory — for their whole lifetime rather than in plain strings or byte slices. Protected entry points are additive; the plain ones remain deprecated until a coordinated portfolio-wide release.
 
 [Read more about protected memory](protected-memory.md)
 

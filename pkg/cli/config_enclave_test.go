@@ -176,13 +176,13 @@ func TestSetBackendCredentialsFromString_Empty(t *testing.T) {
 func TestSetBackendCredentialEnclave_ReplacesPrevious(t *testing.T) {
 	cfg := &Config{}
 
-	firstKey, err := enclave.NewMemoryEnclave([]byte("first-key"))
+	firstKey, err := enclave.NewMemory([]byte("first-key"))
 	if err != nil {
-		t.Fatalf("NewMemoryEnclave: %v", err)
+		t.Fatalf("NewMemory: %v", err)
 	}
-	firstSecret, err := enclave.NewMemoryEnclave([]byte("first-secret"))
+	firstSecret, err := enclave.NewMemory([]byte("first-secret"))
 	if err != nil {
-		t.Fatalf("NewMemoryEnclave: %v", err)
+		t.Fatalf("NewMemory: %v", err)
 	}
 	if err := cfg.SetBackendKeyEnclave(firstKey); err != nil {
 		t.Fatalf("SetBackendKeyEnclave: %v", err)
@@ -287,9 +287,9 @@ func TestDisplayConfig_EnclavedAndPlainAgree(t *testing.T) {
 }
 
 func TestMaskEnclave_ShortMaterial(t *testing.T) {
-	short, err := enclave.NewMemoryEnclave([]byte("ab"))
+	short, err := enclave.NewMemory([]byte("ab"))
 	if err != nil {
-		t.Fatalf("NewMemoryEnclave: %v", err)
+		t.Fatalf("NewMemory: %v", err)
 	}
 	defer short.Destroy()
 
@@ -298,6 +298,9 @@ func TestMaskEnclave_ShortMaterial(t *testing.T) {
 	}
 	if got := maskEnclave(nil); got != "****" {
 		t.Errorf("maskEnclave(nil) = %q, want ****", got)
+	}
+	if _, err := enclaveString(nil); !errors.Is(err, enclave.ErrEnclaveDestroyed) {
+		t.Errorf("enclaveString(nil) err = %v, want ErrEnclaveDestroyed", err)
 	}
 }
 

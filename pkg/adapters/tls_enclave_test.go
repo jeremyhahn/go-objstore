@@ -24,11 +24,11 @@ import (
 	"github.com/jeremyhahn/go-enclave"
 )
 
-func newKeyEnclave(t *testing.T, keyPEM []byte) *enclave.MemoryEnclave {
+func newKeyEnclave(t *testing.T, keyPEM []byte) enclave.ByteAccess {
 	t.Helper()
-	e, err := enclave.NewMemoryEnclave(keyPEM)
+	e, err := enclave.NewMemory(keyPEM)
 	if err != nil {
-		t.Fatalf("NewMemoryEnclave: %v", err)
+		t.Fatalf("NewMemory: %v", err)
 	}
 	return e
 }
@@ -55,7 +55,7 @@ func TestTLSConfig_WithServerKeyEnclave(t *testing.T) {
 	if eq, err := config.ServerKeyEnclave().EqualTo(keyCopy); err != nil || !eq {
 		t.Error("enclave does not hold the key")
 	}
-	// NewMemoryEnclave takes ownership, so the caller's slice is wiped.
+	// NewMemory takes ownership, so the caller's slice is wiped.
 	if !bytes.Equal(keyPEM, make([]byte, len(keyPEM))) {
 		t.Error("caller's key slice was not wiped")
 	}
@@ -145,15 +145,19 @@ func TestTLSConfig_Destroy(t *testing.T) {
 		t.Fatalf("generateTestCert: %v", err)
 	}
 
-	config := NewTLSConfig().WithServerKeyEnclave(certPEM, newKeyEnclave(t, keyPEM))
+	keyEnclave := newKeyEnclave(t, keyPEM)
+	config := NewTLSConfig().WithServerKeyEnclave(certPEM, keyEnclave)
 	// A caller mid-migration may still carry the deprecated copy.
 	config.ServerKeyPEM = []byte("legacy-plaintext-key")
 
 	config.Destroy()
 	config.Destroy() // idempotent
 
-	if config.ServerKeyEnclave().IsAlive() {
+	if keyEnclave.IsAlive() {
 		t.Error("enclave still alive after Destroy")
+	}
+	if config.ServerKeyEnclave() != nil {
+		t.Error("ServerKeyEnclave not cleared after Destroy")
 	}
 	if config.ServerKeyPEM != nil {
 		t.Error("deprecated ServerKeyPEM not cleared")
@@ -163,6 +167,24 @@ func TestTLSConfig_Destroy(t *testing.T) {
 	}
 	if _, err := config.Build(); !errors.Is(err, ErrInvalidCertificate) {
 		t.Errorf("Build after Destroy err = %v, want ErrInvalidCertificate", err)
+	}
+}
+
+// TestTLSConfig_DestroyWithoutEnclave covers the nil ByteAccess paths: a
+// config that never held an enclave destroys cleanly, and reading a key pair
+// from a nil enclave fails closed instead of panicking.
+func TestTLSConfig_DestroyWithoutEnclave(t *testing.T) {
+	config := NewTLSConfig()
+	config.ServerKeyPEM = []byte("legacy-plaintext-key")
+	if err := config.Destroy(); err != nil {
+		t.Errorf("Destroy without enclave err = %v, want nil", err)
+	}
+	if config.ServerKeyPEM != nil {
+		t.Error("deprecated ServerKeyPEM not cleared")
+	}
+
+	if _, err := keyPairFromEnclave(nil, nil); !errors.Is(err, enclave.ErrEnclaveDestroyed) {
+		t.Errorf("keyPairFromEnclave(nil) err = %v, want ErrEnclaveDestroyed", err)
 	}
 }
 

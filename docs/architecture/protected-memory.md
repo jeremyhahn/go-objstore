@@ -7,7 +7,7 @@ Keys, passphrases, tokens and credentials live in protected storage for their
 whole lifetime in the process and are zeroized on release — never in a plain
 `[]byte` or `string`.
 
-The primitive is `MemoryEnclave` from
+The primitive is the memory enclave from
 [`github.com/jeremyhahn/go-enclave`](http://198.51.100.91:3001/jeremyhahn/go-enclave):
 a region of locked, zeroized memory that go-enclave maps itself. The bytes sit
 on `mlock`'d pages (never paged to swap), fenced by inaccessible guard pages,
@@ -16,8 +16,11 @@ are kept out at two levels: `RLIMIT_CORE` is lowered process-wide on import (bes
 effort, reported by `CoreDumpsDisabled` rather than assumed) and every enclave's
 pages are additionally marked `MADV_DONTDUMP` (and, on Linux, `MADV_DONTFORK`,
 so a forked child has no mapping there). This repository builds against
-go-enclave v0.8.0-alpha, which maps the pages itself with `golang.org/x/sys`;
-there is no memguard or memcall in the module graph.
+go-enclave v0.9.0-alpha, which maps the pages itself with `golang.org/x/sys`;
+there is no memguard or memcall in the module graph. Since v0.9.0-alpha the
+enclave's concrete type is internal to go-enclave: `NewMemory` hands it out as
+an `enclave.ByteAccess`, and that interface is what this repository holds and
+passes around.
 
 The primitive lived in this repository as `pkg/enclave` until 2026-08-25. It was
 extracted to its own Layer 0 module (issue #29, owner-ruled 2026-08-23) so that
@@ -30,7 +33,7 @@ and go-enclave's own documentation governs if the two ever disagree.
 ```go
 import "github.com/jeremyhahn/go-enclave"
 
-e, err := enclave.NewMemoryEnclave(keyPEM) // keyPEM is wiped
+e, err := enclave.NewMemory(keyPEM) // keyPEM is wiped
 if err != nil {
     return err
 }
@@ -53,7 +56,7 @@ discipline is a lock over the whole access, not a flag:
 - `WithBytes`, `EqualTo`, `Size`, `IsAlive` and `String` hold the
   enclave's read lock across the entire access. Strings are read through
   `WithBytes`; `OpenString` and `Open` no longer exist, and string material
-  comes in as `NewMemoryEnclave([]byte(s))`.
+  comes in as `NewMemory([]byte(s))`.
 - `Destroy` takes the write lock, so it **blocks** until every in-flight borrow
   has returned. It never wipes memory a reader is still holding. It returns an
   error (never panics): `ErrEnclaveCorrupted` when the guards were overwritten,
@@ -69,11 +72,11 @@ discipline is a lock over the whole access, not a flag:
   deadlocks and a nested read deadlocks whenever a `Destroy` is already waiting
   for the write lock. It **may** construct, destroy or borrow **other** enclaves
   — there is no shared purge lock to forbid it.
-- `MemoryEnclave` has no accessor that returns a slice outliving the lock: the
+- `ByteAccess` has no accessor that returns a slice outliving the lock: the
   old `Open`, `OpenString` and `NewMemoryEnclaveFromString` were removed in
   go-enclave v0.8.0-alpha for exactly that reason. Every read is a `WithBytes`
-  borrow, and string material enters through `NewMemoryEnclave([]byte(s))`.
-- An enclave built by `NewMemoryEnclave` is frozen (read-only): a write through
+  borrow, and string material enters through `NewMemory([]byte(s))`.
+- An enclave built by `NewMemory` is frozen (read-only): a write through
   the `WithBytes` view faults. `EqualTo` returns `(bool, error)` — a destroyed
   enclave is `ErrEnclaveDestroyed`, never a bare `false`.
 - `Destroy` returns an error: `nil`, `ErrReleasedWithoutWipe`,
@@ -132,10 +135,10 @@ ever set; the rule closes a fallback, not the compatibility path.
 
 ## Naming
 
-The type is `MemoryEnclave`, and derived names come from it
-(`NewMemoryEnclave`, `WithBytes`, `Destroy`, `WithServerKeyEnclave`,
-`BackendKeyEnclave`). The name describes the mechanism — a region of locked
-memory.
+The mechanism is the memory enclave — a region of locked memory — and this
+repository's names come from it (`WithServerKeyEnclave`, `BackendKeyEnclave`).
+The handle type is go-enclave's `ByteAccess`, built by `NewMemory` and read with
+`WithBytes`; go-enclave's own `MemoryEnclave` name is gone as of v0.9.0-alpha.
 
 `Secret` is deliberately **not** used: in this codebase it already means a
 configuration value and a secret *reference*, so a reader cannot tell which is
@@ -145,7 +148,7 @@ later audit a `grep`.
 
 ## FIPS
 
-A `MemoryEnclave` performs no cryptography. It maps, locks and wipes memory; the
+A memory enclave performs no cryptography. It maps, locks and wipes memory; the
 only cryptographic primitive anywhere near it is `crypto/rand` filling the guard
 canary, a FIPS-approved DRBG. go-enclave has no memguard in its graph, so the
 non-approved NaCl secretbox that memguard's unused `Enclave`/`Seal` paths
@@ -156,7 +159,7 @@ unit suite — every consumer of the enclave included — under the same setting
 ## Failure behavior
 
 `mlock` is bounded by `RLIMIT_MEMLOCK`. When the kernel refuses to map or lock
-the pages — most often at that ceiling — `NewMemoryEnclave` releases whatever it
+the pages — most often at that ceiling — `NewMemory` releases whatever it
 had already taken and returns a `*LockedMemoryError` carrying the underlying
 `mmap`/`mlock`/`mprotect` cause and the kernel errno, which is what separates a
 memlock ceiling from any other allocation failure. Callers match the
@@ -167,7 +170,7 @@ nothing can purge it, enclaves elsewhere in the process are unaffected.
 Deployments that hold many enclaves should raise `RLIMIT_MEMLOCK`
 accordingly.
 
-The ownership contract holds on that path too: `NewMemoryEnclave` wipes the
+The ownership contract holds on that path too: `NewMemory` wipes the
 caller's slice before **every** return, failures included — so even on the
 mapping-failure path, where nothing was copied out, the secret does not survive
 in the caller's memory on precisely the resource-exhaustion case this handling

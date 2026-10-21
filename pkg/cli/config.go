@@ -38,7 +38,7 @@ type Config struct {
 	// readable in the heap until the garbage collector happens to reuse the
 	// memory, and is pageable to swap and visible in a core dump throughout.
 	// Use GetConfigProtected or SetBackendKeyEnclave, which hold the
-	// credential in a locked, zeroized [enclave.MemoryEnclave]. This field
+	// credential in a locked, zeroized memory enclave ([enclave.ByteAccess]). This field
 	// remains for compatibility and is removed in the next major version;
 	// when both are set, the enclave wins.
 	BackendKey string
@@ -70,8 +70,8 @@ type Config struct {
 	// only be reached through the enclave API, never copied out of the struct
 	// by a consumer, and they take precedence over the deprecated plain
 	// fields above wherever this package reads a credential.
-	backendKeyEnclave    *enclave.MemoryEnclave
-	backendSecretEnclave *enclave.MemoryEnclave
+	backendKeyEnclave    enclave.ByteAccess
+	backendSecretEnclave enclave.ByteAccess
 }
 
 // InitConfig initializes the configuration using Viper.
@@ -182,7 +182,7 @@ func GetConfigProtected(v *viper.Viper) (*Config, error) {
 // enclave and clears the deprecated plain field. The Config TAKES OWNERSHIP of
 // the enclave; any previously held one is destroyed. e is installed whatever
 // the result: the error is the replaced enclave's release report.
-func (c *Config) SetBackendKeyEnclave(e *enclave.MemoryEnclave) error {
+func (c *Config) SetBackendKeyEnclave(e enclave.ByteAccess) error {
 	var err error
 	if c.backendKeyEnclave != nil && c.backendKeyEnclave != e {
 		err = c.backendKeyEnclave.Destroy()
@@ -197,7 +197,7 @@ func (c *Config) SetBackendKeyEnclave(e *enclave.MemoryEnclave) error {
 // OWNERSHIP of the enclave; any previously held one is destroyed. e is
 // installed whatever the result: the error is the replaced enclave's release
 // report.
-func (c *Config) SetBackendSecretEnclave(e *enclave.MemoryEnclave) error {
+func (c *Config) SetBackendSecretEnclave(e enclave.ByteAccess) error {
 	var err error
 	if c.backendSecretEnclave != nil && c.backendSecretEnclave != e {
 		err = c.backendSecretEnclave.Destroy()
@@ -214,7 +214,7 @@ func (c *Config) SetBackendKeyFromString(key string) error {
 	if key == "" {
 		return c.SetBackendKeyEnclave(nil)
 	}
-	e, err := enclave.NewMemoryEnclave([]byte(key))
+	e, err := enclave.NewMemory([]byte(key))
 	if err != nil {
 		return err
 	}
@@ -228,7 +228,7 @@ func (c *Config) SetBackendSecretFromString(secret string) error {
 	if secret == "" {
 		return c.SetBackendSecretEnclave(nil)
 	}
-	e, err := enclave.NewMemoryEnclave([]byte(secret))
+	e, err := enclave.NewMemory([]byte(secret))
 	if err != nil {
 		return err
 	}
@@ -237,13 +237,13 @@ func (c *Config) SetBackendSecretFromString(secret string) error {
 
 // BackendKeyEnclave returns the enclave holding the backend access key, or
 // nil when the credential came from the deprecated plain field.
-func (c *Config) BackendKeyEnclave() *enclave.MemoryEnclave {
+func (c *Config) BackendKeyEnclave() enclave.ByteAccess {
 	return c.backendKeyEnclave
 }
 
 // BackendSecretEnclave returns the enclave holding the backend secret access
 // key, or nil when the credential came from the deprecated plain field.
-func (c *Config) BackendSecretEnclave() *enclave.MemoryEnclave {
+func (c *Config) BackendSecretEnclave() enclave.ByteAccess {
 	return c.backendSecretEnclave
 }
 
@@ -259,9 +259,14 @@ func (c *Config) Destroy() error {
 	if c == nil {
 		return nil
 	}
-	keyErr := c.backendKeyEnclave.Destroy()
+	var keyErr, secretErr error
+	if c.backendKeyEnclave != nil {
+		keyErr = c.backendKeyEnclave.Destroy()
+	}
 	c.backendKeyEnclave = nil
-	secretErr := c.backendSecretEnclave.Destroy()
+	if c.backendSecretEnclave != nil {
+		secretErr = c.backendSecretEnclave.Destroy()
+	}
 	c.backendSecretEnclave = nil
 	c.BackendKey = ""
 	c.BackendSecret = ""
@@ -300,7 +305,10 @@ func (c *Config) backendSecretValue() (string, error) {
 // enclaveString copies the enclave's material out as a string, or reports
 // [enclave.ErrEnclaveDestroyed]. The copy is taken inside the borrow, so a
 // concurrent Destroy waits rather than unmapping the pages mid-read.
-func enclaveString(e *enclave.MemoryEnclave) (string, error) {
+func enclaveString(e enclave.ByteAccess) (string, error) {
+	if e == nil {
+		return "", enclave.ErrEnclaveDestroyed
+	}
 	var s string
 	if err := e.WithBytes(func(b []byte) error {
 		s = string(b)
@@ -571,8 +579,11 @@ func maskSecret(s string) string {
 // credential never materializes the whole of it in unprotected memory. The
 // copy is taken through WithBytes, so a concurrent Destroy waits rather than
 // unmapping the pages mid-read. A destroyed enclave masks completely.
-func maskEnclave(e *enclave.MemoryEnclave) string {
+func maskEnclave(e enclave.ByteAccess) string {
 	masked := "****"
+	if e == nil {
+		return masked
+	}
 	if err := e.WithBytes(func(b []byte) error {
 		if len(b) >= 5 {
 			masked = string(b[:4]) + "****"
