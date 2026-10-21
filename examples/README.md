@@ -184,7 +184,7 @@ storage.AddPolicy(archivePolicy)
 
 ### Prerequisites
 
-- Go 1.27.2 or higher
+- Go 1.27.3 or higher
 - For S3 examples: Floci, a local AWS emulator (optional)
 - For C examples: GCC compiler
 

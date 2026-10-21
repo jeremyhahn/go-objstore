@@ -77,7 +77,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GO_VERSION: '1.27.2'
+  GO_VERSION: '1.27.3'
   COVERAGE_THRESHOLD: 89
   # The docker job builds with push: false / load: true and only ever scans the
   # result, so this is a local image name and nothing more. It used to be

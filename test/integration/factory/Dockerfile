@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM golang:1.27.2-bookworm
+FROM golang:1.27.3-bookworm
 
 ENV GOTOOLCHAIN=auto
 
