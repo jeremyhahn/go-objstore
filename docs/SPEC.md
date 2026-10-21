@@ -1,0 +1,59 @@
+# go-objstore specification
+
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-21
+> Conflicts with this document are defects. Fix them here first.
+
+## Purpose
+
+go-objstore is the multi-backend object storage library of the portfolio: one `Storage` interface over local disk, AWS S3, Google Cloud Storage, Azure Blob and the Glacier and Azure Archive tiers.
+It is a foundational library. go-xkms, go-trusted-ca and go-quicbaas consume it for persistent object storage.
+It also ships servers (gRPC, REST, QUIC, Unix socket, MCP), a CLI, a C library and client SDKs over the same interface.
+Its one first-party dependency is go-enclave, the locked-memory primitive.
+
+## Boundaries
+
+- Owns the storage abstraction, its provider implementations, the facade, the servers and the CLI.
+- Owns at-rest encryption through a pluggable interface; it never owns key management.
+- Holds credentials and keys in go-enclave locked, zeroized memory; never logs them or stores them in object metadata.
+- Takes no portfolio dependency other than go-enclave.
+- Never reaches a provider outside the common `Storage` interface; every provider satisfies it completely.
+- Never supports MinIO; an S3-compatible endpoint is reached through the `s3` provider's `endpoint` option.
+- Never edits another repository; work needed elsewhere is an issue on that repository.
+
+## Features
+
+| Feature | Status | Requirements | Detail |
+|---|---|---|---|
+| storage-interface | shipped | One `Storage` interface covers configuration, basic, context-aware, metadata, lifecycle and archival operations. Every provider implements all of it with the same behaviour and typed errors. | [docs/architecture](architecture/storage-layer.md) |
+| local-provider | shipped | Stores objects on the local filesystem. Listing tolerates concurrent writes and deletes, and an absent directory lists as empty. | [docs/backends](backends/README.md) |
+| cloud-providers | shipped | `s3`, `gcs` and `azure` providers use their SDK credential chains. `s3` reaches any S3-compatible endpoint through its `endpoint` option. | [docs/backends](backends/README.md) |
+| archive-providers | shipped | `glacier` and `azure-archive` serve as archive destinations only, never as primary storage. | [docs/backends](backends/README.md) |
+| facade | shipped | The `objstore` package is the single entry point. It validates input once, routes `backend:key` references and builds providers through the factory. | [docs/architecture](architecture/README.md) |
+| servers | shipped | gRPC, REST, QUIC, Unix socket and MCP servers expose the interface with TLS/mTLS and pluggable authentication. Settings resolve flags over environment over file over defaults. | [docs/architecture](architecture/servers.md) |
+| storagefs | shipped | Wraps any provider in file and directory operations like Go's `os` package. | [docs/storagefs](storagefs/README.md) |
+| encryption | shipped | Optional at-rest encryption through the `Encrypter` and `EncrypterFactory` interfaces, with AES-GCM available. Key management is the caller's. | [docs/architecture](architecture/encryption.md) |
+| protected-memory | shipped | Keys and credentials live in go-enclave locked, zeroized memory for their whole lifetime. Protected entry points are additive and the plain ones stay deprecated until a coordinated release. | [docs/architecture](architecture/protected-memory.md) |
+| lifecycle | shipped | Retention and archival rules delete or archive objects by age and prefix. | [docs/lifecycle](lifecycle/README.md) |
+| replication | shipped | Replicates objects between providers with change detection and a changelog. | [docs/replication](replication/README.md) |
+| cli | shipped | The `objstore` command exposes the interface, lifecycle and replication from a shell. | [docs/usage](usage/cli.md) |
+| c-client | shipped | `libobjstore` exposes the interface to C callers through opaque handles. | [docs/c_client](c_client/README.md) |
+| sdks | shipped | Client SDKs for Go, Python, Ruby, Rust, TypeScript and C# speak the server APIs. | [api/sdks](../api/sdks/README.md) |
+| provider-buckets | planned | Providers create, list and delete buckets. The consumer is go-quicbaas. | none |
+| provider-multipart | planned | Providers initiate a multipart upload, upload a part, complete it and abort it. The consumer is go-quicbaas. | none |
+
+## Interfaces
+
+- Go SDK: `pkg/objstore` facade, `pkg/common` interfaces, `pkg/factory` ([docs/usage](usage/getting-started.md)).
+- CLI: `objstore` ([docs/usage/cli.md](usage/cli.md)); the portfolio surface is in handbook `software/docs/11-cli-surface.md`.
+- Servers: gRPC, REST, QUIC, Unix socket, MCP ([docs/architecture/servers.md](architecture/servers.md), [api/](../api/)).
+- C API: `libobjstore` ([docs/c_client](c_client/README.md)).
+- Configuration: [docs/configuration](configuration/README.md).
+
+## Release criteria
+
+- Every provider passes the common interface tests and its integration target.
+- The module builds on Go 1.27.2 with go-enclave as the only first-party dependency.
+- Every server binary resolves settings through the shared configuration layer.
+- No credential or key appears in a log line or in object metadata.
+- Every row above is shipped, plus every seam row go-trusted-platform's SPEC names on this project, with the API stable.
+- CHANGELOG.md carries a section for the release.

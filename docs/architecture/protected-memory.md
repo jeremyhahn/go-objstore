@@ -8,7 +8,7 @@ whole lifetime in the process and are zeroized on release — never in a plain
 `[]byte` or `string`.
 
 The primitive is the memory enclave from
-[`github.com/jeremyhahn/go-enclave`](http://198.51.100.91:3001/jeremyhahn/go-enclave):
+[`github.com/jeremyhahn/go-enclave`](https://github.com/jeremyhahn/go-enclave):
 a region of locked, zeroized memory that go-enclave maps itself. The bytes sit
 on `mlock`'d pages (never paged to swap), fenced by inaccessible guard pages,
 preceded by a random canary, and wiped when the enclave is destroyed. Core dumps
