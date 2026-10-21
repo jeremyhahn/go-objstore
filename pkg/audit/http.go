@@ -21,6 +21,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 )
 
 // httpStatusRecorder captures the response status code for audit logging.
@@ -41,7 +42,7 @@ func (r *httpStatusRecorder) Write(b []byte) (int, error) {
 // AuditHTTPMiddleware is the net/http counterpart of AuditMiddleware, used by
 // transports without gin (QUIC, MCP HTTP). It records one audit event per
 // auditable request using the same event-type and path taxonomy.
-func AuditHTTPMiddleware(auditLogger AuditLogger) func(http.Handler) http.Handler {
+func AuditHTTPMiddleware(auditLogger auditlog.AuditLogger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requestID := GetRequestID(r.Context())
@@ -68,12 +69,12 @@ func AuditHTTPMiddleware(auditLogger AuditLogger) func(http.Handler) http.Handle
 				clientIP = host
 			}
 
-			result := ResultSuccess
+			result := auditlog.ResultSuccess
 			if rec.status >= 400 {
-				result = ResultFailure
+				result = auditlog.ResultFailure
 			}
 
-			event := &AuditEvent{
+			event := &auditlog.AuditEvent{
 				Timestamp:  start,
 				EventType:  determineEventType(r.Method, r.URL.Path),
 				Action:     r.Method + " " + r.URL.Path,
@@ -92,15 +93,15 @@ func AuditHTTPMiddleware(auditLogger AuditLogger) func(http.Handler) http.Handle
 // LogRPC records one audit event for a JSON-RPC request on a non-HTTP
 // transport (unix socket, MCP stdio). The transport string labels the source
 // (e.g. "unix", "mcp-stdio").
-func LogRPC(ctx context.Context, auditLogger AuditLogger, transport, method string, principal *adapters.Principal, start time.Time, rpcErr error) {
+func LogRPC(ctx context.Context, auditLogger auditlog.AuditLogger, transport, method string, principal *adapters.Principal, start time.Time, rpcErr error) {
 	if auditLogger == nil {
 		return
 	}
 
-	result := ResultSuccess
+	result := auditlog.ResultSuccess
 	errorMessage := ""
 	if rpcErr != nil {
-		result = ResultFailure
+		result = auditlog.ResultFailure
 		errorMessage = rpcErr.Error()
 	}
 
@@ -111,7 +112,7 @@ func LogRPC(ctx context.Context, auditLogger AuditLogger, transport, method stri
 		userID = principal.ID
 	}
 
-	event := &AuditEvent{
+	event := &auditlog.AuditEvent{
 		Timestamp:    start,
 		EventType:    determineRPCEventType(method),
 		UserID:       userID,
@@ -128,19 +129,19 @@ func LogRPC(ctx context.Context, auditLogger AuditLogger, transport, method stri
 
 // determineRPCEventType maps a JSON-RPC method name (unix protocol or MCP tool
 // name) to an audit event type.
-func determineRPCEventType(method string) EventType {
+func determineRPCEventType(method string) auditlog.EventType {
 	switch {
 	case contains(method, "put") || contains(method, "archive"):
-		return EventObjectCreated
+		return auditlog.EventObjectCreated
 	case contains(method, "delete") || contains(method, "remove"):
-		return EventObjectDeleted
+		return auditlog.EventObjectDeleted
 	case contains(method, "update_metadata"):
-		return EventObjectMetadataUpdated
+		return auditlog.EventObjectMetadataUpdated
 	case contains(method, "list"):
-		return EventListObjects
+		return auditlog.EventListObjects
 	case contains(method, "policy") || contains(method, "policies") || contains(method, "replication"):
-		return EventPolicyChanged
+		return auditlog.EventPolicyChanged
 	default:
-		return EventObjectAccessed
+		return auditlog.EventObjectAccessed
 	}
 }

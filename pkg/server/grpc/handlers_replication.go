@@ -21,6 +21,7 @@ import (
 
 	objstorepb "github.com/jeremyhahn/go-objstore/api/proto"
 	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	"github.com/jeremyhahn/go-objstore/pkg/replication"
@@ -418,7 +419,7 @@ func (s *Server) GetReplicationStatus(
 }
 
 // logReplicationAudit logs replication-related events to the audit log.
-func logReplicationAudit(ctx context.Context, auditLogger audit.AuditLogger, eventType string, policyID string, err error) {
+func logReplicationAudit(ctx context.Context, auditLogger auditlog.AuditLogger, eventType string, policyID string, err error) {
 	if auditLogger == nil {
 		return
 	}
@@ -427,14 +428,14 @@ func logReplicationAudit(ctx context.Context, auditLogger audit.AuditLogger, eve
 	requestID := audit.GetRequestID(ctx)
 	ipAddress := extractGRPCClientIP(ctx)
 
-	result := audit.ResultSuccess
+	result := auditlog.ResultSuccess
 	if err != nil {
-		result = audit.ResultFailure
+		result = auditlog.ResultFailure
 	}
 
 	// Log replication event using a custom event type string
 	// Cast to EventType to satisfy the interface
-	_ = auditLogger.LogObjectMutation(ctx, audit.EventType(eventType),
+	_ = auditLogger.LogObjectMutation(ctx, auditlog.EventType(eventType),
 		userID, principal, "replication", policyID, ipAddress, requestID, 0,
 		result, err) // #nosec G104 -- Audit logging errors are logged internally
 }

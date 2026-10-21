@@ -1,6 +1,13 @@
 # Configuration Overview
 
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 This section covers configuration for all go-objstore components. Configuration is provided through command-line flags, environment variables and an optional YAML file (servers and CLI), or programmatic Go APIs (library use).
+
+## Feature documents
+
+[Architecture](architecture.md) · [Engineering](engineering.md) · [CLI](cli.md) · [API](api.md) · [User guide](user.md)
 
 ## Configuration Methods
 

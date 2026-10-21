@@ -1,5 +1,8 @@
 # go-objstore Documentation
 
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 Complete documentation for go-objstore, a unified object storage abstraction library for Go.
 
 ## Documentation Structure
@@ -152,7 +155,8 @@ go-objstore/
 │   ├── azure/        # Azure backend
 │   ├── storagefs/    # Filesystem abstraction
 │   ├── replication/  # Replication engine
-│   ├── audit/        # Audit logging
+│   ├── audit/        # Audit logger implementation, HTTP/gRPC middleware
+│   ├── auditlog/     # Audit contract (AuditLogger, events, no-op), dependency-free
 │   ├── adapters/     # Custom adapters
 │   └── server/       # Server implementations
 │       ├── grpc/     # gRPC

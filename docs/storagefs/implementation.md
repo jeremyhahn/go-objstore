@@ -1,5 +1,8 @@
 # StorageFS Implementation Summary
 
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 ## Overview
 
 Successfully implemented a complete filesystem abstraction layer (StorageFS) that provides an `fs.FS` compatible interface over all go-objstore storage backends. This allows any storage backend (Local, S3, Azure, GCS) to be used with standard filesystem semantics.

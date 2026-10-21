@@ -1,5 +1,8 @@
 # Storage Backends
 
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 go-objstore provides a unified interface for multiple storage backends, letting you switch between local storage and cloud providers with no code changes.
 
 ## Supported Backends

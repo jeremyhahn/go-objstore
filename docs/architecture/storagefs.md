@@ -1,5 +1,8 @@
 # StorageFS Architecture
 
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 StorageFS provides a filesystem abstraction layer over object storage. It wraps any storage backend with an interface similar to Go's `os` package, making object storage feel like a traditional filesystem.
 
 ## Design Goals

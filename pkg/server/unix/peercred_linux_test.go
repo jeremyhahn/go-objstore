@@ -24,7 +24,6 @@ import (
 	"strconv"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
@@ -99,17 +98,7 @@ func startPeerCredServer(t *testing.T, storage common.Storage, cfg ServerConfig)
 		cleanupSocket(t, socketPath)
 	})
 
-	// Wait for the socket to appear.
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		if _, statErr := os.Stat(socketPath); statErr == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("server socket %q did not appear", socketPath)
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	waitForReady(t, server)
 
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {

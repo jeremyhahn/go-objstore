@@ -1,5 +1,8 @@
 # Testing Guide
 
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 ## Overview
 
 objstore has comprehensive test coverage with unit tests, integration tests with emulators, and real cloud integration tests.

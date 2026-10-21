@@ -24,7 +24,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
-	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
 	"github.com/jeremyhahn/go-objstore/pkg/replication"
@@ -40,12 +40,17 @@ var (
 
 	// ErrBackendNotFound is returned when a backend is not found
 	ErrBackendNotFound = errors.New("backend not found")
+
+	// ErrInitializationFailed wraps the error from the first Initialize call
+	// when it failed; later calls return the same error.
+	ErrInitializationFailed = errors.New("objstore facade initialization failed")
 )
 
 // Facade singleton instance
 var (
 	facade   *ObjstoreFacade
 	initOnce sync.Once
+	initErr  error
 	initMu   sync.RWMutex
 )
 
@@ -106,59 +111,63 @@ type FacadeConfig struct {
 //	    DefaultBackend: "default",
 //	})
 func Initialize(config *FacadeConfig) error {
-	var initErr error
-
 	initOnce.Do(func() {
-		if config == nil {
-			initErr = errors.New("config cannot be nil")
-			return
-		}
-
-		// Build backends map from both sources
-		backends := make(map[string]common.Storage)
-
-		// First, create backends from BackendConfigs (simplified API)
-		for name, cfg := range config.BackendConfigs {
-			storage, err := factory.NewStorage(cfg.Type, cfg.Settings)
-			if err != nil {
-				initErr = fmt.Errorf("failed to create backend %q: %w", name, err)
-				return
-			}
-			backends[name] = storage
-		}
-
-		// Then, merge in pre-configured Backends (legacy API takes precedence)
-		for name, storage := range config.Backends {
-			backends[name] = storage
-		}
-
-		if len(backends) == 0 {
-			initErr = errors.New("at least one backend must be configured")
-			return
-		}
-
-		// If no default specified, use first backend
-		defaultBackend := config.DefaultBackend
-		if defaultBackend == "" {
-			for name := range backends {
-				defaultBackend = name
-				break
-			}
-		}
-
-		// Verify default backend exists
-		if _, ok := backends[defaultBackend]; !ok {
-			initErr = fmt.Errorf("default backend %s not found in configured backends", defaultBackend)
-			return
-		}
-
-		facade = &ObjstoreFacade{
-			backends:       backends,
-			defaultBackend: defaultBackend,
+		initErr = initialize(config)
+		if initErr != nil {
+			initErr = fmt.Errorf("%w: %w", ErrInitializationFailed, initErr)
 		}
 	})
 
 	return initErr
+}
+
+// initialize builds the facade from config. Initialize runs it once and
+// retains its error so that every later call reports the first failure.
+func initialize(config *FacadeConfig) error {
+	if config == nil {
+		return errors.New("config cannot be nil")
+	}
+
+	// Build backends map from both sources
+	backends := make(map[string]common.Storage)
+
+	// First, create backends from BackendConfigs (simplified API)
+	for name, cfg := range config.BackendConfigs {
+		storage, err := factory.NewStorage(cfg.Type, cfg.Settings)
+		if err != nil {
+			return fmt.Errorf("failed to create backend %q: %w", name, err)
+		}
+		backends[name] = storage
+	}
+
+	// Then, merge in pre-configured Backends (legacy API takes precedence)
+	for name, storage := range config.Backends {
+		backends[name] = storage
+	}
+
+	if len(backends) == 0 {
+		return errors.New("at least one backend must be configured")
+	}
+
+	// If no default specified, use first backend
+	defaultBackend := config.DefaultBackend
+	if defaultBackend == "" {
+		for name := range backends {
+			defaultBackend = name
+			break
+		}
+	}
+
+	// Verify default backend exists
+	if _, ok := backends[defaultBackend]; !ok {
+		return fmt.Errorf("default backend %s not found in configured backends", defaultBackend)
+	}
+
+	facade = &ObjstoreFacade{
+		backends:       backends,
+		defaultBackend: defaultBackend,
+	}
+	return nil
 }
 
 // Reset clears the facade (useful for testing)
@@ -173,6 +182,7 @@ func Reset() {
 	}
 
 	facade = nil
+	initErr = nil
 	initOnce = sync.Once{}
 }
 
@@ -652,7 +662,7 @@ type ReplicationConfig struct {
 
 	// AuditLog is the audit logger to use for replication operations.
 	// If nil, a no-op audit logger is used.
-	AuditLog audit.AuditLogger
+	AuditLog auditlog.AuditLogger
 
 	// RunInBackground starts a background goroutine to run periodic syncs.
 	// If false, syncs must be triggered manually.
@@ -722,7 +732,7 @@ func EnableReplication(backendName string, config *ReplicationConfig) error {
 
 	auditLog := config.AuditLog
 	if auditLog == nil {
-		auditLog = audit.NewNoOpAuditLogger()
+		auditLog = auditlog.NewNoOpAuditLogger()
 	}
 
 	// Create the replication manager with OSFileSystem

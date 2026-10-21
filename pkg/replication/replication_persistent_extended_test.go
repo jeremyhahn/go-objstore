@@ -25,7 +25,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
-	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
@@ -33,7 +33,7 @@ import (
 func TestSyncPolicy_Success(t *testing.T) {
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
@@ -90,7 +90,7 @@ func TestSyncPolicy_Success(t *testing.T) {
 func TestSyncPolicy_NotFound(t *testing.T) {
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
@@ -107,7 +107,7 @@ func TestSyncPolicy_NotFound(t *testing.T) {
 func TestSyncAll_MultipleEnabled(t *testing.T) {
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
@@ -152,7 +152,7 @@ func TestSyncAll_MultipleEnabled(t *testing.T) {
 func TestSyncAll_SomeDisabled(t *testing.T) {
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
@@ -208,7 +208,7 @@ func TestSyncAll_SomeDisabled(t *testing.T) {
 func TestRun_ContextCancellation(t *testing.T) {
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 100*time.Millisecond, logger, auditLog)
 	if err != nil {
@@ -240,7 +240,7 @@ func TestRun_ContextCancellation(t *testing.T) {
 func TestRun_SyncErrors(t *testing.T) {
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 50*time.Millisecond, logger, auditLog)
 	if err != nil {
@@ -284,7 +284,7 @@ func TestRun_SyncErrors(t *testing.T) {
 func TestGetFactories_AllNil(t *testing.T) {
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
@@ -340,7 +340,7 @@ func TestGetFactories_AllNil(t *testing.T) {
 func TestGetFactories_Mixed(t *testing.T) {
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
@@ -396,7 +396,7 @@ func TestLoad_EmptyFile(t *testing.T) {
 	file.Close()
 
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	// This should fail with JSON unmarshal error
 	_, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
@@ -411,7 +411,7 @@ func TestSave_FileSystemError(t *testing.T) {
 	fs := newMockFileSystem()
 
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
@@ -445,7 +445,7 @@ func TestSave_FileSystemError(t *testing.T) {
 func TestAddPolicy_SaveFailure(t *testing.T) {
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
@@ -478,7 +478,7 @@ func TestAddPolicy_SaveFailure(t *testing.T) {
 func TestRemovePolicy_SaveFailure(t *testing.T) {
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
@@ -527,7 +527,7 @@ func TestLoad_WithNilPolicies(t *testing.T) {
 	file.Close()
 
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
@@ -553,7 +553,7 @@ func TestLoad_WithNilPolicies(t *testing.T) {
 func TestSyncAll_WithErrors(t *testing.T) {
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
@@ -672,7 +672,7 @@ func TestMultipleManagersConcurrent(t *testing.T) {
 
 			fs := newMockFileSystem()
 			logger := adapters.NewNoOpLogger()
-			auditLog := audit.NewNoOpAuditLogger()
+			auditLog := auditlog.NewNoOpAuditLogger()
 
 			mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 			if err != nil {

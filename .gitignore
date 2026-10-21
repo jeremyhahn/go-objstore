@@ -144,7 +144,9 @@ go.work.sum
 gosec-results.json
 
 # AI assistant / local tooling — never commit
-.serena/
+.serena/*
+!.serena/project.yml
+!.serena/.gitignore
 .claude/
 
 # Server configuration: only the .example template is tracked

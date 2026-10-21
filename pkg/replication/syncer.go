@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
-	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
 	"github.com/jeremyhahn/go-objstore/pkg/local"
@@ -52,7 +52,7 @@ type Syncer struct {
 	source   common.Storage
 	dest     common.Storage
 	logger   adapters.Logger
-	auditLog audit.AuditLogger
+	auditLog auditlog.AuditLogger
 	metrics  *ReplicationMetrics
 }
 
@@ -67,7 +67,7 @@ func NewSyncer(
 	sourceFactory common.EncrypterFactory,
 	destFactory common.EncrypterFactory,
 	logger adapters.Logger,
-	auditLog audit.AuditLogger,
+	auditLog auditlog.AuditLogger,
 ) (*Syncer, error) {
 
 	// Create source and destination backends

@@ -1,5 +1,8 @@
 # MCP Server Configuration
 
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 Configuration reference for the Model Context Protocol server.
 
 The MCP server is configured with command-line flags, `OBJSTORE_*` environment

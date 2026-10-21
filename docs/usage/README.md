@@ -1,6 +1,13 @@
 # Usage Guide
 
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 Practical guides for using go-objstore components in your applications.
+
+## Feature documents
+
+[Architecture](architecture.md) · [Engineering](engineering.md) · [CLI](cli.md) · [API](api.md) · [User guide](user.md)
 
 ## Getting Started
 
@@ -18,39 +25,39 @@ Learn how to use different storage backends for your application.
 ### StorageFS
 Use object storage with familiar filesystem operations.
 
-[Using StorageFS](storagefs.md)
+[Using StorageFS](../storagefs/README.md)
 
 ### Encryption
 Enable at-rest encryption for stored data.
 
-[Using Encryption](encryption.md)
+[Using Encryption](../configuration/encryption.md)
 
 ### Lifecycle Policies
 Automate data retention and archival.
 
-[Using Lifecycle Policies](lifecycle.md)
+[Using Lifecycle Policies](../lifecycle/README.md)
 
 ## Servers
 
 ### gRPC Server
 Run a gRPC server to expose storage over RPC.
 
-[Using the gRPC Server](grpc-server.md)
+[Configuring the gRPC Server](../configuration/grpc-server.md)
 
 ### REST API Server
 Run a REST API server for HTTP/JSON access.
 
-[Using the REST Server](rest-server.md)
+[Configuring the REST Server](../configuration/rest-server.md)
 
 ### QUIC Server
 Run a QUIC/HTTP3 server for improved performance.
 
-[Using the QUIC Server](quic-server.md)
+[Configuring the QUIC Server](../configuration/quic-server.md)
 
 ### MCP Server
 Run an MCP server for AI model integrations.
 
-[Using the MCP Server](mcp-server.md)
+[Configuring the MCP Server](../configuration/mcp-server.md)
 
 ## Tools
 
@@ -62,7 +69,7 @@ Use the command-line interface for storage operations.
 ### C API
 Embed go-objstore in C/C++ applications.
 
-[Using the C API](c-api.md)
+[Using the C API](../c_client/README.md)
 
 ## Deployment
 

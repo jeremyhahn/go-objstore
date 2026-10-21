@@ -21,6 +21,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/server/middleware"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
@@ -57,11 +58,11 @@ const (
 )
 
 // GetAuditLogger retrieves the audit logger from the context
-func GetAuditLogger(ctx context.Context) AuditLogger {
-	if logger, ok := ctx.Value(AuditLoggerKey).(AuditLogger); ok {
+func GetAuditLogger(ctx context.Context) auditlog.AuditLogger {
+	if logger, ok := ctx.Value(AuditLoggerKey).(auditlog.AuditLogger); ok {
 		return logger
 	}
-	return NewNoOpAuditLogger()
+	return auditlog.NewNoOpAuditLogger()
 }
 
 // GetRequestID retrieves the request ID from the context
@@ -73,7 +74,7 @@ func GetRequestID(ctx context.Context) string {
 }
 
 // AuditMiddleware creates a Gin middleware for audit logging
-func AuditMiddleware(auditLogger AuditLogger) gin.HandlerFunc {
+func AuditMiddleware(auditLogger auditlog.AuditLogger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Use the request ID already set by RequestIDMiddleware when present so
 		// audit records correlate with the X-Request-ID response header. Fall
@@ -130,10 +131,10 @@ func AuditMiddleware(auditLogger AuditLogger) gin.HandlerFunc {
 		eventType := determineEventType(method, path)
 
 		// Determine result
-		result := ResultSuccess
+		result := auditlog.ResultSuccess
 		errorMessage := ""
 		if statusCode >= 400 {
-			result = ResultFailure
+			result = auditlog.ResultFailure
 			if len(c.Errors) > 0 {
 				errorMessage = c.Errors.Last().Error()
 			}
@@ -143,7 +144,7 @@ func AuditMiddleware(auditLogger AuditLogger) gin.HandlerFunc {
 		bucket, key := extractResourceInfo(c)
 
 		// Log the audit event
-		event := &AuditEvent{
+		event := &auditlog.AuditEvent{
 			Timestamp:    startTime,
 			EventType:    eventType,
 			UserID:       userID,
@@ -168,7 +169,7 @@ func AuditMiddleware(auditLogger AuditLogger) gin.HandlerFunc {
 }
 
 // AuditUnaryInterceptor creates a gRPC unary interceptor for audit logging
-func AuditUnaryInterceptor(auditLogger AuditLogger) grpc.UnaryServerInterceptor {
+func AuditUnaryInterceptor(auditLogger auditlog.AuditLogger) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		// Generate request ID
 		requestID := uuid.New().String()
@@ -218,11 +219,11 @@ func AuditUnaryInterceptor(auditLogger AuditLogger) grpc.UnaryServerInterceptor 
 		duration := time.Since(startTime)
 
 		// Determine result
-		result := ResultSuccess
+		result := auditlog.ResultSuccess
 		errorMessage := ""
 		statusCode := 0
 		if err != nil {
-			result = ResultFailure
+			result = auditlog.ResultFailure
 			errorMessage = err.Error()
 			if st, ok := status.FromError(err); ok {
 				statusCode = int(st.Code())
@@ -236,7 +237,7 @@ func AuditUnaryInterceptor(auditLogger AuditLogger) grpc.UnaryServerInterceptor 
 		bucket, key := extractGRPCResourceInfo(req)
 
 		// Log the audit event
-		event := &AuditEvent{
+		event := &auditlog.AuditEvent{
 			Timestamp:    startTime,
 			EventType:    eventType,
 			UserID:       userID,
@@ -263,7 +264,7 @@ func AuditUnaryInterceptor(auditLogger AuditLogger) grpc.UnaryServerInterceptor 
 }
 
 // AuditStreamInterceptor creates a gRPC stream interceptor for audit logging
-func AuditStreamInterceptor(auditLogger AuditLogger) grpc.StreamServerInterceptor {
+func AuditStreamInterceptor(auditLogger auditlog.AuditLogger) grpc.StreamServerInterceptor {
 	return func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 		// Generate request ID
 		requestID := uuid.New().String()
@@ -315,11 +316,11 @@ func AuditStreamInterceptor(auditLogger AuditLogger) grpc.StreamServerIntercepto
 		duration := time.Since(startTime)
 
 		// Determine result
-		result := ResultSuccess
+		result := auditlog.ResultSuccess
 		errorMessage := ""
 		statusCode := 0
 		if err != nil {
-			result = ResultFailure
+			result = auditlog.ResultFailure
 			errorMessage = err.Error()
 			if st, ok := status.FromError(err); ok {
 				statusCode = int(st.Code())
@@ -330,7 +331,7 @@ func AuditStreamInterceptor(auditLogger AuditLogger) grpc.StreamServerIntercepto
 		eventType := determineGRPCEventType(info.FullMethod)
 
 		// Log the audit event
-		event := &AuditEvent{
+		event := &auditlog.AuditEvent{
 			Timestamp:    startTime,
 			EventType:    eventType,
 			UserID:       userID,
@@ -366,57 +367,57 @@ func (s *auditServerStream) Context() context.Context {
 
 // Helper functions
 
-func determineEventType(method, path string) EventType {
+func determineEventType(method, path string) auditlog.EventType {
 	switch method {
 	case "GET":
 		if contains(path, "/metadata") {
-			return EventObjectAccessed
+			return auditlog.EventObjectAccessed
 		}
 		if contains(path, "/objects") {
 			if contains(path, "?") || path == "/objects" {
-				return EventListObjects
+				return auditlog.EventListObjects
 			}
-			return EventObjectAccessed
+			return auditlog.EventObjectAccessed
 		}
 	case "PUT":
 		if contains(path, "/metadata") {
-			return EventObjectMetadataUpdated
+			return auditlog.EventObjectMetadataUpdated
 		}
 		if contains(path, "/lifecycle") || contains(path, "/policy") {
-			return EventPolicyChanged
+			return auditlog.EventPolicyChanged
 		}
-		return EventObjectCreated
+		return auditlog.EventObjectCreated
 	case "POST":
-		return EventObjectCreated
+		return auditlog.EventObjectCreated
 	case "DELETE":
 		if contains(path, "/bucket") {
-			return EventBucketDeleted
+			return auditlog.EventBucketDeleted
 		}
-		return EventObjectDeleted
+		return auditlog.EventObjectDeleted
 	}
-	return EventObjectAccessed
+	return auditlog.EventObjectAccessed
 }
 
-func determineGRPCEventType(fullMethod string) EventType {
+func determineGRPCEventType(fullMethod string) auditlog.EventType {
 	if contains(fullMethod, "Get") {
 		if contains(fullMethod, "Metadata") {
-			return EventObjectAccessed
+			return auditlog.EventObjectAccessed
 		}
-		return EventObjectAccessed
+		return auditlog.EventObjectAccessed
 	}
 	if contains(fullMethod, "Put") {
-		return EventObjectCreated
+		return auditlog.EventObjectCreated
 	}
 	if contains(fullMethod, "Delete") {
-		return EventObjectDeleted
+		return auditlog.EventObjectDeleted
 	}
 	if contains(fullMethod, "List") {
-		return EventListObjects
+		return auditlog.EventListObjects
 	}
 	if contains(fullMethod, "UpdateMetadata") {
-		return EventObjectMetadataUpdated
+		return auditlog.EventObjectMetadataUpdated
 	}
-	return EventObjectAccessed
+	return auditlog.EventObjectAccessed
 }
 
 func extractResourceInfo(c *gin.Context) (bucket, key string) {

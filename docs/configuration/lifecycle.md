@@ -1,5 +1,8 @@
 # Lifecycle Policy Configuration
 
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 Configuration reference for automatic data retention and archival policies.
 
 Lifecycle policies are not configured through a config file. They are managed

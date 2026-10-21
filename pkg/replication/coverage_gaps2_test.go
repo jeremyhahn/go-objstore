@@ -24,7 +24,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
-	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -166,7 +166,7 @@ func TestRotate_NewFileOpenFails(t *testing.T) {
 
 func TestSave_SyncFails(t *testing.T) {
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mfs := newMockFileSystem()
 	mgr, err := NewPersistentReplicationManager(mfs, "policies.json", time.Minute, logger, auditLog)
@@ -207,7 +207,7 @@ func (f *syncFailFSFile) Sync() error                          { return errors.N
 
 func TestSave_CloseFails(t *testing.T) {
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mfs := newMockFileSystem()
 	mgr, err := NewPersistentReplicationManager(mfs, "policies.json", time.Minute, logger, auditLog)
@@ -249,7 +249,7 @@ func (f *closeFailFSFile) Sync() error                          { return nil }
 func TestSyncAllParallel_TwoFailing(t *testing.T) {
 	mfs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(mfs, "policies.json", time.Minute, logger, auditLog)
 	require.NoError(t, err)
@@ -281,7 +281,7 @@ func TestSyncAllParallel_TwoFailing(t *testing.T) {
 func TestRun_SyncAllError(t *testing.T) {
 	mfs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(mfs, "policies.json", 10*time.Millisecond, logger, auditLog)
 	require.NoError(t, err)
@@ -481,7 +481,7 @@ func (l *listErrorStorage) GetPolicies() ([]common.LifecyclePolicy, error)      
 func TestSyncPolicyParallel_NotFound(t *testing.T) {
 	mfs := newMockFileSystem()
 	mgr, err := NewPersistentReplicationManager(mfs, "policies.json", time.Minute,
-		adapters.NewNoOpLogger(), audit.NewNoOpAuditLogger())
+		adapters.NewNoOpLogger(), auditlog.NewNoOpAuditLogger())
 	require.NoError(t, err)
 
 	_, err = mgr.SyncPolicyParallel(context.Background(), "nonexistent", 2)

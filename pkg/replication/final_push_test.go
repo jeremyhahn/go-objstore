@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
-	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
@@ -31,7 +31,7 @@ func TestSyncAllDisabledPolicy(t *testing.T) {
 	ctx := context.Background()
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
@@ -109,7 +109,7 @@ func TestSyncPolicyError(t *testing.T) {
 	ctx := context.Background()
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
@@ -127,7 +127,7 @@ func TestSyncPolicyError(t *testing.T) {
 func TestGetReplicationStatusError(t *testing.T) {
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
@@ -146,7 +146,7 @@ func TestSyncAllEmptyPolicies(t *testing.T) {
 	ctx := context.Background()
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
@@ -190,7 +190,7 @@ func TestSyncObjectReadError(t *testing.T) {
 		source:   source,
 		dest:     dest,
 		logger:   adapters.NewNoOpLogger(),
-		auditLog: audit.NewNoOpAuditLogger(),
+		auditLog: auditlog.NewNoOpAuditLogger(),
 		metrics:  NewReplicationMetrics(),
 	}
 
@@ -206,7 +206,7 @@ func TestSyncPolicyWithNilResult(t *testing.T) {
 	ctx := context.Background()
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
@@ -243,7 +243,7 @@ func TestMetricsUpdateOnFailure(t *testing.T) {
 	ctx := context.Background()
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
@@ -287,7 +287,7 @@ func TestSyncAllWithMixedResults(t *testing.T) {
 	ctx := context.Background()
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
@@ -346,7 +346,7 @@ func TestSyncAllWithMixedResults(t *testing.T) {
 func TestRemovePolicyCleanup(t *testing.T) {
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {

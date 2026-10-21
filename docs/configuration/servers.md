@@ -1,5 +1,8 @@
 # Server Configuration (file, environment, flags)
 
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 Every server binary — `objstore-server`, `objstore-grpc-server`,
 `objstore-rest-server`, `objstore-quic-server` and `objstore-mcp-server` —
 resolves its settings through one configuration layer

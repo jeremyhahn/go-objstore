@@ -19,6 +19,7 @@ import (
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/server/middleware"
 	"github.com/quic-go/quic-go"
 )
@@ -97,7 +98,7 @@ type Options struct {
 	EnableAudit bool
 
 	// AuditLogger is the audit logger used when EnableAudit is set.
-	AuditLogger audit.AuditLogger
+	AuditLogger auditlog.AuditLogger
 }
 
 // DefaultOptions returns a new Options instance with sensible defaults.
@@ -285,7 +286,7 @@ func (o *Options) WithRateLimit(config *middleware.RateLimitConfig) *Options {
 
 // WithAudit enables audit logging with the given logger. A nil logger uses
 // the default audit logger.
-func (o *Options) WithAudit(auditLogger audit.AuditLogger) *Options {
+func (o *Options) WithAudit(auditLogger auditlog.AuditLogger) *Options {
 	o.EnableAudit = true
 	if auditLogger == nil {
 		auditLogger = audit.NewDefaultAuditLogger()

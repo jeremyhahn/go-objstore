@@ -23,6 +23,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/server/middleware"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
@@ -130,7 +131,7 @@ func TestAuditMiddleware(t *testing.T) {
 }
 
 // newBufferedAuditLogger returns an audit logger writing JSON records into buf.
-func newBufferedAuditLogger(buf *bytes.Buffer) AuditLogger {
+func newBufferedAuditLogger(buf *bytes.Buffer) auditlog.AuditLogger {
 	return NewAuditLogger(&Config{
 		Enabled: true,
 		Format:  FormatJSON,
@@ -492,17 +493,17 @@ func TestDetermineEventType(t *testing.T) {
 		name     string
 		method   string
 		path     string
-		expected EventType
+		expected auditlog.EventType
 	}{
-		{"GET object", "GET", "/objects/key", EventObjectAccessed},
-		{"GET metadata", "GET", "/metadata/key", EventObjectAccessed},
-		{"GET list", "GET", "/objects?prefix=test", EventListObjects},
-		{"PUT object", "PUT", "/objects/key", EventObjectCreated},
-		{"PUT metadata", "PUT", "/metadata/key", EventObjectMetadataUpdated},
-		{"PUT policy", "PUT", "/lifecycle/policy", EventPolicyChanged},
-		{"POST object", "POST", "/objects", EventObjectCreated},
-		{"DELETE object", "DELETE", "/objects/key", EventObjectDeleted},
-		{"DELETE bucket", "DELETE", "/bucket/mybucket", EventBucketDeleted},
+		{"GET object", "GET", "/objects/key", auditlog.EventObjectAccessed},
+		{"GET metadata", "GET", "/metadata/key", auditlog.EventObjectAccessed},
+		{"GET list", "GET", "/objects?prefix=test", auditlog.EventListObjects},
+		{"PUT object", "PUT", "/objects/key", auditlog.EventObjectCreated},
+		{"PUT metadata", "PUT", "/metadata/key", auditlog.EventObjectMetadataUpdated},
+		{"PUT policy", "PUT", "/lifecycle/policy", auditlog.EventPolicyChanged},
+		{"POST object", "POST", "/objects", auditlog.EventObjectCreated},
+		{"DELETE object", "DELETE", "/objects/key", auditlog.EventObjectDeleted},
+		{"DELETE bucket", "DELETE", "/bucket/mybucket", auditlog.EventBucketDeleted},
 	}
 
 	for _, tt := range tests {
@@ -519,14 +520,14 @@ func TestDetermineGRPCEventType(t *testing.T) {
 	tests := []struct {
 		name       string
 		fullMethod string
-		expected   EventType
+		expected   auditlog.EventType
 	}{
-		{"Get", "/ObjectStore/Get", EventObjectAccessed},
-		{"GetMetadata", "/ObjectStore/GetMetadata", EventObjectAccessed},
-		{"Put", "/ObjectStore/Put", EventObjectCreated},
-		{"Delete", "/ObjectStore/Delete", EventObjectDeleted},
-		{"List", "/ObjectStore/List", EventListObjects},
-		{"UpdateMetadata", "/ObjectStore/UpdateMetadata", EventObjectMetadataUpdated},
+		{"Get", "/ObjectStore/Get", auditlog.EventObjectAccessed},
+		{"GetMetadata", "/ObjectStore/GetMetadata", auditlog.EventObjectAccessed},
+		{"Put", "/ObjectStore/Put", auditlog.EventObjectCreated},
+		{"Delete", "/ObjectStore/Delete", auditlog.EventObjectDeleted},
+		{"List", "/ObjectStore/List", auditlog.EventListObjects},
+		{"UpdateMetadata", "/ObjectStore/UpdateMetadata", auditlog.EventObjectMetadataUpdated},
 	}
 
 	for _, tt := range tests {

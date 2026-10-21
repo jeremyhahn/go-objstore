@@ -29,7 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
-	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
 	"github.com/jeremyhahn/go-objstore/pkg/local"
@@ -45,7 +45,7 @@ type TestHelper struct {
 	sourceStore  common.Storage
 	destStore    common.Storage
 	logger       adapters.Logger
-	auditLog     audit.AuditLogger
+	auditLog     auditlog.AuditLogger
 	cleanupFuncs []func()
 }
 
@@ -230,7 +230,7 @@ func (m *mockLogger) GetLevel() adapters.LogLevel                               
 
 type mockAuditLogger struct{}
 
-func (m *mockAuditLogger) LogEvent(ctx context.Context, event *audit.AuditEvent) error {
+func (m *mockAuditLogger) LogEvent(ctx context.Context, event *auditlog.AuditEvent) error {
 	return nil
 }
 func (m *mockAuditLogger) LogAuthFailure(ctx context.Context, userID, principal, ipAddress, requestID, reason string) error {
@@ -239,13 +239,13 @@ func (m *mockAuditLogger) LogAuthFailure(ctx context.Context, userID, principal,
 func (m *mockAuditLogger) LogAuthSuccess(ctx context.Context, userID, principal, ipAddress, requestID string) error {
 	return nil
 }
-func (m *mockAuditLogger) LogObjectAccess(ctx context.Context, userID, principal, bucket, key, ipAddress, requestID string, result audit.Result, err error) error {
+func (m *mockAuditLogger) LogObjectAccess(ctx context.Context, userID, principal, bucket, key, ipAddress, requestID string, result auditlog.Result, err error) error {
 	return nil
 }
-func (m *mockAuditLogger) LogObjectMutation(ctx context.Context, eventType audit.EventType, userID, principal, bucket, key, ipAddress, requestID string, bytesTransferred int64, result audit.Result, err error) error {
+func (m *mockAuditLogger) LogObjectMutation(ctx context.Context, eventType auditlog.EventType, userID, principal, bucket, key, ipAddress, requestID string, bytesTransferred int64, result auditlog.Result, err error) error {
 	return nil
 }
-func (m *mockAuditLogger) LogPolicyChange(ctx context.Context, userID, principal, bucket, policyID, ipAddress, requestID string, result audit.Result, err error) error {
+func (m *mockAuditLogger) LogPolicyChange(ctx context.Context, userID, principal, bucket, policyID, ipAddress, requestID string, result auditlog.Result, err error) error {
 	return nil
 }
 func (m *mockAuditLogger) SetLevel(level adapters.LogLevel) {}

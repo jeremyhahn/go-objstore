@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"net"
 	"testing"
-	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/server/jsonrpc"
 )
@@ -68,7 +67,7 @@ func TestIntegration_PingPong(t *testing.T) {
 	defer cancel()
 
 	go server.Start(ctx)
-	time.Sleep(100 * time.Millisecond)
+	waitForReady(t, server)
 
 	// Connect to server
 	conn, err := net.Dial("unix", socketPath)
@@ -111,7 +110,7 @@ func TestIntegration_PutGetDelete(t *testing.T) {
 	defer cancel()
 
 	go server.Start(ctx)
-	time.Sleep(100 * time.Millisecond)
+	waitForReady(t, server)
 
 	// Connect to server
 	conn, err := net.Dial("unix", socketPath)
@@ -228,7 +227,7 @@ func TestIntegration_List(t *testing.T) {
 	defer cancel()
 
 	go server.Start(ctx)
-	time.Sleep(100 * time.Millisecond)
+	waitForReady(t, server)
 
 	// Connect to server
 	conn, err := net.Dial("unix", socketPath)
@@ -270,7 +269,7 @@ func TestIntegration_PutWithMetadata(t *testing.T) {
 	defer cancel()
 
 	go server.Start(ctx)
-	time.Sleep(100 * time.Millisecond)
+	waitForReady(t, server)
 
 	// Connect to server
 	conn, err := net.Dial("unix", socketPath)
@@ -341,7 +340,7 @@ func TestIntegration_UpdateMetadata(t *testing.T) {
 	defer cancel()
 
 	go server.Start(ctx)
-	time.Sleep(100 * time.Millisecond)
+	waitForReady(t, server)
 
 	// Connect to server
 	conn, err := net.Dial("unix", socketPath)
@@ -381,7 +380,7 @@ func TestIntegration_ErrorResponses(t *testing.T) {
 	defer cancel()
 
 	go server.Start(ctx)
-	time.Sleep(100 * time.Millisecond)
+	waitForReady(t, server)
 
 	// Connect to server
 	conn, err := net.Dial("unix", socketPath)
@@ -454,7 +453,7 @@ func TestIntegration_MultipleConnections(t *testing.T) {
 	defer cancel()
 
 	go server.Start(ctx)
-	time.Sleep(100 * time.Millisecond)
+	waitForReady(t, server)
 
 	// Connect multiple clients
 	numClients := 5
@@ -493,7 +492,7 @@ func TestIntegration_MultipleRequests(t *testing.T) {
 	defer cancel()
 
 	go server.Start(ctx)
-	time.Sleep(100 * time.Millisecond)
+	waitForReady(t, server)
 
 	// Connect to server
 	conn, err := net.Dial("unix", socketPath)

@@ -1,5 +1,8 @@
 # Deployment Guide
 
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 Production deployment guide for go-objstore servers and applications.
 
 ## Deployment Models

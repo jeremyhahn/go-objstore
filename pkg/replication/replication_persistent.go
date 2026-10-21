@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
-	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
@@ -76,7 +76,7 @@ type PersistentReplicationManager struct {
 	mutex      sync.RWMutex
 	interval   time.Duration
 	logger     adapters.Logger
-	auditLog   audit.AuditLogger
+	auditLog   auditlog.AuditLogger
 
 	// Encryption factories per policy
 	backendFactories map[string]common.EncrypterFactory
@@ -104,7 +104,7 @@ func NewPersistentReplicationManager(
 	policyFile string,
 	interval time.Duration,
 	logger adapters.Logger,
-	auditLog audit.AuditLogger,
+	auditLog auditlog.AuditLogger,
 ) (*PersistentReplicationManager, error) {
 	if fs == nil {
 		fs = &OSFileSystem{}
@@ -119,7 +119,7 @@ func NewPersistentReplicationManager(
 	}
 
 	if auditLog == nil {
-		auditLog = audit.NewNoOpAuditLogger()
+		auditLog = auditlog.NewNoOpAuditLogger()
 	}
 
 	if interval <= 0 {

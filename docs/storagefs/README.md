@@ -1,5 +1,8 @@
 # StorageFS - Filesystem Abstraction
 
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 StorageFS provides a filesystem-like interface on top of any storage backend, allowing you to use familiar file operations with cloud storage.
 
 ## Overview

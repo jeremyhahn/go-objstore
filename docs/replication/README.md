@@ -1,5 +1,8 @@
 # Replication and Sync Documentation
 
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 Comprehensive guide to replicating and synchronizing data between storage backends in go-objstore.
 
 ## Table of Contents

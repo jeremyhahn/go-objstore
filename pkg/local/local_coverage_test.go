@@ -26,7 +26,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
-	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
@@ -51,7 +51,7 @@ func TestLocal_GetSetAuditLogger(t *testing.T) {
 	dir := t.TempDir()
 	s := newConfigured(t, dir)
 
-	al := audit.NewNoOpAuditLogger()
+	al := auditlog.NewNoOpAuditLogger()
 	s.SetAuditLogger(al)
 
 	got := s.GetAuditLogger()

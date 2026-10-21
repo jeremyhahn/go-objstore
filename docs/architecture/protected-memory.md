@@ -1,5 +1,8 @@
 # Protected Memory
 
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 Keys, passphrases, tokens and credentials live in protected storage for their
 whole lifetime in the process and are zeroized on release — never in a plain
 `[]byte` or `string`.

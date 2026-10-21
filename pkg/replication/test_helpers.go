@@ -21,7 +21,7 @@ import (
 	"sync"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
-	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
@@ -37,10 +37,10 @@ func (m *mockLogger) WithContext(ctx context.Context) adapters.Logger           
 func (m *mockLogger) SetLevel(level adapters.LogLevel)                                {}
 func (m *mockLogger) GetLevel() adapters.LogLevel                                     { return adapters.InfoLevel }
 
-// mockAuditLogger implements audit.AuditLogger for testing
+// mockAuditLogger implements auditlog.AuditLogger for testing
 type mockAuditLogger struct{}
 
-func (m *mockAuditLogger) LogEvent(ctx context.Context, event *audit.AuditEvent) error {
+func (m *mockAuditLogger) LogEvent(ctx context.Context, event *auditlog.AuditEvent) error {
 	return nil
 }
 
@@ -52,15 +52,15 @@ func (m *mockAuditLogger) LogAuthSuccess(ctx context.Context, userID, principal,
 	return nil
 }
 
-func (m *mockAuditLogger) LogObjectAccess(ctx context.Context, userID, principal, bucket, key, ipAddress, requestID string, result audit.Result, err error) error {
+func (m *mockAuditLogger) LogObjectAccess(ctx context.Context, userID, principal, bucket, key, ipAddress, requestID string, result auditlog.Result, err error) error {
 	return nil
 }
 
-func (m *mockAuditLogger) LogObjectMutation(ctx context.Context, eventType audit.EventType, userID, principal, bucket, key, ipAddress, requestID string, bytesTransferred int64, result audit.Result, err error) error {
+func (m *mockAuditLogger) LogObjectMutation(ctx context.Context, eventType auditlog.EventType, userID, principal, bucket, key, ipAddress, requestID string, bytesTransferred int64, result auditlog.Result, err error) error {
 	return nil
 }
 
-func (m *mockAuditLogger) LogPolicyChange(ctx context.Context, userID, principal, bucket, policyID, ipAddress, requestID string, result audit.Result, err error) error {
+func (m *mockAuditLogger) LogPolicyChange(ctx context.Context, userID, principal, bucket, policyID, ipAddress, requestID string, result auditlog.Result, err error) error {
 	return nil
 }
 

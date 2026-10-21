@@ -1,5 +1,8 @@
 # Using Storage Backends
 
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 Practical guide for using different storage backends.
 
 ## Backend Selection

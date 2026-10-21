@@ -425,11 +425,15 @@ auth := adapters.NewCompositeAuthenticator(
 
 ### Audit Logging
 
-Record storage operations to an audit log:
+Record storage operations to an audit log. The `AuditLogger` interface, event
+types and results live in `pkg/auditlog` (no third-party dependencies, which is
+all a backend imports); `pkg/audit` supplies the slog-backed logger and the
+HTTP/gRPC middleware:
 
 ```go
 import (
     "github.com/jeremyhahn/go-objstore/pkg/audit"
+    "github.com/jeremyhahn/go-objstore/pkg/auditlog"
 )
 
 // Create an audit logger
@@ -442,21 +446,21 @@ auditLog.LogAuthSuccess(ctx, "user-123", "alice", "192.168.1.1", "req-456")
 // Log object operations
 auditLog.LogObjectMutation(
     ctx,
-    audit.EventObjectCreated,
+    auditlog.EventObjectCreated,
     "user-123", "alice", "bucket", "file.txt",
     "192.168.1.1", "req-456",
     1024, // bytes transferred
-    audit.ResultSuccess,
+    auditlog.ResultSuccess,
     nil,  // error
 )
 
 // Log access
 auditLog.LogObjectAccess(ctx, "user-123", "alice", "bucket", "file.txt",
-    "192.168.1.1", "req-456", audit.ResultSuccess, nil)
+    "192.168.1.1", "req-456", auditlog.ResultSuccess, nil)
 
 // Log policy changes
 auditLog.LogPolicyChange(ctx, "user-123", "alice", "bucket", "policy-1",
-    "192.168.1.1", "req-456", audit.ResultSuccess, nil)
+    "192.168.1.1", "req-456", auditlog.ResultSuccess, nil)
 ```
 
 **Event types:** AUTH_FAILURE, AUTH_SUCCESS, OBJECT_CREATED, OBJECT_DELETED, OBJECT_ACCESSED, OBJECT_METADATA_UPDATED, OBJECT_ARCHIVED, POLICY_CHANGED, LIST_OBJECTS
@@ -654,7 +658,8 @@ go-objstore/
 │   ├── azurearchive/          # Azure Archive archiver
 │   ├── storagefs/             # Filesystem abstraction
 │   ├── replication/           # Replication engine
-│   ├── audit/                 # Audit logging
+│   ├── audit/                 # Audit logger implementation, HTTP/gRPC middleware
+│   ├── auditlog/              # Audit contract (AuditLogger, events, no-op), dependency-free
 │   ├── adapters/              # Custom logging and TLS adapters
 │   ├── pool/                  # Volume pool (backend placement)
 │   ├── cli/                   # CLI commands and config

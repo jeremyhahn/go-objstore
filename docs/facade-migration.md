@@ -1,5 +1,8 @@
 # Facade Migration Guide
 
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 This guide explains how to migrate all go-objstore servers, CLI, and client code to use the new facade pattern.
 
 ## Overview

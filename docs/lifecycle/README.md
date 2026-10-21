@@ -1,5 +1,8 @@
 # Lifecycle Policies
 
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 Lifecycle policies define rules for automatic deletion or archival of objects based on age or other criteria.
 
 ## Overview

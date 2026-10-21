@@ -19,6 +19,7 @@ import (
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/server/middleware"
 	"google.golang.org/grpc"
 )
@@ -92,7 +93,7 @@ type ServerOptions struct {
 	AdapterTLSConfig *adapters.TLSConfig
 
 	// AuditLogger is the audit logger for tracking security events (default: enabled with JSON format)
-	AuditLogger audit.AuditLogger
+	AuditLogger auditlog.AuditLogger
 
 	// EnableAudit enables audit logging (default: true)
 	EnableAudit bool
@@ -274,7 +275,7 @@ func WithRequestID(enable bool) ServerOption {
 }
 
 // WithAuditLogger sets the audit logger.
-func WithAuditLogger(logger audit.AuditLogger) ServerOption {
+func WithAuditLogger(logger auditlog.AuditLogger) ServerOption {
 	return func(o *ServerOptions) {
 		o.AuditLogger = logger
 	}

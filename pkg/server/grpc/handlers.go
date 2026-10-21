@@ -22,6 +22,7 @@ import (
 	objstorepb "github.com/jeremyhahn/go-objstore/api/proto"
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
@@ -90,15 +91,15 @@ func (s *Server) Put(ctx context.Context, req *objstorepb.PutRequest) (*objstore
 
 	bytesTransferred := int64(len(req.Data))
 	if err != nil {
-		_ = auditLogger.LogObjectMutation(ctx, audit.EventObjectCreated,
+		_ = auditLogger.LogObjectMutation(ctx, auditlog.EventObjectCreated,
 			userID, principal, s.backend, req.Key, ipAddress, requestID, 0,
-			audit.ResultFailure, err)
+			auditlog.ResultFailure, err)
 		return nil, mapError(err)
 	}
 
-	_ = auditLogger.LogObjectMutation(ctx, audit.EventObjectCreated,
+	_ = auditLogger.LogObjectMutation(ctx, auditlog.EventObjectCreated,
 		userID, principal, s.backend, req.Key, ipAddress, requestID, bytesTransferred,
-		audit.ResultSuccess, nil)
+		auditlog.ResultSuccess, nil)
 
 	// Get the ETag from metadata if available
 	etag := ""
@@ -205,15 +206,15 @@ func (s *Server) Delete(ctx context.Context, req *objstorepb.DeleteRequest) (*ob
 	ipAddress := extractGRPCClientIP(ctx)
 
 	if err != nil {
-		_ = auditLogger.LogObjectMutation(ctx, audit.EventObjectDeleted,
+		_ = auditLogger.LogObjectMutation(ctx, auditlog.EventObjectDeleted,
 			userID, principal, s.backend, req.Key, ipAddress, requestID, 0,
-			audit.ResultFailure, err)
+			auditlog.ResultFailure, err)
 		return nil, mapError(err)
 	}
 
-	_ = auditLogger.LogObjectMutation(ctx, audit.EventObjectDeleted,
+	_ = auditLogger.LogObjectMutation(ctx, auditlog.EventObjectDeleted,
 		userID, principal, s.backend, req.Key, ipAddress, requestID, 0,
-		audit.ResultSuccess, nil)
+		auditlog.ResultSuccess, nil)
 
 	return &objstorepb.DeleteResponse{
 		Success: true,
@@ -350,15 +351,15 @@ func (s *Server) Archive(ctx context.Context, req *objstorepb.ArchiveRequest) (*
 	ipAddress := extractGRPCClientIP(ctx)
 
 	if err != nil {
-		_ = auditLogger.LogObjectMutation(ctx, audit.EventObjectArchived,
+		_ = auditLogger.LogObjectMutation(ctx, auditlog.EventObjectArchived,
 			userID, principal, s.backend, req.Key, ipAddress, requestID, 0,
-			audit.ResultFailure, err)
+			auditlog.ResultFailure, err)
 		return nil, mapError(err)
 	}
 
-	_ = auditLogger.LogObjectMutation(ctx, audit.EventObjectArchived,
+	_ = auditLogger.LogObjectMutation(ctx, auditlog.EventObjectArchived,
 		userID, principal, s.backend, req.Key, ipAddress, requestID, 0,
-		audit.ResultSuccess, nil)
+		auditlog.ResultSuccess, nil)
 
 	return &objstorepb.ArchiveResponse{
 		Success: true,

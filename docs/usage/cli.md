@@ -1,5 +1,8 @@
 # Using the CLI
 
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 Practical guide for the objstore command-line tool.
 
 ## Installation
@@ -28,7 +31,7 @@ objstore put <key> <file>
 From stdin:
 
 ```bash
-echo "content" | objstore put object.txt -
+echo "content" | objstore put - object.txt
 ```
 
 ### Get Objects
@@ -41,7 +44,7 @@ objstore get <key>
 Save to file:
 
 ```bash
-objstore get <key> -o output.txt
+objstore get <key> output.txt
 ```
 
 ### Delete Objects
@@ -92,7 +95,7 @@ done
 ```bash
 # Restore all backups
 objstore list --prefix backup/ | while read key; do
-  objstore get "$key" -o "/restore/$key"
+  objstore get "$key" "/restore/$key"
 done
 ```
 
@@ -107,7 +110,7 @@ done
 ### Pipeline Integration
 ```bash
 # Process and upload
-cat data.txt | process-data | objstore put processed/data.txt -
+cat data.txt | process-data | objstore put - processed/data.txt
 ```
 
 ## Configuration
@@ -174,7 +177,7 @@ objstore policy remove cleanup-old-logs
 
 ### Error Handling
 ```bash
-if ! objstore get file.txt -o output.txt; then
+if ! objstore get file.txt output.txt; then
   echo "Failed to download file"
   exit 1
 fi

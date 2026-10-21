@@ -23,6 +23,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/server/metrics"
 )
 
@@ -185,7 +186,7 @@ func RequestSizeLimitMiddleware(maxSize int64) gin.HandlerFunc {
 // restrictive authenticators (e.g. Prometheus scrapers and load-balancer
 // health checks carry no credentials). Swagger documentation is not public
 // and requires authentication.
-func AuthenticationMiddleware(authenticator adapters.Authenticator, logger adapters.Logger, auditLogger audit.AuditLogger, metricsPublic bool) gin.HandlerFunc {
+func AuthenticationMiddleware(authenticator adapters.Authenticator, logger adapters.Logger, auditLogger auditlog.AuditLogger, metricsPublic bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if isPublicPath(c.Request.URL.Path, metricsPublic) {
 			c.Next()
@@ -231,7 +232,7 @@ func AuthenticationMiddleware(authenticator adapters.Authenticator, logger adapt
 // from the HTTP method and route, then calls authorizer.Authorize. On denial it
 // responds with 403 Forbidden. The default authorizer (NoOpAuthorizer) allows
 // everything, preserving prior behavior.
-func AuthorizationMiddleware(authorizer adapters.Authorizer, logger adapters.Logger, auditLogger audit.AuditLogger, metricsPublic bool) gin.HandlerFunc {
+func AuthorizationMiddleware(authorizer adapters.Authorizer, logger adapters.Logger, auditLogger auditlog.AuditLogger, metricsPublic bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Public paths and swagger are exempt from authorization; swagger still
 		// requires authentication, enforced by AuthenticationMiddleware.

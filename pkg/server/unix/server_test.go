@@ -122,8 +122,7 @@ func TestServerStartShutdown(t *testing.T) {
 		errCh <- server.Start(ctx)
 	}()
 
-	// Wait for server to start
-	time.Sleep(100 * time.Millisecond)
+	waitForReady(t, server)
 
 	// Verify socket file exists
 	if _, err := os.Stat(socketPath); os.IsNotExist(err) {
@@ -228,8 +227,7 @@ func TestServerShutdown(t *testing.T) {
 		errCh <- server.Start(ctx)
 	}()
 
-	// Wait for server to start
-	time.Sleep(100 * time.Millisecond)
+	waitForReady(t, server)
 
 	// Explicit shutdown
 	if err := server.Shutdown(context.Background()); err != nil {
@@ -271,7 +269,7 @@ func TestFirstReadDeadline(t *testing.T) {
 	defer cancel()
 	errCh := make(chan error, 1)
 	go func() { errCh <- server.Start(ctx) }()
-	time.Sleep(100 * time.Millisecond)
+	waitForReady(t, server)
 
 	// Connect and send nothing. The server must close the connection once the
 	// first read deadline expires; observe that as a read returning (EOF or

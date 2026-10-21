@@ -1,5 +1,8 @@
 # Server Architecture
 
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 go-objstore provides multiple server implementations that expose the storage layer through different protocols. All servers share common patterns for authentication, TLS, and configuration.
 
 ## Server Types

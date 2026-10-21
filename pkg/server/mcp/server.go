@@ -28,6 +28,7 @@ import (
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	"github.com/jeremyhahn/go-objstore/pkg/server/middleware"
 	"github.com/sourcegraph/jsonrpc2"
@@ -110,7 +111,7 @@ type ServerConfig struct {
 	EnableAudit bool
 
 	// AuditLogger is the audit logger used when EnableAudit is set.
-	AuditLogger audit.AuditLogger
+	AuditLogger auditlog.AuditLogger
 }
 
 // DefaultServerConfig returns a ServerConfig holding the defaults layer: HTTP

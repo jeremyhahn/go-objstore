@@ -24,13 +24,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	"google.golang.org/grpc/metadata"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
-	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	"github.com/jeremyhahn/go-objstore/pkg/server/middleware"
@@ -141,23 +142,23 @@ func initErrStorage(t *testing.T, storage *errStorage) {
 }
 
 // ---------------------------------------------------------------------------
-// noopAuditLogger satisfies audit.AuditLogger without doing anything.
+// noopAuditLogger satisfies auditlog.AuditLogger without doing anything.
 // ---------------------------------------------------------------------------
 
 type noopAuditLogger struct{}
 
-func (n *noopAuditLogger) LogEvent(_ context.Context, _ *audit.AuditEvent) error { return nil }
+func (n *noopAuditLogger) LogEvent(_ context.Context, _ *auditlog.AuditEvent) error { return nil }
 func (n *noopAuditLogger) LogAuthFailure(_ context.Context, _, _, _, _, _ string) error {
 	return nil
 }
 func (n *noopAuditLogger) LogAuthSuccess(_ context.Context, _, _, _, _ string) error { return nil }
-func (n *noopAuditLogger) LogObjectAccess(_ context.Context, _, _, _, _, _, _ string, _ audit.Result, _ error) error {
+func (n *noopAuditLogger) LogObjectAccess(_ context.Context, _, _, _, _, _, _ string, _ auditlog.Result, _ error) error {
 	return nil
 }
-func (n *noopAuditLogger) LogObjectMutation(_ context.Context, _ audit.EventType, _, _, _, _, _, _ string, _ int64, _ audit.Result, _ error) error {
+func (n *noopAuditLogger) LogObjectMutation(_ context.Context, _ auditlog.EventType, _, _, _, _, _, _ string, _ int64, _ auditlog.Result, _ error) error {
 	return nil
 }
-func (n *noopAuditLogger) LogPolicyChange(_ context.Context, _, _, _, _, _, _ string, _ audit.Result, _ error) error {
+func (n *noopAuditLogger) LogPolicyChange(_ context.Context, _, _, _, _, _, _ string, _ auditlog.Result, _ error) error {
 	return nil
 }
 func (n *noopAuditLogger) SetLevel(_ adapters.LogLevel) {}
@@ -320,15 +321,30 @@ func TestRemoveStaleSocketLstatNonNotExistError(t *testing.T) {
 // server.go: acceptLoop – accept error while server is not yet closed (line 314)
 // ---------------------------------------------------------------------------
 
+// acceptWarnLogger closes accepted the first time acceptLoop logs an accept
+// error, so tests can wait on the event instead of sleeping.
+type acceptWarnLogger struct {
+	mockLogger
+	once     sync.Once
+	accepted chan struct{}
+}
+
+func (l *acceptWarnLogger) Warn(_ context.Context, msg string, _ ...adapters.Field) {
+	if msg == "Accept error" {
+		l.once.Do(func() { close(l.accepted) })
+	}
+}
+
 func TestAcceptLoopErrorNotClosed(t *testing.T) {
 	storage := NewMockStorage()
 	socketPath := filepath.Join(t.TempDir(), "accept-err.sock")
 	defer cleanupSocket(t, socketPath)
 
 	initTestFacade(t, storage)
+	logger := &acceptWarnLogger{accepted: make(chan struct{})}
 	server, err := NewServer(&ServerConfig{
 		SocketPath: socketPath,
-		Logger:     &mockLogger{},
+		Logger:     logger,
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
@@ -340,8 +356,7 @@ func TestAcceptLoopErrorNotClosed(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() { errCh <- server.Start(ctx) }()
 
-	// Wait for socket file.
-	waitForSocket(t, socketPath)
+	waitForReady(t, server)
 
 	// Close the listener externally without setting server.closed. This causes
 	// acceptLoop to hit the error path while the server is still "running".
@@ -350,7 +365,11 @@ func TestAcceptLoopErrorNotClosed(t *testing.T) {
 	server.mu.Unlock()
 	_ = l.Close()
 
-	time.Sleep(50 * time.Millisecond)
+	select {
+	case <-logger.accepted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("acceptLoop did not report the accept error")
+	}
 	cancel()
 
 	select {
@@ -360,19 +379,15 @@ func TestAcceptLoopErrorNotClosed(t *testing.T) {
 	}
 }
 
-// waitForSocket blocks until the given socket path exists or the test deadline
-// expires.
-func waitForSocket(t *testing.T, path string) {
+// waitForReady blocks until the server reports it is listening and accepting,
+// or fails the test on timeout. The socket file appearing is not sufficient:
+// the server assigns its listener after the file is created.
+func waitForReady(t *testing.T, server *Server) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		if _, err := os.Stat(path); err == nil {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("socket %q did not appear within timeout", path)
-		}
-		time.Sleep(5 * time.Millisecond)
+	select {
+	case <-server.Ready():
+	case <-time.After(10 * time.Second):
+		t.Fatal("server did not become ready within timeout")
 	}
 }
 
@@ -397,7 +412,7 @@ func TestHandleConnectionEmptyLine(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = server.Start(ctx) }()
-	waitForSocket(t, socketPath)
+	waitForReady(t, server)
 
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
@@ -573,7 +588,7 @@ func TestShutdownSocketAlreadyGone(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
 	go func() { errCh <- server.Start(ctx) }()
-	waitForSocket(t, socketPath)
+	waitForReady(t, server)
 
 	// Delete the socket before Shutdown to test the "not a socket" branch.
 	os.Remove(socketPath)
@@ -1606,7 +1621,7 @@ func TestShutdownRemoveSocketFails(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
 	go func() { errCh <- server.Start(ctx) }()
-	waitForSocket(t, socketPath)
+	waitForReady(t, server)
 
 	// Make the parent directory non-writable so os.Remove fails.
 	parent := filepath.Dir(socketPath)

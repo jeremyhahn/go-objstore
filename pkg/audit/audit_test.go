@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 )
 
 func TestNewDefaultAuditLogger(t *testing.T) {
@@ -32,7 +33,7 @@ func TestNewDefaultAuditLogger(t *testing.T) {
 	}
 
 	// Verify it implements the interface
-	var _ AuditLogger = logger
+	var _ auditlog.AuditLogger = logger
 }
 
 func TestNewAuditLogger(t *testing.T) {
@@ -93,15 +94,15 @@ func TestLogEvent(t *testing.T) {
 	logger := NewAuditLogger(config)
 	ctx := context.Background()
 
-	event := &AuditEvent{
+	event := &auditlog.AuditEvent{
 		Timestamp:        time.Now(),
-		EventType:        EventObjectCreated,
+		EventType:        auditlog.EventObjectCreated,
 		UserID:           "user123",
 		Principal:        "john.doe",
 		Bucket:           "my-bucket",
 		Key:              "my-key",
 		Action:           "put_object",
-		Result:           ResultSuccess,
+		Result:           auditlog.ResultSuccess,
 		IPAddress:        "192.168.1.1",
 		RequestID:        "req-123",
 		Method:           "PUT",
@@ -200,17 +201,17 @@ func TestLogObjectAccess(t *testing.T) {
 
 	tests := []struct {
 		name   string
-		result Result
+		result auditlog.Result
 		err    error
 	}{
 		{
 			name:   "successful access",
-			result: ResultSuccess,
+			result: auditlog.ResultSuccess,
 			err:    nil,
 		},
 		{
 			name:   "failed access",
-			result: ResultFailure,
+			result: auditlog.ResultFailure,
 			err:    os.ErrNotExist,
 		},
 	}
@@ -251,32 +252,32 @@ func TestLogObjectMutation(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		eventType EventType
-		result    Result
+		eventType auditlog.EventType
+		result    auditlog.Result
 		err       error
 	}{
 		{
 			name:      "object created",
-			eventType: EventObjectCreated,
-			result:    ResultSuccess,
+			eventType: auditlog.EventObjectCreated,
+			result:    auditlog.ResultSuccess,
 			err:       nil,
 		},
 		{
 			name:      "object deleted",
-			eventType: EventObjectDeleted,
-			result:    ResultSuccess,
+			eventType: auditlog.EventObjectDeleted,
+			result:    auditlog.ResultSuccess,
 			err:       nil,
 		},
 		{
 			name:      "metadata updated",
-			eventType: EventObjectMetadataUpdated,
-			result:    ResultSuccess,
+			eventType: auditlog.EventObjectMetadataUpdated,
+			result:    auditlog.ResultSuccess,
 			err:       nil,
 		},
 		{
 			name:      "failed creation",
-			eventType: EventObjectCreated,
-			result:    ResultFailure,
+			eventType: auditlog.EventObjectCreated,
+			result:    auditlog.ResultFailure,
 			err:       os.ErrPermission,
 		},
 	}
@@ -313,7 +314,7 @@ func TestLogPolicyChange(t *testing.T) {
 	logger := NewAuditLogger(config)
 	ctx := context.Background()
 
-	err := logger.LogPolicyChange(ctx, "user123", "john.doe", "bucket", "policy-1", "192.168.1.1", "req-123", ResultSuccess, nil)
+	err := logger.LogPolicyChange(ctx, "user123", "john.doe", "bucket", "policy-1", "192.168.1.1", "req-123", auditlog.ResultSuccess, nil)
 	if err != nil {
 		t.Fatalf("LogPolicyChange failed: %v", err)
 	}
@@ -339,10 +340,10 @@ func TestDisabledLogger(t *testing.T) {
 	logger := NewAuditLogger(config)
 	ctx := context.Background()
 
-	event := &AuditEvent{
-		EventType: EventObjectCreated,
+	event := &auditlog.AuditEvent{
+		EventType: auditlog.EventObjectCreated,
 		Action:    "test",
-		Result:    ResultSuccess,
+		Result:    auditlog.ResultSuccess,
 	}
 
 	err := logger.LogEvent(ctx, event)
@@ -357,11 +358,11 @@ func TestDisabledLogger(t *testing.T) {
 }
 
 func TestNoOpAuditLogger(t *testing.T) {
-	logger := NewNoOpAuditLogger()
+	logger := auditlog.NewNoOpAuditLogger()
 	ctx := context.Background()
 
 	// All methods should succeed without error
-	err := logger.LogEvent(ctx, &AuditEvent{})
+	err := logger.LogEvent(ctx, &auditlog.AuditEvent{})
 	if err != nil {
 		t.Errorf("NoOp LogEvent returned error: %v", err)
 	}
@@ -376,17 +377,17 @@ func TestNoOpAuditLogger(t *testing.T) {
 		t.Errorf("NoOp LogAuthSuccess returned error: %v", err)
 	}
 
-	err = logger.LogObjectAccess(ctx, "user", "principal", "bucket", "key", "ip", "req", ResultSuccess, nil)
+	err = logger.LogObjectAccess(ctx, "user", "principal", "bucket", "key", "ip", "req", auditlog.ResultSuccess, nil)
 	if err != nil {
 		t.Errorf("NoOp LogObjectAccess returned error: %v", err)
 	}
 
-	err = logger.LogObjectMutation(ctx, EventObjectCreated, "user", "principal", "bucket", "key", "ip", "req", 0, ResultSuccess, nil)
+	err = logger.LogObjectMutation(ctx, auditlog.EventObjectCreated, "user", "principal", "bucket", "key", "ip", "req", 0, auditlog.ResultSuccess, nil)
 	if err != nil {
 		t.Errorf("NoOp LogObjectMutation returned error: %v", err)
 	}
 
-	err = logger.LogPolicyChange(ctx, "user", "principal", "bucket", "policy", "ip", "req", ResultSuccess, nil)
+	err = logger.LogPolicyChange(ctx, "user", "principal", "bucket", "policy", "ip", "req", auditlog.ResultSuccess, nil)
 	if err != nil {
 		t.Errorf("NoOp LogPolicyChange returned error: %v", err)
 	}
@@ -412,15 +413,15 @@ func TestLevelManagement(t *testing.T) {
 }
 
 func TestAuditEventJSON(t *testing.T) {
-	event := &AuditEvent{
+	event := &auditlog.AuditEvent{
 		Timestamp:        time.Now(),
-		EventType:        EventObjectCreated,
+		EventType:        auditlog.EventObjectCreated,
 		UserID:           "user123",
 		Principal:        "john.doe",
 		Bucket:           "bucket",
 		Key:              "key",
 		Action:           "put_object",
-		Result:           ResultSuccess,
+		Result:           auditlog.ResultSuccess,
 		IPAddress:        "192.168.1.1",
 		RequestID:        "req-123",
 		Method:           "PUT",
@@ -439,7 +440,7 @@ func TestAuditEventJSON(t *testing.T) {
 	}
 
 	// Unmarshal back
-	var decoded AuditEvent
+	var decoded auditlog.AuditEvent
 	err = json.Unmarshal(data, &decoded)
 	if err != nil {
 		t.Fatalf("Failed to unmarshal event: %v", err)
@@ -479,19 +480,19 @@ func TestDefaultConfig(t *testing.T) {
 
 func TestEventTypeString(t *testing.T) {
 	tests := []struct {
-		eventType EventType
+		eventType auditlog.EventType
 		expected  string
 	}{
-		{EventAuthFailure, "AUTH_FAILURE"},
-		{EventAuthSuccess, "AUTH_SUCCESS"},
-		{EventObjectCreated, "OBJECT_CREATED"},
-		{EventObjectDeleted, "OBJECT_DELETED"},
-		{EventObjectAccessed, "OBJECT_ACCESSED"},
-		{EventObjectMetadataUpdated, "OBJECT_METADATA_UPDATED"},
-		{EventPolicyChanged, "POLICY_CHANGED"},
-		{EventBucketCreated, "BUCKET_CREATED"},
-		{EventBucketDeleted, "BUCKET_DELETED"},
-		{EventListObjects, "LIST_OBJECTS"},
+		{auditlog.EventAuthFailure, "AUTH_FAILURE"},
+		{auditlog.EventAuthSuccess, "AUTH_SUCCESS"},
+		{auditlog.EventObjectCreated, "OBJECT_CREATED"},
+		{auditlog.EventObjectDeleted, "OBJECT_DELETED"},
+		{auditlog.EventObjectAccessed, "OBJECT_ACCESSED"},
+		{auditlog.EventObjectMetadataUpdated, "OBJECT_METADATA_UPDATED"},
+		{auditlog.EventPolicyChanged, "POLICY_CHANGED"},
+		{auditlog.EventBucketCreated, "BUCKET_CREATED"},
+		{auditlog.EventBucketDeleted, "BUCKET_DELETED"},
+		{auditlog.EventListObjects, "LIST_OBJECTS"},
 	}
 
 	for _, tt := range tests {
@@ -504,11 +505,11 @@ func TestEventTypeString(t *testing.T) {
 }
 
 func TestResultString(t *testing.T) {
-	if string(ResultSuccess) != "SUCCESS" {
-		t.Errorf("Expected SUCCESS, got %s", string(ResultSuccess))
+	if string(auditlog.ResultSuccess) != "SUCCESS" {
+		t.Errorf("Expected SUCCESS, got %s", string(auditlog.ResultSuccess))
 	}
-	if string(ResultFailure) != "FAILURE" {
-		t.Errorf("Expected FAILURE, got %s", string(ResultFailure))
+	if string(auditlog.ResultFailure) != "FAILURE" {
+		t.Errorf("Expected FAILURE, got %s", string(auditlog.ResultFailure))
 	}
 }
 

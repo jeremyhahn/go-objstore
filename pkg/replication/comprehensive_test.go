@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
-	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
@@ -30,7 +30,7 @@ func TestMultipleSyncRounds(t *testing.T) {
 	ctx := context.Background()
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
@@ -82,7 +82,7 @@ func TestSyncAllMultiplePolicies(t *testing.T) {
 	ctx := context.Background()
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
@@ -161,7 +161,7 @@ func TestSyncAllParallelWithLargeDataset(t *testing.T) {
 		source:   source,
 		dest:     dest,
 		logger:   adapters.NewNoOpLogger(),
-		auditLog: audit.NewNoOpAuditLogger(),
+		auditLog: auditlog.NewNoOpAuditLogger(),
 		metrics:  NewReplicationMetrics(),
 	}
 
@@ -193,7 +193,7 @@ func TestSyncAllParallelWithLargeDataset(t *testing.T) {
 func TestPolicyReload(t *testing.T) {
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	// Create first manager and add policies
 	mgr1, err := NewPersistentReplicationManager(fs, "reload-test.json", 5*time.Minute, logger, auditLog)
@@ -269,7 +269,7 @@ func TestTransparentModeEncryption(t *testing.T) {
 		NewNoopEncrypterFactory(),
 		NewNoopEncrypterFactory(),
 		adapters.NewNoOpLogger(),
-		audit.NewNoOpAuditLogger(),
+		auditlog.NewNoOpAuditLogger(),
 	)
 
 	if err != nil {
@@ -307,7 +307,7 @@ func TestBackendEncryptionConfig(t *testing.T) {
 		NewNoopEncrypterFactory(),
 		NewNoopEncrypterFactory(),
 		adapters.NewNoOpLogger(),
-		audit.NewNoOpAuditLogger(),
+		auditlog.NewNoOpAuditLogger(),
 	)
 
 	if err != nil {
@@ -323,7 +323,7 @@ func TestBackendEncryptionConfig(t *testing.T) {
 func TestReplicationStatusWithMetrics(t *testing.T) {
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {

@@ -27,7 +27,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
-	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
@@ -41,7 +41,7 @@ type Local struct {
 	atRestEncrypterFactory common.EncrypterFactory
 	changeLog              ChangeLog
 	logger                 adapters.Logger
-	auditLog               audit.AuditLogger
+	auditLog               auditlog.AuditLogger
 	lifecycleCancel        context.CancelFunc // stops the background lifecycle goroutine
 }
 
@@ -78,7 +78,7 @@ func (l *Local) Configure(settings map[string]string) error {
 		l.logger = adapters.NewNoOpLogger()
 	}
 	if l.auditLog == nil {
-		l.auditLog = audit.NewNoOpAuditLogger()
+		l.auditLog = auditlog.NewNoOpAuditLogger()
 	}
 
 	// Configure lifecycle manager type
@@ -896,7 +896,7 @@ func (l *Local) SetLogger(logger adapters.Logger) {
 }
 
 // SetAuditLogger sets the audit logger for replication operations.
-func (l *Local) SetAuditLogger(auditLog audit.AuditLogger) {
+func (l *Local) SetAuditLogger(auditLog auditlog.AuditLogger) {
 	l.auditLog = auditLog
 }
 
@@ -920,7 +920,7 @@ func (l *Local) GetLogger() adapters.Logger {
 }
 
 // GetAuditLogger returns the configured audit logger.
-func (l *Local) GetAuditLogger() audit.AuditLogger {
+func (l *Local) GetAuditLogger() auditlog.AuditLogger {
 	return l.auditLog
 }
 

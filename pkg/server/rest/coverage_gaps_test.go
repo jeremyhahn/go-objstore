@@ -27,7 +27,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
-	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	"github.com/jeremyhahn/go-objstore/pkg/replication"
@@ -806,7 +806,7 @@ func TestGetReplicationStatusGenericManagerError(t *testing.T) {
 func TestAuthorizationMiddlewareNoPrincipal(t *testing.T) {
 	router := gin.New()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 	authorizer := adapters.NewNoOpAuthorizer()
 
 	// Do NOT add AuthenticationMiddleware so no principal is set.
@@ -829,7 +829,7 @@ func TestAuthorizationMiddlewareNoPrincipal(t *testing.T) {
 func TestAuthorizationMiddlewareNilPrincipalInContext(t *testing.T) {
 	router := gin.New()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 	authorizer := adapters.NewNoOpAuthorizer()
 
 	router.Use(func(c *gin.Context) {

@@ -26,7 +26,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
-	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -60,7 +60,7 @@ func TestMockAuditLogger_AllMethods(t *testing.T) {
 	logger := &mockAuditLogger{}
 	ctx := context.Background()
 
-	err := logger.LogEvent(ctx, &audit.AuditEvent{})
+	err := logger.LogEvent(ctx, &auditlog.AuditEvent{})
 	assert.NoError(t, err)
 
 	err = logger.LogAuthFailure(ctx, "user", "principal", "1.2.3.4", "req1", "reason")
@@ -375,7 +375,7 @@ func TestOSFileSystem_Rename(t *testing.T) {
 func TestSave_OpenTmpFails(t *testing.T) {
 	mfs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(mfs, "policies.json", time.Minute, logger, auditLog)
 	require.NoError(t, err)
@@ -392,7 +392,7 @@ func TestSave_OpenTmpFails(t *testing.T) {
 // save: Write to tmp file fails.
 func TestSave_WriteFails(t *testing.T) {
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mfs := newMockFileSystem()
 	mgr, err := NewPersistentReplicationManager(mfs, "policies.json", time.Minute, logger, auditLog)
@@ -409,7 +409,7 @@ func TestSave_WriteFails(t *testing.T) {
 // save: Rename tmp->dst fails.
 func TestSave_RenameFails(t *testing.T) {
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mfs := newMockFileSystem()
 	mgr, err := NewPersistentReplicationManager(mfs, "policies.json", time.Minute, logger, auditLog)
@@ -429,7 +429,7 @@ func TestSave_RenameFails(t *testing.T) {
 
 func TestLoad_ReadAllFails(t *testing.T) {
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mfs := &readFailFS{}
 	// Provide a policy file so OpenFile "succeeds" but returns a read-error reader.
@@ -444,7 +444,7 @@ func TestLoad_ReadAllFails(t *testing.T) {
 func TestSyncAllParallel_NoPolicies(t *testing.T) {
 	mfs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(mfs, "policies.json", time.Minute, logger, auditLog)
 	require.NoError(t, err)
@@ -458,7 +458,7 @@ func TestSyncAllParallel_NoPolicies(t *testing.T) {
 func TestSyncAllParallel_DisabledPoliciesSkipped(t *testing.T) {
 	mfs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(mfs, "policies.json", time.Minute, logger, auditLog)
 	require.NoError(t, err)
@@ -484,7 +484,7 @@ func TestSyncAllParallel_DisabledPoliciesSkipped(t *testing.T) {
 func TestSyncAllParallel_WithError(t *testing.T) {
 	mfs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(mfs, "policies.json", time.Minute, logger, auditLog)
 	require.NoError(t, err)
@@ -515,7 +515,7 @@ func TestSyncAllParallel_WithError(t *testing.T) {
 func TestRun_TickerFiresSync(t *testing.T) {
 	mfs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	// Very short interval so the ticker fires quickly.
 	mgr, err := NewPersistentReplicationManager(mfs, "policies.json", 20*time.Millisecond, logger, auditLog)

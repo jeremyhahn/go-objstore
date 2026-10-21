@@ -1,5 +1,8 @@
 # Storage Layer Architecture
 
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 The storage layer provides a unified interface for object storage operations across different backends. This document describes the interface design, backend implementations, and key concepts.
 
 ## Storage Interface

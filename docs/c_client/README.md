@@ -1,5 +1,8 @@
 # C API Reference
 
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 Complete reference for using go-objstore from C applications.
 
 ## Overview

@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
-	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
@@ -54,7 +54,7 @@ func TestSyncIncrementalWithChangelog(t *testing.T) {
 		source:   source,
 		dest:     dest,
 		logger:   adapters.NewNoOpLogger(),
-		auditLog: audit.NewNoOpAuditLogger(),
+		auditLog: auditlog.NewNoOpAuditLogger(),
 		metrics:  NewReplicationMetrics(),
 	}
 
@@ -107,7 +107,7 @@ func TestSyncIncrementalWithDelete(t *testing.T) {
 		source:   source,
 		dest:     dest,
 		logger:   adapters.NewNoOpLogger(),
-		auditLog: audit.NewNoOpAuditLogger(),
+		auditLog: auditlog.NewNoOpAuditLogger(),
 		metrics:  NewReplicationMetrics(),
 	}
 
@@ -157,7 +157,7 @@ func TestSyncIncrementalWithUnknownOperation(t *testing.T) {
 		source:   source,
 		dest:     dest,
 		logger:   adapters.NewNoOpLogger(),
-		auditLog: audit.NewNoOpAuditLogger(),
+		auditLog: auditlog.NewNoOpAuditLogger(),
 		metrics:  NewReplicationMetrics(),
 	}
 
@@ -211,7 +211,7 @@ func TestSyncObjectMetadataError(t *testing.T) {
 		source:   source,
 		dest:     dest,
 		logger:   adapters.NewNoOpLogger(),
-		auditLog: audit.NewNoOpAuditLogger(),
+		auditLog: auditlog.NewNoOpAuditLogger(),
 		metrics:  NewReplicationMetrics(),
 	}
 
@@ -248,7 +248,7 @@ func TestSyncObjectGetError(t *testing.T) {
 		source:   source,
 		dest:     dest,
 		logger:   adapters.NewNoOpLogger(),
-		auditLog: audit.NewNoOpAuditLogger(),
+		auditLog: auditlog.NewNoOpAuditLogger(),
 		metrics:  NewReplicationMetrics(),
 	}
 
@@ -276,7 +276,7 @@ func TestSyncerClose(t *testing.T) {
 		source:   source,
 		dest:     dest,
 		logger:   adapters.NewNoOpLogger(),
-		auditLog: audit.NewNoOpAuditLogger(),
+		auditLog: auditlog.NewNoOpAuditLogger(),
 		metrics:  NewReplicationMetrics(),
 	}
 
@@ -362,7 +362,7 @@ func TestSyncAllParallelSubmitError(t *testing.T) {
 		source:   source,
 		dest:     dest,
 		logger:   adapters.NewNoOpLogger(),
-		auditLog: audit.NewNoOpAuditLogger(),
+		auditLog: auditlog.NewNoOpAuditLogger(),
 		metrics:  NewReplicationMetrics(),
 	}
 

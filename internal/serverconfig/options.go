@@ -18,6 +18,7 @@ import (
 	"os"
 
 	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	grpcserver "github.com/jeremyhahn/go-objstore/pkg/server/grpc"
 	mcpserver "github.com/jeremyhahn/go-objstore/pkg/server/mcp"
 	"github.com/jeremyhahn/go-objstore/pkg/server/middleware"
@@ -40,7 +41,7 @@ type Middleware struct {
 	RateLimit       bool
 	RateLimitConfig *middleware.RateLimitConfig
 	Audit           bool
-	AuditLogger     audit.AuditLogger
+	AuditLogger     auditlog.AuditLogger
 }
 
 // Middleware builds the shared middleware. When audit is enabled it creates

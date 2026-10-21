@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
-	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
 	"github.com/stretchr/testify/assert"
@@ -46,7 +46,7 @@ func putIntoLocalBackend(t *testing.T, path, key string, data []byte) {
 func TestSyncAll_ResultSyncedAccumulation(t *testing.T) {
 	mfs := newMockFileSystem()
 	mgr, err := NewPersistentReplicationManager(mfs, "p.json", time.Minute,
-		adapters.NewNoOpLogger(), audit.NewNoOpAuditLogger())
+		adapters.NewNoOpLogger(), auditlog.NewNoOpAuditLogger())
 	require.NoError(t, err)
 
 	srcDir := t.TempDir()
@@ -77,7 +77,7 @@ func TestSyncAll_ResultSyncedAccumulation(t *testing.T) {
 func TestSyncAll_MixedEnabledDisabled_Gap(t *testing.T) {
 	mfs := newMockFileSystem()
 	mgr, err := NewPersistentReplicationManager(mfs, "p.json", time.Minute,
-		adapters.NewNoOpLogger(), audit.NewNoOpAuditLogger())
+		adapters.NewNoOpLogger(), auditlog.NewNoOpAuditLogger())
 	require.NoError(t, err)
 
 	srcDir := t.TempDir()
@@ -118,7 +118,7 @@ func TestSyncAll_MixedEnabledDisabled_Gap(t *testing.T) {
 func TestSyncAllParallel_SuccessPath_Gap(t *testing.T) {
 	mfs := newMockFileSystem()
 	mgr, err := NewPersistentReplicationManager(mfs, "p.json", time.Minute,
-		adapters.NewNoOpLogger(), audit.NewNoOpAuditLogger())
+		adapters.NewNoOpLogger(), auditlog.NewNoOpAuditLogger())
 	require.NoError(t, err)
 
 	srcDir := t.TempDir()
@@ -149,7 +149,7 @@ func TestSyncAllParallel_SuccessPath_Gap(t *testing.T) {
 func TestSyncAllParallel_MixedPolicies_Gap(t *testing.T) {
 	mfs := newMockFileSystem()
 	mgr, err := NewPersistentReplicationManager(mfs, "p.json", time.Minute,
-		adapters.NewNoOpLogger(), audit.NewNoOpAuditLogger())
+		adapters.NewNoOpLogger(), auditlog.NewNoOpAuditLogger())
 	require.NoError(t, err)
 
 	srcDir := t.TempDir()
@@ -188,7 +188,7 @@ func TestSyncAllParallel_MixedPolicies_Gap(t *testing.T) {
 func TestSyncAllParallel_DisabledSkipped_Gap(t *testing.T) {
 	mfs := newMockFileSystem()
 	mgr, err := NewPersistentReplicationManager(mfs, "p.json", time.Minute,
-		adapters.NewNoOpLogger(), audit.NewNoOpAuditLogger())
+		adapters.NewNoOpLogger(), auditlog.NewNoOpAuditLogger())
 	require.NoError(t, err)
 
 	srcDir := t.TempDir()
@@ -220,7 +220,7 @@ func TestSyncAllParallel_DisabledSkipped_Gap(t *testing.T) {
 func TestSyncAllParallel_SubResultErrorsPropagated(t *testing.T) {
 	mfs := newMockFileSystem()
 	mgr, err := NewPersistentReplicationManager(mfs, "p.json", time.Minute,
-		adapters.NewNoOpLogger(), audit.NewNoOpAuditLogger())
+		adapters.NewNoOpLogger(), auditlog.NewNoOpAuditLogger())
 	require.NoError(t, err)
 
 	srcDir := t.TempDir()
@@ -254,7 +254,7 @@ func TestSyncAllParallel_SubResultErrorsPropagated(t *testing.T) {
 func TestRun_TickerSyncCompleted(t *testing.T) {
 	mfs := newMockFileSystem()
 	mgr, err := NewPersistentReplicationManager(mfs, "p.json", 15*time.Millisecond,
-		adapters.NewNoOpLogger(), audit.NewNoOpAuditLogger())
+		adapters.NewNoOpLogger(), auditlog.NewNoOpAuditLogger())
 	require.NoError(t, err)
 
 	// No policies: SyncAll will succeed with zeros, exercising the "completed" log.
@@ -300,7 +300,7 @@ func TestSyncer_SyncAllParallel_LocalBackends(t *testing.T) {
 		NewNoopEncrypterFactory(),
 		NewNoopEncrypterFactory(),
 		adapters.NewNoOpLogger(),
-		audit.NewNoOpAuditLogger())
+		auditlog.NewNoOpAuditLogger())
 	require.NoError(t, err)
 
 	result, err := syncer.SyncAllParallel(context.Background(), 2)

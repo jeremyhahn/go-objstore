@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
-	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
@@ -54,7 +54,7 @@ func TestSyncIncrementalSyncError(t *testing.T) {
 		source:   source,
 		dest:     dest,
 		logger:   adapters.NewNoOpLogger(),
-		auditLog: audit.NewNoOpAuditLogger(),
+		auditLog: auditlog.NewNoOpAuditLogger(),
 		metrics:  NewReplicationMetrics(),
 	}
 
@@ -102,7 +102,7 @@ func TestSyncIncrementalDeleteError(t *testing.T) {
 		source:   source,
 		dest:     dest,
 		logger:   adapters.NewNoOpLogger(),
-		auditLog: audit.NewNoOpAuditLogger(),
+		auditLog: auditlog.NewNoOpAuditLogger(),
 		metrics:  NewReplicationMetrics(),
 	}
 
@@ -165,7 +165,7 @@ func TestSyncAllMetricsUpdateWithErrors(t *testing.T) {
 		source:   source,
 		dest:     dest,
 		logger:   adapters.NewNoOpLogger(),
-		auditLog: audit.NewNoOpAuditLogger(),
+		auditLog: auditlog.NewNoOpAuditLogger(),
 		metrics:  NewReplicationMetrics(),
 	}
 
@@ -201,7 +201,7 @@ func TestSyncPolicyParallelMetricsUpdate(t *testing.T) {
 	ctx := context.Background()
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
@@ -294,7 +294,7 @@ func TestSyncAllParallelEmptyKeys(t *testing.T) {
 		source:   source,
 		dest:     dest,
 		logger:   adapters.NewNoOpLogger(),
-		auditLog: audit.NewNoOpAuditLogger(),
+		auditLog: auditlog.NewNoOpAuditLogger(),
 		metrics:  NewReplicationMetrics(),
 	}
 
@@ -316,7 +316,7 @@ func TestSyncAllParallelEmptyKeys(t *testing.T) {
 func TestGetFactoriesNoopDefaults(t *testing.T) {
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
@@ -374,7 +374,7 @@ func TestNewSyncerOpaqueMode(t *testing.T) {
 		NewNoopEncrypterFactory(),
 		NewNoopEncrypterFactory(),
 		adapters.NewNoOpLogger(),
-		audit.NewNoOpAuditLogger(),
+		auditlog.NewNoOpAuditLogger(),
 	)
 
 	if err != nil {

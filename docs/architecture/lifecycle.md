@@ -1,5 +1,8 @@
 # Lifecycle Management Architecture
 
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 Lifecycle management provides automatic data retention and archival policies. Objects can be automatically deleted or moved to archival storage based on age and prefix patterns.
 
 ## Design Overview

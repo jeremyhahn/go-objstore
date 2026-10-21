@@ -24,7 +24,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
-	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -57,7 +57,7 @@ func (m *MockAuthenticator) ValidatePermission(ctx context.Context, principal *a
 func TestAuthenticationMiddlewareSuccess(t *testing.T) {
 	router := gin.New()
 	logger := adapters.NewNoOpLogger()
-	auditLogger := audit.NewNoOpAuditLogger()
+	auditLogger := auditlog.NewNoOpAuditLogger()
 	authenticator := &MockAuthenticator{
 		shouldFail: false,
 		principal: adapters.Principal{
@@ -107,7 +107,7 @@ func TestAuthenticationMiddlewareSuccess(t *testing.T) {
 func TestAuthenticationMiddlewareFailed(t *testing.T) {
 	router := gin.New()
 	logger := adapters.NewNoOpLogger()
-	auditLogger := audit.NewNoOpAuditLogger()
+	auditLogger := auditlog.NewNoOpAuditLogger()
 	authenticator := &MockAuthenticator{
 		shouldFail: true,
 	}

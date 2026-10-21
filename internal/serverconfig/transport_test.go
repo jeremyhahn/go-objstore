@@ -29,7 +29,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	grpcserver "github.com/jeremyhahn/go-objstore/pkg/server/grpc"
 	"github.com/jeremyhahn/go-objstore/pkg/server/middleware"
@@ -168,7 +168,7 @@ type transportMiddleware struct {
 	rateLimit   bool
 	rateConfig  *middleware.RateLimitConfig
 	audit       bool
-	auditLogger audit.AuditLogger
+	auditLogger auditlog.AuditLogger
 }
 
 // buildTransport resolves each transport's real options struct from cfg and

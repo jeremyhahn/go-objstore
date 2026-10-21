@@ -12,6 +12,11 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package audit provides comprehensive audit logging for object storage operations.
+//
+// The logging contract (auditlog.AuditLogger, the event types and the no-op
+// default) lives in pkg/auditlog so storage backends can depend on it without
+// linking this package's HTTP and gRPC middleware. This package supplies the
+// slog-backed implementation and the middleware.
 package audit
 
 import (
@@ -23,137 +28,8 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 )
-
-// EventType represents the type of audit event
-type EventType string
-
-const (
-	// EventAuthFailure indicates an authentication failure
-	EventAuthFailure EventType = "AUTH_FAILURE"
-
-	// EventAuthSuccess indicates successful authentication
-	EventAuthSuccess EventType = "AUTH_SUCCESS"
-
-	// EventObjectCreated indicates an object was created/uploaded
-	EventObjectCreated EventType = "OBJECT_CREATED"
-
-	// EventObjectDeleted indicates an object was deleted
-	EventObjectDeleted EventType = "OBJECT_DELETED"
-
-	// EventObjectAccessed indicates an object was read/accessed
-	EventObjectAccessed EventType = "OBJECT_ACCESSED"
-
-	// EventObjectMetadataUpdated indicates object metadata was modified
-	EventObjectMetadataUpdated EventType = "OBJECT_METADATA_UPDATED"
-
-	// EventObjectArchived indicates an object was archived
-	EventObjectArchived EventType = "OBJECT_ARCHIVED"
-
-	// EventPolicyChanged indicates a lifecycle policy was changed
-	EventPolicyChanged EventType = "POLICY_CHANGED"
-
-	// EventBucketCreated indicates a bucket was created
-	EventBucketCreated EventType = "BUCKET_CREATED"
-
-	// EventBucketDeleted indicates a bucket was deleted
-	EventBucketDeleted EventType = "BUCKET_DELETED"
-
-	// EventListObjects indicates objects were listed
-	EventListObjects EventType = "LIST_OBJECTS"
-)
-
-// Result represents the outcome of an audited operation
-type Result string
-
-const (
-	// ResultSuccess indicates the operation succeeded
-	ResultSuccess Result = "SUCCESS"
-
-	// ResultFailure indicates the operation failed
-	ResultFailure Result = "FAILURE"
-)
-
-// AuditEvent represents a single audit log entry
-type AuditEvent struct {
-	// Timestamp when the event occurred
-	Timestamp time.Time `json:"timestamp"`
-
-	// EventType categorizes the type of event
-	EventType EventType `json:"event_type"`
-
-	// UserID is the identifier for the user/principal
-	UserID string `json:"user_id,omitempty"`
-
-	// Principal is the name of the authenticated user/service
-	Principal string `json:"principal,omitempty"`
-
-	// Resource identifies the target resource (bucket, key, etc.)
-	Resource string `json:"resource,omitempty"`
-
-	// Bucket is the bucket name if applicable
-	Bucket string `json:"bucket,omitempty"`
-
-	// Key is the object key if applicable
-	Key string `json:"key,omitempty"`
-
-	// Action describes what was attempted
-	Action string `json:"action"`
-
-	// Result indicates success or failure
-	Result Result `json:"result"`
-
-	// ErrorMessage contains error details if the operation failed
-	ErrorMessage string `json:"error_message,omitempty"`
-
-	// IPAddress is the client's IP address
-	IPAddress string `json:"ip_address,omitempty"`
-
-	// RequestID uniquely identifies the request
-	RequestID string `json:"request_id,omitempty"`
-
-	// Method is the HTTP method or gRPC method name
-	Method string `json:"method,omitempty"`
-
-	// StatusCode is the HTTP status code or gRPC status code
-	StatusCode int `json:"status_code,omitempty"`
-
-	// BytesTransferred indicates the amount of data transferred
-	BytesTransferred int64 `json:"bytes_transferred,omitempty"`
-
-	// Duration is how long the operation took
-	Duration time.Duration `json:"duration,omitempty"`
-
-	// Metadata contains additional event-specific data
-	Metadata map[string]any `json:"metadata,omitempty"`
-}
-
-// AuditLogger defines the interface for audit logging
-type AuditLogger interface {
-	// LogEvent logs a generic audit event
-	LogEvent(ctx context.Context, event *AuditEvent) error
-
-	// LogAuthFailure logs authentication failures
-	LogAuthFailure(ctx context.Context, userID, principal, ipAddress, requestID, reason string) error
-
-	// LogAuthSuccess logs successful authentication
-	LogAuthSuccess(ctx context.Context, userID, principal, ipAddress, requestID string) error
-
-	// LogObjectAccess logs object read operations
-	LogObjectAccess(ctx context.Context, userID, principal, bucket, key, ipAddress, requestID string, result Result, err error) error
-
-	// LogObjectMutation logs object create/update/delete operations
-	LogObjectMutation(ctx context.Context, eventType EventType, userID, principal, bucket, key, ipAddress, requestID string, bytesTransferred int64, result Result, err error) error
-
-	// LogPolicyChange logs lifecycle policy modifications
-	LogPolicyChange(ctx context.Context, userID, principal, bucket, policyID, ipAddress, requestID string, result Result, err error) error
-
-	// SetLevel sets the minimum audit level (for filtering)
-	SetLevel(level adapters.LogLevel)
-
-	// GetLevel returns the current audit level
-	GetLevel() adapters.LogLevel
-}
 
 // OutputFormat specifies the format for audit log output
 type OutputFormat string
@@ -195,7 +71,7 @@ func DefaultConfig() *Config {
 	}
 }
 
-// DefaultAuditLogger implements AuditLogger using slog
+// DefaultAuditLogger implements auditlog.AuditLogger using slog
 type DefaultAuditLogger struct {
 	config *Config
 	logger *slog.Logger
@@ -203,12 +79,12 @@ type DefaultAuditLogger struct {
 }
 
 // NewDefaultAuditLogger creates a new audit logger with default configuration
-func NewDefaultAuditLogger() AuditLogger {
+func NewDefaultAuditLogger() auditlog.AuditLogger {
 	return NewAuditLogger(DefaultConfig())
 }
 
 // NewAuditLogger creates a new audit logger with the specified configuration
-func NewAuditLogger(config *Config) AuditLogger {
+func NewAuditLogger(config *Config) auditlog.AuditLogger {
 	if config == nil {
 		config = DefaultConfig()
 	}
@@ -239,7 +115,7 @@ func NewAuditLogger(config *Config) AuditLogger {
 }
 
 // LogEvent logs a generic audit event
-func (a *DefaultAuditLogger) LogEvent(ctx context.Context, event *AuditEvent) error {
+func (a *DefaultAuditLogger) LogEvent(ctx context.Context, event *auditlog.AuditEvent) error {
 	if !a.config.Enabled {
 		return nil
 	}
@@ -310,13 +186,13 @@ func (a *DefaultAuditLogger) LogEvent(ctx context.Context, event *AuditEvent) er
 
 // LogAuthFailure logs authentication failures
 func (a *DefaultAuditLogger) LogAuthFailure(ctx context.Context, userID, principal, ipAddress, requestID, reason string) error {
-	event := &AuditEvent{
+	event := &auditlog.AuditEvent{
 		Timestamp:    time.Now(),
-		EventType:    EventAuthFailure,
+		EventType:    auditlog.EventAuthFailure,
 		UserID:       userID,
 		Principal:    principal,
 		Action:       "authenticate",
-		Result:       ResultFailure,
+		Result:       auditlog.ResultFailure,
 		ErrorMessage: reason,
 		IPAddress:    ipAddress,
 		RequestID:    requestID,
@@ -326,13 +202,13 @@ func (a *DefaultAuditLogger) LogAuthFailure(ctx context.Context, userID, princip
 
 // LogAuthSuccess logs successful authentication
 func (a *DefaultAuditLogger) LogAuthSuccess(ctx context.Context, userID, principal, ipAddress, requestID string) error {
-	event := &AuditEvent{
+	event := &auditlog.AuditEvent{
 		Timestamp: time.Now(),
-		EventType: EventAuthSuccess,
+		EventType: auditlog.EventAuthSuccess,
 		UserID:    userID,
 		Principal: principal,
 		Action:    "authenticate",
-		Result:    ResultSuccess,
+		Result:    auditlog.ResultSuccess,
 		IPAddress: ipAddress,
 		RequestID: requestID,
 	}
@@ -340,10 +216,10 @@ func (a *DefaultAuditLogger) LogAuthSuccess(ctx context.Context, userID, princip
 }
 
 // LogObjectAccess logs object read operations
-func (a *DefaultAuditLogger) LogObjectAccess(ctx context.Context, userID, principal, bucket, key, ipAddress, requestID string, result Result, err error) error {
-	event := &AuditEvent{
+func (a *DefaultAuditLogger) LogObjectAccess(ctx context.Context, userID, principal, bucket, key, ipAddress, requestID string, result auditlog.Result, err error) error {
+	event := &auditlog.AuditEvent{
 		Timestamp: time.Now(),
-		EventType: EventObjectAccessed,
+		EventType: auditlog.EventObjectAccessed,
 		UserID:    userID,
 		Principal: principal,
 		Bucket:    bucket,
@@ -363,18 +239,18 @@ func (a *DefaultAuditLogger) LogObjectAccess(ctx context.Context, userID, princi
 }
 
 // LogObjectMutation logs object create/update/delete operations
-func (a *DefaultAuditLogger) LogObjectMutation(ctx context.Context, eventType EventType, userID, principal, bucket, key, ipAddress, requestID string, bytesTransferred int64, result Result, err error) error {
+func (a *DefaultAuditLogger) LogObjectMutation(ctx context.Context, eventType auditlog.EventType, userID, principal, bucket, key, ipAddress, requestID string, bytesTransferred int64, result auditlog.Result, err error) error {
 	action := "modify_object"
 	switch eventType {
-	case EventObjectCreated:
+	case auditlog.EventObjectCreated:
 		action = "put_object"
-	case EventObjectDeleted:
+	case auditlog.EventObjectDeleted:
 		action = "delete_object"
-	case EventObjectMetadataUpdated:
+	case auditlog.EventObjectMetadataUpdated:
 		action = "update_metadata"
 	}
 
-	event := &AuditEvent{
+	event := &auditlog.AuditEvent{
 		Timestamp:        time.Now(),
 		EventType:        eventType,
 		UserID:           userID,
@@ -397,10 +273,10 @@ func (a *DefaultAuditLogger) LogObjectMutation(ctx context.Context, eventType Ev
 }
 
 // LogPolicyChange logs lifecycle policy modifications
-func (a *DefaultAuditLogger) LogPolicyChange(ctx context.Context, userID, principal, bucket, policyID, ipAddress, requestID string, result Result, err error) error {
-	event := &AuditEvent{
+func (a *DefaultAuditLogger) LogPolicyChange(ctx context.Context, userID, principal, bucket, policyID, ipAddress, requestID string, result auditlog.Result, err error) error {
+	event := &auditlog.AuditEvent{
 		Timestamp: time.Now(),
-		EventType: EventPolicyChanged,
+		EventType: auditlog.EventPolicyChanged,
 		UserID:    userID,
 		Principal: principal,
 		Bucket:    bucket,
@@ -429,46 +305,4 @@ func (a *DefaultAuditLogger) SetLevel(level adapters.LogLevel) {
 // GetLevel returns the current audit level
 func (a *DefaultAuditLogger) GetLevel() adapters.LogLevel {
 	return a.level
-}
-
-// NoOpAuditLogger is an audit logger that discards all events
-type NoOpAuditLogger struct {
-	level adapters.LogLevel
-}
-
-// NewNoOpAuditLogger creates a new no-op audit logger
-func NewNoOpAuditLogger() AuditLogger {
-	return &NoOpAuditLogger{level: adapters.InfoLevel}
-}
-
-func (n *NoOpAuditLogger) LogEvent(ctx context.Context, event *AuditEvent) error {
-	return nil
-}
-
-func (n *NoOpAuditLogger) LogAuthFailure(ctx context.Context, userID, principal, ipAddress, requestID, reason string) error {
-	return nil
-}
-
-func (n *NoOpAuditLogger) LogAuthSuccess(ctx context.Context, userID, principal, ipAddress, requestID string) error {
-	return nil
-}
-
-func (n *NoOpAuditLogger) LogObjectAccess(ctx context.Context, userID, principal, bucket, key, ipAddress, requestID string, result Result, err error) error {
-	return nil
-}
-
-func (n *NoOpAuditLogger) LogObjectMutation(ctx context.Context, eventType EventType, userID, principal, bucket, key, ipAddress, requestID string, bytesTransferred int64, result Result, err error) error {
-	return nil
-}
-
-func (n *NoOpAuditLogger) LogPolicyChange(ctx context.Context, userID, principal, bucket, policyID, ipAddress, requestID string, result Result, err error) error {
-	return nil
-}
-
-func (n *NoOpAuditLogger) SetLevel(level adapters.LogLevel) {
-	n.level = level
-}
-
-func (n *NoOpAuditLogger) GetLevel() adapters.LogLevel {
-	return n.level
 }

@@ -25,6 +25,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
@@ -149,17 +150,17 @@ func (h *Handler) PutObject(c *gin.Context) {
 	requestID := audit.GetRequestID(c.Request.Context())
 
 	if err != nil {
-		_ = auditLogger.LogObjectMutation(c.Request.Context(), audit.EventObjectCreated,
+		_ = auditLogger.LogObjectMutation(c.Request.Context(), auditlog.EventObjectCreated,
 			userID, principal, h.backend, key, c.ClientIP(), requestID, 0,
-			audit.ResultFailure, err)
+			auditlog.ResultFailure, err)
 		RespondWithBackendError(c, err)
 		return
 	}
 
 	bytesTransferred := metadata.Size
-	_ = auditLogger.LogObjectMutation(c.Request.Context(), audit.EventObjectCreated,
+	_ = auditLogger.LogObjectMutation(c.Request.Context(), auditlog.EventObjectCreated,
 		userID, principal, h.backend, key, c.ClientIP(), requestID, bytesTransferred,
-		audit.ResultSuccess, nil)
+		auditlog.ResultSuccess, nil)
 
 	// Get the stored metadata to retrieve the ETag
 	var etag string
@@ -272,16 +273,16 @@ func (h *Handler) DeleteObject(c *gin.Context) {
 	requestID := audit.GetRequestID(c.Request.Context())
 
 	if err != nil {
-		_ = auditLogger.LogObjectMutation(c.Request.Context(), audit.EventObjectDeleted,
+		_ = auditLogger.LogObjectMutation(c.Request.Context(), auditlog.EventObjectDeleted,
 			userID, principal, h.backend, key, c.ClientIP(), requestID, 0,
-			audit.ResultFailure, err)
+			auditlog.ResultFailure, err)
 		RespondWithBackendError(c, err)
 		return
 	}
 
-	_ = auditLogger.LogObjectMutation(c.Request.Context(), audit.EventObjectDeleted,
+	_ = auditLogger.LogObjectMutation(c.Request.Context(), auditlog.EventObjectDeleted,
 		userID, principal, h.backend, key, c.ClientIP(), requestID, 0,
-		audit.ResultSuccess, nil)
+		auditlog.ResultSuccess, nil)
 
 	// 204 No Content per the OpenAPI contract for DELETE.
 	c.Status(http.StatusNoContent)
@@ -494,16 +495,16 @@ func (h *Handler) Archive(c *gin.Context) {
 	requestID := audit.GetRequestID(c.Request.Context())
 
 	if err != nil {
-		_ = auditLogger.LogObjectMutation(c.Request.Context(), audit.EventObjectArchived,
+		_ = auditLogger.LogObjectMutation(c.Request.Context(), auditlog.EventObjectArchived,
 			userID, principal, h.backend, req.Key, c.ClientIP(), requestID, 0,
-			audit.ResultFailure, err)
+			auditlog.ResultFailure, err)
 		RespondWithBackendError(c, err)
 		return
 	}
 
-	_ = auditLogger.LogObjectMutation(c.Request.Context(), audit.EventObjectArchived,
+	_ = auditLogger.LogObjectMutation(c.Request.Context(), auditlog.EventObjectArchived,
 		userID, principal, h.backend, req.Key, c.ClientIP(), requestID, 0,
-		audit.ResultSuccess, nil)
+		auditlog.ResultSuccess, nil)
 
 	RespondWithSuccess(c, http.StatusOK, "object archived successfully", gin.H{
 		keyField:      req.Key,

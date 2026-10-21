@@ -23,28 +23,29 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 )
 
 // recordingAuditLogger captures events for assertions. It embeds the no-op
-// logger to satisfy the full AuditLogger interface and overrides LogEvent.
+// logger to satisfy the full auditlog.AuditLogger interface and overrides LogEvent.
 type recordingAuditLogger struct {
-	AuditLogger
+	auditlog.AuditLogger
 	mu     sync.Mutex
-	events []*AuditEvent
+	events []*auditlog.AuditEvent
 }
 
 func newRecordingAuditLogger() *recordingAuditLogger {
-	return &recordingAuditLogger{AuditLogger: NewNoOpAuditLogger()}
+	return &recordingAuditLogger{AuditLogger: auditlog.NewNoOpAuditLogger()}
 }
 
-func (r *recordingAuditLogger) LogEvent(_ context.Context, event *AuditEvent) error {
+func (r *recordingAuditLogger) LogEvent(_ context.Context, event *auditlog.AuditEvent) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.events = append(r.events, event)
 	return nil
 }
 
-func (r *recordingAuditLogger) last() *AuditEvent {
+func (r *recordingAuditLogger) last() *auditlog.AuditEvent {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if len(r.events) == 0 {
@@ -75,10 +76,10 @@ func TestAuditHTTPMiddleware(t *testing.T) {
 		if event == nil {
 			t.Fatal("expected an audit event")
 		}
-		if event.EventType != EventObjectCreated {
-			t.Errorf("event type = %v, want %v", event.EventType, EventObjectCreated)
+		if event.EventType != auditlog.EventObjectCreated {
+			t.Errorf("event type = %v, want %v", event.EventType, auditlog.EventObjectCreated)
 		}
-		if event.Result != ResultSuccess {
+		if event.Result != auditlog.ResultSuccess {
 			t.Errorf("result = %v, want success", event.Result)
 		}
 		if event.StatusCode != http.StatusCreated {
@@ -106,11 +107,11 @@ func TestAuditHTTPMiddleware(t *testing.T) {
 		if event == nil {
 			t.Fatal("expected an audit event")
 		}
-		if event.Result != ResultFailure {
+		if event.Result != auditlog.ResultFailure {
 			t.Errorf("result = %v, want failure", event.Result)
 		}
-		if event.EventType != EventObjectDeleted {
-			t.Errorf("event type = %v, want %v", event.EventType, EventObjectDeleted)
+		if event.EventType != auditlog.EventObjectDeleted {
+			t.Errorf("event type = %v, want %v", event.EventType, auditlog.EventObjectDeleted)
 		}
 	})
 
@@ -137,8 +138,8 @@ func TestLogRPC(t *testing.T) {
 	if event == nil {
 		t.Fatal("expected an audit event")
 	}
-	if event.EventType != EventObjectCreated {
-		t.Errorf("event type = %v, want %v", event.EventType, EventObjectCreated)
+	if event.EventType != auditlog.EventObjectCreated {
+		t.Errorf("event type = %v, want %v", event.EventType, auditlog.EventObjectCreated)
 	}
 	if event.UserID != "uid-1000" || event.Principal != "alice" {
 		t.Errorf("principal not recorded: %+v", event)
@@ -149,11 +150,11 @@ func TestLogRPC(t *testing.T) {
 
 	LogRPC(context.Background(), logger, "mcp-stdio", "objstore_delete", nil, time.Now(), errors.New("forbidden"))
 	event = logger.last()
-	if event.Result != ResultFailure || event.ErrorMessage != "forbidden" {
+	if event.Result != auditlog.ResultFailure || event.ErrorMessage != "forbidden" {
 		t.Errorf("failure not recorded: %+v", event)
 	}
-	if event.EventType != EventObjectDeleted {
-		t.Errorf("event type = %v, want %v", event.EventType, EventObjectDeleted)
+	if event.EventType != auditlog.EventObjectDeleted {
+		t.Errorf("event type = %v, want %v", event.EventType, auditlog.EventObjectDeleted)
 	}
 
 	// Nil logger is a safe no-op.
@@ -163,19 +164,19 @@ func TestLogRPC(t *testing.T) {
 func TestDetermineRPCEventType(t *testing.T) {
 	tests := []struct {
 		method string
-		want   EventType
+		want   auditlog.EventType
 	}{
-		{"put", EventObjectCreated},
-		{"objstore_put", EventObjectCreated},
-		{"archive", EventObjectCreated},
-		{"delete", EventObjectDeleted},
-		{"remove_policy", EventObjectDeleted},
-		{"update_metadata", EventObjectMetadataUpdated},
-		{"list", EventListObjects},
-		{"get_policies", EventPolicyChanged},
-		{"trigger_replication", EventPolicyChanged},
-		{"get", EventObjectAccessed},
-		{"health", EventObjectAccessed},
+		{"put", auditlog.EventObjectCreated},
+		{"objstore_put", auditlog.EventObjectCreated},
+		{"archive", auditlog.EventObjectCreated},
+		{"delete", auditlog.EventObjectDeleted},
+		{"remove_policy", auditlog.EventObjectDeleted},
+		{"update_metadata", auditlog.EventObjectMetadataUpdated},
+		{"list", auditlog.EventListObjects},
+		{"get_policies", auditlog.EventPolicyChanged},
+		{"trigger_replication", auditlog.EventPolicyChanged},
+		{"get", auditlog.EventObjectAccessed},
+		{"health", auditlog.EventObjectAccessed},
 	}
 	for _, tt := range tests {
 		if got := determineRPCEventType(tt.method); got != tt.want {

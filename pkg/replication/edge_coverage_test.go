@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
-	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
@@ -149,7 +149,7 @@ type capturingAuditLogger struct {
 	called bool
 }
 
-func (c *capturingAuditLogger) LogEvent(ctx context.Context, event *audit.AuditEvent) error {
+func (c *capturingAuditLogger) LogEvent(ctx context.Context, event *auditlog.AuditEvent) error {
 	c.called = true
 	return nil
 }
@@ -164,17 +164,17 @@ func (c *capturingAuditLogger) LogAuthSuccess(ctx context.Context, userID, princ
 	return nil
 }
 
-func (c *capturingAuditLogger) LogObjectAccess(ctx context.Context, userID, principal, bucket, key, ipAddress, requestID string, result audit.Result, err error) error {
+func (c *capturingAuditLogger) LogObjectAccess(ctx context.Context, userID, principal, bucket, key, ipAddress, requestID string, result auditlog.Result, err error) error {
 	c.called = true
 	return nil
 }
 
-func (c *capturingAuditLogger) LogObjectMutation(ctx context.Context, eventType audit.EventType, userID, principal, bucket, key, ipAddress, requestID string, bytesTransferred int64, result audit.Result, err error) error {
+func (c *capturingAuditLogger) LogObjectMutation(ctx context.Context, eventType auditlog.EventType, userID, principal, bucket, key, ipAddress, requestID string, bytesTransferred int64, result auditlog.Result, err error) error {
 	c.called = true
 	return nil
 }
 
-func (c *capturingAuditLogger) LogPolicyChange(ctx context.Context, userID, principal, bucket, policyID, ipAddress, requestID string, result audit.Result, err error) error {
+func (c *capturingAuditLogger) LogPolicyChange(ctx context.Context, userID, principal, bucket, policyID, ipAddress, requestID string, result auditlog.Result, err error) error {
 	c.called = true
 	return nil
 }

@@ -1,5 +1,8 @@
 # Filesystem Watcher for Real-Time Replication
 
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 ## Overview
 
 The filesystem watcher provides real-time monitoring of local filesystem changes using [fsnotify](https://github.com/fsnotify/fsnotify) for cross-platform compatibility. It enables immediate replication of changes instead of relying solely on periodic polling.

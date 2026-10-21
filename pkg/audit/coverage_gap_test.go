@@ -24,6 +24,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
@@ -45,7 +46,7 @@ func TestNewAuditLogger_NilOutput(t *testing.T) {
 	}
 	// Smoke-test: logging must not panic.
 	ctx := context.Background()
-	if err := logger.LogEvent(ctx, &AuditEvent{Action: "test", Result: ResultSuccess}); err != nil {
+	if err := logger.LogEvent(ctx, &auditlog.AuditEvent{Action: "test", Result: auditlog.ResultSuccess}); err != nil {
 		t.Fatalf("LogEvent: %v", err)
 	}
 }
@@ -64,7 +65,7 @@ func TestNewAuditLogger_UnknownFormat(t *testing.T) {
 	if logger == nil {
 		t.Fatal("expected non-nil logger for unknown format")
 	}
-	_ = logger.LogEvent(context.Background(), &AuditEvent{Action: "smoke", Result: ResultSuccess})
+	_ = logger.LogEvent(context.Background(), &auditlog.AuditEvent{Action: "smoke", Result: auditlog.ResultSuccess})
 }
 
 // --- LogEvent: optional field branches ---------------------------------------
@@ -79,11 +80,11 @@ func TestLogEvent_ResourceField(t *testing.T) {
 		Output:  &mockFile{Buffer: &buf},
 	})
 
-	event := &AuditEvent{
-		EventType: EventObjectAccessed,
+	event := &auditlog.AuditEvent{
+		EventType: auditlog.EventObjectAccessed,
 		Resource:  "bucket/key",
 		Action:    "get_object",
-		Result:    ResultSuccess,
+		Result:    auditlog.ResultSuccess,
 	}
 	if err := logger.LogEvent(context.Background(), event); err != nil {
 		t.Fatalf("LogEvent: %v", err)
@@ -111,11 +112,11 @@ func TestLogEvent_ZeroTimestamp(t *testing.T) {
 		Level:   adapters.InfoLevel,
 		Output:  &mockFile{Buffer: &buf},
 	})
-	event := &AuditEvent{
+	event := &auditlog.AuditEvent{
 		// Timestamp intentionally left as zero value.
-		EventType: EventObjectCreated,
+		EventType: auditlog.EventObjectCreated,
 		Action:    "put",
-		Result:    ResultSuccess,
+		Result:    auditlog.ResultSuccess,
 	}
 	if err := logger.LogEvent(context.Background(), event); err != nil {
 		t.Fatalf("LogEvent: %v", err)
@@ -142,7 +143,7 @@ func TestLogPolicyChange_WithError(t *testing.T) {
 		context.Background(),
 		"user1", "alice", "my-bucket", "pol-001",
 		"10.0.0.1", "req-xyz",
-		ResultFailure, errors.New("permission denied"),
+		auditlog.ResultFailure, errors.New("permission denied"),
 	)
 	if err != nil {
 		t.Fatalf("LogPolicyChange: %v", err)
@@ -153,24 +154,6 @@ func TestLogPolicyChange_WithError(t *testing.T) {
 	}
 	if !strings.Contains(output, "POLICY_CHANGED") {
 		t.Error("expected POLICY_CHANGED in log output")
-	}
-}
-
-// --- NoOpAuditLogger SetLevel / GetLevel -------------------------------------
-
-// TestNoOpAuditLogger_SetLevelGetLevel exercises the two 0%-covered methods
-// on NoOpAuditLogger.
-func TestNoOpAuditLogger_SetLevelGetLevel(t *testing.T) {
-	noop := &NoOpAuditLogger{level: adapters.InfoLevel}
-
-	noop.SetLevel(adapters.DebugLevel)
-	if noop.GetLevel() != adapters.DebugLevel {
-		t.Errorf("GetLevel = %v, want DebugLevel", noop.GetLevel())
-	}
-
-	noop.SetLevel(adapters.ErrorLevel)
-	if noop.GetLevel() != adapters.ErrorLevel {
-		t.Errorf("GetLevel = %v, want ErrorLevel", noop.GetLevel())
 	}
 }
 
@@ -476,7 +459,7 @@ func TestExtractResourceInfo_KeyWithLeadingSlash(t *testing.T) {
 // TestDetermineEventType_GetObjectsRoot exercises the path == "/objects" branch.
 func TestDetermineEventType_GetObjectsRoot(t *testing.T) {
 	got := determineEventType("GET", "/objects")
-	if got != EventListObjects {
+	if got != auditlog.EventListObjects {
 		t.Errorf("expected EventListObjects, got %v", got)
 	}
 }
@@ -486,7 +469,7 @@ func TestDetermineEventType_GetObjectsRoot(t *testing.T) {
 // TestDetermineEventType_UnknownMethod exercises the default return.
 func TestDetermineEventType_UnknownMethod(t *testing.T) {
 	got := determineEventType("PATCH", "/objects/key")
-	if got != EventObjectAccessed {
+	if got != auditlog.EventObjectAccessed {
 		t.Errorf("expected EventObjectAccessed for PATCH, got %v", got)
 	}
 }

@@ -1,5 +1,8 @@
 # Architecture Overview
 
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 go-objstore is a unified object storage abstraction library built around a consistent interface that works across multiple storage backends. The architecture emphasizes simplicity, extensibility, and testing.
 
 ## Core Components

@@ -1,5 +1,8 @@
 # Getting Started with go-objstore
 
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 Quick start guide for using go-objstore in your applications.
 
 ## Installation

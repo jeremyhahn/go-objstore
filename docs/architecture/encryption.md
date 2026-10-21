@@ -1,5 +1,8 @@
 # Encryption Architecture
 
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> Conflicts with this document are defects. Fix them here first.
+
 go-objstore provides optional at-rest encryption for all stored data through a clean abstraction layer. The encryption layer is completely pluggable - you provide an implementation of the `Encrypter` and `EncrypterFactory` interfaces, allowing integration with any key management solution.
 
 ## Design Philosophy

@@ -20,6 +20,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	"github.com/jeremyhahn/go-objstore/pkg/replication"
@@ -104,7 +105,7 @@ func (h *Handler) AddReplicationPolicy(c *gin.Context) {
 	if err != nil {
 		_ = auditLogger.LogObjectMutation(c.Request.Context(), "replication_policy_add_failed",
 			userID, principal, h.backend, req.ID, c.ClientIP(), requestID, 0,
-			audit.ResultFailure, err)
+			auditlog.ResultFailure, err)
 
 		// Classify maps "policy already exists" to 409 Conflict.
 		RespondWithBackendError(c, err)
@@ -113,7 +114,7 @@ func (h *Handler) AddReplicationPolicy(c *gin.Context) {
 
 	_ = auditLogger.LogObjectMutation(c.Request.Context(), "replication_policy_added",
 		userID, principal, h.backend, req.ID, c.ClientIP(), requestID, 0,
-		audit.ResultSuccess, nil)
+		auditlog.ResultSuccess, nil)
 
 	RespondWithSuccess(c, http.StatusCreated, "replication policy added successfully", gin.H{
 		"id": req.ID,
@@ -155,7 +156,7 @@ func (h *Handler) RemoveReplicationPolicy(c *gin.Context) {
 	if err != nil {
 		_ = auditLogger.LogObjectMutation(c.Request.Context(), "replication_policy_remove_failed",
 			userID, principal, h.backend, id, c.ClientIP(), requestID, 0,
-			audit.ResultFailure, err)
+			auditlog.ResultFailure, err)
 
 		if errors.Is(err, common.ErrPolicyNotFound) {
 			RespondWithError(c, http.StatusNotFound, common.SanitizeErrorMessage(err))
@@ -167,7 +168,7 @@ func (h *Handler) RemoveReplicationPolicy(c *gin.Context) {
 
 	_ = auditLogger.LogObjectMutation(c.Request.Context(), "replication_policy_removed",
 		userID, principal, h.backend, id, c.ClientIP(), requestID, 0,
-		audit.ResultSuccess, nil)
+		auditlog.ResultSuccess, nil)
 
 	RespondWithSuccess(c, http.StatusOK, "replication policy removed successfully", gin.H{
 		"id": id,
@@ -292,7 +293,7 @@ func (h *Handler) TriggerReplication(c *gin.Context) {
 	if err != nil {
 		_ = auditLogger.LogObjectMutation(c.Request.Context(), "replication_trigger_failed",
 			userID, principal, h.backend, policyID, c.ClientIP(), requestID, 0,
-			audit.ResultFailure, err)
+			auditlog.ResultFailure, err)
 
 		if errors.Is(err, common.ErrPolicyNotFound) {
 			RespondWithError(c, http.StatusNotFound, common.SanitizeErrorMessage(err))
@@ -304,7 +305,7 @@ func (h *Handler) TriggerReplication(c *gin.Context) {
 
 	_ = auditLogger.LogObjectMutation(c.Request.Context(), "replication_triggered",
 		userID, principal, h.backend, policyID, c.ClientIP(), requestID, result.BytesTotal,
-		audit.ResultSuccess, nil)
+		auditlog.ResultSuccess, nil)
 
 	RespondWithSyncResult(c, result)
 }

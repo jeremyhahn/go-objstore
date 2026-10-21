@@ -27,6 +27,7 @@ import (
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	"github.com/jeremyhahn/go-objstore/pkg/server/jsonrpc"
 	"github.com/jeremyhahn/go-objstore/pkg/server/metrics"
@@ -144,7 +145,7 @@ type ServerConfig struct {
 	EnableAudit bool
 
 	// AuditLogger is the audit logger used when EnableAudit is set.
-	AuditLogger audit.AuditLogger
+	AuditLogger auditlog.AuditLogger
 }
 
 // DefaultConfig returns default server configuration
@@ -174,6 +175,10 @@ type Server struct {
 	// usePeerCred is the resolved value of ServerConfig.UsePeerCredentials
 	// (nil/unset defaults to true).
 	usePeerCred bool
+	// ready is closed by Start once the listener is assigned, the socket
+	// permissions are set and the accept loop is running.
+	ready     chan struct{}
+	readyOnce sync.Once
 }
 
 // NewServer creates a new Unix socket server
@@ -241,6 +246,7 @@ func NewServer(config *ServerConfig) (*Server, error) {
 		connSem:      make(chan struct{}, maxConns),
 		readDeadline: readDeadline,
 		usePeerCred:  usePeerCred,
+		ready:        make(chan struct{}),
 	}, nil
 }
 
@@ -294,6 +300,7 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Accept connections
 	go s.acceptLoop(ctx)
+	s.readyOnce.Do(func() { close(s.ready) })
 
 	// Wait for context cancellation
 	<-ctx.Done()
@@ -495,4 +502,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // SocketPath returns the socket path
 func (s *Server) SocketPath() string {
 	return s.config.SocketPath
+}
+
+// Ready returns a channel that is closed once Start has bound the socket, set
+// its permissions and begun accepting connections. It is never closed if Start
+// fails before that point.
+func (s *Server) Ready() <-chan struct{} {
+	return s.ready
 }

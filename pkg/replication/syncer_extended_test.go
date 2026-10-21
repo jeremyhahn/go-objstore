@@ -24,7 +24,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
-	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
@@ -43,7 +43,7 @@ func TestNewSyncer_InvalidSourceBackend(t *testing.T) {
 	sourceFactory := NewNoopEncrypterFactory()
 	destFactory := NewNoopEncrypterFactory()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	_, err := NewSyncer(policy, backendFactory, sourceFactory, destFactory, logger, auditLog)
 
@@ -71,7 +71,7 @@ func TestNewSyncer_InvalidDestBackend(t *testing.T) {
 	sourceFactory := NewNoopEncrypterFactory()
 	destFactory := NewNoopEncrypterFactory()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	_, err := NewSyncer(policy, backendFactory, sourceFactory, destFactory, logger, auditLog)
 
@@ -116,7 +116,7 @@ func TestNewSyncer_LocalWithBackendEncryption(t *testing.T) {
 	sourceFactory := NewNoopEncrypterFactory()
 	destFactory := NewNoopEncrypterFactory()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	syncer, err := NewSyncer(policy, backendFactory, sourceFactory, destFactory, logger, auditLog)
 
@@ -160,7 +160,7 @@ func TestNewSyncer_OpaqueMode(t *testing.T) {
 	sourceFactory := NewNoopEncrypterFactory()
 	destFactory := NewNoopEncrypterFactory()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	syncer, err := NewSyncer(policy, backendFactory, sourceFactory, destFactory, logger, auditLog)
 
@@ -191,7 +191,7 @@ func TestNewSyncer_InvalidMode(t *testing.T) {
 	sourceFactory := NewNoopEncrypterFactory()
 	destFactory := NewNoopEncrypterFactory()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	_, err := NewSyncer(policy, backendFactory, sourceFactory, destFactory, logger, auditLog)
 
@@ -231,7 +231,7 @@ func TestNewSyncer_TransparentMode(t *testing.T) {
 	sourceFactory := NewNoopEncrypterFactory()
 	destFactory := NewNoopEncrypterFactory()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	syncer, err := NewSyncer(policy, backendFactory, sourceFactory, destFactory, logger, auditLog)
 
@@ -277,7 +277,7 @@ func TestNewSyncer_NoEncryption(t *testing.T) {
 	sourceFactory := NewNoopEncrypterFactory()
 	destFactory := NewNoopEncrypterFactory()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	syncer, err := NewSyncer(policy, backendFactory, sourceFactory, destFactory, logger, auditLog)
 
@@ -312,7 +312,7 @@ func TestNewSyncer_SourceEncryptionOnly(t *testing.T) {
 	sourceFactory := NewNoopEncrypterFactory()
 	destFactory := NewNoopEncrypterFactory()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	syncer, err := NewSyncer(policy, backendFactory, sourceFactory, destFactory, logger, auditLog)
 
@@ -347,7 +347,7 @@ func TestNewSyncer_DestinationEncryptionOnly(t *testing.T) {
 	sourceFactory := NewNoopEncrypterFactory()
 	destFactory := NewNoopEncrypterFactory()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	syncer, err := NewSyncer(policy, backendFactory, sourceFactory, destFactory, logger, auditLog)
 
@@ -586,7 +586,7 @@ func TestNewSyncer_S3Backend(t *testing.T) {
 	sourceFactory := NewNoopEncrypterFactory()
 	destFactory := NewNoopEncrypterFactory()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	syncer, err := NewSyncer(policy, backendFactory, sourceFactory, destFactory, logger, auditLog)
 

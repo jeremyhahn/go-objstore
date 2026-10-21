@@ -25,6 +25,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/server/middleware"
 )
@@ -124,7 +125,7 @@ type ServerConfig struct {
 	TLSConfig *adapters.TLSConfig
 
 	// AuditLogger is the audit logger for tracking security events (default: enabled with JSON format)
-	AuditLogger audit.AuditLogger
+	AuditLogger auditlog.AuditLogger
 
 	// EnableAudit enables audit logging (default: true)
 	EnableAudit bool
@@ -182,7 +183,7 @@ func NewServer(storage common.Storage, config *ServerConfig) (*Server, error) {
 		if config.EnableAudit {
 			config.AuditLogger = audit.NewDefaultAuditLogger()
 		} else {
-			config.AuditLogger = audit.NewNoOpAuditLogger()
+			config.AuditLogger = auditlog.NewNoOpAuditLogger()
 		}
 	}
 

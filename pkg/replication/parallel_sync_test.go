@@ -25,7 +25,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
-	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
@@ -34,7 +34,7 @@ func TestSyncPolicyParallel(t *testing.T) {
 	ctx := context.Background()
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	// Create manager
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
@@ -99,7 +99,7 @@ func TestSyncPolicyParallelNonExistent(t *testing.T) {
 	ctx := context.Background()
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
@@ -117,7 +117,7 @@ func TestSyncPolicyParallelInvalidWorkerCount(t *testing.T) {
 	ctx := context.Background()
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
@@ -192,7 +192,7 @@ func TestSyncAllParallel(t *testing.T) {
 		source:   source,
 		dest:     dest,
 		logger:   adapters.NewNoOpLogger(),
-		auditLog: audit.NewNoOpAuditLogger(),
+		auditLog: auditlog.NewNoOpAuditLogger(),
 		metrics:  NewReplicationMetrics(),
 	}
 
@@ -260,7 +260,7 @@ func TestSyncAllParallelNoChanges(t *testing.T) {
 		source:   source,
 		dest:     dest,
 		logger:   adapters.NewNoOpLogger(),
-		auditLog: audit.NewNoOpAuditLogger(),
+		auditLog: auditlog.NewNoOpAuditLogger(),
 		metrics:  NewReplicationMetrics(),
 	}
 
@@ -313,7 +313,7 @@ func TestSyncAllParallelWithErrors(t *testing.T) {
 		source:   source,
 		dest:     dest,
 		logger:   adapters.NewNoOpLogger(),
-		auditLog: audit.NewNoOpAuditLogger(),
+		auditLog: auditlog.NewNoOpAuditLogger(),
 		metrics:  NewReplicationMetrics(),
 	}
 
@@ -345,7 +345,7 @@ func TestSyncAllParallelWithErrors(t *testing.T) {
 func TestGetOrCreateMetricsConcurrent(t *testing.T) {
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
@@ -410,7 +410,7 @@ func TestMetricsCollection(t *testing.T) {
 		source:   source,
 		dest:     dest,
 		logger:   adapters.NewNoOpLogger(),
-		auditLog: audit.NewNoOpAuditLogger(),
+		auditLog: auditlog.NewNoOpAuditLogger(),
 		metrics:  NewReplicationMetrics(),
 	}
 
@@ -459,7 +459,7 @@ func TestPolicyLifecycle(t *testing.T) {
 	ctx := context.Background()
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
@@ -534,7 +534,7 @@ func TestMultiBackendReplication(t *testing.T) {
 	ctx := context.Background()
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
@@ -613,7 +613,7 @@ func TestErrorRecovery(t *testing.T) {
 	ctx := context.Background()
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
@@ -684,7 +684,7 @@ func TestErrorRecovery(t *testing.T) {
 func TestGetFactories(t *testing.T) {
 	fs := newMockFileSystem()
 	logger := adapters.NewNoOpLogger()
-	auditLog := audit.NewNoOpAuditLogger()
+	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
