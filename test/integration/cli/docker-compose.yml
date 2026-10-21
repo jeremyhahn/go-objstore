@@ -19,10 +19,6 @@ services:
 volumes:
   test-storage:
 
-networks:
-  default:
-    name: objstore-cli-test
-
 # The go mod download inside each build resolves the internal first-party
 # module go-enclave from Gitea via an optional BuildKit secret carrying the
 # read-only module token (conventions/dependency-resolution.md §6). The file is

@@ -163,8 +163,7 @@ volumes:
   mcp-archive:
 
 networks:
-  test-network:
-    name: objstore-server-test
+  test-network: {}
 
 # The go mod download inside each build resolves the internal first-party
 # module go-enclave from Gitea via an optional BuildKit secret carrying the

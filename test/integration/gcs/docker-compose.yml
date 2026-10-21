@@ -4,8 +4,6 @@ services:
     init: true
     image: fsouza/fake-gcs-server:1.49.1
     command: ["-scheme", "http", "-port", "4443", "-backend", "memory", "-public-host", "fake-gcs:4443"]
-    ports:
-      - "4443:4443"
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:4443/storage/v1/b"]
       interval: 5s
@@ -23,10 +21,6 @@ services:
     environment:
       - STORAGE_EMULATOR_HOST=http://fake-gcs:4443
     working_dir: /app
-
-networks:
-  default:
-    name: objstore-gcs-test
 
 # The go mod download inside each build resolves the internal first-party
 # module go-enclave from Gitea via an optional BuildKit secret carrying the

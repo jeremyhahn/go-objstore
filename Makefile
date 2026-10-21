@@ -79,6 +79,13 @@ GOCLEAN := $(GO) clean
 # Docker Compose (use v2 syntax for GitHub Actions compatibility)
 DOCKER_COMPOSE := docker compose
 
+# Compose project prefix for the integration targets. Concurrent CI jobs share
+# one Docker host, and compose's default project name (the directory) made one
+# job's `down -v --remove-orphans` remove another job's running containers.
+# Unique per CI job (run id + job), stable for a local run; each target adds
+# its own suffix. Sanitised to compose's charset: lowercase, digits, - and _.
+COMPOSE_PROJECT ?= $(shell printf '%s' "objstore-$(or $(GITHUB_RUN_ID),local)-$(or $(GITHUB_JOB),$(USER),user)" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9_\n-' '-')
+
 # Project structure
 PROJECT_NAME := go-objstore
 MODULE := go-objstore
@@ -213,66 +220,66 @@ integration-test-local:
 # --build on every run: the source is baked into these images, so a cached
 # image from an earlier commit silently tests old code. That cost real
 # debugging time once already.
-	@cd test/integration/local && $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30 >/dev/null 2>&1 || true
-	@cd test/integration/local && $(DOCKER_COMPOSE) run --build --rm test
-	@cd test/integration/local && $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30
+	@cd test/integration/local && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-local down -v --remove-orphans --timeout 30 >/dev/null 2>&1 || true
+	@cd test/integration/local && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-local run --build --rm test
+	@cd test/integration/local && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-local down -v --remove-orphans --timeout 30
 	@echo "$(GREEN)✓ Local integration tests complete$(RESET)"
 
 .PHONY: integration-test-s3
 ## integration-test-s3: Run S3 integration tests against Floci
 integration-test-s3:
 	@echo "$(CYAN)$(BOLD)→ Running S3 integration tests (Floci)...$(RESET)"
-	@cd test/integration/s3 && $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30 >/dev/null 2>&1 || true
-	@cd test/integration/s3 && $(DOCKER_COMPOSE) up -d --wait floci
-	@cd test/integration/s3 && $(DOCKER_COMPOSE) run --build --rm test
-	@cd test/integration/s3 && $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30
+	@cd test/integration/s3 && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-s3 down -v --remove-orphans --timeout 30 >/dev/null 2>&1 || true
+	@cd test/integration/s3 && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-s3 up -d --wait floci
+	@cd test/integration/s3 && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-s3 run --build --rm test
+	@cd test/integration/s3 && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-s3 down -v --remove-orphans --timeout 30
 	@echo "$(GREEN)✓ S3 integration tests complete$(RESET)"
 
 .PHONY: integration-test-azure
 ## integration-test-azure: Run Azure/Azurite integration tests
 integration-test-azure:
 	@echo "$(CYAN)$(BOLD)→ Running Azure/Azurite integration tests...$(RESET)"
-	@cd test/integration/azure && $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30 >/dev/null 2>&1 || true
-	@cd test/integration/azure && $(DOCKER_COMPOSE) up -d azurite
-	@cd test/integration/azure && $(DOCKER_COMPOSE) run --build --rm test
-	@cd test/integration/azure && $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30
+	@cd test/integration/azure && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-azure down -v --remove-orphans --timeout 30 >/dev/null 2>&1 || true
+	@cd test/integration/azure && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-azure up -d azurite
+	@cd test/integration/azure && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-azure run --build --rm test
+	@cd test/integration/azure && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-azure down -v --remove-orphans --timeout 30
 	@echo "$(GREEN)✓ Azure integration tests complete$(RESET)"
 
 .PHONY: integration-test-gcs
 ## integration-test-gcs: Run GCS emulator integration tests
 integration-test-gcs:
 	@echo "$(CYAN)$(BOLD)→ Running GCS emulator integration tests...$(RESET)"
-	@cd test/integration/gcs && $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30 >/dev/null 2>&1 || true
-	@cd test/integration/gcs && $(DOCKER_COMPOSE) up -d fake-gcs
-	@cd test/integration/gcs && $(DOCKER_COMPOSE) run --build --rm test
-	@cd test/integration/gcs && $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30
+	@cd test/integration/gcs && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-gcs down -v --remove-orphans --timeout 30 >/dev/null 2>&1 || true
+	@cd test/integration/gcs && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-gcs up -d fake-gcs
+	@cd test/integration/gcs && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-gcs run --build --rm test
+	@cd test/integration/gcs && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-gcs down -v --remove-orphans --timeout 30
 	@echo "$(GREEN)✓ GCS integration tests complete$(RESET)"
 
 .PHONY: integration-test-factory
 ## integration-test-factory: Run factory/common integration tests
 integration-test-factory:
 	@echo "$(CYAN)$(BOLD)→ Running factory integration tests...$(RESET)"
-	@cd test/integration/factory && $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30 >/dev/null 2>&1 || true
-	@cd test/integration/factory && $(DOCKER_COMPOSE) run --build --rm test
-	@cd test/integration/factory && $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30
+	@cd test/integration/factory && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-factory down -v --remove-orphans --timeout 30 >/dev/null 2>&1 || true
+	@cd test/integration/factory && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-factory run --build --rm test
+	@cd test/integration/factory && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-factory down -v --remove-orphans --timeout 30
 	@echo "$(GREEN)✓ Factory integration tests complete$(RESET)"
 
 .PHONY: integration-test-replication
 ## integration-test-replication: Run replication integration tests
 integration-test-replication:
 	@echo "$(CYAN)$(BOLD)→ Running replication integration tests...$(RESET)"
-	@cd test/integration/replication && $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30 >/dev/null 2>&1 || true
-	@cd test/integration/replication && $(DOCKER_COMPOSE) run --build --rm test
-	@cd test/integration/replication && $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30
+	@cd test/integration/replication && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-replication down -v --remove-orphans --timeout 30 >/dev/null 2>&1 || true
+	@cd test/integration/replication && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-replication run --build --rm test
+	@cd test/integration/replication && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-replication down -v --remove-orphans --timeout 30
 	@echo "$(GREEN)✓ Replication integration tests complete$(RESET)"
 
 .PHONY: integration-test-cli
 ## integration-test-cli: Run CLI integration tests in Docker
 integration-test-cli:
 	@echo "$(CYAN)$(BOLD)→ Running CLI integration tests...$(RESET)"
-	@cd test/integration/cli && $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30 >/dev/null 2>&1 || true
-	@cd test/integration/cli && $(DOCKER_COMPOSE) up --build --abort-on-container-exit --exit-code-from test
-	@cd test/integration/cli && $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30
+	@cd test/integration/cli && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-cli down -v --remove-orphans --timeout 30 >/dev/null 2>&1 || true
+	@cd test/integration/cli && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-cli up --build --abort-on-container-exit --exit-code-from test
+	@cd test/integration/cli && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-cli down -v --remove-orphans --timeout 30
 	@echo "$(GREEN)✓ CLI integration tests complete$(RESET)"
 
 .PHONY: test-cli
@@ -286,8 +293,8 @@ test-servers:
 	@echo "$(CYAN)  Generating test certificates...$(RESET)"
 	@cd test/integration/server && bash generate-certs.sh
 	@echo "$(CYAN)  Starting server test environment...$(RESET)"
-	@cd test/integration/server && $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30 >/dev/null 2>&1 || true
-	@cd test/integration/server && $(DOCKER_COMPOSE) up --build --abort-on-container-exit --exit-code-from test; status=$$?; $(DOCKER_COMPOSE) down -v --remove-orphans --timeout 30; exit $$status
+	@cd test/integration/server && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-server down -v --remove-orphans --timeout 30 >/dev/null 2>&1 || true
+	@cd test/integration/server && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-server up --build --abort-on-container-exit --exit-code-from test; status=$$?; $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-server down -v --remove-orphans --timeout 30; exit $$status
 	@echo "$(GREEN)✓ Server integration tests complete$(RESET)"
 
 .PHONY: integration-test-all

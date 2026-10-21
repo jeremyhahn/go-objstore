@@ -6,8 +6,6 @@ services:
     command: azurite --blobHost 0.0.0.0 --blobPort 10000 --location /data --silent
     environment:
       - AZURITE_ACCOUNTS=devstoreaccount1:bXlrZXk=
-    ports:
-      - "10000:10000"
 
   test:
     build:
@@ -20,10 +18,6 @@ services:
     environment:
       - AZURE_ENDPOINT=http://azurite:10000
     working_dir: /app
-
-networks:
-  default:
-    name: objstore-azure-test
 
 # The go mod download inside each build resolves the internal first-party
 # module go-enclave from Gitea via an optional BuildKit secret carrying the
