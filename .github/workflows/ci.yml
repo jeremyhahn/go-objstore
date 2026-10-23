@@ -3,6 +3,10 @@
 # automatethethings repo (devops.md §1/§8/§9). Divergence outside the
 # repo-specific blocks below is a defect.
 #
+# v1.15 (2026-10-23): docs-only filter (ci-standard.md §10 (a)). A PR that
+# changes only markdown or docs/ runs Lint and the CI Gate; the `changes` job
+# decides, and ci-gate reads a skipped job as passed only then.
+#
 # v1.15 (2026-10-05, automatethethings#209/#211): push runs on main only.
 # automerge.yml v7 opens each merge train as a PR into main, so a train gets
 # its CI from the pull_request trigger like any PR.
@@ -78,6 +82,10 @@ concurrency:
 
 env:
   GO_VERSION: '1.27.3'
+  # The files a docs-only PR may touch (v1.15 docs-only filter), and the PR
+  # label that forces the full run.
+  DOCS_ONLY_PATTERN: '(\.md$|^docs/)'
+  CI_FULL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') }}
   COVERAGE_THRESHOLD: 89
   # The docker job builds with push: false / load: true and only ever scans the
   # result, so this is a local image name and nothing more. It used to be
@@ -90,7 +98,40 @@ env:
   SCAN_IMAGE: 'objstore:ci-scan'
 
 jobs:
-  # Every job below starts at once (v1.14); only ci-gate has `needs`.
+  # v1.15 docs-only filter: a PR whose every changed file matches
+  # DOCS_ONLY_PATTERN runs lint only; every job but lint and ci-gate waits on
+  # `changes` and is skipped when docs_only is true. Off pull_request, or on a
+  # PR labelled ci:full, docs_only is always false. Any doubt (a failed diff,
+  # an empty list) reads as false, so the run fails toward running the tests.
+  changes:
+    name: Changed files
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.diff.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v6
+        if: ${{ github.event_name == 'pull_request' && env.CI_FULL != 'true' }}
+        with:
+          fetch-depth: 0
+      - name: Is every changed file docs or markdown?
+        id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          docs_only=false
+          if [ "$EVENT" = pull_request ] && [ "$CI_FULL" != true ]; then
+            if files=$(git diff --name-only --no-renames "$BASE...$HEAD") && [ -n "$files" ]; then
+              if ! printf '%s\n' "$files" | grep -qvE "$DOCS_ONLY_PATTERN"; then
+                docs_only=true
+              fi
+              printf '%s\n' "$files"
+            fi
+          fi
+          echo "docs only: $docs_only"
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -129,6 +170,8 @@ jobs:
 
   build:
     name: Build
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -162,6 +205,8 @@ jobs:
 
   test:
     name: Test
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -207,6 +252,8 @@ jobs:
 
   sdk-tests:
     name: SDK Tests (${{ matrix.sdk }})
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -272,6 +319,8 @@ jobs:
 
   conformance-test:
     name: Cross-Protocol Conformance
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -289,6 +338,8 @@ jobs:
 
   integration-test:
     name: Integration Tests
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -336,6 +387,8 @@ jobs:
 
   security:
     name: Security Scan
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -524,6 +577,8 @@ jobs:
   # out, or trim the package list.
   fips:
     name: FIPS
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     # This runs the whole unit suite a second time under the FIPS module, and
     # `make test` carries -race (go-objstore#18), so give it room. It is a gate,
@@ -593,6 +648,8 @@ jobs:
   # Do not re-add the skip to silence a finding.
   trivy:
     name: Trivy
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -663,6 +720,8 @@ jobs:
 
   docker:
     name: Build and Scan Docker Image
+    needs: changes
+    if: needs.changes.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -805,11 +864,13 @@ jobs:
     name: CI Gate
     runs-on: ubuntu-latest
     if: always()
-    needs: [lint, build, test, sdk-tests, conformance-test, integration-test, security, trivy, fips, docker]
+    needs: [changes, lint, build, test, sdk-tests, conformance-test, integration-test, security, trivy, fips, docker]
 
     steps:
     - name: Fail closed on any non-success
       env:
+        RESULT_CHANGES: ${{ needs.changes.result }}
+        DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
         RESULT_LINT: ${{ needs.lint.result }}
         RESULT_BUILD: ${{ needs.build.result }}
         RESULT_TEST: ${{ needs.test.result }}
@@ -821,20 +882,37 @@ jobs:
         RESULT_FIPS: ${{ needs.fips.result }}
         RESULT_DOCKER: ${{ needs.docker.result }}
       run: |
-        # `skipped` is not the same as `failed`, and BOTH fail the gate. No
-        # job depends on another, so a skip means the job never ran (a
-        # cancelled or filtered run); naming it keeps that loud. An
-        # unreadable (empty) result fails closed rather than passing.
+        # `skipped` is not the same as `failed`, and BOTH fail the gate, with
+        # one exception: on a docs-only run (the `changes` job says so) the
+        # jobs behind it are skipped by design and a skip reads as passed.
+        # changes and lint must be success always. Any other result keeps the
+        # fail-closed rule, and an unreadable (empty) result or DOCS_ONLY
+        # fails closed rather than passing.
         status=0
+        docs_only=false
+        [ "$DOCS_ONLY" = true ] && docs_only=true
+        must() {
+          case "$2" in
+            success) echo "ok:   $1 = success" ;;
+            "")      echo "FAIL: $1 result is unreadable - failing closed"; status=1 ;;
+            *)       echo "FAIL: $1 = $2"; status=1 ;;
+          esac
+        }
         check() {
           case "$2" in
             success) echo "ok:   $1 = success" ;;
-            skipped) echo "SKIP: $1 (job did not run - failing closed)";       status=1 ;;
+            skipped)
+              if [ "$docs_only" = true ]; then
+                echo "docs-only: $1 skipped"
+              else
+                echo "SKIP: $1 (job did not run - failing closed)"; status=1
+              fi ;;
             "")      echo "FAIL: $1 result is unreadable - failing closed";     status=1 ;;
             *)       echo "FAIL: $1 = $2";                                     status=1 ;;
           esac
         }
-        check lint             "$RESULT_LINT"
+        must  changes          "$RESULT_CHANGES"
+        must  lint             "$RESULT_LINT"
         check build            "$RESULT_BUILD"
         check test             "$RESULT_TEST"
         check sdk-tests        "$RESULT_SDK_TESTS"
