@@ -16,6 +16,7 @@ package common
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 )
 
@@ -112,6 +113,57 @@ var (
 
 	// ErrUnavailable is returned when a backend or dependency is unavailable.
 	ErrUnavailable = errors.New("unavailable")
+
+	// ErrNotSupported is returned when the backend lacks a capability, for
+	// example when a provider implements neither BucketManager nor
+	// MultipartUploader, or when an archive-only type is asked for one.
+	ErrNotSupported = errors.New("common: operation not supported")
+
+	// ErrBucketNotFound is returned when a bucket does not exist.
+	ErrBucketNotFound = errors.New("common: bucket not found")
+
+	// ErrBucketAlreadyExists is returned when creating a bucket that exists.
+	ErrBucketAlreadyExists = fmt.Errorf("common: bucket already exists: %w", ErrAlreadyExists)
+
+	// ErrBucketNotEmpty is returned when deleting a bucket that still holds
+	// objects or uploads.
+	ErrBucketNotEmpty = errors.New("common: bucket not empty")
+
+	// ErrUploadNotFound is returned for an unknown, completed, aborted or
+	// expired multipart upload ID.
+	ErrUploadNotFound = errors.New("common: multipart upload not found")
+
+	// ErrInvalidBucketName is returned when a bucket name fails
+	// ValidateBucketName.
+	ErrInvalidBucketName = fmt.Errorf("common: invalid bucket name: %w", ErrInvalidArgument)
+
+	// ErrBucketRootNotSet is returned when a provider that emulates buckets
+	// over a directory is asked for a bucket manager without a bucketRoot
+	// setting.
+	ErrBucketRootNotSet = fmt.Errorf("common: bucketRoot not set: %w", ErrInvalidArgument)
+
+	// ErrProjectNotSet is returned when a provider that creates and lists
+	// buckets within a project is asked to do so without a project setting.
+	ErrProjectNotSet = fmt.Errorf("common: project not set: %w", ErrInvalidArgument)
+
+	// ErrInvalidPartNumber is returned when a part number is outside
+	// 1..MaxParts.
+	ErrInvalidPartNumber = fmt.Errorf("common: invalid part number: %w", ErrInvalidArgument)
+
+	// ErrPartTooSmall is returned when a part other than the last is
+	// smaller than MinPartSize.
+	ErrPartTooSmall = fmt.Errorf("common: part too small: %w", ErrInvalidArgument)
+
+	// ErrPartTooLarge is returned when a part is larger than MaxPartSize.
+	ErrPartTooLarge = fmt.Errorf("common: part too large: %w", ErrInvalidArgument)
+
+	// ErrInvalidPartOrder is returned when the parts given at completion are
+	// not in strictly ascending part-number order, or are empty.
+	ErrInvalidPartOrder = fmt.Errorf("common: invalid part order: %w", ErrInvalidArgument)
+
+	// ErrPartMismatch is returned when an ETag or part number given at
+	// completion does not match an uploaded part.
+	ErrPartMismatch = fmt.Errorf("common: part mismatch: %w", ErrInvalidArgument)
 )
 
 // ErrorCode is the canonical classification of an error, independent of
@@ -141,6 +193,11 @@ const (
 	CodeCanceled
 	// CodeDeadlineExceeded classifies timeouts.
 	CodeDeadlineExceeded
+	// CodeUnimplemented classifies a capability the backend does not have.
+	CodeUnimplemented
+	// CodeFailedPrecondition classifies a request that conflicts with the
+	// current state of the resource, such as deleting a non-empty bucket.
+	CodeFailedPrecondition
 )
 
 // Classify maps an error to its canonical ErrorCode. Matching uses errors.Is
@@ -155,9 +212,15 @@ func Classify(err error) ErrorCode {
 	case errors.Is(err, ErrKeyNotFound),
 		errors.Is(err, ErrMetadataNotFound),
 		errors.Is(err, ErrPolicyNotFound),
+		errors.Is(err, ErrBucketNotFound),
+		errors.Is(err, ErrUploadNotFound),
 		// Raw filesystem not-found errors leaked by backends.
 		errors.Is(err, fs.ErrNotExist):
 		return CodeNotFound
+	case errors.Is(err, ErrNotSupported):
+		return CodeUnimplemented
+	case errors.Is(err, ErrBucketNotEmpty):
+		return CodeFailedPrecondition
 	case errors.Is(err, ErrAlreadyExists):
 		return CodeAlreadyExists
 	case errors.Is(err, ErrInvalidArgument):

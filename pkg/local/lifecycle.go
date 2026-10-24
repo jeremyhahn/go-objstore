@@ -97,6 +97,10 @@ func (lm *LifecycleManager) Run(ctx context.Context, storage *Local) {
 
 // Process runs a single pass applying lifecycle policies to the storage.
 func (lm *LifecycleManager) Process(storage *Local) {
+	// Uploads past their expiry are dropped on the same schedule as the
+	// retention policies.
+	storage.expireUploads()
+
 	// GetPolicies acquires RLock internally and returns a copy; no outer lock needed.
 	policies, _ := lm.GetPolicies()
 
@@ -106,6 +110,9 @@ func (lm *LifecycleManager) Process(storage *Local) {
 				return err
 			}
 			if info.IsDir() {
+				if path == filepath.Join(storage.path, stagingDir) {
+					return filepath.SkipDir
+				}
 				return nil
 			}
 

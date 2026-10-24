@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jeremyhahn/go-objstore/internal/multipart"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
@@ -174,11 +175,18 @@ type Azure struct {
 	// For testing purposes, allow injecting a pre-configured ContainerURL
 	TestContainerURL azblob.ContainerURL
 	// Management plane client for lifecycle policies (optional)
-	mgmtClient         ManagementPoliciesClient
-	subscriptionID     string
-	resourceGroup      string
-	accountName        string
-	containerName      string
+	mgmtClient     ManagementPoliciesClient
+	subscriptionID string
+	resourceGroup  string
+	accountName    string
+	containerName  string
+	// account manages the containers of the account; nil when the backend
+	// was injected a container and cannot reach the account.
+	account accountAPI
+	// sharedKey signs the read access that the service needs to stage a block
+	// from a blob; nil when the backend was injected a container.
+	sharedKey          *azblob.SharedKeyCredential
+	multipartExpiry    time.Duration
 	policiesMutex      sync.RWMutex
 	replicationManager common.ReplicationManager
 }
@@ -200,7 +208,32 @@ func New() common.Storage {
 //
 // Optional settings:
 //   - endpoint: Custom endpoint URL (for Azurite, etc.)
+//   - multipartExpiry: age after which a multipart upload counts as aborted
+//     (default 168h)
 func (a *Azure) Configure(settings map[string]string) error {
+	return a.configure(settings, true)
+}
+
+// NewManager returns an Azure backend that manages containers and serves
+// every container of the account. It is configured like a storage backend,
+// except that containerName is not required.
+func NewManager(settings map[string]string) (*Azure, error) {
+	a := &Azure{}
+	if err := a.configure(settings, false); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+// configure applies the settings. A storage backend needs a container; a
+// manager does not.
+func (a *Azure) configure(settings map[string]string, needContainer bool) error {
+	expiry, err := multipart.ParseExpiry(settings)
+	if err != nil {
+		return err
+	}
+	a.multipartExpiry = expiry
+
 	if a.TestContainerURL.URL().Host != "" { // If TestContainerURL is set, use it
 		a.container = containerWrapper{a.TestContainerURL}
 		return nil
@@ -210,7 +243,7 @@ func (a *Azure) Configure(settings map[string]string) error {
 	accountKey := settings["accountKey"]
 	containerName := settings["containerName"]
 
-	if accountName == "" || accountKey == "" || containerName == "" {
+	if accountName == "" || accountKey == "" || (needContainer && containerName == "") {
 		return common.ErrAccountNotSet
 	}
 
@@ -225,21 +258,27 @@ func (a *Azure) Configure(settings map[string]string) error {
 	if err != nil {
 		return err
 	}
+	a.sharedKey = credential
 
 	p := azblob.NewPipeline(credential, azblob.PipelineOptions{})
 
-	var u *url.URL
-	var parseErr error
-	if ep := settings["endpoint"]; ep != "" {
-		u, parseErr = url.Parse(fmt.Sprintf("%s/%s", ep, containerName))
-	} else {
-		u, parseErr = url.Parse(fmt.Sprintf("https://%s.blob.core.windows.net/%s", accountName, containerName))
+	base := settings["endpoint"]
+	if base == "" {
+		base = fmt.Sprintf("https://%s.blob.core.windows.net", accountName)
 	}
-	if parseErr != nil {
-		return parseErr
+	accountURL, err := url.Parse(base)
+	if err != nil {
+		return err
 	}
+	a.account = serviceWrapper{azblob.NewServiceURL(*accountURL, p)}
 
-	a.container = containerWrapper{azblob.NewContainerURL(*u, p)}
+	if containerName != "" {
+		u, parseErr := url.Parse(fmt.Sprintf("%s/%s", base, containerName))
+		if parseErr != nil {
+			return parseErr
+		}
+		a.container = containerWrapper{azblob.NewContainerURL(*u, p)}
+	}
 
 	// Optionally set up management client for lifecycle policies
 	// This requires Azure AD authentication and subscription/resource group info
@@ -303,7 +342,7 @@ func (a *Azure) List(prefix string) ([]string, error) {
 	if a.container == nil {
 		return nil, common.ErrNotConfigured
 	}
-	return a.container.ListBlobsFlat(context.Background(), prefix)
+	return a.listKeys(context.Background(), prefix)
 }
 
 func (a *Azure) Archive(key string, destination common.Archiver) error {

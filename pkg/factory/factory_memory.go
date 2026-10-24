@@ -27,4 +27,16 @@ func init() {
 		}
 		return storage, nil
 	})
+
+	RegisterBucketManager("memory", func(settings map[string]string) (common.BucketManager, error) {
+		storage := memory.New()
+		if err := storage.Configure(settings); err != nil {
+			return nil, err
+		}
+		bm, ok := storage.(common.BucketManager)
+		if !ok {
+			return nil, common.ErrNotSupported
+		}
+		return bm, nil
+	})
 }

@@ -72,6 +72,13 @@ func (g *GCS) GetMetadata(ctx context.Context, key string) (*common.Metadata, er
 	}
 	meta.Size = attrs.Size
 	meta.ContentType = attrs.ContentType
+	meta.ContentEncoding = attrs.ContentEncoding
+	if len(attrs.Metadata) > 0 {
+		meta.Custom = make(map[string]string, len(attrs.Metadata))
+		for k, v := range attrs.Metadata {
+			meta.Custom[k] = v
+		}
+	}
 	return meta, nil
 }
 
@@ -147,6 +154,9 @@ func (g *GCS) ListWithContext(ctx context.Context, prefix string) ([]string, err
 		if err != nil {
 			return nil, err
 		}
+		if staged(attrs.Name) {
+			continue
+		}
 		keys = append(keys, attrs.Name)
 	}
 
@@ -204,6 +214,12 @@ func (g *GCS) ListWithOptions(ctx context.Context, opts *common.ListOptions) (*c
 		}
 		if err != nil {
 			return nil, err
+		}
+
+		// Staged multipart state is never an object, and neither is the
+		// prefix that holds it.
+		if staged(attrs.Name) || staged(attrs.Prefix) {
+			continue
 		}
 
 		// Check if this is a common prefix

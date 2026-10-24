@@ -60,6 +60,23 @@ func (e *ValidationError) Error() string {
 // transport.
 func (e *ValidationError) Unwrap() error { return ErrInvalidArgument }
 
+// inReservedArea reports whether key names the multipart staging directory or
+// anything below it, however the path is spelled: leading "./" segments and
+// backslash separators lead to the same directory on a filesystem backend, and
+// a case-insensitive filesystem does not tell the letter cases apart. Keys
+// with ".." never get here with a way back into the directory; they are
+// rejected as traversal.
+func inReservedArea(key string) bool {
+	for len(key) >= 2 && key[0] == '.' && (key[1] == '/' || key[1] == '\\') {
+		key = key[2:]
+	}
+	dir := strings.TrimSuffix(MultipartPrefix, "/")
+	if len(key) < len(dir) || !strings.EqualFold(key[:len(dir)], dir) {
+		return false
+	}
+	return len(key) == len(dir) || key[len(dir)] == '/' || key[len(dir)] == '\\'
+}
+
 // ValidateKey validates an object key for security issues
 // Returns error if the key:
 // - Is empty
@@ -68,6 +85,7 @@ func (e *ValidationError) Unwrap() error { return ErrInvalidArgument }
 // - Contains null bytes
 // - Exceeds maximum length
 // - Contains invalid characters
+// - Names the reserved multipart staging directory, or anything below it
 func ValidateKey(key string) error {
 	if key == "" {
 		return &ValidationError{
@@ -82,6 +100,15 @@ func ValidateKey(key string) error {
 		return &ValidationError{
 			Field:   fieldKey,
 			Message: fmt.Sprintf("key length exceeds maximum of %d bytes", MaxKeyLength),
+		}
+	}
+
+	// The multipart staging area is reserved; a user key under it would
+	// collide with staged parts.
+	if inReservedArea(key) {
+		return &ValidationError{
+			Field:   fieldKey,
+			Message: fmt.Sprintf("key cannot use the reserved prefix %q", MultipartPrefix),
 		}
 	}
 

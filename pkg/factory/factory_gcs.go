@@ -29,4 +29,12 @@ func init() {
 		}
 		return storage, nil
 	})
+
+	RegisterBucketManager("gcs", func(settings map[string]string) (common.BucketManager, error) {
+		manager, err := gcs.NewManager(settings)
+		if err != nil {
+			return nil, err
+		}
+		return manager, nil
+	})
 }

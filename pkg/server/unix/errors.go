@@ -55,4 +55,6 @@ const (
 	ErrCodeMethodNotFound = jsonrpc.CodeMethodNotFound
 	ErrCodeInvalidParams  = jsonrpc.CodeInvalidParams
 	ErrCodeInternalError  = jsonrpc.CodeInternal
+	// ErrCodeUnimplemented reports a capability the backend does not have.
+	ErrCodeUnimplemented = jsonrpc.CodeUnimplemented
 )

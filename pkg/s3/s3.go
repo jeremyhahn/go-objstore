@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jeremyhahn/go-objstore/internal/multipart"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 
 	"github.com/aws/aws-sdk-go/aws"                  //nolint:staticcheck // Using v1 SDK, migration to v2 planned
@@ -51,6 +52,8 @@ var s3managerNewUploaderWithClient = func(c s3iface.S3API, options ...func(*s3ma
 type S3 struct {
 	svc                s3iface.S3API
 	bucket             string
+	region             string
+	multipartExpiry    time.Duration // zero means multipart.DefaultExpiry
 	policiesMutex      sync.RWMutex
 	replicationManager common.ReplicationManager
 }
@@ -66,6 +69,29 @@ func (s *S3) Configure(settings map[string]string) error {
 	if s.bucket == "" {
 		return common.ErrBucketNotSet
 	}
+	return s.configureClient(settings)
+}
+
+// NewManager returns an S3 that manages buckets and has no bucket of its own,
+// so the bucket setting is not required. Bucket returns the Storage of a
+// bucket that reuses the manager's client and credentials.
+func NewManager(settings map[string]string) (*S3, error) {
+	s := &S3{}
+	if err := s.configureClient(settings); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// configureClient builds the client from the region, endpoint and credential
+// settings and reads the multipartExpiry setting.
+func (s *S3) configureClient(settings map[string]string) error {
+	expiry, err := multipart.ParseExpiry(settings)
+	if err != nil {
+		return err
+	}
+	s.region = settings["region"]
+	s.multipartExpiry = expiry
 
 	cfg := &aws.Config{
 		Region: aws.String(settings["region"]),

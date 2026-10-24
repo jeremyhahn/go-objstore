@@ -52,6 +52,10 @@ func HTTPStatus(err error) (int, string) {
 		return 499, "request canceled"
 	case common.CodeDeadlineExceeded:
 		return http.StatusGatewayTimeout, "deadline exceeded"
+	case common.CodeUnimplemented:
+		return http.StatusNotImplemented, "not implemented"
+	case common.CodeFailedPrecondition:
+		return http.StatusPreconditionFailed, "precondition failed"
 	default:
 		return http.StatusInternalServerError, common.SanitizeErrorMessage(err)
 	}
@@ -82,6 +86,10 @@ func GRPCStatus(err error) error {
 		return status.Error(codes.Canceled, "request canceled")
 	case common.CodeDeadlineExceeded:
 		return status.Error(codes.DeadlineExceeded, "deadline exceeded")
+	case common.CodeUnimplemented:
+		return status.Error(codes.Unimplemented, "not implemented")
+	case common.CodeFailedPrecondition:
+		return status.Error(codes.FailedPrecondition, "precondition failed")
 	default:
 		return status.Error(codes.Internal, common.SanitizeErrorMessage(err))
 	}
@@ -112,6 +120,10 @@ func JSONRPCError(err error) (int, string) {
 		return jsonrpc.CodeInternal, "request canceled"
 	case common.CodeDeadlineExceeded:
 		return jsonrpc.CodeInternal, "deadline exceeded"
+	case common.CodeUnimplemented:
+		return jsonrpc.CodeUnimplemented, "not implemented"
+	case common.CodeFailedPrecondition:
+		return jsonrpc.CodePreconditionFailed, "precondition failed"
 	default:
 		return jsonrpc.CodeInternal, common.SanitizeErrorMessage(err)
 	}

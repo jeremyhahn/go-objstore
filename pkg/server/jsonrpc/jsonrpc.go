@@ -65,6 +65,11 @@ const (
 	CodeNotFound = -32004
 	// CodeAlreadyExists reports a conflict with an existing resource.
 	CodeAlreadyExists = -32005
+	// CodeUnimplemented reports a capability the backend does not have.
+	CodeUnimplemented = -32006
+	// CodePreconditionFailed reports a request that conflicts with the
+	// current state of the resource.
+	CodePreconditionFailed = -32007
 	// CodeRateLimited reports a rate-limit rejection.
 	CodeRateLimited = -32029
 )

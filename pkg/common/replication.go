@@ -15,13 +15,13 @@ package common
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"time"
 )
 
 var (
 	// ErrReplicationNotSupported is returned when replication is not supported.
-	ErrReplicationNotSupported = errors.New("replication not supported for this backend")
+	ErrReplicationNotSupported = fmt.Errorf("replication not supported for this backend: %w", ErrNotSupported)
 )
 
 // ReplicationMode defines how replication handles encryption.

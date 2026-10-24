@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jeremyhahn/go-objstore/internal/multipart"
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
@@ -43,6 +44,9 @@ type Local struct {
 	logger                 adapters.Logger
 	auditLog               auditlog.AuditLogger
 	lifecycleCancel        context.CancelFunc // stops the background lifecycle goroutine
+	multipartExpiry        time.Duration      // age after which an upload in progress is treated as aborted
+	now                    func() time.Time   // time source for upload expiry; nil means time.Now
+	buckets                *Buckets           // set when the bucketRoot setting is present
 }
 
 // New creates a new Local storage backend.
@@ -68,9 +72,25 @@ func (l *Local) Configure(settings map[string]string) error {
 		return common.ErrPathNotSet
 	}
 
+	expiry, err := multipart.ParseExpiry(settings)
+	if err != nil {
+		return err
+	}
+	l.multipartExpiry = expiry
+
 	// Ensure directory exists
 	if err := os.MkdirAll(l.path, 0750); err != nil {
 		return err
+	}
+
+	l.buckets = nil
+	if settings[settingBucketRoot] != "" {
+		buckets, err := NewBuckets(settings)
+		if err != nil {
+			return err
+		}
+		buckets.SetAtRestEncrypterFactory(l.atRestEncrypterFactory)
+		l.buckets = buckets
 	}
 
 	// Initialize logger and audit log with no-op defaults if not set
@@ -126,6 +146,9 @@ func (l *Local) Configure(settings map[string]string) error {
 // disk will be decrypted. If not set, data is stored in plaintext (noop).
 func (l *Local) SetAtRestEncrypterFactory(factory common.EncrypterFactory) {
 	l.atRestEncrypterFactory = factory
+	if l.buckets != nil {
+		l.buckets.SetAtRestEncrypterFactory(factory)
+	}
 }
 
 // SetChangeLog sets the change log for tracking Put and Delete operations.
@@ -142,12 +165,19 @@ type localFileSystem struct {
 func (lfs *localFileSystem) OpenFile(name string, flag int, perm os.FileMode) (common.LifecycleFile, error) {
 	fullPath := filepath.Join(lfs.basePath, name)
 	// Ensure parent directory exists
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0750); err != nil {
-		return nil, err
-	}
-	file, err := os.OpenFile(fullPath, flag, perm) // #nosec G304 -- Path is controlled by system
-	if err != nil {
-		return nil, err
+	var file *os.File
+	for attempt := 1; ; attempt++ {
+		if err := mkdirAllPruneSafe(filepath.Dir(fullPath)); err != nil {
+			return nil, err
+		}
+		var err error
+		file, err = os.OpenFile(fullPath, flag, perm) // #nosec G304 -- Path is controlled by system
+		if err == nil {
+			break
+		}
+		if flag&os.O_CREATE == 0 || !errors.Is(err, fs.ErrNotExist) || attempt == pruneRetryAttempts {
+			return nil, err
+		}
 	}
 	return &localFile{File: file}, nil
 }
@@ -197,7 +227,7 @@ func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 	}
 
 	path := filepath.Join(l.path, key)
-	if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil { // Restrict permissions for security
+	if err := mkdirAllPruneSafe(filepath.Dir(path)); err != nil {
 		return err
 	}
 
@@ -223,7 +253,7 @@ func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 	}
 
 	var size int64
-	if err := writeFileAtomic(path, 0644, func(w io.Writer) error {
+	if err := writeObjectAtomic(path, 0644, func(w io.Writer) error {
 		n, werr := io.Copy(w, dataToWrite)
 		size = n
 		return werr
@@ -448,6 +478,8 @@ func (l *Local) DeleteWithContext(ctx context.Context, key string) error {
 		return err
 	}
 
+	l.pruneEmptyDirs(filepath.Dir(path))
+
 	if sizeStr != "" {
 		log.Printf("[LOCAL] ✓ DELETE '%s' ✗ %s (freed %s)", key, path, sizeStr)
 	} else {
@@ -464,6 +496,19 @@ func (l *Local) DeleteWithContext(ctx context.Context, key string) error {
 	}
 
 	return nil
+}
+
+// pruneEmptyDirs removes dir and then its parents for as long as they are
+// empty, stopping below the store's own directory. A directory that still holds
+// an object, a sidecar or an upload is kept, since os.Remove refuses it.
+func (l *Local) pruneEmptyDirs(dir string) {
+	root := filepath.Clean(l.path)
+	for strings.HasPrefix(dir, root+string(filepath.Separator)) {
+		if err := os.Remove(dir); err != nil {
+			return
+		}
+		dir = filepath.Dir(dir)
+	}
 }
 
 // Exists checks if an object exists in the backend.
@@ -733,13 +778,13 @@ func (l *Local) saveMetadata(key string, metadata *common.Metadata) error {
 	}
 
 	// Ensure the parent directory exists before writing the sidecar.
-	if err := os.MkdirAll(filepath.Dir(metadataPath), 0750); err != nil {
+	if err := mkdirAllPruneSafe(filepath.Dir(metadataPath)); err != nil {
 		return err
 	}
 
 	// Write the sidecar atomically so a crash mid-write cannot leave a
 	// truncated or partial metadata file alongside the object.
-	return writeFileAtomic(metadataPath, 0600, func(w io.Writer) error {
+	return writeObjectAtomic(metadataPath, 0600, func(w io.Writer) error {
 		_, werr := w.Write(data)
 		return werr
 	})
@@ -806,6 +851,11 @@ func walkObjects(ctx context.Context, root string, fn func(path string, d fs.Dir
 			return err
 		}
 
+		// Staged multipart state is never an object.
+		if d.IsDir() && path == filepath.Join(root, stagingDir) {
+			return filepath.SkipDir
+		}
+
 		if d.IsDir() || strings.HasSuffix(path, metadataSuffix) || strings.HasPrefix(d.Name(), tmpFilePrefix) {
 			return nil
 		}
@@ -815,8 +865,58 @@ func walkObjects(ctx context.Context, root string, fn func(path string, d fs.Dir
 }
 
 func writeFileAtomic(path string, mode os.FileMode, write func(io.Writer) error) error {
+	return writeAtomic(path, mode, false, write)
+}
+
+// writeObjectAtomic is writeFileAtomic for a file whose directory may not exist
+// yet. Deleting an object prunes the directories it leaves empty, which can
+// happen between creating the directory and creating the temp file in it, so
+// the directory is created again when that happens.
+func writeObjectAtomic(path string, mode os.FileMode, write func(io.Writer) error) error {
+	return writeAtomic(path, mode, true, write)
+}
+
+// createObjectTemp creates the temp file for a write to dir. With makeDirs it
+// also creates dir, and tries again if the directory vanishes underneath it.
+func createObjectTemp(dir string, makeDirs bool) (*os.File, error) {
+	for attempt := 1; ; attempt++ {
+		if makeDirs {
+			if err := mkdirAllPruneSafe(dir); err != nil {
+				return nil, err
+			}
+		}
+		tmp, err := os.CreateTemp(dir, tmpFilePrefix+"*") // #nosec G304 -- dir derived from a key validated by validateKey() to prevent directory traversal
+		if err == nil || !makeDirs || !errors.Is(err, fs.ErrNotExist) || attempt == pruneRetryAttempts {
+			return tmp, err
+		}
+	}
+}
+
+// pruneRetryAttempts bounds how often a writer repeats a mkdir-then-create
+// sequence that a concurrent pruneEmptyDirs interrupted.
+const pruneRetryAttempts = 100
+
+// mkdirAllPruneSafe is os.MkdirAll that survives pruneEmptyDirs removing the
+// directory, or one of its parents, while the path is being created. The prune
+// can be in this process or in another one sharing the same root, so a retry
+// on ENOENT is used instead of a lock: each retry follows a prune that has
+// already completed, and the number of prunes is bounded by the deletes in
+// flight. EEXIST is retried too: os.MkdirAll reports it when the directory it
+// found was pruned again before its follow-up stat. A caller still has to retry
+// its own create step after this returns, since a prune can land between the
+// two.
+func mkdirAllPruneSafe(dir string) error {
+	for attempt := 1; ; attempt++ {
+		err := os.MkdirAll(dir, 0750)
+		if err == nil || !(errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrExist)) || attempt == pruneRetryAttempts {
+			return err
+		}
+	}
+}
+
+func writeAtomic(path string, mode os.FileMode, makeDirs bool, write func(io.Writer) error) error {
 	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, tmpFilePrefix+"*") // #nosec G304 -- dir derived from a key validated by validateKey() to prevent directory traversal
+	tmp, err := createObjectTemp(dir, makeDirs)
 	if err != nil {
 		return err
 	}
@@ -857,6 +957,11 @@ func writeFileAtomic(path string, mode os.FileMode, write func(io.Writer) error)
 
 	// Fsync the parent directory so the rename is durable on the inode level.
 	d, err := os.Open(dir) // #nosec G304 -- dir is derived from a validated key path
+	if errors.Is(err, fs.ErrNotExist) {
+		// A concurrent delete removed the renamed file and pruned the now
+		// empty directory; there is nothing left to make durable.
+		return nil
+	}
 	if err != nil {
 		return err
 	}

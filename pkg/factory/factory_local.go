@@ -38,4 +38,12 @@ func init() {
 		}
 		return archiver, nil
 	})
+
+	RegisterBucketManager("local", func(settings map[string]string) (common.BucketManager, error) {
+		buckets, err := local.NewBuckets(settings)
+		if err != nil {
+			return nil, err
+		}
+		return buckets, nil
+	})
 }

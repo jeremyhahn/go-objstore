@@ -878,7 +878,7 @@ func TestHandleAddReplicationPolicy(t *testing.T) {
 				Enabled:         true,
 			},
 			wantErr: true, // Will fail because no replication manager configured
-			errCode: ErrCodeInternalError,
+			errCode: ErrCodeUnimplemented,
 		},
 	}
 
@@ -945,7 +945,7 @@ func TestHandleRemoveReplicationPolicy(t *testing.T) {
 			name:    "no replication manager",
 			params:  ReplicationPolicyIDParams{ID: "test-id"},
 			wantErr: true,
-			errCode: ErrCodeInternalError,
+			errCode: ErrCodeUnimplemented,
 		},
 	}
 
@@ -1012,7 +1012,7 @@ func TestHandleGetReplicationPolicy(t *testing.T) {
 			name:    "no replication manager",
 			params:  ReplicationPolicyIDParams{ID: "test-id"},
 			wantErr: true,
-			errCode: ErrCodeInternalError,
+			errCode: ErrCodeUnimplemented,
 		},
 	}
 
@@ -1076,8 +1076,8 @@ func TestHandleGetReplicationPolicies(t *testing.T) {
 		t.Error("expected error but got success")
 		return
 	}
-	if resp.Error.Code != ErrCodeInternalError {
-		t.Errorf("got error code %d, want %d", resp.Error.Code, ErrCodeInternalError)
+	if resp.Error.Code != ErrCodeUnimplemented {
+		t.Errorf("got error code %d, want %d", resp.Error.Code, ErrCodeUnimplemented)
 	}
 }
 
@@ -1095,13 +1095,13 @@ func TestHandleTriggerReplication(t *testing.T) {
 			name:    "trigger all - no replication manager",
 			params:  nil,
 			wantErr: true,
-			errCode: ErrCodeInternalError,
+			errCode: ErrCodeUnimplemented,
 		},
 		{
 			name:    "trigger specific - no replication manager",
 			params:  &ReplicationPolicyIDParams{ID: "test-policy"},
 			wantErr: true,
-			errCode: ErrCodeInternalError,
+			errCode: ErrCodeUnimplemented,
 		},
 	}
 
@@ -1171,7 +1171,7 @@ func TestHandleGetReplicationStatus(t *testing.T) {
 			name:    "no replication manager",
 			params:  ReplicationPolicyIDParams{ID: "test-id"},
 			wantErr: true,
-			errCode: ErrCodeInternalError,
+			errCode: ErrCodeUnimplemented,
 		},
 	}
 

@@ -140,7 +140,7 @@ func (a *Azure) Exists(ctx context.Context, key string) (bool, error) {
 
 // ListWithContext returns a list of keys with context support.
 func (a *Azure) ListWithContext(ctx context.Context, prefix string) ([]string, error) {
-	return a.container.ListBlobsFlat(ctx, prefix)
+	return a.listKeys(ctx, prefix)
 }
 
 // ListWithOptions returns a paginated list of objects with full metadata.
@@ -151,7 +151,7 @@ func (a *Azure) ListWithOptions(ctx context.Context, opts *common.ListOptions) (
 	}
 
 	// Use the existing list method
-	keys, err := a.container.ListBlobsFlat(ctx, opts.Prefix)
+	keys, err := a.listKeys(ctx, opts.Prefix)
 	if err != nil {
 		return nil, err
 	}

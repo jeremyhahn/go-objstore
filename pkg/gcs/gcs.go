@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jeremyhahn/go-objstore/internal/multipart"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 
 	"cloud.google.com/go/storage"
@@ -117,6 +118,8 @@ func (o objectWrapper) Update(ctx context.Context, uattrs storage.ObjectAttrsToU
 type GCS struct {
 	client             gcsClient
 	bucket             string
+	project            string        // the project that owns the buckets this provider creates
+	multipartExpiry    time.Duration // zero means multipart.DefaultExpiry
 	policiesMutex      sync.RWMutex
 	replicationManager common.ReplicationManager
 }
@@ -134,6 +137,31 @@ func (g *GCS) Configure(settings map[string]string) error {
 	if g.bucket == "" {
 		return common.ErrBucketNotSet
 	}
+	return g.configureClient(settings)
+}
+
+// NewManager returns a GCS that manages buckets of a project and is bound to
+// no bucket of its own. The project setting is required.
+func NewManager(settings map[string]string) (*GCS, error) {
+	if settings["project"] == "" {
+		return nil, common.ErrProjectNotSet
+	}
+	g := &GCS{}
+	if err := g.configureClient(settings); err != nil {
+		return nil, err
+	}
+	return g, nil
+}
+
+// configureClient reads the settings that do not name a bucket and creates the
+// client.
+func (g *GCS) configureClient(settings map[string]string) error {
+	expiry, err := multipart.ParseExpiry(settings)
+	if err != nil {
+		return err
+	}
+	g.project = settings["project"]
+	g.multipartExpiry = expiry
 	if g.client != nil {
 		return nil
 	}
@@ -200,6 +228,9 @@ func (g *GCS) List(prefix string) ([]string, error) {
 		}
 		if err != nil {
 			return nil, err
+		}
+		if staged(attrs.Name) {
+			continue
 		}
 
 		keys = append(keys, attrs.Name)

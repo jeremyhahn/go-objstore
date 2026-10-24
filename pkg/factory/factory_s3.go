@@ -29,4 +29,12 @@ func init() {
 		}
 		return storage, nil
 	})
+
+	RegisterBucketManager("s3", func(settings map[string]string) (common.BucketManager, error) {
+		manager, err := s3.NewManager(settings)
+		if err != nil {
+			return nil, err
+		}
+		return manager, nil
+	})
 }

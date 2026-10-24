@@ -29,4 +29,11 @@ func init() {
 		}
 		return storage, nil
 	})
+	RegisterBucketManager("azure", func(settings map[string]string) (common.BucketManager, error) {
+		manager, err := azure.NewManager(settings)
+		if err != nil {
+			return nil, err
+		}
+		return manager, nil
+	})
 }

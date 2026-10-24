@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jeremyhahn/go-objstore/internal/multipart"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
@@ -39,6 +40,16 @@ type Memory struct {
 	mu               sync.RWMutex
 	objects          map[string]*object
 	lifecycleManager common.LifecycleManager
+
+	// uploads and buckets back the multipart and bucket emulation. They are
+	// kept apart from objects, created on first use, and guarded by mu.
+	uploads map[string]*upload
+	buckets map[string]*bucket
+
+	// multipartExpiry is how long an upload may stay open; zero means
+	// multipart.DefaultExpiry. now is the clock; nil means time.Now.
+	multipartExpiry time.Duration
+	now             func() time.Time
 }
 
 // New creates a new Memory storage backend.
@@ -50,8 +61,16 @@ func New() common.Storage {
 }
 
 // Configure sets up the backend with the necessary settings.
-// The memory backend has no required settings.
+// The memory backend has no required settings; multipartExpiry optionally
+// sets how long a multipart upload may stay open.
 func (m *Memory) Configure(settings map[string]string) error {
+	expiry, err := multipart.ParseExpiry(settings)
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.multipartExpiry = expiry
+	m.mu.Unlock()
 	return nil
 }
 

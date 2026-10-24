@@ -47,6 +47,11 @@ type encryptedStorage struct {
 // NewEncryptedStorage creates a new encrypted storage wrapper.
 // The underlying storage backend will store encrypted data.
 // The encrypterFactory provides encryption/decryption operations.
+//
+// The wrapper encrypts each object as one stream, and separately encrypted
+// parts do not join into such a stream. It therefore offers neither
+// MultipartUploader nor BucketManager, whatever the wrapped storage offers,
+// and the facade reports ErrNotSupported for a wrapped backend.
 func NewEncryptedStorage(underlying Storage, encrypterFactory EncrypterFactory) Storage {
 	return &encryptedStorage{
 		underlying:       underlying,
