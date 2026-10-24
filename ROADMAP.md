@@ -1,6 +1,6 @@
 # go-objstore roadmap
 
-> **Status: REFERENCE** · Scope: go-objstore · Last verified: 2026-10-21
+> **Status: REFERENCE** · Scope: go-objstore · Last verified: 2026-10-24
 > An as-built plan. Gitea issues are the backlog; this orders them.
 
 ## Mission
@@ -29,6 +29,8 @@ Its only first-party dependency is go-enclave.
 - **cli** — `objstore` command — [v0.4.0-alpha](../../releases/tag/v0.4.0-alpha) — done
 - **c-client** — `libobjstore` C library — [v0.4.0-alpha](../../releases/tag/v0.4.0-alpha) — done
 - **sdks** — client SDKs in six languages — [v0.4.0-alpha](../../releases/tag/v0.4.0-alpha) — done
+- **provider-buckets** — create, list and delete buckets on every provider, for go-quicbaas — [#89](../../issues/89) — done
+- **provider-multipart** — initiate, upload part, complete and abort on every provider, for go-quicbaas — [#89](../../issues/89) — done
 
 ## Now
 
@@ -40,8 +42,6 @@ None.
 
 ## Later
 
-- **provider-buckets** — create, list and delete buckets on every provider, for go-quicbaas — [#90](../../issues/90) — open
-- **provider-multipart** — initiate, upload part, complete and abort on every provider, for go-quicbaas — [#90](../../issues/90) — open
 - **backup-agent** — client-SDK backup agent with go-xkms keys; SPEC row awaiting owner approval, no code yet — [#92](../../pulls/92) — open
 
 ## Future

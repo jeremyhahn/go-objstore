@@ -1,6 +1,6 @@
 # go-objstore specification
 
-> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-21
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-24
 > Conflicts with this document are defects. Fix them here first.
 
 ## Purpose
@@ -38,8 +38,8 @@ Its one first-party dependency is go-enclave, the locked-memory primitive.
 | cli | shipped | The `objstore` command exposes the interface, lifecycle and replication from a shell. | [docs/usage](usage/cli.md) |
 | c-client | shipped | `libobjstore` exposes the interface to C callers through opaque handles. | [docs/c_client](c_client/README.md) |
 | sdks | shipped | Client SDKs for Go, Python, Ruby, Rust, TypeScript and C# speak the server APIs. | [api/sdks](../api/sdks/README.md) |
-| provider-buckets | in progress | Providers create, list and delete buckets. The consumer is go-quicbaas. | [docs/buckets](buckets/README.md) |
-| provider-multipart | in progress | Providers initiate a multipart upload, upload a part, complete it and abort it. The consumer is go-quicbaas. | [docs/buckets](buckets/README.md) |
+| provider-buckets | shipped | Providers create, list and delete buckets. The consumer is go-quicbaas. | [docs/buckets](buckets/README.md) |
+| provider-multipart | shipped | Providers initiate a multipart upload, upload a part, complete it and abort it. The consumer is go-quicbaas. | [docs/buckets](buckets/README.md) |
 | configure-credential-handle | planned | `Storage.Configure` accepts the protected-memory credential handle (go-enclave `enclave.ByteAccess`, the type `pkg/cli` already holds for the backend key and secret) in place of the `map[string]string` credential values. A backend copies the credential out of the handle for the length of the call and never retains the handle. This breaks the current `Configure(map[string]string)` signature of the `Storage` interface and of every provider and wrapper that implements it. The consumer is the go-qrdb object-storage backend. | [docs/architecture](architecture/protected-memory.md) |
 | backup-agent | planned | One backup agent binary, built from the Go client SDK's module (`api/sdks/go`, its own go.mod) and talking to an unchanged objstore server through that SDK; the server gains nothing. Keys come from go-xkms through the agent's key seam, so the root module keeps go-enclave as its only first-party dependency. Standards: FastCDC chunking, HMAC-SHA-256 chunk IDs (FIPS 198-1), zstd (RFC 8878) compress-then-encrypt, AES-256-GCM (SP 800-38D) with HKDF (RFC 5869) subkeys, immutable packs plus index plus snapshot manifests as the snapshot format, and restore with end-to-end verify. | [docs/backup-agent](backup-agent/README.md) |
 
