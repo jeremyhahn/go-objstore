@@ -172,10 +172,13 @@ func (l *Local) InitiateMultipartUpload(ctx context.Context, key string, metadat
 	}
 
 	stage := l.stagingPath()
-	if err := os.MkdirAll(stage, 0750); err != nil {
-		return "", err
+	release := holdDirs(&l.pruneMu)
+	err = os.MkdirAll(stage, 0750)
+	var tmp string
+	if err == nil {
+		tmp, err = os.MkdirTemp(stage, tmpFilePrefix+"*")
 	}
-	tmp, err := os.MkdirTemp(stage, tmpFilePrefix+"*")
+	release()
 	if err != nil {
 		return "", err
 	}
@@ -381,11 +384,8 @@ func (l *Local) CompleteMultipartUpload(ctx context.Context, key, uploadID strin
 	}
 
 	path := filepath.Join(l.path, key)
-	if err := mkdirAllPruneSafe(filepath.Dir(path)); err != nil {
-		return err
-	}
 	var size int64
-	if err := writeObjectAtomic(path, 0644, func(w io.Writer) error {
+	if err := writeObjectAtomic(&l.pruneMu, path, 0644, func(w io.Writer) error {
 		n, werr := io.Copy(w, in)
 		size = n
 		return werr

@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/internal/multipart"
@@ -47,6 +48,12 @@ type Local struct {
 	multipartExpiry        time.Duration      // age after which an upload in progress is treated as aborted
 	now                    func() time.Time   // time source for upload expiry; nil means time.Now
 	buckets                *Buckets           // set when the bucketRoot setting is present
+
+	// pruneMu orders directory pruning against writers. A writer holds the
+	// read side from the moment it creates a parent directory until its
+	// temporary file exists in it; pruneEmptyDirs holds the write side while
+	// it removes directories. Writers never block one another.
+	pruneMu sync.RWMutex
 }
 
 // New creates a new Local storage backend.
@@ -118,7 +125,7 @@ func (l *Local) Configure(settings map[string]string) error {
 			policyFile = ".lifecycle-policies.json"
 		}
 
-		fs := &localFileSystem{basePath: l.path}
+		fs := &localFileSystem{basePath: l.path, pruneMu: &l.pruneMu}
 		persistentManager, err := common.NewPersistentLifecycleManager(fs, policyFile)
 		if err != nil {
 			return err
@@ -160,6 +167,7 @@ func (l *Local) SetChangeLog(changeLog ChangeLog) {
 // localFileSystem is a simple FileSystem implementation that uses local files
 type localFileSystem struct {
 	basePath string
+	pruneMu  *sync.RWMutex // the owning store's pruneMu; nil when no store prunes the tree
 }
 
 func (lfs *localFileSystem) OpenFile(name string, flag int, perm os.FileMode) (common.LifecycleFile, error) {
@@ -167,11 +175,14 @@ func (lfs *localFileSystem) OpenFile(name string, flag int, perm os.FileMode) (c
 	// Ensure parent directory exists
 	var file *os.File
 	for attempt := 1; ; attempt++ {
+		release := holdDirs(lfs.pruneMu)
 		if err := mkdirAllPruneSafe(filepath.Dir(fullPath)); err != nil {
+			release()
 			return nil, err
 		}
 		var err error
 		file, err = os.OpenFile(fullPath, flag, perm) // #nosec G304 -- Path is controlled by system
+		release()
 		if err == nil {
 			break
 		}
@@ -227,9 +238,6 @@ func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 	}
 
 	path := filepath.Join(l.path, key)
-	if err := mkdirAllPruneSafe(filepath.Dir(path)); err != nil {
-		return err
-	}
 
 	// Get at-rest encrypter if factory is set
 	var encrypter common.Encrypter
@@ -253,7 +261,7 @@ func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 	}
 
 	var size int64
-	if err := writeObjectAtomic(path, 0644, func(w io.Writer) error {
+	if err := writeObjectAtomic(&l.pruneMu, path, 0644, func(w io.Writer) error {
 		n, werr := io.Copy(w, dataToWrite)
 		size = n
 		return werr
@@ -501,7 +509,12 @@ func (l *Local) DeleteWithContext(ctx context.Context, key string) error {
 // pruneEmptyDirs removes dir and then its parents for as long as they are
 // empty, stopping below the store's own directory. A directory that still holds
 // an object, a sidecar or an upload is kept, since os.Remove refuses it.
+//
+// It holds the write side of pruneMu, so it waits for the writers that are
+// between creating a directory and creating a file in it.
 func (l *Local) pruneEmptyDirs(dir string) {
+	l.pruneMu.Lock()
+	defer l.pruneMu.Unlock()
 	root := filepath.Clean(l.path)
 	for strings.HasPrefix(dir, root+string(filepath.Separator)) {
 		if err := os.Remove(dir); err != nil {
@@ -777,14 +790,10 @@ func (l *Local) saveMetadata(key string, metadata *common.Metadata) error {
 		return err
 	}
 
-	// Ensure the parent directory exists before writing the sidecar.
-	if err := mkdirAllPruneSafe(filepath.Dir(metadataPath)); err != nil {
-		return err
-	}
-
 	// Write the sidecar atomically so a crash mid-write cannot leave a
-	// truncated or partial metadata file alongside the object.
-	return writeObjectAtomic(metadataPath, 0600, func(w io.Writer) error {
+	// truncated or partial metadata file alongside the object. The parent
+	// directory is created under the prune lock.
+	return writeObjectAtomic(&l.pruneMu, metadataPath, 0600, func(w io.Writer) error {
 		_, werr := w.Write(data)
 		return werr
 	})
@@ -865,27 +874,52 @@ func walkObjects(ctx context.Context, root string, fn func(path string, d fs.Dir
 }
 
 func writeFileAtomic(path string, mode os.FileMode, write func(io.Writer) error) error {
-	return writeAtomic(path, mode, false, write)
+	return writeAtomic(nil, path, mode, false, write)
 }
 
 // writeObjectAtomic is writeFileAtomic for a file whose directory may not exist
-// yet. Deleting an object prunes the directories it leaves empty, which can
-// happen between creating the directory and creating the temp file in it, so
-// the directory is created again when that happens.
-func writeObjectAtomic(path string, mode os.FileMode, write func(io.Writer) error) error {
-	return writeAtomic(path, mode, true, write)
+// yet. Deleting an object prunes the directories it leaves empty, so the
+// directory is created, and the temp file made in it, while holding off the
+// prune of mu's store (see createObjectTemp).
+func writeObjectAtomic(mu *sync.RWMutex, path string, mode os.FileMode, write func(io.Writer) error) error {
+	return writeAtomic(mu, path, mode, true, write)
+}
+
+// holdDirs takes the read side of mu, which keeps pruneEmptyDirs from removing
+// directories until the returned function is called. A nil mu holds nothing.
+// Callers hold it only across a mkdir and the create that follows it, never
+// across a read of a caller-supplied io.Reader: a Delete queued behind the
+// read lock would otherwise block every later writer, and a reader that
+// itself waits on that Delete would deadlock.
+func holdDirs(mu *sync.RWMutex) (release func()) {
+	if mu == nil {
+		return func() {}
+	}
+	mu.RLock()
+	return mu.RUnlock
 }
 
 // createObjectTemp creates the temp file for a write to dir. With makeDirs it
-// also creates dir, and tries again if the directory vanishes underneath it.
-func createObjectTemp(dir string, makeDirs bool) (*os.File, error) {
+// also creates dir. mu is held from the mkdir until the temp file exists, and
+// a file in dir keeps os.Remove from pruning it, so within one store no prune
+// can land in that window.
+//
+// Pruning by another process sharing the root takes no part in mu, so the
+// ENOENT retry stays as a second line of defense. It is bounded by
+// pruneRetryAttempts and so only makes losing the race unlikely: a writer
+// that loses every round still fails. The store-level lock, not the retry, is
+// what makes writers within one process safe.
+func createObjectTemp(mu *sync.RWMutex, dir string, makeDirs bool) (*os.File, error) {
 	for attempt := 1; ; attempt++ {
+		release := holdDirs(mu)
 		if makeDirs {
 			if err := mkdirAllPruneSafe(dir); err != nil {
+				release()
 				return nil, err
 			}
 		}
 		tmp, err := os.CreateTemp(dir, tmpFilePrefix+"*") // #nosec G304 -- dir derived from a key validated by validateKey() to prevent directory traversal
+		release()
 		if err == nil || !makeDirs || !errors.Is(err, fs.ErrNotExist) || attempt == pruneRetryAttempts {
 			return tmp, err
 		}
@@ -893,18 +927,19 @@ func createObjectTemp(dir string, makeDirs bool) (*os.File, error) {
 }
 
 // pruneRetryAttempts bounds how often a writer repeats a mkdir-then-create
-// sequence that a concurrent pruneEmptyDirs interrupted.
+// sequence that a prune by another process interrupted.
 const pruneRetryAttempts = 100
 
-// mkdirAllPruneSafe is os.MkdirAll that survives pruneEmptyDirs removing the
-// directory, or one of its parents, while the path is being created. The prune
-// can be in this process or in another one sharing the same root, so a retry
-// on ENOENT is used instead of a lock: each retry follows a prune that has
-// already completed, and the number of prunes is bounded by the deletes in
-// flight. EEXIST is retried too: os.MkdirAll reports it when the directory it
-// found was pruned again before its follow-up stat. A caller still has to retry
-// its own create step after this returns, since a prune can land between the
-// two.
+// mkdirAllPruneSafe is os.MkdirAll that survives a prune removing the
+// directory, or one of its parents, while the path is being created. Within
+// a store the caller excludes pruneEmptyDirs with holdDirs; this retry covers
+// a prune by another process sharing the same root, which no in-process lock
+// can order. Each retry follows a prune that has already completed, and the
+// number of prunes is bounded by the deletes in flight, but the bound is not
+// a guarantee. EEXIST is retried too: os.MkdirAll reports it when the
+// directory it found was pruned again before its follow-up stat. A caller
+// still has to retry its own create step after this returns, since a prune
+// can land between the two.
 func mkdirAllPruneSafe(dir string) error {
 	for attempt := 1; ; attempt++ {
 		err := os.MkdirAll(dir, 0750)
@@ -914,9 +949,9 @@ func mkdirAllPruneSafe(dir string) error {
 	}
 }
 
-func writeAtomic(path string, mode os.FileMode, makeDirs bool, write func(io.Writer) error) error {
+func writeAtomic(mu *sync.RWMutex, path string, mode os.FileMode, makeDirs bool, write func(io.Writer) error) error {
 	dir := filepath.Dir(path)
-	tmp, err := createObjectTemp(dir, makeDirs)
+	tmp, err := createObjectTemp(mu, dir, makeDirs)
 	if err != nil {
 		return err
 	}
