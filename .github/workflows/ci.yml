@@ -7,6 +7,11 @@
 # changes only markdown or docs/ runs Lint and the CI Gate; the `changes` job
 # decides, and ci-gate reads a skipped job as passed only then.
 #
+# v1.15 (2026-10-24): a main push never cancels the main run still in progress,
+# because each main commit has its own concurrency group (not an expression in
+# cancel-in-progress); PR runs still supersede. Integration Tests run on the
+# bigdisk runners on Gitea, ubuntu-latest on GitHub.
+#
 # v1.15 (2026-10-05, automatethethings#209/#211): push runs on main only.
 # automerge.yml v7 opens each merge train as a PR into main, so a train gets
 # its CI from the pull_request trigger like any PR.
@@ -51,9 +56,11 @@ on:
   # failure is the runner's rather than the code's.
   workflow_dispatch:
 
-# Superseded-run cancellation (issue #41). A newer push to a ref cancels the
+# Superseded-run cancellation (issue #41). A newer push to a PR ref cancels the
 # older, now-pointless CI run on that same ref; the NEWEST run survives.
-# Cancellation stops runs nobody will read.
+# Cancellation stops runs nobody will read. A main run is never cancelled:
+# on main each commit gets its own group, so back-to-back merges do not leave
+# main with no completed run. A PR ref is still one group.
 #
 # This corrects the earlier header claim that "Gitea cannot cancel in-flight
 # jobs". `concurrency:` works on Gitea 1.27.1 (measured: go-netmon run 12242
@@ -68,7 +75,8 @@ on:
 # route (software/scripts/gitea-cancel-run.sh in the automatethethings repo).
 #
 # - cancel-in-progress is the literal `true`: Gitea 1.27.1 does not evaluate
-#   expressions here, and any non-empty value is truthy.
+#   expressions here, and any non-empty value is truthy. Main runs are kept
+#   apart by the per-commit group below, not by an expression here.
 # - The group leads with github.workflow, so it can never cancel the separate
 #   Code Review workflow that also gates merges.
 # - Adoption boundary, expected once: Gitea groups a run by the workflow file
@@ -77,7 +85,7 @@ on:
 # - Workflow-level on purpose, and only in this file: nightly and release runs
 #   must never be cancelled mid-flight.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && format('main-{0}-{1}', github.event_name, github.sha) || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -340,7 +348,7 @@ jobs:
     name: Integration Tests
     needs: changes
     if: needs.changes.outputs.docs_only != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
 
     steps:
     - name: Checkout code
