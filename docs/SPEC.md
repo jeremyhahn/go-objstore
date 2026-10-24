@@ -40,6 +40,7 @@ Its one first-party dependency is go-enclave, the locked-memory primitive.
 | sdks | shipped | Client SDKs for Go, Python, Ruby, Rust, TypeScript and C# speak the server APIs. | [api/sdks](../api/sdks/README.md) |
 | provider-buckets | planned | Providers create, list and delete buckets. The consumer is go-quicbaas. | none |
 | provider-multipart | planned | Providers initiate a multipart upload, upload a part, complete it and abort it. The consumer is go-quicbaas. | none |
+| backup-agent | planned | One backup agent binary, built from the Go client SDK's module (`api/sdks/go`, its own go.mod) and talking to an unchanged objstore server through that SDK; the server gains nothing. Keys come from go-xkms through the agent's key seam, so the root module keeps go-enclave as its only first-party dependency. Standards: FastCDC chunking, HMAC-SHA-256 chunk IDs (FIPS 198-1), zstd (RFC 8878) compress-then-encrypt, AES-256-GCM (SP 800-38D) with HKDF (RFC 5869) subkeys, immutable packs plus index plus snapshot manifests as the snapshot format, and restore with end-to-end verify. | [docs/backup-agent](backup-agent/README.md) |
 
 ## Interfaces
 

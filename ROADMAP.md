@@ -42,6 +42,7 @@ None.
 
 - **provider-buckets** — create, list and delete buckets on every provider, for go-quicbaas — [#90](../../issues/90) — open
 - **provider-multipart** — initiate, upload part, complete and abort on every provider, for go-quicbaas — [#90](../../issues/90) — open
+- **backup-agent** — client-SDK backup agent with go-xkms keys; SPEC row awaiting owner approval, no code yet — [#92](../../pulls/92) — open
 
 ## Future
 
