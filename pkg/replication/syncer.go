@@ -69,16 +69,35 @@ func NewSyncer(
 	logger adapters.Logger,
 	auditLog auditlog.AuditLogger,
 ) (*Syncer, error) {
+	return NewSyncerWithProvider(context.Background(), nil, policy, backendFactory, sourceFactory, destFactory, logger, auditLog)
+}
+
+// NewSyncerWithProvider creates a Syncer whose backends are configured with the
+// handles a CredentialProvider yields for each target. The handles are
+// destroyed as soon as their backend is configured. A nil provider selects the
+// SDK default credential chain, as NewSyncer does.
+func NewSyncerWithProvider(
+	ctx context.Context,
+	provider CredentialProvider,
+	policy common.ReplicationPolicy,
+	backendFactory common.EncrypterFactory,
+	sourceFactory common.EncrypterFactory,
+	destFactory common.EncrypterFactory,
+	logger adapters.Logger,
+	auditLog auditlog.AuditLogger,
+) (*Syncer, error) {
 
 	// Create source and destination backends
-	source, err := factory.NewStorage(policy.SourceBackend, policy.SourceSettings, common.Credentials{})
+	source, err := newBackend(ctx, provider, CredentialTarget{PolicyID: policy.ID, Side: SourceSide},
+		policy.SourceBackend, policy.SourceSettings)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create source backend: %w", err)
+		return nil, err
 	}
 
-	dest, err := factory.NewStorage(policy.DestinationBackend, policy.DestinationSettings, common.Credentials{})
+	dest, err := newBackend(ctx, provider, CredentialTarget{PolicyID: policy.ID, Side: DestinationSide},
+		policy.DestinationBackend, policy.DestinationSettings)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create destination backend: %w", err)
+		return nil, err
 	}
 
 	// Set backend at-rest encryption if applicable (Layer 1)
@@ -122,6 +141,35 @@ func NewSyncer(
 		auditLog: auditLog,
 		metrics:  NewReplicationMetrics(),
 	}, nil
+}
+
+// newBackend configures one target's backend. The provider's handles live only
+// for the Configure call: they are destroyed whether or not it succeeds.
+func newBackend(
+	ctx context.Context,
+	provider CredentialProvider,
+	target CredentialTarget,
+	backendType string,
+	settings map[string]string,
+) (common.Storage, error) {
+	var creds common.Credentials
+	if provider != nil {
+		var err error
+		creds, err = provider.Credentials(ctx, target)
+		if err != nil {
+			_ = destroyCredentials(creds)
+			return nil, &CredentialProviderError{Target: target, Err: err}
+		}
+	}
+
+	storage, err := factory.NewStorage(backendType, settings, creds)
+	if destroyErr := destroyCredentials(creds); destroyErr != nil && err == nil {
+		err = destroyErr
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to create %s backend: %w", target.Side, err)
+	}
+	return storage, nil
 }
 
 // SyncAll synchronizes all changed objects from source to destination.

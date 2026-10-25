@@ -231,8 +231,31 @@ here rather than silently left:
   client it configures (the Azure backend also keeps the
   `*azblob.SharedKeyCredential`). Strings cannot be wiped and the SDKs are not
   ours to change; destroying the enclave removes the custody copy, not the
-  SDK's. Backends that use the SDK default chain (`pkg/gcs`, `pkg/glacier`)
-  receive no credential from this repository. Closed by issue #16.
+  SDK's. `pkg/gcs` and `pkg/glacier` ignore the handles and authenticate
+  through the vendor SDK's own chain. Closed by issue #16.
+- **Server archive `DestinationSettings` and the C library — handle inside the
+  process, plain string on the wire.** The REST, gRPC, QUIC, unix and MCP
+  servers accept archive credentials in `destination_settings` exactly as
+  before. At the API boundary `factory.NewArchiverFromWire` moves the
+  credential entries out of the map into go-enclave handles, builds the
+  archiver with `Configure(settings, creds)` (the settings it sees hold no
+  credential), and destroys the handles when the call returns. The C library's
+  `ObjstoreNewStorageWithCredentials` does the same for the key and secret
+  buffers it is given. **Residual:** the JSON or protobuf decoder (or the
+  caller's C buffer) holds the value before it reaches the handle, and Go
+  cannot wipe a decoded `string`; the library zeroizes only its own copies, and
+  the C caller must wipe its buffers.
+- **Replication policies** — a persisted policy never holds a credential.
+  `AddPolicy` refuses a policy whose settings carry one, so none is written to
+  the policy file. Instead the embedding application supplies a
+  `replication.CredentialProvider` when it constructs the replication manager
+  (`replication.WithCredentialProvider`, or `ReplicationConfig.CredentialProvider`
+  on the facade). For each sync the manager asks it for one handle per target,
+  passes the handle to `Configure` and destroys it when that backend is
+  configured. The provider is never persisted, a provider failure fails that
+  sync with `*replication.CredentialProviderError` (which carries no credential
+  and not the provider's error text), and a nil provider uses the SDK default
+  chain.
 - **Flag and configuration parsing** — cobra and viper hand out `string`
   values, which cannot be wiped. One unprotected copy therefore exists between
   the parser and the enclave.

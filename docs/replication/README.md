@@ -355,11 +355,42 @@ Settings: map[string]string{
 }
 ```
 
-Settings maps never carry credentials: a key such as `accessKey` or
-`accountKey` is rejected. Replication backends authenticate through the vendor
+Settings maps never carry credentials: `AddPolicy` refuses a policy whose source
+or destination settings hold a key such as `accessKey` or `accountKey`, with
+`*common.CredentialSettingError`, so no secret is written to the policy file.
+A policy is persisted and re-synced on a schedule, so it never holds a
+`common.Credentials` handle either. The embedding application supplies a
+`replication.CredentialProvider` when it constructs the manager, and each sync
+asks it for one handle per target:
+
+```go
+type CredentialProvider interface {
+    Credentials(ctx context.Context, target CredentialTarget) (common.Credentials, error)
+}
+
+mgr, err := replication.NewPersistentReplicationManager(
+    fs, policyFile, interval, logger, auditLog,
+    replication.WithCredentialProvider(provider),
+)
+```
+
+`CredentialTarget` names the policy ID and the side (`replication.SourceSide`
+or `replication.DestinationSide`). The manager passes the returned handle to
+the backend's `Configure` and destroys it as soon as that backend is
+configured, so the provider returns a fresh handle on every call. The provider
+is never persisted, and no handle or credential is stored in a policy, the
+policy file, metadata, logs or errors. If the provider fails, that sync fails
+with `*replication.CredentialProviderError`, which names the policy and side
+but not the provider's own error text (it stays reachable through `Unwrap`).
+`objstore.ReplicationConfig.CredentialProvider` passes the same provider
+through `EnableReplication`.
+
+Without a provider (nil) replication backends authenticate through the vendor
 SDK's default credential chain (environment, shared config, instance or
-workload identity); for the S3-compatible example above set
-`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` in the environment.
+workload identity); for the S3-compatible example above set `AWS_ACCESS_KEY_ID`
+and `AWS_SECRET_ACCESS_KEY` in the environment. The server archive endpoints
+and the C library take a credential through the handle as well; see
+[Protected Memory](../architecture/protected-memory.md).
 
 **GCS Backend:**
 ```go
@@ -377,8 +408,10 @@ Settings: map[string]string{
 }
 ```
 
-The Azure account key is a credential and cannot be set in the map; it must be
-supplied as a `common.Credentials` handle by the embedding application.
+The Azure account key is a credential and cannot be set in the map. A
+replication policy cannot supply it through a handle (see above), so an Azure
+replication endpoint that needs an account key is not supported by persisted
+policies.
 
 ### YAML Configuration File
 

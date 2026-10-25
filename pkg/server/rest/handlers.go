@@ -745,7 +745,7 @@ func extractPrincipal(c *gin.Context) (principal string, userID string) {
 
 // createArchiver creates an archiver from factory based on destination type
 func createArchiver(destinationType string, settings map[string]string) (common.Archiver, error) {
-	return factory.NewArchiver(destinationType, settings, common.Credentials{})
+	return factory.NewArchiverFromWire(destinationType, settings)
 }
 
 // hasPrefix checks if a string starts with the given prefix

@@ -20,10 +20,31 @@
   `secretKey`, `secretAccessKey`, `accountKey`, `sasToken`, `sessionToken`, in
   any case, with or without `_` or `-`) is rejected by every backend's
   `Configure` with `*common.CredentialSettingError`, which matches
-  `common.ErrCredentialInSettings` and `common.ErrInvalidArgument`. Server
-  archive destination settings, the C library and replication policies can no
-  longer carry credentials through their settings maps and use the SDK default
-  chain.
+  `common.ErrCredentialInSettings` and `common.ErrInvalidArgument`.
+- Server archive `DestinationSettings` (REST, gRPC, QUIC, unix, MCP) take the
+  credential through the handle. `factory.NewArchiverFromWire` moves credential
+  entries out of the request map into go-enclave handles at the API boundary,
+  builds the archiver, and destroys the handles when the call ends; the wire
+  format is unchanged. A token (`sessionToken`, `sasToken`) left in the
+  settings is refused, and the error names the setting, never its value.
+- C library: new export `ObjstoreNewStorageWithCredentials` takes the key and
+  secret as length-prefixed buffers, copies them into a handle for the call and
+  zeroizes its own copies. The caller wipes its own buffers. `ObjstoreNewStorage`
+  and every existing symbol are unchanged, and it still refuses a credential in
+  the settings arrays.
+- Replication takes its credentials from a `replication.CredentialProvider`
+  that the embedding application supplies when it constructs the manager
+  (`replication.WithCredentialProvider`, an option to
+  `NewPersistentReplicationManager`; `ReplicationConfig.CredentialProvider` on
+  the facade). Each sync asks it for one handle per target, passes the handle to
+  `Configure` and destroys it when the backend is configured. The provider is
+  never persisted, a provider failure fails the sync with
+  `*replication.CredentialProviderError` (no credential in its text), and a nil
+  provider keeps the SDK default chain. `NewSyncerWithProvider` is the same
+  path for a single syncer.
+  `PersistentReplicationManager.AddPolicy` now refuses a credential in a
+  policy's settings with `*common.CredentialSettingError`, so no secret is
+  persisted.
 - **BREAKING:** `cli.Config.StorageSettings` returns only `map[string]string`
   (no error) and contains no credential entries; `GetStorageSettings` is the
   same and stays deprecated. `cli.Config.Credentials` returns the handles to pass

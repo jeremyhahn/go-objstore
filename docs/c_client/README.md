@@ -80,6 +80,57 @@ if (handle < 0) {
 }
 ```
 
+A key such as `accessKey`, `secretKey`, `accountKey`, `sasToken` or
+`sessionToken` in `keys` is refused. Use `ObjstoreNewStorageWithCredentials`
+to pass a credential.
+
+#### ObjstoreNewStorageWithCredentials
+
+```c
+int ObjstoreNewStorageWithCredentials(const char* backend, char** keys, char** values,
+                                      int num_pairs,
+                                      const char* key, int key_len,
+                                      const char* secret, int secret_len);
+```
+
+Like `ObjstoreNewStorage`, and additionally takes a credential as two byte
+buffers with explicit lengths (not NUL-terminated strings). The library copies
+each buffer into a protected-memory handle at the call boundary, builds the
+backend from the handle, destroys the handle and zeroizes its own copy before
+it returns, and keeps no copy of the credential afterwards.
+
+**Parameters:**
+- `backend`, `keys`, `values`, `num_pairs` - as for `ObjstoreNewStorage`
+- `key`, `key_len` - access key (S3). `NULL` with `0` passes none
+- `secret`, `secret_len` - secret key (S3) or account key (Azure). `NULL` with `0` passes none
+
+Passing neither buffer selects the SDK default credential chain. A `NULL`
+buffer with a non-zero length, or a negative length, is an error.
+
+**Caller's duty:** the library cannot reach your buffers. Wipe them as soon as
+the call returns, with `explicit_bzero` (POSIX) or `SecureZeroMemory`
+(Windows), never `memset`, which the compiler may remove. The library receives
+the bytes as given, so any copy you made earlier is yours to wipe.
+
+**Example:**
+```c
+char key[] = "AKIA...";
+char secret[] = "...";
+char *keys[] = {"region", "bucket"};
+char *values[] = {"us-east-1", "my-bucket"};
+
+int h = ObjstoreNewStorageWithCredentials("s3", keys, values, 2,
+                                          key, (int)strlen(key),
+                                          secret, (int)strlen(secret));
+explicit_bzero(key, sizeof key);
+explicit_bzero(secret, sizeof secret);
+if (h < 0) {
+    char *err = ObjstoreGetLastError();
+    fprintf(stderr, "Error: %s\n", err);
+    ObjstoreFreeString(err);
+}
+```
+
 #### ObjstoreClose
 
 ```c
@@ -269,7 +320,8 @@ int h = ObjstoreNewStorage("s3", keys, values, 2);
 - `bucket` - S3 bucket name
 
 **Credentials:**
-Uses AWS SDK credential chain:
+Pass the access key and secret key to `ObjstoreNewStorageWithCredentials` (see
+above). When none is passed, the AWS SDK credential chain applies:
 1. Environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)
 2. AWS credentials file (`~/.aws/credentials`)
 3. IAM instance role
@@ -304,10 +356,9 @@ int h = ObjstoreNewStorage("azure", keys, values, 2);
 - `containerName` - Blob container name
 
 **Credentials:** a credential never travels in the settings arrays. A key such as
-`accountKey`, `accessKey` or `secretKey` is rejected with an error. The C
-library does not yet have a protected-memory credential channel, so backends
-that need an explicit key (Azure, and S3 without the SDK default chain) cannot be
-configured with one from C (issue #16).
+`accountKey`, `accessKey` or `secretKey` is rejected with an error. Pass the
+account key as the `secret` of `ObjstoreNewStorageWithCredentials` (see above);
+Azure reads only the secret and ignores `key`.
 
 ---
 

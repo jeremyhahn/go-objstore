@@ -420,7 +420,7 @@ func (h *Handler) handleArchive(ctx context.Context, req *Request) *Response {
 	}
 
 	// Create archiver from factory
-	archiver, err := factory.NewArchiver(params.DestinationType, params.DestinationSettings, common.Credentials{})
+	archiver, err := factory.NewArchiverFromWire(params.DestinationType, params.DestinationSettings)
 	if err != nil {
 		return h.backendErrorResponse(req.ID, err)
 	}

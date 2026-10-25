@@ -85,6 +85,22 @@ with `common.ErrCredentialInSettings`. S3 reads `Key` (access key) and `Secret`
 default credential chain. See
 [Protected Memory](../architecture/protected-memory.md).
 
+The handle is the credential path wherever a credential is accepted:
+
+- **Go API:** pass `common.Credentials` to `Configure` and the factory.
+- **Server archive:** the REST, gRPC, QUIC, unix and MCP servers still accept
+  credential entries in `destination_settings`; at the API boundary they are
+  moved into a handle that is destroyed when the call ends, and the backend's
+  settings hold no credential. The wire format is unchanged.
+- **C library:** `ObjstoreNewStorageWithCredentials` takes the key and secret as
+  buffers and copies them into a handle for the call. The caller wipes its own
+  buffers. See the [C client](../c_client/README.md).
+- **Replication policies:** persisted policies hold no credential and
+  `AddPolicy` refuses one in their settings; the embedding application supplies
+  a `replication.CredentialProvider` that yields a handle per target at sync
+  time, and without one the SDK default chain applies. See
+  [Replication](../replication/README.md).
+
 ### Basic Operations
 
 All backends implement the same `Storage` interface:

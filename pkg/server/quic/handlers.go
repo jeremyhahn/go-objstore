@@ -1093,5 +1093,5 @@ func deriveActionResource(r *http.Request) (action, resource string) {
 
 // createArchiver creates an archiver from factory based on destination type
 func createArchiver(destinationType string, settings map[string]string) (common.Archiver, error) {
-	return factory.NewArchiver(destinationType, settings, common.Credentials{})
+	return factory.NewArchiverFromWire(destinationType, settings)
 }

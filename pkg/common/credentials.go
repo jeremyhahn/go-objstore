@@ -15,6 +15,7 @@ package common
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/jeremyhahn/go-enclave"
@@ -154,4 +155,90 @@ func RejectCredentialSettings(settings map[string]string) error {
 		}
 	}
 	return nil
+}
+
+// credentialRole names the Credentials handle a wire-format settings entry
+// feeds. Session tokens and SAS tokens have no handle, so they are not here:
+// they stay in the returned settings and Configure refuses them.
+type credentialRole int
+
+const (
+	roleKey credentialRole = iota + 1
+	roleSecret
+)
+
+var credentialRoles = map[string]credentialRole{
+	"accesskey":       roleKey,
+	"accesskeyid":     roleKey,
+	"secretkey":       roleSecret,
+	"secretaccesskey": roleSecret,
+	"accountkey":      roleSecret,
+}
+
+// ExtractCredentialSettings moves the credential entries of a settings map
+// received over a wire protocol into protected-memory handles. It is for the
+// API boundary only: call it before anything else touches the map. The
+// returned settings hold no credential entry, so they pass
+// RejectCredentialSettings and Configure; the entries are also deleted from
+// the map passed in, so the request holds no credential after the call.
+//
+// Entries with an empty value are dropped, which leaves that handle nil (the
+// SDK default chain). Two entries for the same handle are ambiguous and
+// rejected. release destroys the handles and must be called when the call that
+// uses them ends; it is never nil, even on error.
+//
+// The wire format is a JSON, protobuf or text string, so the decoder has
+// already made a Go string copy that Go cannot zeroize. The handle bounds the
+// lifetime of every copy this package makes, not the decoder's.
+func ExtractCredentialSettings(settings map[string]string) (clean map[string]string, creds Credentials, release func() error, err error) {
+	clean = make(map[string]string, len(settings))
+	release = func() error {
+		return errors.Join(destroyHandle(creds.Key), destroyHandle(creds.Secret))
+	}
+	for k, v := range settings {
+		norm := strings.ToLower(strings.NewReplacer("_", "", "-", "").Replace(k))
+		role, isCred := credentialRoles[norm]
+		if !isCred {
+			clean[k] = v
+			continue
+		}
+		delete(settings, k)
+		if v == "" {
+			continue
+		}
+		slot := &creds.Key
+		if role == roleSecret {
+			slot = &creds.Secret
+		}
+		if *slot != nil {
+			err = fmt.Errorf("%w: more than one setting supplies the same credential (%q)", ErrInvalidArgument, k)
+			break
+		}
+		material := []byte(v)
+		h, nerr := enclave.NewMemory(material)
+		clear(material)
+		if nerr != nil {
+			err = fmt.Errorf("protect credential setting %q: %w", k, nerr)
+			break
+		}
+		*slot = h
+	}
+	if err != nil {
+		// Drop the rest of the credential entries too, then free what was made.
+		for k := range settings {
+			if _, isCred := credentialRoles[strings.ToLower(strings.NewReplacer("_", "", "-", "").Replace(k))]; isCred {
+				delete(settings, k)
+			}
+		}
+		err = errors.Join(err, release())
+		return nil, Credentials{}, func() error { return nil }, err
+	}
+	return clean, creds, release, nil
+}
+
+func destroyHandle(h enclave.ByteAccess) error {
+	if h == nil {
+		return nil
+	}
+	return h.Destroy()
 }

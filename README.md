@@ -145,6 +145,14 @@ as [go-enclave](https://github.com/jeremyhahn/go-enclave) handles
 the map is rejected with `common.ErrCredentialInSettings`. Leave a field nil to
 use the SDK's default credential chain.
 
+The same handle is the credential path elsewhere. The server archive endpoints
+(REST, gRPC, QUIC, unix, MCP) move credential entries from `destination_settings`
+into a handle at the API boundary and destroy it when the call ends, with the
+wire format unchanged. The C library takes the key and secret through
+`ObjstoreNewStorageWithCredentials`; the caller wipes its own buffers.
+Persisted replication policies take no credential, refuse one in their
+settings, and use the SDK default chain.
+
 ```go
 accessKey, _ := enclave.NewMemory([]byte(id))   // id is wiped
 secretKey, _ := enclave.NewMemory([]byte(sec))  // sec is wiped

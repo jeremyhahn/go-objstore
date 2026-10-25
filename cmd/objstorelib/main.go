@@ -25,6 +25,8 @@ import (
 	"sync"
 	"unsafe"
 
+	"github.com/jeremyhahn/go-enclave"
+
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
 )
@@ -178,18 +180,18 @@ func ObjstoreNewStorage(backendType *C.char, settingsKeys **C.char, settingsValu
 	if !checkLength("settingsCount", int(settingsCount)) {
 		return -1
 	}
+	return C.int(buildStorage(C.GoString(backendType), readSettings(settingsKeys, settingsValues, settingsCount), nil, nil))
+}
 
-	// Convert C strings to Go
-	goBackendType := C.GoString(backendType)
-
-	// Build settings map
+// readSettings copies the parallel C arrays into a Go map.
+func readSettings(settingsKeys **C.char, settingsValues **C.char, settingsCount C.int) map[string]string {
 	settings := make(map[string]string)
 	if settingsCount > 0 {
 		// #nosec G103 -- FFI boundary. settingsKeys/settingsValues are caller-owned
 		// arrays of C strings whose length only the caller knows; settingsCount is
 		// the C ABI's sole means of communicating it. The count is checked positive
-		// above, and both slices are read (never written) and never outlive this
-		// call. A count larger than the real allocation is a caller-contract
+		// by the caller, and both slices are read (never written) and never outlive
+		// this call. A count larger than the real allocation is a caller-contract
 		// violation that no callee-side check can detect.
 		keysSlice := unsafe.Slice(settingsKeys, settingsCount)
 		// #nosec G103 -- same array-length contract as keysSlice above; the two are
@@ -201,10 +203,60 @@ func ObjstoreNewStorage(backendType *C.char, settingsKeys **C.char, settingsValu
 			settings[key] = value
 		}
 	}
+	return settings
+}
 
-	// Create storage backend
-	storage, err := factory.NewStorage(goBackendType, settings, common.Credentials{})
+// ObjstoreNewStorageWithCredentials is ObjstoreNewStorage for a backend that
+// needs an explicit credential. key and secret are byte buffers with explicit
+// lengths (not NUL-terminated strings): the S3 access key and secret key, or
+// the Azure account key in secret. Pass NULL and 0 for one or both to use the
+// SDK default chain. A credential still cannot go in the settings arrays.
+//
+// The library copies each buffer into protected memory, builds the backend,
+// destroys the protected copy before returning, and zeroizes its own temporary
+// copy. It keeps nothing of the credential after the call. The caller still
+// owns key and secret and must wipe them (explicit_bzero, SecureZeroMemory)
+// as soon as the call returns.
+//
+//export ObjstoreNewStorageWithCredentials
+func ObjstoreNewStorageWithCredentials(backendType *C.char, settingsKeys **C.char, settingsValues **C.char, settingsCount C.int, key *C.char, keyLen C.int, secret *C.char, secretLen C.int) C.int {
+	if !checkLength("settingsCount", int(settingsCount)) || !checkLength("keyLen", int(keyLen)) || !checkLength("secretLen", int(secretLen)) {
+		return -1
+	}
+	if (key == nil && keyLen > 0) || (secret == nil && secretLen > 0) {
+		setLastError(&InvalidLengthError{Param: "credential buffer", Value: -1})
+		return -1
+	}
+	// C.GoBytes copies the caller's buffer; both Go copies are zeroized below,
+	// whether or not the backend was built.
+	var keyBytes, secretBytes []byte
+	if keyLen > 0 {
+		keyBytes = C.GoBytes(unsafe.Pointer(key), keyLen) // #nosec G103 -- length-checked caller buffer, copied once
+		defer clear(keyBytes)
+	}
+	if secretLen > 0 {
+		secretBytes = C.GoBytes(unsafe.Pointer(secret), secretLen) // #nosec G103 -- length-checked caller buffer, copied once
+		defer clear(secretBytes)
+	}
+	return C.int(buildStorage(C.GoString(backendType), readSettings(settingsKeys, settingsValues, settingsCount), keyBytes, secretBytes))
+}
+
+// buildStorage creates the backend with key and secret in protected-memory
+// handles (nil or empty means the SDK default chain), destroys the handles,
+// registers the backend and returns its handle, or -1 with the last error set.
+// The caller owns key and secret and zeroizes them.
+func buildStorage(backendType string, settings map[string]string, key, secret []byte) int32 {
+	creds, release, err := protectCredentials(key, secret)
 	if err != nil {
+		setLastError(err)
+		return -1
+	}
+
+	storage, err := factory.NewStorage(backendType, settings, creds)
+	if err = errors.Join(err, release()); err != nil {
+		if closer, ok := storage.(io.Closer); ok {
+			_ = closer.Close()
+		}
 		setLastError(err)
 		return -1
 	}
@@ -218,7 +270,37 @@ func ObjstoreNewStorage(backendType *C.char, settingsKeys **C.char, settingsValu
 		return -1
 	}
 	setLastError(nil)
-	return C.int(handle)
+	return handle
+}
+
+// protectCredentials copies key and secret into protected memory. An empty
+// slice leaves that handle nil. release destroys the handles and is never nil.
+func protectCredentials(key, secret []byte) (common.Credentials, func() error, error) {
+	var creds common.Credentials
+	release := func() error { return errors.Join(destroyHandle(creds.Key), destroyHandle(creds.Secret)) }
+	var err error
+	if creds.Key, err = protect(key); err != nil {
+		return common.Credentials{}, func() error { return nil }, err
+	}
+	if creds.Secret, err = protect(secret); err != nil {
+		_ = release()
+		return common.Credentials{}, func() error { return nil }, err
+	}
+	return creds, release, nil
+}
+
+func protect(material []byte) (enclave.ByteAccess, error) {
+	if len(material) == 0 {
+		return nil, nil
+	}
+	return enclave.NewMemory(material)
+}
+
+func destroyHandle(h enclave.ByteAccess) error {
+	if h == nil {
+		return nil
+	}
+	return h.Destroy()
 }
 
 //export ObjstorePut

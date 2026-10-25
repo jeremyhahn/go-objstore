@@ -22,14 +22,22 @@ import (
 	"testing"
 )
 
-// TestBackendsHoldNoCredentialHandle proves that no backend retains a
-// credential handle: a Configure call borrows the handle, builds the SDK
-// credential, and lets go. No struct field in a backend package may have the
+// TestBackendsHoldNoCredentialHandle proves that no backend, nor any caller
+// that builds one, retains a credential handle: a Configure call borrows the
+// handle, builds the SDK credential, and lets go. No struct field in these
+// packages may have the
 // type enclave.ByteAccess or common.Credentials (directly, as a pointer,
 // slice, array or map element, or embedded). Every file is parsed regardless
 // of build tags.
 func TestBackendsHoldNoCredentialHandle(t *testing.T) {
-	backends := []string{"s3", "azure", "azurearchive", "gcs", "glacier", "local", "memory"}
+	// The backends, plus every package that builds one from a caller's
+	// credential: each borrows the handle for one call and lets go.
+	backends := []string{
+		"s3", "azure", "azurearchive", "gcs", "glacier", "local", "memory",
+		"factory", "replication",
+		"server/rest", "server/grpc", "server/quic", "server/unix", "server/mcp",
+		"../cmd/objstorelib",
+	}
 	fset := token.NewFileSet()
 	for _, b := range backends {
 		dir := filepath.Join("..", b)

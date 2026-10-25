@@ -670,6 +670,11 @@ type ReplicationConfig struct {
 	// If nil, a no-op audit logger is used.
 	AuditLog auditlog.AuditLogger
 
+	// CredentialProvider supplies the protected-memory credential handle for
+	// each replication target at sync time. It is never persisted. If nil,
+	// replication uses the SDK default credential chain.
+	CredentialProvider replication.CredentialProvider
+
 	// RunInBackground starts a background goroutine to run periodic syncs.
 	// If false, syncs must be triggered manually.
 	RunInBackground bool
@@ -748,6 +753,7 @@ func EnableReplication(backendName string, config *ReplicationConfig) error {
 		interval,
 		logger,
 		auditLog,
+		replication.WithCredentialProvider(config.CredentialProvider),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create replication manager: %w", err)

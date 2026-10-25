@@ -78,6 +78,10 @@ type PersistentReplicationManager struct {
 	logger     adapters.Logger
 	auditLog   auditlog.AuditLogger
 
+	// credentials supplies each target's protected credential handle at sync
+	// time. It is never persisted; nil selects the SDK default chain.
+	credentials CredentialProvider
+
 	// Encryption factories per policy
 	backendFactories map[string]common.EncrypterFactory
 	sourceFactories  map[string]common.EncrypterFactory
@@ -99,12 +103,15 @@ type persistedPolicies struct {
 // NewPersistentReplicationManager creates a new persistent replication manager.
 // The manager automatically loads existing policies from the policy file.
 // If policyFile is empty, it defaults to ".replication-policies.json".
+// WithCredentialProvider makes each sync take its targets' credential handles
+// from the application's provider; without it the SDK default chain applies.
 func NewPersistentReplicationManager(
 	fs FileSystem,
 	policyFile string,
 	interval time.Duration,
 	logger adapters.Logger,
 	auditLog auditlog.AuditLogger,
+	opts ...ManagerOption,
 ) (*PersistentReplicationManager, error) {
 	if fs == nil {
 		fs = &OSFileSystem{}
@@ -139,6 +146,9 @@ func NewPersistentReplicationManager(
 		auditLog:         auditLog,
 		stopChan:         make(chan struct{}),
 	}
+	for _, opt := range opts {
+		opt(prm)
+	}
 
 	// Load existing policies
 	if err := prm.load(); err != nil {
@@ -157,6 +167,17 @@ func NewPersistentReplicationManager(
 func (prm *PersistentReplicationManager) AddPolicy(policy common.ReplicationPolicy) error {
 	if policy.ID == "" {
 		return common.ErrInvalidPolicy
+	}
+
+	// A persisted policy never carries a credential: the manager's credential
+	// provider supplies the handle at sync time, or the SDK default chain
+	// applies. A credential in its settings would be written to disk and is
+	// refused instead.
+	if err := common.RejectCredentialSettings(policy.SourceSettings); err != nil {
+		return err
+	}
+	if err := common.RejectCredentialSettings(policy.DestinationSettings); err != nil {
+		return err
 	}
 
 	prm.mutex.Lock()
@@ -407,7 +428,7 @@ func (prm *PersistentReplicationManager) SyncPolicy(ctx context.Context, policyI
 	backendFactory, sourceFactory, destFactory := prm.getFactories(policyID)
 	policyMetrics := prm.getOrCreateMetrics(policyID)
 
-	syncer, err := NewSyncer(*policy, backendFactory, sourceFactory, destFactory, prm.logger, prm.auditLog)
+	syncer, err := NewSyncerWithProvider(ctx, prm.credentials, *policy, backendFactory, sourceFactory, destFactory, prm.logger, prm.auditLog)
 	if err != nil {
 		return nil, err
 	}
@@ -491,7 +512,7 @@ func (prm *PersistentReplicationManager) SyncPolicyParallel(ctx context.Context,
 	backendFactory, sourceFactory, destFactory := prm.getFactories(policyID)
 	policyMetrics := prm.getOrCreateMetrics(policyID)
 
-	syncer, err := NewSyncer(*policy, backendFactory, sourceFactory, destFactory, prm.logger, prm.auditLog)
+	syncer, err := NewSyncerWithProvider(ctx, prm.credentials, *policy, backendFactory, sourceFactory, destFactory, prm.logger, prm.auditLog)
 	if err != nil {
 		return nil, err
 	}

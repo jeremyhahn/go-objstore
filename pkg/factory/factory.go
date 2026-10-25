@@ -14,6 +14,8 @@
 package factory
 
 import (
+	"errors"
+
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
@@ -63,6 +65,24 @@ func NewArchiver(backendType string, settings map[string]string, creds common.Cr
 		return nil, ErrUnknownArchiver
 	}
 	return creator(settings, creds)
+}
+
+// NewArchiverFromWire builds an archiver from destination settings received
+// over a wire protocol (REST, gRPC, QUIC, unix socket, MCP). The credential
+// entries are moved out of wire into a protected-memory handle before the
+// backend sees them, and the handle is destroyed when the archiver is built.
+// wire is left without credential entries. A request that carries no credential
+// uses the SDK default chain.
+func NewArchiverFromWire(backendType string, wire map[string]string) (common.Archiver, error) {
+	settings, creds, release, err := common.ExtractCredentialSettings(wire)
+	if err != nil {
+		return nil, err
+	}
+	archiver, buildErr := NewArchiver(backendType, settings, creds)
+	if err := errors.Join(buildErr, release()); err != nil {
+		return nil, err
+	}
+	return archiver, nil
 }
 
 // ListStorageBackends returns a list of all registered storage backend types.
