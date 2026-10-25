@@ -34,12 +34,12 @@ generate-proto:
 # Run unit tests in Docker
 test:
 	@echo "Running unit tests in Docker..."
-	docker compose up --build --abort-on-container-exit python-unit-tests; rc=$$?; docker compose down -v; exit $$rc
+	docker compose up --build --abort-on-container-exit python-unit-tests; rc=$$?; docker compose down -v --rmi local; exit $$rc
 
 # Run integration tests in Docker
 integration-test:
 	@echo "Running integration tests in Docker..."
-	docker compose up --build --abort-on-container-exit objstore-server python-integration-tests; rc=$$?; docker compose down -v; exit $$rc
+	docker compose up --build --abort-on-container-exit objstore-server python-integration-tests; rc=$$?; docker compose down -v --rmi local; exit $$rc
 
 # Build Docker test image
 docker-build:
@@ -49,12 +49,12 @@ docker-build:
 # Run unit tests in Docker
 docker-test-unit:
 	@echo "Running unit tests in Docker..."
-	docker compose up --build --abort-on-container-exit python-unit-tests; rc=$$?; docker compose down -v; exit $$rc
+	docker compose up --build --abort-on-container-exit python-unit-tests; rc=$$?; docker compose down -v --rmi local; exit $$rc
 
 # Run integration tests in Docker
 docker-test-integration:
 	@echo "Running integration tests in Docker..."
-	docker compose up --build --abort-on-container-exit objstore-server python-integration-tests; rc=$$?; docker compose down -v; exit $$rc
+	docker compose up --build --abort-on-container-exit objstore-server python-integration-tests; rc=$$?; docker compose down -v --rmi local; exit $$rc
 
 # Run all tests in Docker (unit + integration)
 docker-test: docker-test-unit docker-test-integration
@@ -92,4 +92,4 @@ clean:
 	find . -type f -name "*.pyc" -delete
 	find . -type f -name "*.pyo" -delete
 	@echo "Cleaning Docker resources..."
-	docker compose down -v 2>/dev/null || true
+	docker compose down -v --rmi local 2>/dev/null || true
