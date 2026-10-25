@@ -219,6 +219,7 @@ test:
 	@echo "$(CYAN)$(BOLD)→ Running unit tests with coverage (race detector)...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
 	$(GO) test -race -timeout=20m $(TAG_FLAGS) -coverprofile=$(COVERAGE_DIR)/unit.out -covermode=atomic ./pkg/... ./internal/... ./cmd/objstorelib/...
+	$(GO) test -race -timeout=20m $(TAG_FLAGS) ./cmd/objstore
 	@echo ""
 	@echo "$(CYAN)$(BOLD)→ Coverage Summary:$(RESET)"
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/unit.out | tail -1 | awk '{print "  $(GREEN)Total Coverage: " $$NF "$(RESET)"}' || true
