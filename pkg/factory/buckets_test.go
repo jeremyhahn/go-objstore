@@ -42,7 +42,7 @@ func TestNewBucketManager(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			bm, err := NewBucketManager(tt.backend, tt.settings)
+			bm, err := NewBucketManager(tt.backend, tt.settings, noCreds)
 			if tt.wantErr != nil {
 				if !errors.Is(err, tt.wantErr) {
 					t.Fatalf("err = %v, want %v", err, tt.wantErr)
@@ -69,10 +69,10 @@ func TestNewBucketManager(t *testing.T) {
 
 func TestNewBucketManager_RegisteredStorageWithoutManager(t *testing.T) {
 	const name = "buckets-test-no-manager"
-	RegisterStorage(name, func(map[string]string) (common.Storage, error) { return memory.New(), nil })
+	RegisterStorage(name, func(map[string]string, common.Credentials) (common.Storage, error) { return memory.New(), nil })
 	t.Cleanup(func() { delete(storageRegistry, name) })
 
-	bm, err := NewBucketManager(name, nil)
+	bm, err := NewBucketManager(name, nil, noCreds)
 	if !errors.Is(err, common.ErrNotSupported) {
 		t.Errorf("err = %v, want ErrNotSupported", err)
 	}
@@ -85,13 +85,13 @@ func TestRegisterBucketManager(t *testing.T) {
 	const name = "buckets-test-custom"
 	want := errors.New("creator failed")
 	var got map[string]string
-	RegisterBucketManager(name, func(settings map[string]string) (common.BucketManager, error) {
+	RegisterBucketManager(name, func(settings map[string]string, _ common.Credentials) (common.BucketManager, error) {
 		got = settings
 		return nil, want
 	})
 	t.Cleanup(func() { delete(bucketManagerRegistry, name) })
 
-	_, err := NewBucketManager(name, map[string]string{"a": "b"})
+	_, err := NewBucketManager(name, map[string]string{"a": "b"}, noCreds)
 	if !errors.Is(err, want) {
 		t.Errorf("err = %v, want the creator's error", err)
 	}
@@ -102,8 +102,8 @@ func TestRegisterBucketManager(t *testing.T) {
 
 func TestNewBucketManager_MemoryManagersAreIndependent(t *testing.T) {
 	ctx := context.Background()
-	a, _ := NewBucketManager("memory", nil)
-	b, _ := NewBucketManager("memory", nil)
+	a, _ := NewBucketManager("memory", nil, noCreds)
+	b, _ := NewBucketManager("memory", nil, noCreds)
 	if err := a.CreateBucket(ctx, "only-in-a"); err != nil {
 		t.Fatal(err)
 	}

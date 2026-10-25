@@ -18,6 +18,7 @@ import (
 	"io"
 	"log"
 
+	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
 	"github.com/jeremyhahn/go-objstore/pkg/storagefs"
 )
@@ -43,7 +44,7 @@ func localExample() {
 	// Create local storage backend
 	storage, err := factory.NewStorage("local", map[string]string{
 		"basePath": "/tmp/objstore-local",
-	})
+	}, common.Credentials{})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -103,7 +104,7 @@ func s3Example() {
 	storage, err := factory.NewStorage("s3", map[string]string{
 		"bucket": "my-objstore-bucket",
 		"region": "us-east-1",
-	})
+	}, common.Credentials{})
 	if err != nil {
 		log.Printf("Skipping S3 example: %v", err)
 		return
@@ -136,7 +137,7 @@ func utilsExample() {
 	// Create a mock storage for demonstration
 	storage, _ := factory.NewStorage("local", map[string]string{
 		"basePath": "/tmp/objstore-utils",
-	})
+	}, common.Credentials{})
 	fs := storagefs.New(storage)
 
 	// Example 1: Write and read files
@@ -169,7 +170,7 @@ func utilsExample() {
 	srcFs := storagefs.New(storage)
 	dstStorage, _ := factory.NewStorage("local", map[string]string{
 		"basePath": "/tmp/objstore-dest",
-	})
+	}, common.Credentials{})
 	dstFs := storagefs.New(dstStorage)
 
 	// Copy a file using standard io operations

@@ -168,7 +168,7 @@ func TestServerStartServerError(t *testing.T) {
 	// Test the error logging path in Start when server.Serve fails
 	// This is hard to trigger reliably, but we can at least call Start
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -435,7 +435,7 @@ func TestNewTLSConfigWithValidFiles(t *testing.T) {
 
 func TestOptionsValidateAllBranches(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 

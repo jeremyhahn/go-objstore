@@ -931,7 +931,7 @@ func TestAzure_Configure_MissingAccountName(t *testing.T) {
 	err := a.Configure(map[string]string{
 		"accountKey":    "key",
 		"containerName": "c",
-	})
+	}, noCreds)
 	if err == nil {
 		t.Fatal("expected error for missing accountName")
 	}
@@ -943,7 +943,7 @@ func TestAzure_Configure_MissingAccountKey(t *testing.T) {
 	err := a.Configure(map[string]string{
 		"accountName":   "acct",
 		"containerName": "c",
-	})
+	}, noCreds)
 	if err == nil {
 		t.Fatal("expected error for missing accountKey")
 	}
@@ -955,7 +955,7 @@ func TestAzure_Configure_MissingContainerName(t *testing.T) {
 	err := a.Configure(map[string]string{
 		"accountName": "acct",
 		"accountKey":  "key",
-	})
+	}, noCreds)
 	if err == nil {
 		t.Fatal("expected error for missing containerName")
 	}

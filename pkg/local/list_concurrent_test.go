@@ -33,7 +33,7 @@ func TestListConcurrentWithPut(t *testing.T) {
 	tempDir := t.TempDir()
 
 	storage := local.New()
-	if err := storage.Configure(map[string]string{"path": tempDir}); err != nil {
+	if err := storage.Configure(map[string]string{"path": tempDir}, noCreds); err != nil {
 		t.Fatalf("Configure failed: %v", err)
 	}
 

@@ -440,8 +440,10 @@ type listErrorStorage struct {
 	err     error
 }
 
-func (l *listErrorStorage) Configure(settings map[string]string) error { return nil }
-func (l *listErrorStorage) Put(key string, data io.Reader) error       { return nil }
+func (l *listErrorStorage) Configure(settings map[string]string, _ common.Credentials) error {
+	return nil
+}
+func (l *listErrorStorage) Put(key string, data io.Reader) error { return nil }
 func (l *listErrorStorage) PutWithContext(ctx context.Context, key string, data io.Reader) error {
 	return nil
 }

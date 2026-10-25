@@ -199,8 +199,10 @@ func New() common.Storage {
 // Configure sets up the backend with the necessary settings.
 // Required settings for blob operations:
 //   - accountName: Azure storage account name
-//   - accountKey: Azure storage account key
 //   - containerName: Azure blob container name
+//
+// The storage account key is creds.Secret; creds.Key is not used, and an
+// accountKey entry in settings is an error.
 //
 // Optional settings for lifecycle management:
 //   - subscriptionID: Azure subscription ID (required for lifecycle policies)
@@ -210,16 +212,16 @@ func New() common.Storage {
 //   - endpoint: Custom endpoint URL (for Azurite, etc.)
 //   - multipartExpiry: age after which a multipart upload counts as aborted
 //     (default 168h)
-func (a *Azure) Configure(settings map[string]string) error {
-	return a.configure(settings, true)
+func (a *Azure) Configure(settings map[string]string, creds common.Credentials) error {
+	return a.configure(settings, creds, true)
 }
 
 // NewManager returns an Azure backend that manages containers and serves
 // every container of the account. It is configured like a storage backend,
 // except that containerName is not required.
-func NewManager(settings map[string]string) (*Azure, error) {
+func NewManager(settings map[string]string, creds common.Credentials) (*Azure, error) {
 	a := &Azure{}
-	if err := a.configure(settings, false); err != nil {
+	if err := a.configure(settings, creds, false); err != nil {
 		return nil, err
 	}
 	return a, nil
@@ -227,7 +229,10 @@ func NewManager(settings map[string]string) (*Azure, error) {
 
 // configure applies the settings. A storage backend needs a container; a
 // manager does not.
-func (a *Azure) configure(settings map[string]string, needContainer bool) error {
+func (a *Azure) configure(settings map[string]string, creds common.Credentials, needContainer bool) error {
+	if err := common.RejectCredentialSettings(settings); err != nil {
+		return err
+	}
 	expiry, err := multipart.ParseExpiry(settings)
 	if err != nil {
 		return err
@@ -240,10 +245,9 @@ func (a *Azure) configure(settings map[string]string, needContainer bool) error 
 	}
 
 	accountName := settings["accountName"]
-	accountKey := settings["accountKey"]
 	containerName := settings["containerName"]
 
-	if accountName == "" || accountKey == "" || (needContainer && containerName == "") {
+	if accountName == "" || creds.Secret == nil || (needContainer && containerName == "") {
 		return common.ErrAccountNotSet
 	}
 
@@ -254,7 +258,12 @@ func (a *Azure) configure(settings map[string]string, needContainer bool) error 
 	a.resourceGroup = settings["resourceGroup"]
 
 	// Set up blob operations client
-	credential, err := azblob.NewSharedKeyCredential(accountName, accountKey)
+	var credential *azblob.SharedKeyCredential
+	err = creds.Open(func(_, secret []byte) error {
+		var credErr error
+		credential, credErr = azblob.NewSharedKeyCredential(accountName, string(secret))
+		return credErr
+	})
 	if err != nil {
 		return err
 	}

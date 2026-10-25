@@ -24,6 +24,7 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
+	testcommon "github.com/jeremyhahn/go-objstore/test/integration/common"
 	"google.golang.org/api/iterator"
 )
 
@@ -75,7 +76,7 @@ func TestGCS_RealCloud(t *testing.T) {
 	// Create storage
 	stor, err := factory.NewStorage("gcs", map[string]string{
 		"bucket": bucket,
-	})
+	}, testcommon.NoCreds())
 	if err != nil {
 		t.Fatalf("Failed to create GCS storage: %v", err)
 	}

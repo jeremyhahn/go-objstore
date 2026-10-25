@@ -24,7 +24,7 @@ import (
 // TestListenAndServe_SuccessfulStart tests the ListenAndServe function starting successfully
 func TestListenAndServe_SuccessfulStart(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -66,7 +66,7 @@ func TestListenAndServe_SuccessfulStart(t *testing.T) {
 // TestListenAndServe_WithStartFailure tests ListenAndServe when Start() returns an error
 func TestListenAndServe_WithStartFailure(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -85,7 +85,7 @@ func TestListenAndServe_WithStartFailure(t *testing.T) {
 // TestServerStart_LoggingOnError tests that server logs errors when Serve() fails
 func TestServerStart_LoggingOnError(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -128,7 +128,7 @@ func TestServerStart_LoggingOnError(t *testing.T) {
 // TestServerStop_ContextLogging tests that Stop logs with the provided context
 func TestServerStop_ContextLogging(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -167,7 +167,7 @@ func TestServerStop_ContextLogging(t *testing.T) {
 // TestServerStart_ListenUDPError tests error path in Start when ListenUDP fails
 func TestServerStart_ListenUDPError(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -196,7 +196,7 @@ func TestServerStart_ListenUDPError(t *testing.T) {
 // TestServerStop_ErrorFromClose tests error handling when Close() returns an error
 func TestServerStop_ErrorFromClose(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -235,7 +235,7 @@ func TestServerStop_ErrorFromClose(t *testing.T) {
 // TestServerServe_RunningFlagManagement tests that the running flag is managed correctly
 func TestServerServe_RunningFlagManagement(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -279,7 +279,7 @@ func TestServerServe_RunningFlagManagement(t *testing.T) {
 // TestServerStart_NilContext tests Start's logging with nil context
 func TestServerStart_NilContext(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -320,7 +320,7 @@ func TestServerStart_NilContext(t *testing.T) {
 // TestServerStart_GoroutineExecution tests the goroutine execution path in Start
 func TestServerStart_GoroutineExecution(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 

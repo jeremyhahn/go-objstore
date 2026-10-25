@@ -23,7 +23,7 @@ import (
 
 func TestNewServer(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -68,7 +68,7 @@ func TestNewServer_InvalidOptions(t *testing.T) {
 
 func TestServerStartStop(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -118,7 +118,7 @@ func TestServerStartStop(t *testing.T) {
 
 func TestServerStartTwice(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -155,7 +155,7 @@ func TestServerStartTwice(t *testing.T) {
 
 func TestServerStopNotStarted(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -181,7 +181,7 @@ func TestServerStopNotStarted(t *testing.T) {
 
 func TestServerAddr(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -227,7 +227,7 @@ func TestServerAddr(t *testing.T) {
 
 func TestServerOptions(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -254,7 +254,7 @@ func TestServerOptions(t *testing.T) {
 
 func TestServerHandler(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -281,7 +281,7 @@ func TestServerHandler(t *testing.T) {
 
 func TestServerInvalidAddr(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -307,7 +307,7 @@ func TestServerInvalidAddr(t *testing.T) {
 
 func TestServerConcurrentStartStop(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -361,7 +361,7 @@ func TestServerConcurrentStartStop(t *testing.T) {
 
 func TestServerWithCustomTimeouts(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -388,7 +388,7 @@ func TestServerWithCustomTimeouts(t *testing.T) {
 
 func TestServerWithStreamLimits(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 

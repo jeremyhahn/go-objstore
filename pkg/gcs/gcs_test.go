@@ -529,7 +529,7 @@ func TestNew(t *testing.T) {
 
 func TestGCS_Configure_MissingBucket(t *testing.T) {
 	g := &GCS{}
-	err := g.Configure(map[string]string{})
+	err := g.Configure(map[string]string{}, noCreds)
 	if err == nil {
 		t.Fatal("expected error for missing bucket")
 	}
@@ -540,7 +540,7 @@ func TestGCS_Configure_MissingBucket(t *testing.T) {
 
 func TestGCS_Configure_EmptyBucket(t *testing.T) {
 	g := &GCS{}
-	err := g.Configure(map[string]string{"bucket": ""})
+	err := g.Configure(map[string]string{"bucket": ""}, noCreds)
 	if err == nil {
 		t.Fatal("expected error for empty bucket")
 	}
@@ -554,7 +554,7 @@ func TestGCS_Configure_ClientAlreadySet(t *testing.T) {
 	g := &GCS{client: fc}
 
 	// Configure should skip client creation if already set
-	err := g.Configure(map[string]string{"bucket": "test-bucket"})
+	err := g.Configure(map[string]string{"bucket": "test-bucket"}, noCreds)
 	if err != nil {
 		t.Fatalf("config err: %v", err)
 	}
@@ -575,7 +575,7 @@ func TestGCS_Configure_ClientCreationError(t *testing.T) {
 	}
 
 	g := &GCS{}
-	err := g.Configure(map[string]string{"bucket": "test-bucket"})
+	err := g.Configure(map[string]string{"bucket": "test-bucket"}, noCreds)
 	if err == nil {
 		t.Fatal("expected error from client creation")
 	}
@@ -587,7 +587,7 @@ func TestGCS_Configure_ClientCreationError(t *testing.T) {
 func TestGCS_PutGetDelete_Archive(t *testing.T) {
 	fc := fakeClient{b: fakeBucket{objs: map[string]*fakeObj{}}}
 	g := &GCS{client: fc}
-	if err := g.Configure(map[string]string{"bucket": "b"}); err != nil {
+	if err := g.Configure(map[string]string{"bucket": "b"}, noCreds); err != nil {
 		t.Fatalf("config err: %v", err)
 	}
 

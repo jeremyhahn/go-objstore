@@ -70,7 +70,7 @@ func configuredLocal(t *testing.T) common.Storage {
 	t.Helper()
 	dir := t.TempDir()
 	s := local.New()
-	if err := s.Configure(map[string]string{"path": dir}); err != nil {
+	if err := s.Configure(map[string]string{"path": dir}, noCreds); err != nil {
 		t.Fatalf("Configure failed: %v", err)
 	}
 	return s

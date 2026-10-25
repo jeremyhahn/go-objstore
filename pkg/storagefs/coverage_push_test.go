@@ -593,7 +593,7 @@ func TestMockStorageContextMethods(t *testing.T) {
 	})
 
 	t.Run("Configure", func(t *testing.T) {
-		err := mock.Configure(map[string]string{"key": "value"})
+		err := mock.Configure(map[string]string{"key": "value"}, noCreds)
 		if err != nil {
 			t.Fatalf("Configure failed: %v", err)
 		}

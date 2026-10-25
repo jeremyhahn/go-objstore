@@ -26,7 +26,7 @@ func TestLocal_ListWithOptions_Pagination(t *testing.T) {
 	t.Run("pagination with small page size", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -85,7 +85,7 @@ func TestLocal_ListWithOptions_Pagination(t *testing.T) {
 	t.Run("pagination with exact multiple", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -140,7 +140,7 @@ func TestLocal_ListWithOptions_Pagination(t *testing.T) {
 	t.Run("pagination with default max results", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -179,7 +179,7 @@ func TestLocal_ListWithOptions_Pagination(t *testing.T) {
 	t.Run("empty result with pagination", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -210,7 +210,7 @@ func TestLocal_ListWithOptions_Delimiter(t *testing.T) {
 	t.Run("hierarchical listing with delimiter", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -270,7 +270,7 @@ func TestLocal_ListWithOptions_Delimiter(t *testing.T) {
 	t.Run("delimiter listing at subdirectory level", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -320,7 +320,7 @@ func TestLocal_ListWithOptions_Delimiter(t *testing.T) {
 	t.Run("delimiter with no hierarchical structure", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -368,7 +368,7 @@ func TestLocal_ListWithOptions_Combined(t *testing.T) {
 	t.Run("pagination with delimiter", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -416,7 +416,7 @@ func TestLocal_ListWithOptions_Combined(t *testing.T) {
 	t.Run("nil options uses defaults", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -444,7 +444,7 @@ func TestLocal_ListWithOptions_Combined(t *testing.T) {
 	t.Run("list with cancelled context", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}

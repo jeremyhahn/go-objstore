@@ -168,7 +168,7 @@ import (
 )
 
 // Create storage manually
-storage, _ := factory.NewStorage("local", map[string]string{"path": "/data"})
+storage, _ := factory.NewStorage("local", map[string]string{"path": "/data"}, common.Credentials{})
 
 // Initialize facade with pre-configured storage
 objstore.Initialize(&objstore.FacadeConfig{

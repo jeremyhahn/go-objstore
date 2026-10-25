@@ -63,17 +63,26 @@ func New() common.ArchiveOnlyStorage {
 	return &AzureArchive{}
 }
 
-// Configure sets up the backend with the necessary settings.
-func (a *AzureArchive) Configure(settings map[string]string) error {
+// Configure sets up the backend with the necessary settings. The storage
+// account key is creds.Secret; creds.Key is not used, and an accountKey entry
+// in settings is an error.
+func (a *AzureArchive) Configure(settings map[string]string, creds common.Credentials) error {
+	if err := common.RejectCredentialSettings(settings); err != nil {
+		return err
+	}
 	accountName := settings["accountName"]
-	accountKey := settings["accountKey"]
 	containerName := settings["containerName"]
 
-	if accountName == "" || accountKey == "" || containerName == "" {
+	if accountName == "" || creds.Secret == nil || containerName == "" {
 		return common.ErrAccountNotSet
 	}
 
-	credential, err := azblob.NewSharedKeyCredential(accountName, accountKey)
+	var credential *azblob.SharedKeyCredential
+	err := creds.Open(func(_, secret []byte) error {
+		var credErr error
+		credential, credErr = azblob.NewSharedKeyCredential(accountName, string(secret))
+		return credErr
+	})
 	if err != nil {
 		return err
 	}

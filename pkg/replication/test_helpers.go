@@ -86,8 +86,8 @@ func newMockStorage() *mockStorage {
 	}
 }
 
-func (m *mockStorage) Configure(settings map[string]string) error { return nil }
-func (m *mockStorage) Put(key string, data io.Reader) error       { return nil }
+func (m *mockStorage) Configure(settings map[string]string, _ common.Credentials) error { return nil }
+func (m *mockStorage) Put(key string, data io.Reader) error                             { return nil }
 func (m *mockStorage) PutWithContext(ctx context.Context, key string, data io.Reader) error {
 	return nil
 }

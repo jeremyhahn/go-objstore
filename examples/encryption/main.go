@@ -246,7 +246,7 @@ type mockStorage struct {
 	data map[string][]byte
 }
 
-func (m *mockStorage) Configure(settings map[string]string) error {
+func (m *mockStorage) Configure(settings map[string]string, _ common.Credentials) error {
 	return nil
 }
 

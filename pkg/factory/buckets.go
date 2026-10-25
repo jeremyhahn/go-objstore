@@ -18,7 +18,7 @@ import (
 )
 
 // BucketManagerCreator creates a bucket manager from settings.
-type BucketManagerCreator func(settings map[string]string) (common.BucketManager, error)
+type BucketManagerCreator func(settings map[string]string, creds common.Credentials) (common.BucketManager, error)
 
 var bucketManagerRegistry = make(map[string]BucketManagerCreator)
 
@@ -31,12 +31,12 @@ func RegisterBucketManager(backendType string, creator BucketManagerCreator) {
 // backends return ErrArchiveOnlyBackend and unknown types ErrUnknownBackend.
 // A registered backend that offers no bucket management returns
 // common.ErrNotSupported.
-func NewBucketManager(backendType string, settings map[string]string) (common.BucketManager, error) {
+func NewBucketManager(backendType string, settings map[string]string, creds common.Credentials) (common.BucketManager, error) {
 	if archiveOnlyTypes[backendType] {
 		return nil, ErrArchiveOnlyBackend
 	}
 	if creator, exists := bucketManagerRegistry[backendType]; exists {
-		return creator(settings)
+		return creator(settings, creds)
 	}
 	if _, exists := storageRegistry[backendType]; exists {
 		return nil, common.ErrNotSupported

@@ -21,6 +21,8 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/jeremyhahn/go-enclave"
+
+	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
 const (
@@ -79,43 +81,106 @@ func TestGetConfigProtected_NoCredentials(t *testing.T) {
 	if cfg.BackendKeyEnclave() != nil || cfg.BackendSecretEnclave() != nil {
 		t.Error("enclaves allocated for absent credentials")
 	}
-	if len(cfg.GetStorageSettings()) == 0 {
+	if len(cfg.StorageSettings()) == 0 {
 		t.Error("expected storage settings for the local backend")
 	}
-	if _, ok := cfg.GetStorageSettings()["access_key_id"]; ok {
-		t.Error("access_key_id present without a credential")
+	creds, release, err := cfg.Credentials()
+	if err != nil {
+		t.Fatalf("Credentials: %v", err)
+	}
+	defer func() {
+		if err := release(); err != nil {
+			t.Errorf("release: %v", err)
+		}
+	}()
+	if !creds.IsZero() {
+		t.Error("Credentials set for absent credentials; want the SDK default chain")
 	}
 }
 
-func TestGetStorageSettings_FromEnclaves(t *testing.T) {
+// handleString reads a credential handle for assertions.
+func handleString(t *testing.T, h enclave.ByteAccess) string {
+	t.Helper()
+	if h == nil {
+		t.Fatal("credential handle is nil")
+	}
+	var s string
+	if err := h.WithBytes(func(b []byte) error { s = string(b); return nil }); err != nil {
+		t.Fatalf("WithBytes: %v", err)
+	}
+	return s
+}
+
+func TestStorageSettings_ProtectedConfigHasNoCredentialEntries(t *testing.T) {
 	cfg, err := GetConfigProtected(protectedTestViper())
 	if err != nil {
 		t.Fatalf("GetConfigProtected: %v", err)
 	}
 	defer cfg.Destroy()
 
-	settings := cfg.GetStorageSettings()
-	if settings["access_key_id"] != testAccessKey {
-		t.Errorf("access_key_id = %q, want %q", settings["access_key_id"], testAccessKey)
+	for name, settings := range map[string]map[string]string{
+		"StorageSettings":    cfg.StorageSettings(),
+		"GetStorageSettings": cfg.GetStorageSettings(),
+	} {
+		if err := common.RejectCredentialSettings(settings); err != nil {
+			t.Errorf("%s carries a credential entry: %v", name, err)
+		}
+		for k, v := range settings {
+			if v == testAccessKey || v == testSecretKey {
+				t.Errorf("%s[%q] holds credential material", name, k)
+			}
+		}
 	}
-	if settings["secret_access_key"] != testSecretKey {
-		t.Errorf("secret_access_key = %q, want %q", settings["secret_access_key"], testSecretKey)
+
+	creds, release, err := cfg.Credentials()
+	if err != nil {
+		t.Fatalf("Credentials: %v", err)
+	}
+	defer func() {
+		if err := release(); err != nil {
+			t.Errorf("release: %v", err)
+		}
+	}()
+	if creds.Key != cfg.BackendKeyEnclave() || creds.Secret != cfg.BackendSecretEnclave() {
+		t.Error("Credentials did not pass the Config's own handles through")
+	}
+	if got := handleString(t, creds.Key); got != testAccessKey {
+		t.Errorf("key handle = %q, want %q", got, testAccessKey)
+	}
+	if got := handleString(t, creds.Secret); got != testSecretKey {
+		t.Errorf("secret handle = %q, want %q", got, testSecretKey)
 	}
 }
 
-func TestGetStorageSettings_DeprecatedFieldsStillWork(t *testing.T) {
+func TestCredentials_DeprecatedFieldsMovedIntoTemporaryEnclaves(t *testing.T) {
 	cfg := &Config{
 		Backend:       "s3",
 		BackendKey:    testAccessKey,
 		BackendSecret: testSecretKey,
 	}
 
-	settings := cfg.GetStorageSettings()
-	if settings["access_key_id"] != testAccessKey {
-		t.Errorf("access_key_id = %q, want %q", settings["access_key_id"], testAccessKey)
+	if err := common.RejectCredentialSettings(cfg.StorageSettings()); err != nil {
+		t.Errorf("settings carry a credential entry: %v", err)
 	}
-	if settings["secret_access_key"] != testSecretKey {
-		t.Errorf("secret_access_key = %q, want %q", settings["secret_access_key"], testSecretKey)
+
+	creds, release, err := cfg.Credentials()
+	if err != nil {
+		t.Fatalf("Credentials: %v", err)
+	}
+	if got := handleString(t, creds.Key); got != testAccessKey {
+		t.Errorf("key handle = %q, want %q", got, testAccessKey)
+	}
+	if got := handleString(t, creds.Secret); got != testSecretKey {
+		t.Errorf("secret handle = %q, want %q", got, testSecretKey)
+	}
+
+	if err := release(); err != nil {
+		t.Errorf("release: %v", err)
+	}
+	for name, h := range map[string]enclave.ByteAccess{"key": creds.Key, "secret": creds.Secret} {
+		if err := h.WithBytes(func([]byte) error { return nil }); !errors.Is(err, enclave.ErrEnclaveDestroyed) {
+			t.Errorf("%s handle after release: err = %v, want ErrEnclaveDestroyed", name, err)
+		}
 	}
 }
 
@@ -143,8 +208,17 @@ func TestSetBackendCredentialsFromString(t *testing.T) {
 	// The enclave takes precedence over a value written to the deprecated
 	// field afterwards.
 	cfg.BackendKey = "should-be-ignored"
-	if got := cfg.GetStorageSettings()["access_key_id"]; got != testAccessKey {
-		t.Errorf("access_key_id = %q, want the enclaved key", got)
+	creds, release, err := cfg.Credentials()
+	if err != nil {
+		t.Fatalf("Credentials: %v", err)
+	}
+	defer func() {
+		if err := release(); err != nil {
+			t.Errorf("release: %v", err)
+		}
+	}()
+	if got := handleString(t, creds.Key); got != testAccessKey {
+		t.Errorf("key handle = %q, want the enclaved key", got)
 	}
 }
 
@@ -238,8 +312,8 @@ func TestConfigDestroy(t *testing.T) {
 	if cfg.BackendKeyEnclave() != nil || cfg.BackendSecretEnclave() != nil {
 		t.Error("enclave references not cleared")
 	}
-	if _, ok := cfg.GetStorageSettings()["access_key_id"]; ok {
-		t.Error("destroyed credential still reaches the settings map")
+	if _, _, err := cfg.Credentials(); err != nil {
+		t.Errorf("Credentials after Destroy: %v, want none configured", err)
 	}
 
 	var nilCfg *Config
@@ -299,18 +373,15 @@ func TestMaskEnclave_ShortMaterial(t *testing.T) {
 	if got := maskEnclave(nil); got != "****" {
 		t.Errorf("maskEnclave(nil) = %q, want ****", got)
 	}
-	if _, err := enclaveString(nil); !errors.Is(err, enclave.ErrEnclaveDestroyed) {
-		t.Errorf("enclaveString(nil) err = %v, want ErrEnclaveDestroyed", err)
-	}
 }
 
-// TestStorageSettings_DestroyedEnclaveDoesNotFallBack proves the credential
+// TestCredentials_DestroyedEnclaveDoesNotFallBack proves the credential
 // path fails CLOSED. An enclave can be destroyed independently of the read — an
 // explicit rotation or a Config teardown, as this test does below. If a stale
 // value is still sitting in the deprecated plain field at that moment, reading
 // it would authenticate the backend with unprotected credentials the caller
 // believed it had replaced.
-func TestStorageSettings_DestroyedEnclaveDoesNotFallBack(t *testing.T) {
+func TestCredentials_DestroyedEnclaveDoesNotFallBack(t *testing.T) {
 	cfg := &Config{Backend: "s3", BackendBucket: "b", BackendRegion: "us-east-1"}
 	if err := cfg.SetBackendKeyFromString(testAccessKey); err != nil {
 		t.Fatalf("SetBackendKeyFromString: %v", err)
@@ -327,22 +398,37 @@ func TestStorageSettings_DestroyedEnclaveDoesNotFallBack(t *testing.T) {
 	cfg.BackendKeyEnclave().Destroy()
 	cfg.BackendSecretEnclave().Destroy()
 
-	settings, err := cfg.StorageSettings()
-	if !errors.Is(err, enclave.ErrEnclaveDestroyed) {
-		t.Fatalf("StorageSettings err = %v, want ErrEnclaveDestroyed", err)
+	creds, release, err := cfg.Credentials()
+	if err == nil {
+		if err := release(); err != nil {
+			t.Errorf("release: %v", err)
+		}
+		t.Fatal("Credentials: want a typed error for a destroyed enclave")
 	}
-	if settings != nil {
-		t.Errorf("settings = %v, want nil on the error path", settings)
+	if err := release(); err != nil {
+		t.Errorf("release: %v", err)
+	}
+	var unavailable *CredentialUnavailableError
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("Credentials err = %T, want *CredentialUnavailableError", err)
+	}
+	if !errors.Is(err, enclave.ErrEnclaveDestroyed) {
+		t.Errorf("Credentials err = %v, want it to wrap ErrEnclaveDestroyed", err)
+	}
+	if !creds.IsZero() {
+		t.Error("Credentials returned handles on the error path")
 	}
 
-	// The deprecated accessor cannot report the error, so it must omit the
-	// credential rather than substitute the stale one.
-	deprecated := cfg.GetStorageSettings()
-	if v, ok := deprecated["access_key_id"]; ok {
-		t.Errorf("access_key_id = %q, want it omitted after the enclave was destroyed", v)
-	}
-	if v, ok := deprecated["secret_access_key"]; ok {
-		t.Errorf("secret_access_key = %q, want it omitted after the enclave was destroyed", v)
+	// Neither settings accessor may carry the stale plaintext.
+	for name, settings := range map[string]map[string]string{
+		"StorageSettings":    cfg.StorageSettings(),
+		"GetStorageSettings": cfg.GetStorageSettings(),
+	} {
+		for k, v := range settings {
+			if strings.Contains(v, "AKIASTALE") || strings.Contains(v, "stale-plaintext") {
+				t.Errorf("%s[%q] leaked the stale plain credential", name, k)
+			}
+		}
 	}
 
 	// Display must not leak the stale plaintext either.
@@ -355,25 +441,6 @@ func TestStorageSettings_DestroyedEnclaveDoesNotFallBack(t *testing.T) {
 // TestStorageSettings_PlainFieldsStillReadableWithoutAnyEnclave keeps the
 // no-fallback rule from swallowing the deprecated path itself: the plain field
 // is legitimate when no enclave was ever selected.
-func TestStorageSettings_PlainFieldsStillReadableWithoutAnyEnclave(t *testing.T) {
-	cfg := &Config{
-		Backend:       "s3",
-		BackendKey:    testAccessKey,
-		BackendSecret: testSecretKey,
-	}
-
-	settings, err := cfg.StorageSettings()
-	if err != nil {
-		t.Fatalf("StorageSettings: %v", err)
-	}
-	if settings["access_key_id"] != testAccessKey {
-		t.Errorf("access_key_id = %q, want %q", settings["access_key_id"], testAccessKey)
-	}
-	if settings["secret_access_key"] != testSecretKey {
-		t.Errorf("secret_access_key = %q, want %q", settings["secret_access_key"], testSecretKey)
-	}
-}
-
 // TestNewCommandContext_DestroyedEnclaveIsRefused checks the fail-closed rule
 // where it matters: the backend is never constructed from a config whose
 // protected credential cannot be read.

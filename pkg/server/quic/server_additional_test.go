@@ -24,7 +24,7 @@ import (
 
 func TestServerServe(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -77,7 +77,7 @@ func TestServerServe(t *testing.T) {
 
 func TestServerServe_AlreadyRunning(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -118,7 +118,7 @@ func TestServerServe_AlreadyRunning(t *testing.T) {
 
 func TestServerServeConn(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -181,7 +181,7 @@ func TestListenAndServe(t *testing.T) {
 
 func TestServerStartWithBadAddr(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -209,7 +209,7 @@ func TestServerStartWithBadAddr(t *testing.T) {
 
 func TestServerStopWithError(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -245,7 +245,7 @@ func TestServerStopWithError(t *testing.T) {
 
 func TestServerConcurrentAccess(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -293,7 +293,7 @@ func TestServerConcurrentAccess(t *testing.T) {
 
 func TestServerAddrBeforeStart(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 

@@ -57,14 +57,14 @@ func TestLocal_Configure(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	err := storage.Configure(map[string]string{"path": tempDir})
+	err := storage.Configure(map[string]string{"path": tempDir}, noCreds)
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
 
 	// Test case 2: Missing path in settings
 	storage = local.New()
-	err = storage.Configure(map[string]string{})
+	err = storage.Configure(map[string]string{}, noCreds)
 	if err == nil || err.Error() != "path not set" {
 		t.Errorf("Expected error 'path not set', got %v", err)
 	}
@@ -78,7 +78,7 @@ func TestLocal_PutAndGet(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	key := "test/object.txt"
 	data := "hello world"
@@ -122,7 +122,7 @@ func TestLocal_Delete(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	key := "test/object-to-delete.txt"
 	data := "delete me"
@@ -170,7 +170,7 @@ func TestLocal_Archive(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	key := "test/object-to-archive.txt"
 	data := "archive me"
@@ -222,7 +222,7 @@ func TestLocal_Archive_NilDestination(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	key := "test/object.txt"
 	data := "data"
@@ -240,7 +240,7 @@ func TestLocal_LifecycleMethods_Delegate(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	s := local.New()
-	if err := s.Configure(map[string]string{"path": tempDir}); err != nil {
+	if err := s.Configure(map[string]string{"path": tempDir}, noCreds); err != nil {
 		t.Fatal(err)
 	}
 
@@ -261,7 +261,7 @@ func TestLocal_List_EmptyPrefix(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	// Create some test files
 	storage.Put("file1.txt", bytes.NewBufferString("data1"))
@@ -295,7 +295,7 @@ func TestLocal_List_WithPrefix(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	// Create test files
 	storage.Put("logs/2023/file1.log", bytes.NewBufferString("log1"))
@@ -329,7 +329,7 @@ func TestLocal_List_SpecificPrefix(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	// Create test files
 	storage.Put("logs/2023/file1.log", bytes.NewBufferString("log1"))
@@ -362,7 +362,7 @@ func TestLocal_List_NoMatches(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	// Create test files
 	storage.Put("logs/file1.log", bytes.NewBufferString("log1"))
@@ -384,7 +384,7 @@ func TestLocal_List_EmptyDirectory(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	// Don't create any files
 	keys, err := storage.List("")
@@ -404,7 +404,7 @@ func TestLocal_List_PartialKeyComponentPrefix(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	for _, key := range []string{"k01", "k02", "k03", "j01", "x/k03", "x/k04", "x/j05"} {
 		if err := storage.Put(key, bytes.NewBufferString("data")); err != nil {
@@ -454,7 +454,7 @@ func TestLocal_ListWithOptions_PartialKeyComponentPrefix(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	for _, key := range []string{"k01", "k02", "j01", "x/k03"} {
 		if err := storage.Put(key, bytes.NewBufferString("data")); err != nil {
@@ -490,7 +490,7 @@ func TestLocal_PutWithContext_ContextCancelled(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
@@ -510,7 +510,7 @@ func TestLocal_GetWithContext_ContextCancelled(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
@@ -530,7 +530,7 @@ func TestLocal_DeleteWithContext_ContextCancelled(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
@@ -550,7 +550,7 @@ func TestLocal_ListWithContext_ContextCancelled(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
@@ -570,7 +570,7 @@ func TestLocal_GetMetadata_ContextCancelled(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
@@ -590,7 +590,7 @@ func TestLocal_UpdateMetadata_ContextCancelled(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
@@ -610,7 +610,7 @@ func TestLocal_Exists_ContextCancelled(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
@@ -630,7 +630,7 @@ func TestLocal_ListWithOptions_ContextCancelled(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
@@ -650,7 +650,7 @@ func TestLocal_ValidateKey_PathTraversal(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	invalidKeys := []string{
 		"../etc/passwd",
@@ -677,7 +677,7 @@ func TestLocal_ValidateKey_AbsolutePaths(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	invalidKeys := []string{
 		"/etc/passwd",
@@ -703,7 +703,7 @@ func TestLocal_ValidateKey_NullBytes(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	key := "test\x00file.txt"
 	err := storage.Put(key, bytes.NewBufferString("data"))
@@ -721,7 +721,7 @@ func TestLocal_ValidateKey_EmptyKey(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	err := storage.Put("", bytes.NewBufferString("data"))
 	if err == nil {
@@ -738,7 +738,7 @@ func TestLocal_ValidateKey_ControlCharacters(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	invalidKeys := []string{
 		"test\nfile.txt",
@@ -762,7 +762,7 @@ func TestLocal_ValidateKey_ListInvalidPrefix(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	_, err := storage.List("../etc")
 	if err == nil {
@@ -776,7 +776,7 @@ func TestLocal_Exists_Success(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	// Test non-existent file
 	exists, err := storage.Exists(context.Background(), "nonexistent.txt")
@@ -807,7 +807,7 @@ func TestLocal_Exists_InvalidKey(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	_, err := storage.Exists(context.Background(), "../etc/passwd")
 	if err == nil {
@@ -821,7 +821,7 @@ func TestLocal_PutWithMetadata_Success(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	key := "test/metadata.txt"
 	metadata := &common.Metadata{
@@ -862,7 +862,7 @@ func TestLocal_PutWithMetadata_NilMetadata(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	key := "test/nil-metadata.txt"
 	err := storage.PutWithMetadata(context.Background(), key, bytes.NewBufferString("data"), nil)
@@ -877,7 +877,7 @@ func TestLocal_UpdateMetadata_Success(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	key := "test/update-metadata.txt"
 	storage.Put(key, bytes.NewBufferString("data"))
@@ -911,7 +911,7 @@ func TestLocal_UpdateMetadata_NonExistent(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	metadata := &common.Metadata{
 		ContentType: "text/plain",
@@ -929,7 +929,7 @@ func TestLocal_GetMetadata_NoMetadataFile(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	// Create file without metadata
 	key := "test/no-metadata.txt"
@@ -952,7 +952,7 @@ func TestLocal_ListWithOptions_Delimiter(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	// Create test files
 	storage.Put("logs/2023/file1.log", bytes.NewBufferString("log1"))
@@ -986,7 +986,7 @@ func TestLocal_ListWithOptions_Pagination(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	// Create multiple files
 	for i := 1; i <= 10; i++ {
@@ -1034,7 +1034,7 @@ func TestLocal_ListWithOptions_NilOptions(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	storage.Put("test.txt", bytes.NewBufferString("data"))
 
@@ -1054,7 +1054,7 @@ func TestLocal_ListWithOptions_InvalidPrefix(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	opts := &common.ListOptions{
 		Prefix: "../etc",
@@ -1072,7 +1072,7 @@ func TestLocal_Delete_RemovesMetadata(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	key := "test/with-metadata.txt"
 	metadata := &common.Metadata{
@@ -1108,7 +1108,7 @@ func TestLocal_Configure_RunLifecycle(t *testing.T) {
 	err := storage.Configure(map[string]string{
 		"path":         tempDir,
 		"runLifecycle": "true",
-	})
+	}, noCreds)
 	if err != nil {
 		t.Errorf("Expected no error with runLifecycle, got %v", err)
 	}
@@ -1123,7 +1123,7 @@ func TestLocal_Archive_InvalidKey(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	mockArchiver := &MockArchiver{}
 
@@ -1139,7 +1139,7 @@ func TestLocal_PutWithMetadata_InvalidMetadata(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	// Create metadata with too many entries
 	custom := make(map[string]string)
@@ -1163,7 +1163,7 @@ func TestLocal_PutWithMetadata_InvalidKeyInSaveMetadata(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	// Try to put with invalid key that passes initial validation but fails in saveMetadata
 	err := storage.PutWithMetadata(context.Background(), "../test.txt", bytes.NewBufferString("data"), nil)
@@ -1178,7 +1178,7 @@ func TestLocal_GetWithContext_InvalidKey(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	_, err := storage.GetWithContext(context.Background(), "../etc/passwd")
 	if err == nil {
@@ -1192,7 +1192,7 @@ func TestLocal_GetMetadata_InvalidKey(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	_, err := storage.GetMetadata(context.Background(), "../etc/passwd")
 	if err == nil {
@@ -1206,7 +1206,7 @@ func TestLocal_UpdateMetadata_InvalidKey(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	err := storage.UpdateMetadata(context.Background(), "../etc/passwd", &common.Metadata{})
 	if err == nil {
@@ -1220,7 +1220,7 @@ func TestLocal_DeleteWithContext_InvalidKey(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	err := storage.DeleteWithContext(context.Background(), "../etc/passwd")
 	if err == nil {
@@ -1234,7 +1234,7 @@ func TestLocal_PutWithMetadata_DirectoryError(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	// Create a file where we want a directory
 	conflictPath := filepath.Join(tempDir, "conflict")
@@ -1253,7 +1253,7 @@ func TestLocal_PutWithMetadata_FileCreationError(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	// Create a directory where we want a file
 	dirPath := filepath.Join(tempDir, "isdir")
@@ -1272,7 +1272,7 @@ func TestLocal_UpdateMetadata_NilMetadata(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	key := "test/update-nil.txt"
 	storage.Put(key, bytes.NewBufferString("data"))
@@ -1289,7 +1289,7 @@ func TestLocal_LoadMetadata_CorruptedJSON(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	// Create a file
 	key := "test/corrupted.txt"
@@ -1312,7 +1312,7 @@ func TestLocal_Exists_StatError(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	// Create a file
 	key := "test/protected.txt"
@@ -1342,7 +1342,7 @@ func TestLocal_ListWithOptions_MetadataLoadError(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	// Create a file
 	key := "test/file.txt"
@@ -1369,7 +1369,7 @@ func TestLocal_PutWithMetadata_ETagGeneration(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	key := "test/etag.txt"
 
@@ -1404,7 +1404,7 @@ func TestLocal_SaveMetadata_Nil(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	key := "test/nil-save.txt"
 	storage.Put(key, bytes.NewBufferString("data"))
@@ -1428,7 +1428,7 @@ func TestLocal_PutWithMetadata_CopyError(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	err := storage.PutWithMetadata(context.Background(), "test.txt", &ErrorReader{}, nil)
 	if err == nil {
@@ -1445,7 +1445,7 @@ func TestLocal_LoadMetadata_InvalidKey(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	_, err := storage.GetMetadata(context.Background(), "\x00invalid")
 	if err == nil {
@@ -1459,7 +1459,7 @@ func TestLocal_LoadMetadata_ReadError(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	// Create a file
 	key := "test/perms.txt"
@@ -1488,7 +1488,7 @@ func TestLocal_ListWithContext_CancelDuringWalk(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	// Create many files
 	for i := 0; i < 100; i++ {
@@ -1516,7 +1516,7 @@ func TestLocal_ListWithContext_WalkError(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	// Create a subdirectory
 	subDir := filepath.Join(tempDir, "protected")
@@ -1547,7 +1547,7 @@ func TestLocal_ListWithOptions_CancelDuringWalk(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	// Create many files
 	for i := 0; i < 100; i++ {
@@ -1575,7 +1575,7 @@ func TestLocal_ListWithOptions_WalkError(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	// Create a subdirectory
 	subDir := filepath.Join(tempDir, "restricted")
@@ -1603,7 +1603,7 @@ func TestLocal_ListWithOptions_RelError(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	// Create a file
 	storage.Put("test.txt", bytes.NewBufferString("data"))
@@ -1624,7 +1624,7 @@ func TestLocal_SaveMetadata_InvalidCustomMetadata(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	// Create metadata with empty key in custom data
 	metadata := &common.Metadata{
@@ -1645,7 +1645,7 @@ func TestLocal_ListWithOptions_PaginationEdgeCases(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	// Create exactly 3 files
 	for i := 1; i <= 3; i++ {
@@ -1685,7 +1685,7 @@ func TestLocal_ListWithOptions_InvalidContinuationToken(t *testing.T) {
 	defer cleanupTempDir(t, tempDir)
 
 	storage := local.New()
-	_ = storage.Configure(map[string]string{"path": tempDir})
+	_ = storage.Configure(map[string]string{"path": tempDir}, noCreds)
 
 	storage.Put("test1.txt", bytes.NewBufferString("data"))
 	storage.Put("test2.txt", bytes.NewBufferString("data"))

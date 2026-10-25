@@ -23,7 +23,7 @@ import (
 storage, err := factory.NewStorage("s3", map[string]string{
     "bucket": "my-bucket",
     "region": "us-east-1",
-})
+}, common.Credentials{})
 
 // 2. Create your encrypter factory implementation
 // (using your KMS, Vault, or your own implementation)
@@ -297,7 +297,7 @@ func main() {
     storage, err := factory.NewStorage("s3", map[string]string{
         "bucket": "my-secure-bucket",
         "region": "us-east-1",
-    })
+    }, common.Credentials{})
     if err != nil {
         panic(err)
     }

@@ -27,7 +27,7 @@ func TestLocal_PutWithMetadata(t *testing.T) {
 	t.Run("put with custom metadata", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -71,7 +71,7 @@ func TestLocal_PutWithMetadata(t *testing.T) {
 	t.Run("put without metadata creates basic metadata", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -100,7 +100,7 @@ func TestLocal_PutWithMetadata(t *testing.T) {
 	t.Run("metadata persists across operations", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -138,7 +138,7 @@ func TestLocal_GetMetadata(t *testing.T) {
 	t.Run("get metadata for existing file with metadata", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -167,7 +167,7 @@ func TestLocal_GetMetadata(t *testing.T) {
 	t.Run("get metadata for file without metadata returns nil", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -197,7 +197,7 @@ func TestLocal_GetMetadata(t *testing.T) {
 	t.Run("get metadata with cancelled context", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -216,7 +216,7 @@ func TestLocal_UpdateMetadata(t *testing.T) {
 	t.Run("update metadata for existing file", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -266,7 +266,7 @@ func TestLocal_UpdateMetadata(t *testing.T) {
 	t.Run("update metadata for non-existing file returns error", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -285,7 +285,7 @@ func TestLocal_UpdateMetadata(t *testing.T) {
 	t.Run("update metadata with cancelled context", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -308,7 +308,7 @@ func TestLocal_DeleteRemovesMetadata(t *testing.T) {
 	t.Run("delete removes both file and metadata", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -347,7 +347,7 @@ func TestLocal_MetadataInListWithOptions(t *testing.T) {
 	t.Run("list with options includes metadata", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}

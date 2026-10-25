@@ -27,7 +27,7 @@ func TestNewBucketManager_S3(t *testing.T) {
 	bm, err := NewBucketManager("s3", map[string]string{
 		"region":   "eu-west-1",
 		"endpoint": "http://127.0.0.1:1",
-	})
+	}, noCreds)
 	if err != nil || bm == nil {
 		t.Fatalf("NewBucketManager = %v, %v", bm, err)
 	}
@@ -35,7 +35,7 @@ func TestNewBucketManager_S3(t *testing.T) {
 		t.Error("the s3 manager does not offer multipart upload")
 	}
 
-	bm, err = NewBucketManager("s3", map[string]string{"multipartExpiry": "x"})
+	bm, err = NewBucketManager("s3", map[string]string{"multipartExpiry": "x"}, noCreds)
 	if !errors.Is(err, common.ErrInvalidArgument) || bm != nil {
 		t.Errorf("bad expiry = %v, %v", bm, err)
 	}

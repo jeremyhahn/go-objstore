@@ -195,7 +195,7 @@ func (b *Buckets) Bucket(ctx context.Context, name string) (common.Storage, erro
 	}
 	settings["path"] = b.bucketPath(name)
 	l := &Local{lifecycleManager: NewLifecycleManager()}
-	if err := l.Configure(settings); err != nil {
+	if err := l.Configure(settings, common.Credentials{}); err != nil {
 		return nil, err
 	}
 	l.now = b.now

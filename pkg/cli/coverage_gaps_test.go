@@ -488,7 +488,7 @@ func TestApplyLocalPolicies_ArchiveAction(t *testing.T) {
 	// Build a storage that has one very old object matching an archive policy
 	// whose Destination archiver is set (use local backend as fake archiver).
 	destDir := t.TempDir()
-	archiver, err := factory.NewArchiver("local", map[string]string{"path": destDir})
+	archiver, err := factory.NewArchiver("local", map[string]string{"path": destDir}, noCreds)
 	if err != nil {
 		t.Fatalf("failed to create local archiver: %v", err)
 	}

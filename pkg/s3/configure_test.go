@@ -15,11 +15,15 @@
 
 package s3
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/jeremyhahn/go-objstore/pkg/common"
+)
 
 func TestS3_Configure_Errors(t *testing.T) {
 	s := &S3{}
-	if err := s.Configure(map[string]string{}); err == nil {
+	if err := s.Configure(map[string]string{}, noCreds); err == nil {
 		t.Fatalf("expected error for missing bucket")
 	}
 }
@@ -31,9 +35,7 @@ func TestS3_Configure_WithEndpointAndCreds(t *testing.T) {
 		"region":         "us-east-1",
 		"endpoint":       "http://localhost:9000",
 		"forcePathStyle": "true",
-		"accessKey":      "ak",
-		"secretKey":      "sk",
-	})
+	}, common.Credentials{Key: credHandle(t, "ak"), Secret: credHandle(t, "sk")})
 	if err != nil {
 		t.Fatalf("unexpected configure error: %v", err)
 	}

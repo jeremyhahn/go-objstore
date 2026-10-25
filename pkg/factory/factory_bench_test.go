@@ -26,7 +26,7 @@ func BenchmarkNewStorage_Local(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, err := NewStorage("local", settings)
+		_, err := NewStorage("local", settings, noCreds)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -43,7 +43,7 @@ func BenchmarkNewStorage_S3(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_, err := NewStorage("s3", settings)
+		_, err := NewStorage("s3", settings, noCreds)
 		if err != nil {
 			b.Fatal(err)
 		}

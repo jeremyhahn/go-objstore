@@ -63,7 +63,9 @@ func New() common.Storage {
 	}
 }
 
-// Configure sets up the backend with the necessary settings.
+// Configure sets up the backend with the necessary settings. The local
+// filesystem needs no credential, so creds is not read; a credential entry in
+// settings is an error.
 // Settings:
 //   - path: The directory path for local storage (required)
 //   - runLifecycle: "true" to run lifecycle processing in background (optional)
@@ -73,7 +75,10 @@ func New() common.Storage {
 // Note: Replication is enabled by calling SetReplicationManager() after Configure().
 // This allows the caller to configure replication with custom settings and avoids
 // import cycles between packages.
-func (l *Local) Configure(settings map[string]string) error {
+func (l *Local) Configure(settings map[string]string, _ common.Credentials) error {
+	if err := common.RejectCredentialSettings(settings); err != nil {
+		return err
+	}
 	l.path = settings["path"]
 	if l.path == "" {
 		return common.ErrPathNotSet

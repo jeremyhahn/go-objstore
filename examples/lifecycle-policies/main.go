@@ -66,7 +66,7 @@ func deletePolicyExample() {
 	// Create storage backend
 	storage, err := factory.NewStorage("local", map[string]string{
 		configKeyPath: "/tmp/objstore-lifecycle",
-	})
+	}, common.Credentials{})
 	if err != nil {
 		log.Fatalf("Failed to create storage: %v", err)
 	}
@@ -118,7 +118,7 @@ func archivePolicyExample() {
 	// Create primary storage
 	storage, err := factory.NewStorage("local", map[string]string{
 		configKeyPath: "/tmp/objstore-primary",
-	})
+	}, common.Credentials{})
 	if err != nil {
 		log.Fatalf("Failed to create storage: %v", err)
 	}
@@ -126,7 +126,7 @@ func archivePolicyExample() {
 	// Create archival storage (using local as example, could be Glacier)
 	archiveStorage, err := factory.NewArchiver("local", map[string]string{
 		configKeyPath: "/tmp/objstore-archive",
-	})
+	}, common.Credentials{})
 	if err != nil {
 		log.Fatalf("Failed to create archiver: %v", err)
 	}
@@ -178,7 +178,7 @@ func archivePolicyExample() {
 func policyManagementExample() {
 	storage, _ := factory.NewStorage("local", map[string]string{
 		configKeyPath: "/tmp/objstore-policies",
-	})
+	}, common.Credentials{})
 
 	// Add multiple policies
 	policies := []common.LifecyclePolicy{
@@ -245,7 +245,7 @@ func glacierArchiveExample() {
 	s3Storage, err := factory.NewStorage("s3", map[string]string{
 		"bucket": "my-active-bucket",
 		"region": "us-east-1",
-	})
+	}, common.Credentials{})
 	if err != nil {
 		log.Printf("Skipping Glacier example: %v", err)
 		return
@@ -255,7 +255,7 @@ func glacierArchiveExample() {
 	glacier, err := factory.NewArchiver("glacier", map[string]string{
 		"vaultName": "long-term-archive",
 		"region":    "us-east-1",
-	})
+	}, common.Credentials{})
 	if err != nil {
 		log.Printf("Skipping Glacier example: %v", err)
 		return
@@ -295,7 +295,7 @@ func multiTierArchivalExample() {
 	activeStorage, err := factory.NewStorage("s3", map[string]string{
 		"bucket": "active-data",
 		"region": "us-east-1",
-	})
+	}, common.Credentials{})
 	if err != nil {
 		log.Printf("Skipping multi-tier example: %v", err)
 		return
@@ -304,7 +304,7 @@ func multiTierArchivalExample() {
 	// Tier 2: Warm data in local storage
 	warmStorage, err := factory.NewArchiver("local", map[string]string{
 		configKeyPath: "/mnt/warm-storage",
-	})
+	}, common.Credentials{})
 	if err != nil {
 		log.Printf("Skipping multi-tier example: %v", err)
 		return
@@ -314,7 +314,7 @@ func multiTierArchivalExample() {
 	coldStorage, err := factory.NewArchiver("glacier", map[string]string{
 		"vaultName": "cold-archive",
 		"region":    "us-east-1",
-	})
+	}, common.Credentials{})
 	if err != nil {
 		log.Printf("Skipping multi-tier example: %v", err)
 		return
@@ -357,7 +357,7 @@ func multiTierArchivalExample() {
 func lifecycleManagerExample() {
 	storage, err := factory.NewStorage("local", map[string]string{
 		configKeyPath: "/tmp/objstore-lifecycle-manager",
-	})
+	}, common.Credentials{})
 	if err != nil {
 		log.Printf("Skipping lifecycle manager example: %v", err)
 		return

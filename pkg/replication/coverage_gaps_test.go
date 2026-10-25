@@ -88,7 +88,7 @@ func TestMockStorage_AllMethods(t *testing.T) {
 	ctx := context.Background()
 
 	// Configure
-	err := s.Configure(map[string]string{"key": "val"})
+	err := s.Configure(map[string]string{"key": "val"}, noCreds)
 	assert.NoError(t, err)
 
 	// Put

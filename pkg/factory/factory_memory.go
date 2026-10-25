@@ -19,18 +19,18 @@ import (
 )
 
 func init() {
-	RegisterStorage("memory", func(settings map[string]string) (common.Storage, error) {
+	RegisterStorage("memory", func(settings map[string]string, creds common.Credentials) (common.Storage, error) {
 		storage := memory.New()
-		err := storage.Configure(settings)
+		err := storage.Configure(settings, creds)
 		if err != nil {
 			return nil, err
 		}
 		return storage, nil
 	})
 
-	RegisterBucketManager("memory", func(settings map[string]string) (common.BucketManager, error) {
+	RegisterBucketManager("memory", func(settings map[string]string, creds common.Credentials) (common.BucketManager, error) {
 		storage := memory.New()
-		if err := storage.Configure(settings); err != nil {
+		if err := storage.Configure(settings, creds); err != nil {
 			return nil, err
 		}
 		bm, ok := storage.(common.BucketManager)

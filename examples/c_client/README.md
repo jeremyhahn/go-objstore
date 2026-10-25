@@ -174,8 +174,7 @@ Settings:
 - `region`: AWS region (required)
 - `bucket`: S3 bucket name (required)
 - `endpoint`: Custom endpoint URL (optional, for S3-compatible services)
-- `accessKeyId`: AWS access key (optional, uses AWS credentials chain if not provided)
-- `secretAccessKey`: AWS secret key (optional)
+- Credentials: not accepted here. The C library has no protected-memory credential channel (issue #16), so S3 uses the AWS credentials chain; a credential key in the arrays is rejected
 
 ### Google Cloud Storage
 
@@ -187,7 +186,7 @@ Settings:
 
 Settings:
 - `accountName`: Azure storage account name (required)
-- `accountKey`: Azure storage account key (required)
+- Account key: not accepted here (issue #16); the C library has no protected-memory credential channel yet
 - `containerName`: Blob container name (required)
 
 ## Error Handling Pattern

@@ -38,7 +38,7 @@ func TestAzure_Configure(t *testing.T) {
 		"containerName": "testcontainer",
 	}
 
-	err := storage.Configure(settings)
+	err := storage.Configure(splitKey(t, settings))
 	if err != nil {
 		t.Errorf("Expected no error, got %v", err)
 	}
@@ -49,7 +49,7 @@ func TestAzure_Configure(t *testing.T) {
 		"accountKey":    "testkey",
 		"containerName": "testcontainer",
 	}
-	err = storage.Configure(settings)
+	err = storage.Configure(splitKey(t, settings))
 	if err == nil || !strings.Contains(err.Error(), "accountName") {
 		t.Errorf("Expected error containing 'accountName', got %v", err)
 	}
@@ -60,7 +60,7 @@ func TestAzure_Configure(t *testing.T) {
 		"accountName":   "testaccount",
 		"containerName": "testcontainer",
 	}
-	err = storage.Configure(settings)
+	err = storage.Configure(splitKey(t, settings))
 	if err == nil || !strings.Contains(err.Error(), "accountKey") {
 		t.Errorf("Expected error containing 'accountKey', got %v", err)
 	}
@@ -71,7 +71,7 @@ func TestAzure_Configure(t *testing.T) {
 		"accountName": "testaccount",
 		"accountKey":  "testkey",
 	}
-	err = storage.Configure(settings)
+	err = storage.Configure(splitKey(t, settings))
 	if err == nil || !strings.Contains(err.Error(), "containerName") {
 		t.Errorf("Expected error containing 'containerName', got %v", err)
 	}
@@ -85,7 +85,7 @@ func TestAzure_Configure_BadEndpoint(t *testing.T) {
 		"containerName": "testcontainer",
 		"endpoint":      "://bad url",
 	}
-	err := storage.Configure(settings)
+	err := storage.Configure(splitKey(t, settings))
 	if err == nil {
 		t.Errorf("Expected error for bad endpoint, got nil")
 	}
@@ -96,7 +96,7 @@ func TestAzure_Configure_TestContainerURLBranch(t *testing.T) {
 	// Inject a preconfigured container URL, Configure should short-circuit
 	u, _ := url.Parse("http://127.0.0.1:1/container")
 	storage.(*azure.Azure).TestContainerURL = azblob.NewContainerURL(*u, azblob.NewPipeline(azblob.NewAnonymousCredential(), azblob.PipelineOptions{}))
-	if err := storage.Configure(map[string]string{}); err != nil {
+	if err := storage.Configure(map[string]string{}, noCreds); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

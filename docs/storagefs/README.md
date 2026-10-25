@@ -34,7 +34,7 @@ func main() {
     // Create storage backend
     storage, err := factory.NewStorage("local", map[string]string{
         "path": "/tmp/mydata",
-    })
+    }, common.Credentials{})
     if err != nil {
         log.Fatal(err)
     }
@@ -300,7 +300,7 @@ file.Close()
 ```go
 storage, _ := factory.NewStorage("local", map[string]string{
     "path": "/var/data",
-})
+}, common.Credentials{})
 fs := storagefs.New(storage)
 ```
 
@@ -310,7 +310,7 @@ fs := storagefs.New(storage)
 storage, _ := factory.NewStorage("s3", map[string]string{
     "region": "us-east-1",
     "bucket": "my-bucket",
-})
+}, common.Credentials{})
 fs := storagefs.New(storage)
 
 // Use S3 like a filesystem
@@ -325,7 +325,7 @@ file.Close()
 ```go
 storage, _ := factory.NewStorage("gcs", map[string]string{
     "bucket": "my-gcs-bucket",
-})
+}, common.Credentials{})
 fs := storagefs.New(storage)
 ```
 
@@ -334,9 +334,8 @@ fs := storagefs.New(storage)
 ```go
 storage, _ := factory.NewStorage("azure", map[string]string{
     "accountName":   "myaccount",
-    "accountKey":    "key==",
     "containerName": "files",
-})
+}, common.Credentials{Secret: accountKey}) // accountKey is an enclave.ByteAccess
 fs := storagefs.New(storage)
 ```
 

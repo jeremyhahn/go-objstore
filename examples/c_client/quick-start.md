@@ -106,9 +106,12 @@ char *v[] = {"my-gcs-bucket"};
 
 ### Azure Blob
 ```c
-char *k[] = {"accountName", "accountKey", "containerName"};
-char *v[] = {"myaccount", "key==", "mycontainer"};
+char *k[] = {"accountName", "containerName"};
+char *v[] = {"myaccount", "mycontainer"};
 ```
+
+The C library cannot pass credentials: a credential key in the arrays is
+rejected (issue #16).
 
 ## Common Patterns
 

@@ -33,7 +33,7 @@ func TestLocalStorage_PersistentLifecycleManager(t *testing.T) {
 		"path":                 dir,
 		"lifecycleManagerType": "persistent",
 		"lifecyclePolicyFile":  "test-policies.json",
-	})
+	}, noCreds)
 	if err != nil {
 		t.Fatalf("Failed to configure storage: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestLocalStorage_PersistentLifecycleManager(t *testing.T) {
 		"path":                 dir,
 		"lifecycleManagerType": "persistent",
 		"lifecyclePolicyFile":  "test-policies.json",
-	})
+	}, noCreds)
 	if err != nil {
 		t.Fatalf("Failed to configure second storage: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestLocalStorage_PersistentLifecycleManager(t *testing.T) {
 		"path":                 dir,
 		"lifecycleManagerType": "persistent",
 		"lifecyclePolicyFile":  "test-policies.json",
-	})
+	}, noCreds)
 	if err != nil {
 		t.Fatalf("Failed to configure third storage: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestLocalStorage_InMemoryLifecycleManager(t *testing.T) {
 	s := New()
 	err := s.Configure(map[string]string{
 		"path": dir,
-	})
+	}, noCreds)
 	if err != nil {
 		t.Fatalf("Failed to configure storage: %v", err)
 	}
@@ -198,7 +198,7 @@ func TestLocalStorage_InMemoryLifecycleManager(t *testing.T) {
 	s2 := New()
 	err = s2.Configure(map[string]string{
 		"path": dir,
-	})
+	}, noCreds)
 	if err != nil {
 		t.Fatalf("Failed to configure second storage: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestLocalStorage_PersistentLifecycleManager_DefaultFile(t *testing.T) {
 	err := s.Configure(map[string]string{
 		"path":                 dir,
 		"lifecycleManagerType": "persistent",
-	})
+	}, noCreds)
 	if err != nil {
 		t.Fatalf("Failed to configure storage: %v", err)
 	}
@@ -255,7 +255,7 @@ func TestLocalStorage_InvalidLifecycleManagerType(t *testing.T) {
 	err := s.Configure(map[string]string{
 		"path":                 dir,
 		"lifecycleManagerType": "invalid",
-	})
+	}, noCreds)
 	if err == nil {
 		t.Fatal("Expected error for invalid lifecycle manager type")
 	}
@@ -271,7 +271,7 @@ func TestLocalStorage_PersistentLifecycleWithData(t *testing.T) {
 	err := s.Configure(map[string]string{
 		"path":                 dir,
 		"lifecycleManagerType": "persistent",
-	})
+	}, noCreds)
 	if err != nil {
 		t.Fatalf("Failed to configure storage: %v", err)
 	}
@@ -305,7 +305,7 @@ func TestLocalStorage_PersistentLifecycleWithData(t *testing.T) {
 	err = s2.Configure(map[string]string{
 		"path":                 dir,
 		"lifecycleManagerType": "persistent",
-	})
+	}, noCreds)
 	if err != nil {
 		t.Fatalf("Failed to configure second storage: %v", err)
 	}

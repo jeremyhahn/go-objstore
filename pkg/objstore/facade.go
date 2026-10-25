@@ -69,8 +69,14 @@ type BackendConfig struct {
 	// Type is the backend type (local, s3, gcs, azure)
 	Type string
 
-	// Settings contains backend-specific configuration
+	// Settings contains backend-specific configuration. It must not carry
+	// a credential; the backend rejects one.
 	Settings map[string]string
+
+	// Credentials holds the protected-memory credential handles passed to the
+	// backend. The facade passes them through and does not retain them. The
+	// zero value selects the SDK's default credential chain.
+	Credentials common.Credentials
 }
 
 // FacadeConfig configures the objstore facade
@@ -105,7 +111,7 @@ type FacadeConfig struct {
 //
 // 2. Legacy - pass pre-configured Storage instances:
 //
-//	storage, _ := factory.NewStorage("local", settings)
+//	storage, _ := factory.NewStorage("local", settings, common.Credentials{})
 //	objstore.Initialize(&objstore.FacadeConfig{
 //	    Backends: map[string]common.Storage{"default": storage},
 //	    DefaultBackend: "default",
@@ -133,7 +139,7 @@ func initialize(config *FacadeConfig) error {
 
 	// First, create backends from BackendConfigs (simplified API)
 	for name, cfg := range config.BackendConfigs {
-		storage, err := factory.NewStorage(cfg.Type, cfg.Settings)
+		storage, err := factory.NewStorage(cfg.Type, cfg.Settings, cfg.Credentials)
 		if err != nil {
 			return fmt.Errorf("failed to create backend %q: %w", name, err)
 		}

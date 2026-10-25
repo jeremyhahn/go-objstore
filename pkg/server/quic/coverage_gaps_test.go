@@ -46,7 +46,7 @@ import (
 func gapHandler(t *testing.T) *Handler {
 	t.Helper()
 	storage := local.New()
-	if err := storage.Configure(map[string]string{"path": t.TempDir()}); err != nil {
+	if err := storage.Configure(map[string]string{"path": t.TempDir()}, noCreds); err != nil {
 		t.Fatal(err)
 	}
 	initTestFacade(t, storage)
@@ -89,7 +89,7 @@ func TestNewHandlerNotInitialized(t *testing.T) {
 
 func TestKeyRefWithBackendPrefix(t *testing.T) {
 	storage := local.New()
-	if err := storage.Configure(map[string]string{"path": t.TempDir()}); err != nil {
+	if err := storage.Configure(map[string]string{"path": t.TempDir()}, noCreds); err != nil {
 		t.Fatal(err)
 	}
 	initTestFacade(t, storage)
@@ -128,7 +128,7 @@ func TestOriginAllowedFunction(t *testing.T) {
 
 func TestCORSAllowlistedOrigin(t *testing.T) {
 	storage := local.New()
-	if err := storage.Configure(map[string]string{"path": t.TempDir()}); err != nil {
+	if err := storage.Configure(map[string]string{"path": t.TempDir()}, noCreds); err != nil {
 		t.Fatal(err)
 	}
 	initTestFacade(t, storage)
@@ -155,7 +155,7 @@ func TestCORSAllowlistedOrigin(t *testing.T) {
 
 func TestCORSNonAllowlistedOriginGetsNoHeader(t *testing.T) {
 	storage := local.New()
-	if err := storage.Configure(map[string]string{"path": t.TempDir()}); err != nil {
+	if err := storage.Configure(map[string]string{"path": t.TempDir()}, noCreds); err != nil {
 		t.Fatal(err)
 	}
 	initTestFacade(t, storage)
@@ -196,7 +196,7 @@ func (gapFailAuthenticator) AuthenticateMTLS(_ context.Context, _ *tls.Connectio
 
 func TestServeHTTPAuthFailure(t *testing.T) {
 	storage := local.New()
-	if err := storage.Configure(map[string]string{"path": t.TempDir()}); err != nil {
+	if err := storage.Configure(map[string]string{"path": t.TempDir()}, noCreds); err != nil {
 		t.Fatal(err)
 	}
 	initTestFacade(t, storage)
@@ -409,7 +409,7 @@ func TestHandlePutJSONEncodeError(t *testing.T) {
 // gapNilMetaStorage is a minimal storage that always returns nil metadata.
 type gapNilMetaStorage struct{ common.Storage }
 
-func (g *gapNilMetaStorage) Configure(_ map[string]string) error { return nil }
+func (g *gapNilMetaStorage) Configure(_ map[string]string, _ common.Credentials) error { return nil }
 func (g *gapNilMetaStorage) Put(key string, data io.Reader) error {
 	_, _ = io.ReadAll(data)
 	return nil
@@ -824,7 +824,7 @@ func TestDeriveActionResourceMetadataPath(t *testing.T) {
 
 func TestNewServerWithAuditAndRateLimit(t *testing.T) {
 	storage := local.New()
-	if err := storage.Configure(map[string]string{"path": t.TempDir()}); err != nil {
+	if err := storage.Configure(map[string]string{"path": t.TempDir()}, noCreds); err != nil {
 		t.Fatal(err)
 	}
 	initTestFacade(t, storage)
@@ -865,7 +865,7 @@ func TestNewServerNotInitialized(t *testing.T) {
 
 func TestStartResolveUDPAddrError(t *testing.T) {
 	storage := local.New()
-	if err := storage.Configure(map[string]string{"path": t.TempDir()}); err != nil {
+	if err := storage.Configure(map[string]string{"path": t.TempDir()}, noCreds); err != nil {
 		t.Fatal(err)
 	}
 	initTestFacade(t, storage)
@@ -894,7 +894,7 @@ func TestStartResolveUDPAddrError(t *testing.T) {
 
 func TestStopWithRateLimiter(t *testing.T) {
 	storage := local.New()
-	if err := storage.Configure(map[string]string{"path": t.TempDir()}); err != nil {
+	if err := storage.Configure(map[string]string{"path": t.TempDir()}, noCreds); err != nil {
 		t.Fatal(err)
 	}
 	initTestFacade(t, storage)
@@ -924,7 +924,7 @@ func TestStopWithRateLimiter(t *testing.T) {
 // Stop — Shutdown timeout → Close fallback (server.go:156-163).
 func TestStopShutdownContextExpired(t *testing.T) {
 	storage := local.New()
-	if err := storage.Configure(map[string]string{"path": t.TempDir()}); err != nil {
+	if err := storage.Configure(map[string]string{"path": t.TempDir()}, noCreds); err != nil {
 		t.Fatal(err)
 	}
 	initTestFacade(t, storage)
@@ -956,7 +956,7 @@ func TestStopShutdownContextExpired(t *testing.T) {
 
 func TestOptionsValidateAdapterTLSConfig(t *testing.T) {
 	storage := local.New()
-	if err := storage.Configure(map[string]string{"path": t.TempDir()}); err != nil {
+	if err := storage.Configure(map[string]string{"path": t.TempDir()}, noCreds); err != nil {
 		t.Fatal(err)
 	}
 	initTestFacade(t, storage)
@@ -1535,7 +1535,7 @@ func TestServeHTTPPanicRecoveryAfterHeaderWritten(t *testing.T) {
 
 func TestStartListenUDPError(t *testing.T) {
 	storage := local.New()
-	if err := storage.Configure(map[string]string{"path": t.TempDir()}); err != nil {
+	if err := storage.Configure(map[string]string{"path": t.TempDir()}, noCreds); err != nil {
 		t.Fatal(err)
 	}
 	initTestFacade(t, storage)

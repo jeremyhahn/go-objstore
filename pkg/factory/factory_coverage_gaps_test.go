@@ -158,7 +158,7 @@ func TestIsArchiverRegistered_Conditional(t *testing.T) {
 // TestNewStorage_Memory exercises the memory backend creator registered in
 // factory_memory.go's init(), which is the 16.7%-covered init function.
 func TestNewStorage_Memory(t *testing.T) {
-	st, err := NewStorage("memory", map[string]string{})
+	st, err := NewStorage("memory", map[string]string{}, noCreds)
 	if err != nil {
 		t.Fatalf("NewStorage(\"memory\") error = %v", err)
 	}
@@ -167,7 +167,7 @@ func TestNewStorage_Memory(t *testing.T) {
 	}
 
 	// Confirm it's actually usable.
-	if err := st.Configure(map[string]string{}); err != nil {
+	if err := st.Configure(map[string]string{}, noCreds); err != nil {
 		t.Fatalf("memory storage Configure() error = %v", err)
 	}
 }

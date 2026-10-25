@@ -24,7 +24,7 @@ import (
 
 func TestNewBucketManager_GCS(t *testing.T) {
 	// The bucket setting is not required: the manager serves every bucket.
-	bm, err := NewBucketManager("gcs", map[string]string{"project": "proj", "skip_client": "true"})
+	bm, err := NewBucketManager("gcs", map[string]string{"project": "proj", "skip_client": "true"}, noCreds)
 	if err != nil || bm == nil {
 		t.Fatalf("NewBucketManager = %v, %v", bm, err)
 	}
@@ -32,12 +32,12 @@ func TestNewBucketManager_GCS(t *testing.T) {
 		t.Error("the gcs manager does not offer multipart upload")
 	}
 
-	bm, err = NewBucketManager("gcs", map[string]string{"skip_client": "true"})
+	bm, err = NewBucketManager("gcs", map[string]string{"skip_client": "true"}, noCreds)
 	if !errors.Is(err, common.ErrProjectNotSet) || bm != nil {
 		t.Errorf("no project = %v, %v", bm, err)
 	}
 
-	bm, err = NewBucketManager("gcs", map[string]string{"project": "p", "skip_client": "true", "multipartExpiry": "x"})
+	bm, err = NewBucketManager("gcs", map[string]string{"project": "p", "skip_client": "true", "multipartExpiry": "x"}, noCreds)
 	if !errors.Is(err, common.ErrInvalidArgument) || bm != nil {
 		t.Errorf("bad expiry = %v, %v", bm, err)
 	}

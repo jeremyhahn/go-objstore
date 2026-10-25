@@ -63,7 +63,10 @@ func New() common.Storage {
 // Configure sets up the backend with the necessary settings.
 // The memory backend has no required settings; multipartExpiry optionally
 // sets how long a multipart upload may stay open.
-func (m *Memory) Configure(settings map[string]string) error {
+func (m *Memory) Configure(settings map[string]string, _ common.Credentials) error {
+	if err := common.RejectCredentialSettings(settings); err != nil {
+		return err
+	}
 	expiry, err := multipart.ParseExpiry(settings)
 	if err != nil {
 		return err

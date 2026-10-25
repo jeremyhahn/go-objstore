@@ -33,7 +33,7 @@ import (
 
 func TestGlacier_Configure_Errors(t *testing.T) {
 	g := &Glacier{}
-	if err := g.Configure(map[string]string{"region": "us-east-1"}); err == nil {
+	if err := g.Configure(map[string]string{"region": "us-east-1"}, noCreds); err == nil {
 		t.Fatalf("expected error for missing vaultName")
 	}
 }
@@ -45,7 +45,7 @@ func (e errReader) Read(p []byte) (int, error) { return 0, io.ErrUnexpectedEOF }
 func TestGlacier_Put_ReadError(t *testing.T) {
 	g := &Glacier{}
 	// Configure minimal fields to set vault and avoid nil deref of svc in Put before read
-	_ = g.Configure(map[string]string{"region": "us-east-1", "vaultName": "v"})
+	_ = g.Configure(map[string]string{"region": "us-east-1", "vaultName": "v"}, noCreds)
 	if err := g.Put("k", errReader{}); err == nil {
 		t.Fatalf("expected error from reader")
 	}
@@ -56,7 +56,7 @@ func TestGlacier_Configure_Success(t *testing.T) {
 		t.Skip("skipping test that creates real AWS SDK client")
 	}
 	g := &Glacier{}
-	if err := g.Configure(map[string]string{"region": "us-east-1", "vaultName": "vault"}); err != nil {
+	if err := g.Configure(map[string]string{"region": "us-east-1", "vaultName": "vault"}, noCreds); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if g.svc == nil {
@@ -76,7 +76,7 @@ func TestGlacier_New(t *testing.T) {
 
 func TestGlacier_Configure_EmptyVaultName(t *testing.T) {
 	g := &Glacier{}
-	err := g.Configure(map[string]string{"region": "us-east-1", "vaultName": ""})
+	err := g.Configure(map[string]string{"region": "us-east-1", "vaultName": ""}, noCreds)
 	if err == nil {
 		t.Fatal("expected error for empty vaultName, got nil")
 	}
@@ -91,7 +91,7 @@ func TestGlacier_Configure_NoRegion(t *testing.T) {
 	}
 	g := &Glacier{}
 	// Note: AWS SDK allows nil region, but we can test it configures successfully
-	err := g.Configure(map[string]string{"vaultName": "test-vault"})
+	err := g.Configure(map[string]string{"vaultName": "test-vault"}, noCreds)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestGlacier_Put_EmptyData(t *testing.T) {
 		t.Skip("skipping test that creates real AWS SDK client")
 	}
 	g := &Glacier{}
-	g.Configure(map[string]string{"region": "us-east-1", "vaultName": "vault"})
+	g.Configure(map[string]string{"region": "us-east-1", "vaultName": "vault"}, noCreds)
 
 	// Put with empty reader
 	err := g.Put("test-key", &bytes.Buffer{})
@@ -120,7 +120,7 @@ func TestGlacier_Configure_MultipleRegions(t *testing.T) {
 		err := g.Configure(map[string]string{
 			"region":    region,
 			"vaultName": "test-vault",
-		})
+		}, noCreds)
 		if err != nil {
 			t.Fatalf("Configure with region %s failed: %v", region, err)
 		}
@@ -138,7 +138,7 @@ func TestGlacier_Put_LargeData(t *testing.T) {
 		t.Skip("skipping test that creates real AWS SDK client")
 	}
 	g := &Glacier{}
-	g.Configure(map[string]string{"region": "us-east-1", "vaultName": "vault"})
+	g.Configure(map[string]string{"region": "us-east-1", "vaultName": "vault"}, noCreds)
 
 	// Put with larger data
 	largeData := bytes.Repeat([]byte("x"), 1024*1024) // 1MB

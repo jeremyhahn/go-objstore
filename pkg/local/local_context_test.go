@@ -26,7 +26,7 @@ func TestLocal_PutWithContext(t *testing.T) {
 	t.Run("successful put with valid context", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -48,7 +48,7 @@ func TestLocal_PutWithContext(t *testing.T) {
 	t.Run("put with cancelled context", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -66,7 +66,7 @@ func TestLocal_PutWithContext(t *testing.T) {
 	t.Run("put with expired deadline context", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -88,7 +88,7 @@ func TestLocal_GetWithContext(t *testing.T) {
 	t.Run("successful get with valid context", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -122,7 +122,7 @@ func TestLocal_GetWithContext(t *testing.T) {
 	t.Run("get with cancelled context", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -141,7 +141,7 @@ func TestLocal_DeleteWithContext(t *testing.T) {
 	t.Run("successful delete with valid context", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -170,7 +170,7 @@ func TestLocal_DeleteWithContext(t *testing.T) {
 	t.Run("delete with cancelled context", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -189,7 +189,7 @@ func TestLocal_Exists(t *testing.T) {
 	t.Run("exists returns true for existing file", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -213,7 +213,7 @@ func TestLocal_Exists(t *testing.T) {
 	t.Run("exists returns false for non-existing file", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -231,7 +231,7 @@ func TestLocal_Exists(t *testing.T) {
 	t.Run("exists with cancelled context", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -250,7 +250,7 @@ func TestLocal_ListWithContext(t *testing.T) {
 	t.Run("list with valid context", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -281,7 +281,7 @@ func TestLocal_ListWithContext(t *testing.T) {
 	t.Run("list with cancelled context", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -300,7 +300,7 @@ func TestLocal_BackwardCompatibility(t *testing.T) {
 	t.Run("old Put method still works", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -321,7 +321,7 @@ func TestLocal_BackwardCompatibility(t *testing.T) {
 	t.Run("old Get method still works", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -342,7 +342,7 @@ func TestLocal_BackwardCompatibility(t *testing.T) {
 	t.Run("old Delete method still works", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -362,7 +362,7 @@ func TestLocal_BackwardCompatibility(t *testing.T) {
 	t.Run("old List method still works", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New()
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}

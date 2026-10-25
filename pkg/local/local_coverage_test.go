@@ -113,7 +113,7 @@ func TestLocal_Close_WithAndWithoutLifecycle(t *testing.T) {
 	if err := s2.Configure(map[string]string{
 		"path":         t.TempDir(),
 		"runLifecycle": "true",
-	}); err != nil {
+	}, noCreds); err != nil {
 		t.Fatal(err)
 	}
 	s2.Close()
@@ -426,7 +426,7 @@ func TestLocal_Configure_RunLifecycle_PersistentManager(t *testing.T) {
 		"path":                 dir,
 		"lifecycleManagerType": "persistent",
 		"runLifecycle":         "true",
-	})
+	}, noCreds)
 	if err != nil {
 		t.Fatalf("Configure: %v", err)
 	}
@@ -570,7 +570,7 @@ func TestLocal_Configure_MkdirAllFails(t *testing.T) {
 	}
 
 	s := new(Local)
-	err := s.Configure(map[string]string{"path": conflict + "/sub"})
+	err := s.Configure(map[string]string{"path": conflict + "/sub"}, noCreds)
 	if err == nil {
 		t.Fatal("expected error when MkdirAll fails")
 	}
@@ -599,7 +599,7 @@ func TestLocal_Configure_PersistentManagerError(t *testing.T) {
 		"path":                 dir,
 		"lifecycleManagerType": "persistent",
 		"lifecyclePolicyFile":  policyFile,
-	})
+	}, noCreds)
 	if err == nil {
 		t.Fatal("expected error when persistent manager init fails due to corrupt policy file")
 	}
@@ -1008,7 +1008,7 @@ func TestWriteFileAtomic_CreateTempInMissingDir(t *testing.T) {
 func newConfigured(t *testing.T, dir string) *Local {
 	t.Helper()
 	s := New()
-	if err := s.Configure(map[string]string{"path": dir}); err != nil {
+	if err := s.Configure(map[string]string{"path": dir}, noCreds); err != nil {
 		t.Fatalf("Configure: %v", err)
 	}
 	return s.(*Local)

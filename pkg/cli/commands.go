@@ -15,6 +15,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -64,11 +65,12 @@ func NewCommandContext(cfg *Config) (*CommandContext, error) {
 		ctx.Client = remoteClient
 	} else {
 		// Create local storage backend
-		settings, err := cfg.StorageSettings()
+		creds, release, err := cfg.Credentials()
 		if err != nil {
 			return nil, err
 		}
-		storage, err := factory.NewStorage(cfg.Backend, settings)
+		storage, err := factory.NewStorage(cfg.Backend, cfg.StorageSettings(), creds)
+		err = errors.Join(err, release())
 		if err != nil {
 			return nil, err
 		}
@@ -275,22 +277,24 @@ func (ctx *CommandContext) ConfigCommand() *Config {
 // ArchiveCommand archives an object to archival storage.
 // Uses the current backend settings for the destination.
 func (ctx *CommandContext) ArchiveCommand(key, destinationBackend string) error {
-	settings, err := ctx.Config.StorageSettings()
-	if err != nil {
-		return err
-	}
-	return ctx.ArchiveCommandWithSettings(key, destinationBackend, settings)
+	return ctx.ArchiveCommandWithSettings(key, destinationBackend, ctx.Config.StorageSettings())
 }
 
 // ArchiveCommandWithSettings archives an object to archival storage with custom settings.
 // This allows specifying different paths/buckets for the archive destination.
-func (ctx *CommandContext) ArchiveCommandWithSettings(key, destinationBackend string, destinationSettings map[string]string) error {
-	// If no custom settings provided, use backend settings
+func (ctx *CommandContext) ArchiveCommandWithSettings(key, destinationBackend string, destinationSettings map[string]string) (retErr error) {
+	// If no custom settings provided, use the backend settings and credentials
+	var creds common.Credentials
 	if len(destinationSettings) == 0 {
-		var err error
-		destinationSettings, err = ctx.Config.StorageSettings()
-		if err != nil {
-			return err
+		destinationSettings = ctx.Config.StorageSettings()
+		if ctx.Client == nil {
+			var release func() error
+			var err error
+			creds, release, err = ctx.Config.Credentials()
+			if err != nil {
+				return err
+			}
+			defer func() { retErr = errors.Join(retErr, release()) }()
 		}
 	}
 
@@ -302,7 +306,7 @@ func (ctx *CommandContext) ArchiveCommandWithSettings(key, destinationBackend st
 	}
 
 	// Create archiver with custom settings
-	archiver, err := factory.NewArchiver(destinationBackend, destinationSettings)
+	archiver, err := factory.NewArchiver(destinationBackend, destinationSettings, creds)
 	if err != nil {
 		return err
 	}
@@ -379,7 +383,7 @@ func (ctx *CommandContext) newPolicyArchiver() (common.Archiver, error) {
 	if settings["vaultName"] == "" {
 		return nil, ErrArchiveVaultRequired
 	}
-	return factory.NewArchiver("glacier", settings)
+	return factory.NewArchiver("glacier", settings, common.Credentials{})
 }
 
 // RemovePolicyCommand removes a lifecycle policy.

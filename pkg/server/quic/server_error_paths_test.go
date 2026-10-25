@@ -25,7 +25,7 @@ import (
 // TestServerStart_ErrorLogging tests the error logging path in Start's goroutine
 func TestServerStart_ErrorLogging(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -70,7 +70,7 @@ func TestServerStart_ErrorLogging(t *testing.T) {
 // TestServerStop_WithCloseError tests the error return path in Stop
 func TestServerStop_WithCloseError(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -110,7 +110,7 @@ func TestServerStop_WithCloseError(t *testing.T) {
 // TestServerServe_StoreAddr tests that Serve stores the connection address
 func TestServerServe_StoreAddr(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -174,7 +174,7 @@ func TestServerServe_StoreAddr(t *testing.T) {
 // TestServerStart_AddressStorage tests that Start stores the listening address
 func TestServerStart_AddressStorage(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -226,7 +226,7 @@ func TestServerStart_AddressStorage(t *testing.T) {
 // TestServerStart_RunningFlagTransition tests the running flag is set before goroutine
 func TestServerStart_RunningFlagTransition(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -273,7 +273,7 @@ func TestServerStart_RunningFlagTransition(t *testing.T) {
 // TestServerServe_MutexLocking tests that Serve properly locks the mutex
 func TestServerServe_MutexLocking(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -325,7 +325,7 @@ func TestServerServe_MutexLocking(t *testing.T) {
 // TestServerStop_MutexLocking tests that Stop properly locks the mutex
 func TestServerStop_MutexLocking(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -373,7 +373,7 @@ func TestServerStop_MutexLocking(t *testing.T) {
 // TestServerStart_GoroutineErrorPath tests the error path in the Start goroutine
 func TestServerStart_GoroutineErrorPath(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 

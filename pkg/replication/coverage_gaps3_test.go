@@ -33,7 +33,7 @@ import (
 // so the local backend also writes its sidecar metadata file.
 func putIntoLocalBackend(t *testing.T, path, key string, data []byte) {
 	t.Helper()
-	s, err := factory.NewStorage("local", map[string]string{"path": path})
+	s, err := factory.NewStorage("local", map[string]string{"path": path}, noCreds)
 	require.NoError(t, err)
 	err = s.PutWithContext(context.Background(), key, bytes.NewReader(data))
 	require.NoError(t, err)

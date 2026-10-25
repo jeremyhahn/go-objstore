@@ -212,8 +212,10 @@ func (m *MockStorageWithReplication) GetReplicationManager() (common.Replication
 }
 
 // Implement required Storage interface methods (minimal implementation for testing)
-func (m *MockStorageWithReplication) Configure(settings map[string]string) error { return nil }
-func (m *MockStorageWithReplication) Put(key string, data io.Reader) error       { return nil }
+func (m *MockStorageWithReplication) Configure(settings map[string]string, _ common.Credentials) error {
+	return nil
+}
+func (m *MockStorageWithReplication) Put(key string, data io.Reader) error { return nil }
 func (m *MockStorageWithReplication) PutWithContext(ctx context.Context, key string, data io.Reader) error {
 	return nil
 }

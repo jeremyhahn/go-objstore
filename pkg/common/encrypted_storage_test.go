@@ -101,7 +101,7 @@ func newMockUnderlyingStorage() *mockUnderlyingStorage {
 	}
 }
 
-func (m *mockUnderlyingStorage) Configure(settings map[string]string) error {
+func (m *mockUnderlyingStorage) Configure(settings map[string]string, _ Credentials) error {
 	return nil
 }
 
@@ -242,7 +242,7 @@ func TestEncryptedStorage_Configure(t *testing.T) {
 	}
 
 	storage := NewEncryptedStorage(underlying, factory)
-	err := storage.Configure(map[string]string{"test": "value"})
+	err := storage.Configure(map[string]string{"test": "value"}, Credentials{})
 	if err != nil {
 		t.Errorf("Configure failed: %v", err)
 	}

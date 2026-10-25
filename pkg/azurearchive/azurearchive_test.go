@@ -85,7 +85,8 @@ func TestAzureArchive_Configure_Success(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			a := &AzureArchive{}
-			err := a.Configure(tt.settings)
+			settings, creds := splitKey(t, tt.settings)
+			err := a.Configure(settings, creds)
 			if err != nil {
 				t.Fatalf("Configure() error = %v", err)
 			}
@@ -136,7 +137,8 @@ func TestAzureArchive_Configure_Errors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			a := &AzureArchive{}
-			err := a.Configure(tt.settings)
+			settings, creds := splitKey(t, tt.settings)
+			err := a.Configure(settings, creds)
 			if err == nil {
 				t.Fatal("Configure() expected error, got nil")
 			}
@@ -277,7 +279,8 @@ func TestAzureArchive_Configure_BadEndpoint(t *testing.T) {
 		"containerName": "testcontainer",
 		"endpoint":      "://bad url",
 	}
-	err := a.Configure(settings)
+	settings, creds := splitKey(t, settings)
+	err := a.Configure(settings, creds)
 	if err == nil {
 		t.Fatal("Configure() expected error for bad endpoint, got nil")
 	}

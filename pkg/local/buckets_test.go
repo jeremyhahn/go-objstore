@@ -329,7 +329,7 @@ func TestLocal_AsBucketManager(t *testing.T) {
 	ctx := context.Background()
 	root := filepath.Join(t.TempDir(), "root")
 	l := New().(*Local)
-	if err := l.Configure(map[string]string{"path": t.TempDir(), "bucketRoot": root}); err != nil {
+	if err := l.Configure(map[string]string{"path": t.TempDir(), "bucketRoot": root}, noCreds); err != nil {
 		t.Fatal(err)
 	}
 	var s common.Storage = l
@@ -408,7 +408,7 @@ func TestBuckets_ChildrenEncryptAtRest(t *testing.T) {
 		if before {
 			l.SetAtRestEncrypterFactory(atRestFactory())
 		}
-		if err := l.Configure(map[string]string{"path": t.TempDir(), "bucketRoot": root}); err != nil {
+		if err := l.Configure(map[string]string{"path": t.TempDir(), "bucketRoot": root}, noCreds); err != nil {
 			t.Fatal(err)
 		}
 		if !before {
@@ -657,7 +657,7 @@ func TestLocal_Configure_BucketRootErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := New().(*Local)
-	if err := l.Configure(map[string]string{"path": t.TempDir(), "bucketRoot": f}); err == nil {
+	if err := l.Configure(map[string]string{"path": t.TempDir(), "bucketRoot": f}, noCreds); err == nil {
 		t.Error("Configure accepted a file as the bucket root")
 	}
 }

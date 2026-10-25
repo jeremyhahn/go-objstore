@@ -21,25 +21,25 @@ import (
 )
 
 func init() {
-	RegisterStorage("local", func(settings map[string]string) (common.Storage, error) {
+	RegisterStorage("local", func(settings map[string]string, creds common.Credentials) (common.Storage, error) {
 		storage := local.New()
-		err := storage.Configure(settings)
+		err := storage.Configure(settings, creds)
 		if err != nil {
 			return nil, err
 		}
 		return storage, nil
 	})
 
-	RegisterArchiver("local", func(settings map[string]string) (common.Archiver, error) {
+	RegisterArchiver("local", func(settings map[string]string, creds common.Credentials) (common.Archiver, error) {
 		archiver := local.New()
-		err := archiver.Configure(settings)
+		err := archiver.Configure(settings, creds)
 		if err != nil {
 			return nil, err
 		}
 		return archiver, nil
 	})
 
-	RegisterBucketManager("local", func(settings map[string]string) (common.BucketManager, error) {
+	RegisterBucketManager("local", func(settings map[string]string, creds common.Credentials) (common.BucketManager, error) {
 		buckets, err := local.NewBuckets(settings)
 		if err != nil {
 			return nil, err

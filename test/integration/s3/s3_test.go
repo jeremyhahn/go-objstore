@@ -33,9 +33,7 @@ func TestS3_BasicOps(t *testing.T) {
 		"region":         "us-east-1",
 		"endpoint":       "http://floci:4566",
 		"forcePathStyle": "true",
-		"accessKey":      "test",
-		"secretKey":      "test",
-	})
+	}, testcommon.Creds(t, "test", "test"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,9 +66,7 @@ func TestS3_EmptyFile(t *testing.T) {
 		"region":         "us-east-1",
 		"endpoint":       "http://floci:4566",
 		"forcePathStyle": "true",
-		"accessKey":      "test",
-		"secretKey":      "test",
-	})
+	}, testcommon.Creds(t, "test", "test"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,9 +96,7 @@ func TestS3_SpecialCharacters(t *testing.T) {
 		"region":         "us-east-1",
 		"endpoint":       "http://floci:4566",
 		"forcePathStyle": "true",
-		"accessKey":      "test",
-		"secretKey":      "test",
-	})
+	}, testcommon.Creds(t, "test", "test"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,9 +133,7 @@ func TestS3_ErrorHandling(t *testing.T) {
 		"region":         "us-east-1",
 		"endpoint":       "http://floci:4566",
 		"forcePathStyle": "true",
-		"accessKey":      "test",
-		"secretKey":      "test",
-	})
+	}, testcommon.Creds(t, "test", "test"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,9 +159,7 @@ func TestS3_Lifecycle(t *testing.T) {
 		"region":         "us-east-1",
 		"endpoint":       "http://floci:4566",
 		"forcePathStyle": "true",
-		"accessKey":      "test",
-		"secretKey":      "test",
-	})
+	}, testcommon.Creds(t, "test", "test"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,9 +183,7 @@ func TestS3_ComprehensiveSuite(t *testing.T) {
 		"region":         "us-east-1",
 		"endpoint":       "http://floci:4566",
 		"forcePathStyle": "true",
-		"accessKey":      "test",
-		"secretKey":      "test",
-	})
+	}, testcommon.Creds(t, "test", "test"))
 	if err != nil {
 		t.Fatal(err)
 	}

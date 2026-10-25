@@ -50,7 +50,7 @@ func newMockLifecycleStorage() *mockLifecycleStorage {
 	}
 }
 
-func (m *mockLifecycleStorage) Configure(settings map[string]string) error {
+func (m *mockLifecycleStorage) Configure(settings map[string]string, _ common.Credentials) error {
 	return nil
 }
 

@@ -71,8 +71,13 @@ func New() common.ArchiveOnlyStorage {
 	return &Glacier{}
 }
 
-// Configure sets up the backend with the necessary settings.
-func (g *Glacier) Configure(settings map[string]string) error {
+// Configure sets up the backend with the necessary settings. The client uses
+// the AWS default credential chain, so creds is not read; a credential entry
+// in settings is an error.
+func (g *Glacier) Configure(settings map[string]string, _ common.Credentials) error {
+	if err := common.RejectCredentialSettings(settings); err != nil {
+		return err
+	}
 	g.vaultName = settings["vaultName"]
 	if g.vaultName == "" {
 		return common.ErrVaultNotSet

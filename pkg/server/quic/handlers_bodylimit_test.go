@@ -39,7 +39,7 @@ func TestHandlePutNoContentLengthIsBounded(t *testing.T) {
 	const maxBody int64 = 64
 
 	storage := local.New()
-	if err := storage.Configure(map[string]string{"path": t.TempDir()}); err != nil {
+	if err := storage.Configure(map[string]string{"path": t.TempDir()}, noCreds); err != nil {
 		t.Fatalf("Failed to configure storage: %v", err)
 	}
 	initTestFacade(t, storage)

@@ -21,16 +21,16 @@ import (
 )
 
 func init() {
-	RegisterStorage("azure", func(settings map[string]string) (common.Storage, error) {
+	RegisterStorage("azure", func(settings map[string]string, creds common.Credentials) (common.Storage, error) {
 		storage := azure.New()
-		err := storage.Configure(settings)
+		err := storage.Configure(settings, creds)
 		if err != nil {
 			return nil, err
 		}
 		return storage, nil
 	})
-	RegisterBucketManager("azure", func(settings map[string]string) (common.BucketManager, error) {
-		manager, err := azure.NewManager(settings)
+	RegisterBucketManager("azure", func(settings map[string]string, creds common.Credentials) (common.BucketManager, error) {
+		manager, err := azure.NewManager(settings, creds)
 		if err != nil {
 			return nil, err
 		}

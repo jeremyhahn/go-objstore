@@ -131,8 +131,10 @@ func New() common.Storage {
 	return &GCS{}
 }
 
-// Configure sets up the backend with the necessary settings.
-func (g *GCS) Configure(settings map[string]string) error {
+// Configure sets up the backend with the necessary settings. The client uses
+// Google application default credentials, so creds is not read; a credential
+// entry in settings is an error.
+func (g *GCS) Configure(settings map[string]string, _ common.Credentials) error {
 	g.bucket = settings["bucket"]
 	if g.bucket == "" {
 		return common.ErrBucketNotSet
@@ -156,6 +158,9 @@ func NewManager(settings map[string]string) (*GCS, error) {
 // configureClient reads the settings that do not name a bucket and creates the
 // client.
 func (g *GCS) configureClient(settings map[string]string) error {
+	if err := common.RejectCredentialSettings(settings); err != nil {
+		return err
+	}
 	expiry, err := multipart.ParseExpiry(settings)
 	if err != nil {
 		return err

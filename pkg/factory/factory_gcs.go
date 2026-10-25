@@ -21,16 +21,16 @@ import (
 )
 
 func init() {
-	RegisterStorage("gcs", func(settings map[string]string) (common.Storage, error) {
+	RegisterStorage("gcs", func(settings map[string]string, creds common.Credentials) (common.Storage, error) {
 		storage := gcs.New()
-		err := storage.Configure(settings)
+		err := storage.Configure(settings, creds)
 		if err != nil {
 			return nil, err
 		}
 		return storage, nil
 	})
 
-	RegisterBucketManager("gcs", func(settings map[string]string) (common.BucketManager, error) {
+	RegisterBucketManager("gcs", func(settings map[string]string, creds common.Credentials) (common.BucketManager, error) {
 		manager, err := gcs.NewManager(settings)
 		if err != nil {
 			return nil, err

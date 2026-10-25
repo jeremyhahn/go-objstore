@@ -27,7 +27,8 @@ go-objstore provides a unified interface for multiple storage backends, letting 
 
 ### Azure Blob Storage
 - **Backend ID**: `azure`
-- **Configuration**: `{"accountName": "myaccount", "accountKey": "key==", "containerName": "mycontainer"}`
+- **Configuration**: `{"accountName": "myaccount", "containerName": "mycontainer"}`
+- **Credentials**: the account key is passed as `common.Credentials{Secret: handle}`, never in the settings map
 - **Features**: Full Azure Blob API support, lifecycle policies
 
 ## Archive-Only Backends
@@ -42,7 +43,8 @@ These backends can only be used as archive destinations, not as primary storage:
 
 ### Azure Archive
 - **Backend ID**: `azure-archive`
-- **Configuration**: `{"accountName": "myaccount", "accountKey": "key==", "containerName": "archive"}`
+- **Configuration**: `{"accountName": "myaccount", "containerName": "archive"}`
+- **Credentials**: the account key is passed as `common.Credentials{Secret: handle}`, never in the settings map
 - **Use Case**: Cost-effective long-term storage
 - **Access Tier**: Archive tier with delayed retrieval
 
@@ -56,26 +58,32 @@ import "go-objstore/pkg/factory"
 // Local storage
 storage, err := factory.NewStorage("local", map[string]string{
     "path": "/var/data",
-})
+}, common.Credentials{})
 
 // S3
 storage, err := factory.NewStorage("s3", map[string]string{
     "region": "us-east-1",
     "bucket": "my-bucket",
-})
+}, common.Credentials{})
 
 // GCS
 storage, err := factory.NewStorage("gcs", map[string]string{
     "bucket": "my-gcs-bucket",
-})
+}, common.Credentials{})
 
 // Azure
 storage, err := factory.NewStorage("azure", map[string]string{
     "accountName": "myaccount",
-    "accountKey":   "base64key==",
     "containerName": "mycontainer",
-})
+}, common.Credentials{Secret: accountKey}) // accountKey is an enclave.ByteAccess
 ```
+
+Credentials are go-enclave handles (`enclave.ByteAccess`), never settings
+values: an `accessKey`, `secretKey` or `accountKey` entry in the map is rejected
+with `common.ErrCredentialInSettings`. S3 reads `Key` (access key) and `Secret`
+(secret key); Azure reads `Secret` (account key). A nil field uses the SDK's
+default credential chain. See
+[Protected Memory](../architecture/protected-memory.md).
 
 ### Basic Operations
 
@@ -119,7 +127,7 @@ keys, err := storage.List("path/to/")
 ## Error Handling
 
 ```go
-storage, err := factory.NewStorage("s3", config)
+storage, err := factory.NewStorage("s3", config, creds)
 if err != nil {
     if strings.Contains(err.Error(), "credentials") {
         // Handle credential errors

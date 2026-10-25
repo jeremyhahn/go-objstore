@@ -47,7 +47,7 @@ func TestSetChangeLog(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	local := New()
-	err := local.Configure(map[string]string{"path": tmpDir})
+	err := local.Configure(map[string]string{"path": tmpDir}, noCreds)
 	require.NoError(t, err)
 
 	localBackend := local.(*Local)
@@ -68,7 +68,7 @@ func TestPutRecordsChange(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	local := New()
-	err := local.Configure(map[string]string{"path": tmpDir})
+	err := local.Configure(map[string]string{"path": tmpDir}, noCreds)
 	require.NoError(t, err)
 
 	localBackend := local.(*Local)
@@ -96,7 +96,7 @@ func TestPutMultipleRecordsChanges(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	local := New()
-	err := local.Configure(map[string]string{"path": tmpDir})
+	err := local.Configure(map[string]string{"path": tmpDir}, noCreds)
 	require.NoError(t, err)
 
 	localBackend := local.(*Local)
@@ -126,7 +126,7 @@ func TestDeleteRecordsChange(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	local := New()
-	err := local.Configure(map[string]string{"path": tmpDir})
+	err := local.Configure(map[string]string{"path": tmpDir}, noCreds)
 	require.NoError(t, err)
 
 	localBackend := local.(*Local)
@@ -157,7 +157,7 @@ func TestDeleteMultipleRecordsChanges(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	local := New()
-	err := local.Configure(map[string]string{"path": tmpDir})
+	err := local.Configure(map[string]string{"path": tmpDir}, noCreds)
 	require.NoError(t, err)
 
 	localBackend := local.(*Local)
@@ -195,7 +195,7 @@ func TestWithoutChangeLog(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	local := New()
-	err := local.Configure(map[string]string{"path": tmpDir})
+	err := local.Configure(map[string]string{"path": tmpDir}, noCreds)
 	require.NoError(t, err)
 
 	// No change log set - operations should still work
@@ -219,7 +219,7 @@ func TestPutDeleteSequence(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	local := New()
-	err := local.Configure(map[string]string{"path": tmpDir})
+	err := local.Configure(map[string]string{"path": tmpDir}, noCreds)
 	require.NoError(t, err)
 
 	localBackend := local.(*Local)
@@ -256,7 +256,7 @@ func TestPutWithContext(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	local := New()
-	err := local.Configure(map[string]string{"path": tmpDir})
+	err := local.Configure(map[string]string{"path": tmpDir}, noCreds)
 	require.NoError(t, err)
 
 	localBackend := local.(*Local)
@@ -278,7 +278,7 @@ func TestDeleteWithContext(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	local := New()
-	err := local.Configure(map[string]string{"path": tmpDir})
+	err := local.Configure(map[string]string{"path": tmpDir}, noCreds)
 	require.NoError(t, err)
 
 	localBackend := local.(*Local)
@@ -305,7 +305,7 @@ func TestChangeLogMetadata(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	local := New()
-	err := local.Configure(map[string]string{"path": tmpDir})
+	err := local.Configure(map[string]string{"path": tmpDir}, noCreds)
 	require.NoError(t, err)
 
 	localBackend := local.(*Local)
@@ -331,7 +331,7 @@ func TestChangeLogDisableReEnable(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	local := New()
-	err := local.Configure(map[string]string{"path": tmpDir})
+	err := local.Configure(map[string]string{"path": tmpDir}, noCreds)
 	require.NoError(t, err)
 
 	localBackend := local.(*Local)

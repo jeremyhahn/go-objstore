@@ -83,7 +83,7 @@ type MockStorage struct {
 	ListWithOptionsFunc   func(ctx context.Context, opts *common.ListOptions) (*common.ListResult, error)
 }
 
-func (m *MockStorage) Configure(settings map[string]string) error {
+func (m *MockStorage) Configure(settings map[string]string, _ common.Credentials) error {
 	if m.ConfigureFunc != nil {
 		return m.ConfigureFunc(settings)
 	}

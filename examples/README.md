@@ -77,25 +77,24 @@ import "github.com/jeremyhahn/go-objstore/pkg/factory"
 // Local storage
 local, _ := factory.NewStorage("local", map[string]string{
     "path": "/tmp/storage",
-})
+}, common.Credentials{})
 
 // Amazon S3
 s3, _ := factory.NewStorage("s3", map[string]string{
     "bucket": "my-bucket",
     "region": "us-east-1",
-})
+}, common.Credentials{})
 
 // Google Cloud Storage
 gcs, _ := factory.NewStorage("gcs", map[string]string{
     "bucket": "my-gcs-bucket",
-})
+}, common.Credentials{})
 
 // Azure Blob Storage
 azure, _ := factory.NewStorage("azure", map[string]string{
     "accountName":   "myaccount",
-    "accountKey":    "key==",
     "containerName": "mycontainer",
-})
+}, common.Credentials{Secret: accountKey}) // accountKey is an enclave.ByteAccess
 ```
 
 ### Basic Operations
@@ -168,7 +167,7 @@ storage.AddPolicy(deletePolicy)
 archiver, _ := factory.NewArchiver("glacier", map[string]string{
     "vaultName": "archive",
     "region":    "us-east-1",
-})
+}, common.Credentials{})
 
 archivePolicy := common.LifecyclePolicy{
     ID:          "archive-old-data",
@@ -232,7 +231,7 @@ func init() {
     storage, _ = factory.NewStorage("s3", map[string]string{
         "bucket": "uploads",
         "region": "us-east-1",
-    })
+    }, common.Credentials{})
 }
 
 func uploadHandler(w http.ResponseWriter, r *http.Request) {
@@ -287,7 +286,7 @@ func main() {
 
     storage, _ := factory.NewStorage(*backend, map[string]string{
         "path": *path,
-    })
+    }, common.Credentials{})
 
     command := flag.Arg(0)
     switch command {

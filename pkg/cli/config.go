@@ -23,6 +23,8 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/jeremyhahn/go-enclave"
+
+	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
 // Config holds the CLI configuration settings.
@@ -154,12 +156,11 @@ func GetConfig(v *viper.Viper) *Config {
 //   - Viper hands out credentials as Go strings, which cannot be wiped, so one
 //     unprotected copy of each exists between v.GetString and the enclave.
 //     That copy is unavoidable without owning the configuration loader.
-//   - StorageSettings materializes each credential as a Go string again at the
-//     backend Configure(map[string]string) boundary, and the backend and its
-//     vendor SDK keep copies of those strings for their own lifetime.
-//     [Config.Destroy] wipes the enclaves; it cannot reach those copies.
-//     Closing that boundary requires a breaking change to the Storage
-//     interface and is tracked as issue #16.
+//   - [Config.Credentials] hands the enclaves straight to the backend's
+//     Configure, which copies a credential out only for the call that builds
+//     the vendor SDK credential and zeroizes that copy. The SDK keeps its own
+//     copy of the string for its lifetime. [Config.Destroy] wipes the enclaves;
+//     it cannot reach the SDK's copy.
 //
 // Between those two boundaries the credential lives only in locked, zeroized
 // memory, and is never held as a plain string in a struct for the process
@@ -273,50 +274,57 @@ func (c *Config) Destroy() error {
 	return errors.Join(keyErr, secretErr)
 }
 
-// backendKeyValue materializes the backend access key as a plain string.
+// Credentials returns the backend credentials as protected-memory handles for
+// [common.Storage.Configure], plus a release func the caller must call once the
+// backend is configured. No credential is ever copied into a string or a
+// settings map.
 //
-// This is the boundary with backend Configure, which takes a
-// map[string]string; a plain copy is unavoidable there. Call it as late as
-// possible and never store the result.
-//
-// Once an enclave has been selected for this credential it is the ONLY source:
-// a destroyed enclave reports [enclave.ErrEnclaveDestroyed] rather than
-// falling back to the deprecated plain field. An enclave can be destroyed
+// Once an enclave has been selected for a credential it is the ONLY source: a
+// destroyed enclave fails closed with a [*CredentialUnavailableError] rather
+// than falling back to the deprecated plain field. An enclave can be destroyed
 // independently of this call — a rotation or a Config teardown elsewhere — so
 // authenticating with whatever stale plaintext happened to be left in
-// BackendKey at that moment would be a fail-open. The deprecated field is read
-// only when no enclave was ever set.
-func (c *Config) backendKeyValue() (string, error) {
-	if c.backendKeyEnclave != nil {
-		return enclaveString(c.backendKeyEnclave)
+// BackendKey at that moment would be a fail-open. The deprecated plain field is
+// read only when no enclave was ever set; it is then moved into a temporary
+// enclave that the release func destroys. A credential that is not configured
+// is left nil, so the backend uses the SDK's default credential chain.
+func (c *Config) Credentials() (common.Credentials, func() error, error) {
+	var temp []enclave.ByteAccess
+	release := func() error {
+		var errs []error
+		for _, h := range temp {
+			errs = append(errs, h.Destroy())
+		}
+		return errors.Join(errs...)
 	}
-	return c.BackendKey, nil
-}
 
-// backendSecretValue materializes the backend secret access key as a plain
-// string. Same boundary caveat and same no-fallback rule as backendKeyValue.
-func (c *Config) backendSecretValue() (string, error) {
-	if c.backendSecretEnclave != nil {
-		return enclaveString(c.backendSecretEnclave)
+	resolve := func(name string, protected enclave.ByteAccess, plain string) (enclave.ByteAccess, error) {
+		if protected != nil {
+			if err := protected.WithBytes(func([]byte) error { return nil }); err != nil {
+				return nil, &CredentialUnavailableError{Credential: name, Err: err}
+			}
+			return protected, nil
+		}
+		if plain == "" {
+			return nil, nil
+		}
+		h, err := enclave.NewMemory([]byte(plain))
+		if err != nil {
+			return nil, &CredentialUnavailableError{Credential: name, Err: err}
+		}
+		temp = append(temp, h)
+		return h, nil
 	}
-	return c.BackendSecret, nil
-}
 
-// enclaveString copies the enclave's material out as a string, or reports
-// [enclave.ErrEnclaveDestroyed]. The copy is taken inside the borrow, so a
-// concurrent Destroy waits rather than unmapping the pages mid-read.
-func enclaveString(e enclave.ByteAccess) (string, error) {
-	if e == nil {
-		return "", enclave.ErrEnclaveDestroyed
+	key, err := resolve("backend access key", c.backendKeyEnclave, c.BackendKey)
+	if err != nil {
+		return common.Credentials{}, func() error { return nil }, errors.Join(err, release())
 	}
-	var s string
-	if err := e.WithBytes(func(b []byte) error {
-		s = string(b)
-		return nil
-	}); err != nil {
-		return "", err
+	secret, err := resolve("backend secret key", c.backendSecretEnclave, c.BackendSecret)
+	if err != nil {
+		return common.Credentials{}, func() error { return nil }, errors.Join(err, release())
 	}
-	return s, nil
+	return common.Credentials{Key: key, Secret: secret}, release, nil
 }
 
 // hasBackendKey reports whether a backend access key is configured, without
@@ -349,63 +357,20 @@ func (c *Config) maskedBackendSecret() string {
 	return maskSecret(c.BackendSecret)
 }
 
-// StorageSettings converts Config to a storage backend settings map.
-//
-// It is the protected replacement for GetStorageSettings: when a credential
-// was placed in an enclave that has since been destroyed it returns
-// [enclave.ErrEnclaveDestroyed] instead of authenticating with whatever stale
-// value the deprecated plain field happens to hold.
-//
-// The returned map holds the credentials as ordinary Go strings, because the
-// backend Configure boundary takes a map[string]string. Those strings cannot
-// be wiped; build the map as late as possible, hand it straight to the
-// backend, and do not retain it. Closing that boundary needs the Storage
-// interface to change and is tracked separately.
-func (c *Config) StorageSettings() (map[string]string, error) {
-	settings := c.storageSettingsWithoutCredentials()
-
-	if c.hasBackendKey() {
-		v, err := c.backendKeyValue()
-		if err != nil {
-			return nil, &CredentialUnavailableError{Credential: "backend access key", Err: err}
-		}
-		settings["access_key_id"] = v
-	}
-	if c.hasBackendSecret() {
-		v, err := c.backendSecretValue()
-		if err != nil {
-			return nil, &CredentialUnavailableError{Credential: "backend secret access key", Err: err}
-		}
-		settings["secret_access_key"] = v
-	}
-
-	return settings, nil
+// StorageSettings converts Config to the plain settings map of a storage
+// backend. It never holds a credential: those travel separately, as the
+// protected-memory handles [Config.Credentials] returns, so no credential is
+// ever an ordinary Go string that cannot be wiped.
+func (c *Config) StorageSettings() map[string]string {
+	return c.storageSettingsWithoutCredentials()
 }
 
 // GetStorageSettings converts Config to storage backend settings map.
 //
-// Deprecated: this signature cannot report a destroyed enclave. It fails
-// CLOSED — a credential whose enclave has been destroyed is omitted from the
-// map, so the backend fails to authenticate — but the caller never learns
-// why. Use StorageSettings, which returns the error.
+// Deprecated: use StorageSettings. The two are identical; neither carries a
+// credential.
 func (c *Config) GetStorageSettings() map[string]string {
-	settings := c.storageSettingsWithoutCredentials()
-
-	// An unreadable credential is omitted, never replaced by the deprecated
-	// plain field: falling back would authenticate with stale unprotected
-	// material after the protected path was chosen.
-	if c.hasBackendKey() {
-		if v, err := c.backendKeyValue(); err == nil {
-			settings["access_key_id"] = v
-		}
-	}
-	if c.hasBackendSecret() {
-		if v, err := c.backendSecretValue(); err == nil {
-			settings["secret_access_key"] = v
-		}
-	}
-
-	return settings
+	return c.StorageSettings()
 }
 
 // storageSettingsWithoutCredentials builds every backend setting that is not a

@@ -44,8 +44,8 @@ func newMinimalStorage() *minimalStorage {
 	return &minimalStorage{inner: newMockStorage()}
 }
 
-func (s *minimalStorage) Configure(settings map[string]string) error {
-	return s.inner.Configure(settings)
+func (s *minimalStorage) Configure(settings map[string]string, creds common.Credentials) error {
+	return s.inner.Configure(settings, creds)
 }
 func (s *minimalStorage) Put(key string, data io.Reader) error {
 	return s.inner.Put(key, data)

@@ -28,7 +28,7 @@ func TestLifecycle_Run_DeletesOldFiles(t *testing.T) {
 	dir := t.TempDir()
 	s := New()
 	// Use in-memory lifecycle manager (default)
-	if err := s.Configure(map[string]string{"path": dir}); err != nil {
+	if err := s.Configure(map[string]string{"path": dir}, noCreds); err != nil {
 		t.Fatal(err)
 	}
 	ll := s.(*Local)

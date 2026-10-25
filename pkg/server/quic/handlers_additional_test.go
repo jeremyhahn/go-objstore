@@ -246,7 +246,7 @@ func TestHandlerPutWithMultipleCustomMetadata(t *testing.T) {
 
 func TestNewHandler(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 
 	logger := adapters.NewNoOpLogger()
 	auth := adapters.NewNoOpAuthenticator()

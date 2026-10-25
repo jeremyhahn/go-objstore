@@ -30,10 +30,9 @@ func TestAzure_BasicOps(t *testing.T) {
 
 	st, err := factory.NewStorage("azure", map[string]string{
 		"accountName":   "devstoreaccount1",
-		"accountKey":    "bXlrZXk=",
 		"containerName": container,
 		"endpoint":      "http://azurite:10000/devstoreaccount1",
-	})
+	}, testcommon.Creds(t, "", "bXlrZXk="))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,10 +61,9 @@ func TestAzure_EmptyFile(t *testing.T) {
 
 	st, err := factory.NewStorage("azure", map[string]string{
 		"accountName":   "devstoreaccount1",
-		"accountKey":    "bXlrZXk=",
 		"containerName": container,
 		"endpoint":      "http://azurite:10000/devstoreaccount1",
-	})
+	}, testcommon.Creds(t, "", "bXlrZXk="))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,10 +90,9 @@ func TestAzure_ErrorHandling(t *testing.T) {
 
 	st, err := factory.NewStorage("azure", map[string]string{
 		"accountName":   "devstoreaccount1",
-		"accountKey":    "bXlrZXk=",
 		"containerName": container,
 		"endpoint":      "http://azurite:10000/devstoreaccount1",
-	})
+	}, testcommon.Creds(t, "", "bXlrZXk="))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,10 +110,9 @@ func TestAzure_Lifecycle(t *testing.T) {
 
 	st, err := factory.NewStorage("azure", map[string]string{
 		"accountName":   "devstoreaccount1",
-		"accountKey":    "bXlrZXk=",
 		"containerName": container,
 		"endpoint":      "http://azurite:10000/devstoreaccount1",
-	})
+	}, testcommon.Creds(t, "", "bXlrZXk="))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,10 +133,9 @@ func TestAzure_ComprehensiveSuite(t *testing.T) {
 
 	st, err := factory.NewStorage("azure", map[string]string{
 		"accountName":   "devstoreaccount1",
-		"accountKey":    "bXlrZXk=",
 		"containerName": container,
 		"endpoint":      "http://azurite:10000/devstoreaccount1",
-	})
+	}, testcommon.Creds(t, "", "bXlrZXk="))
 	if err != nil {
 		t.Fatal(err)
 	}

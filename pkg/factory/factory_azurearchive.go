@@ -21,13 +21,13 @@ import (
 )
 
 func init() {
-	RegisterArchiver("azurearchive", func(settings map[string]string) (common.Archiver, error) {
+	RegisterArchiver("azurearchive", func(settings map[string]string, creds common.Credentials) (common.Archiver, error) {
 		archiver := azurearchive.New()
 		azureArchiver, ok := archiver.(*azurearchive.AzureArchive)
 		if !ok {
 			return nil, ErrTypeAssertionFailed
 		}
-		err := azureArchiver.Configure(settings)
+		err := azureArchiver.Configure(settings, creds)
 		if err != nil {
 			return nil, err
 		}

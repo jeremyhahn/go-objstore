@@ -35,7 +35,7 @@ func (m *mockArchiver) Put(key string, r io.Reader) error {
 func TestLifecycle_Process_Delete(t *testing.T) {
 	dir := t.TempDir()
 	s := New()
-	if err := s.Configure(map[string]string{"path": dir}); err != nil {
+	if err := s.Configure(map[string]string{"path": dir}, noCreds); err != nil {
 		t.Fatal(err)
 	}
 	ll := s.(*Local)
@@ -73,7 +73,7 @@ func TestLifecycle_Process_Delete(t *testing.T) {
 func TestLifecycle_Process_Archive(t *testing.T) {
 	dir := t.TempDir()
 	s := New()
-	if err := s.Configure(map[string]string{"path": dir}); err != nil {
+	if err := s.Configure(map[string]string{"path": dir}, noCreds); err != nil {
 		t.Fatal(err)
 	}
 	ll := s.(*Local)

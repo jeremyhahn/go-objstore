@@ -294,15 +294,20 @@ Uses Google Application Default Credentials:
 ### Azure Blob Storage
 
 ```c
-char *keys[] = {"accountName", "accountKey", "containerName"};
-char *values[] = {"myaccount", "base64key==", "mycontainer"};
-int h = ObjstoreNewStorage("azure", keys, values, 3);
+char *keys[] = {"accountName", "containerName"};
+char *values[] = {"myaccount", "mycontainer"};
+int h = ObjstoreNewStorage("azure", keys, values, 2);
 ```
 
 **Configuration:**
 - `accountName` - Azure storage account name
-- `accountKey` - Base64-encoded account key
 - `containerName` - Blob container name
+
+**Credentials:** a credential never travels in the settings arrays. A key such as
+`accountKey`, `accessKey` or `secretKey` is rejected with an error. The C
+library does not yet have a protected-memory credential channel, so backends
+that need an explicit key (Azure, and S3 without the SDK default chain) cannot be
+configured with one from C (issue #16).
 
 ---
 

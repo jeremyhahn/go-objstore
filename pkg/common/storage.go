@@ -22,8 +22,13 @@ import (
 type Storage interface {
 	LifecycleManager
 
-	// Configure sets up the backend with the necessary credentials and settings.
-	Configure(settings map[string]string) error
+	// Configure sets up the backend. settings carries the plain settings (path,
+	// bucket, region, endpoint and so on); a credential entry in it is an
+	// error. creds carries the protected-memory credential handles: a backend
+	// copies a credential out of its handle only for the length of the call
+	// that builds the vendor SDK credential, zeroizes the copy, and never
+	// retains the handle. A zero Credentials means the SDK's default chain.
+	Configure(settings map[string]string, creds Credentials) error
 
 	// Put stores an object in the backend.
 	Put(key string, data io.Reader) error

@@ -21,13 +21,13 @@ import (
 )
 
 func init() {
-	RegisterArchiver("glacier", func(settings map[string]string) (common.Archiver, error) {
+	RegisterArchiver("glacier", func(settings map[string]string, creds common.Credentials) (common.Archiver, error) {
 		archiver := glacier.New()
 		glacierArchiver, ok := archiver.(*glacier.Glacier)
 		if !ok {
 			return nil, ErrTypeAssertionFailed
 		}
-		err := glacierArchiver.Configure(settings)
+		err := glacierArchiver.Configure(settings, creds)
 		if err != nil {
 			return nil, err
 		}

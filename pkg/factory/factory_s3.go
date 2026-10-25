@@ -21,17 +21,17 @@ import (
 )
 
 func init() {
-	RegisterStorage("s3", func(settings map[string]string) (common.Storage, error) {
+	RegisterStorage("s3", func(settings map[string]string, creds common.Credentials) (common.Storage, error) {
 		storage := s3.New()
-		err := storage.Configure(settings)
+		err := storage.Configure(settings, creds)
 		if err != nil {
 			return nil, err
 		}
 		return storage, nil
 	})
 
-	RegisterBucketManager("s3", func(settings map[string]string) (common.BucketManager, error) {
-		manager, err := s3.NewManager(settings)
+	RegisterBucketManager("s3", func(settings map[string]string, creds common.Credentials) (common.BucketManager, error) {
+		manager, err := s3.NewManager(settings, creds)
 		if err != nil {
 			return nil, err
 		}

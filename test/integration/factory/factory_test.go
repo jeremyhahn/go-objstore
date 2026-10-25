@@ -19,10 +19,11 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
+	testcommon "github.com/jeremyhahn/go-objstore/test/integration/common"
 )
 
 func TestFactory_InvalidBackend(t *testing.T) {
-	_, err := factory.NewStorage("nonexistent", nil)
+	_, err := factory.NewStorage("nonexistent", nil, testcommon.NoCreds())
 	if err == nil {
 		t.Fatal("Expected error for invalid backend")
 	}
@@ -31,11 +32,9 @@ func TestFactory_InvalidBackend(t *testing.T) {
 func TestFactory_ArchiveOnlyAsStorage(t *testing.T) {
 	// Glacier should not be allowed as primary storage
 	_, err := factory.NewStorage("glacier", map[string]string{
-		"vault":     "test",
-		"region":    "us-east-1",
-		"accessKey": "test",
-		"secretKey": "test",
-	})
+		"vault":  "test",
+		"region": "us-east-1",
+	}, testcommon.Creds(t, "test", "test"))
 	if err == nil {
 		t.Fatal("Expected error when using archive-only backend as storage")
 	}
@@ -43,7 +42,7 @@ func TestFactory_ArchiveOnlyAsStorage(t *testing.T) {
 
 func TestFactory_InvalidArchiver(t *testing.T) {
 	// Test creating invalid archiver
-	_, err := factory.NewArchiver("nonexistent", nil)
+	_, err := factory.NewArchiver("nonexistent", nil, testcommon.NoCreds())
 	if err == nil {
 		t.Fatal("Expected error for invalid archiver type")
 	}
@@ -54,7 +53,7 @@ func TestFactory_MissingConfig(t *testing.T) {
 	_, err := factory.NewStorage("s3", map[string]string{
 		"region": "us-east-1",
 		// missing bucket
-	})
+	}, testcommon.NoCreds())
 	if err == nil {
 		t.Fatal("Expected error for missing bucket config")
 	}
@@ -64,7 +63,7 @@ func TestFactory_LocalStorageCreation(t *testing.T) {
 	// Test successful local storage creation
 	st, err := factory.NewStorage("local", map[string]string{
 		"path": "/tmp/test-factory-local",
-	})
+	}, testcommon.NoCreds())
 	if err != nil {
 		t.Fatalf("Failed to create local storage: %v", err)
 	}

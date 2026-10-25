@@ -18,10 +18,10 @@ import (
 )
 
 // StorageCreator is a function that creates a storage backend.
-type StorageCreator func(settings map[string]string) (common.Storage, error)
+type StorageCreator func(settings map[string]string, creds common.Credentials) (common.Storage, error)
 
 // ArchiverCreator is a function that creates an archiver.
-type ArchiverCreator func(settings map[string]string) (common.Archiver, error)
+type ArchiverCreator func(settings map[string]string, creds common.Credentials) (common.Archiver, error)
 
 var (
 	storageRegistry  = make(map[string]StorageCreator)
@@ -43,7 +43,7 @@ func RegisterArchiver(backendType string, creator ArchiverCreator) {
 }
 
 // NewStorage creates a new storage backend based on the given type.
-func NewStorage(backendType string, settings map[string]string) (common.Storage, error) {
+func NewStorage(backendType string, settings map[string]string, creds common.Credentials) (common.Storage, error) {
 	// Check if this is an archive-only backend
 	if archiveOnlyTypes[backendType] {
 		return nil, ErrArchiveOnlyBackend
@@ -53,16 +53,16 @@ func NewStorage(backendType string, settings map[string]string) (common.Storage,
 	if !exists {
 		return nil, ErrUnknownBackend
 	}
-	return creator(settings)
+	return creator(settings, creds)
 }
 
 // NewArchiver creates a new archiver based on the given type.
-func NewArchiver(backendType string, settings map[string]string) (common.Archiver, error) {
+func NewArchiver(backendType string, settings map[string]string, creds common.Credentials) (common.Archiver, error) {
 	creator, exists := archiverRegistry[backendType]
 	if !exists {
 		return nil, ErrUnknownArchiver
 	}
-	return creator(settings)
+	return creator(settings, creds)
 }
 
 // ListStorageBackends returns a list of all registered storage backend types.

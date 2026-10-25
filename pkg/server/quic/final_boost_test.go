@@ -133,7 +133,7 @@ func TestTLSSaveWithInvalidKeyType(t *testing.T) {
 func TestServerStartMultipleTimes(t *testing.T) {
 	// Test starting server multiple times to cover all state transitions
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
@@ -177,7 +177,7 @@ func TestServerStartMultipleTimes(t *testing.T) {
 
 func TestServerMultipleStopCalls(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	initTestFacade(t, storage)
 	tlsConfig, _ := GenerateSelfSignedCert()
 

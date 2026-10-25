@@ -91,7 +91,7 @@ func (m *mockEncrypterFactory) Close() error {
 func TestLocalAtRestEncryption(t *testing.T) {
 	tmpDir := t.TempDir()
 	storage := New().(*Local)
-	err := storage.Configure(map[string]string{"path": tmpDir})
+	err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 	if err != nil {
 		t.Fatalf("failed to configure storage: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestLocalAtRestEncryption(t *testing.T) {
 func TestLocalWithoutEncryption(t *testing.T) {
 	tmpDir := t.TempDir()
 	storage := New().(*Local)
-	err := storage.Configure(map[string]string{"path": tmpDir})
+	err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 	if err != nil {
 		t.Fatalf("failed to configure storage: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestLocalWithoutEncryption(t *testing.T) {
 func TestLocalEncryptionRoundtrip(t *testing.T) {
 	tmpDir := t.TempDir()
 	storage := New().(*Local)
-	err := storage.Configure(map[string]string{"path": tmpDir})
+	err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 	if err != nil {
 		t.Fatalf("failed to configure storage: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestLocalEncryptionRoundtrip(t *testing.T) {
 func TestSetAtRestEncrypterFactory(t *testing.T) {
 	tmpDir := t.TempDir()
 	storage := New().(*Local)
-	err := storage.Configure(map[string]string{"path": tmpDir})
+	err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 	if err != nil {
 		t.Fatalf("failed to configure storage: %v", err)
 	}
@@ -333,7 +333,7 @@ func TestSetAtRestEncrypterFactory(t *testing.T) {
 func TestLocalEncryptionWithMetadata(t *testing.T) {
 	tmpDir := t.TempDir()
 	storage := New().(*Local)
-	err := storage.Configure(map[string]string{"path": tmpDir})
+	err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 	if err != nil {
 		t.Fatalf("failed to configure storage: %v", err)
 	}
@@ -416,7 +416,7 @@ func TestLocalEncryptionErrors(t *testing.T) {
 	t.Run("encrypter factory returns error", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New().(*Local)
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -445,7 +445,7 @@ func TestLocalEncryptionErrors(t *testing.T) {
 	t.Run("decryption fails for corrupted data", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		storage := New().(*Local)
-		err := storage.Configure(map[string]string{"path": tmpDir})
+		err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 		if err != nil {
 			t.Fatalf("failed to configure storage: %v", err)
 		}
@@ -490,7 +490,7 @@ func TestLocalEncryptionErrors(t *testing.T) {
 func TestLocalEncryptionWithDelete(t *testing.T) {
 	tmpDir := t.TempDir()
 	storage := New().(*Local)
-	err := storage.Configure(map[string]string{"path": tmpDir})
+	err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 	if err != nil {
 		t.Fatalf("failed to configure storage: %v", err)
 	}
@@ -555,7 +555,7 @@ func TestLocalEncryptionWithDelete(t *testing.T) {
 func TestLocalEncryptionWithList(t *testing.T) {
 	tmpDir := t.TempDir()
 	storage := New().(*Local)
-	err := storage.Configure(map[string]string{"path": tmpDir})
+	err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 	if err != nil {
 		t.Fatalf("failed to configure storage: %v", err)
 	}
@@ -612,7 +612,7 @@ func TestLocalEncryptionWithList(t *testing.T) {
 func TestLocalEncryptionWithListOptions(t *testing.T) {
 	tmpDir := t.TempDir()
 	storage := New().(*Local)
-	err := storage.Configure(map[string]string{"path": tmpDir})
+	err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 	if err != nil {
 		t.Fatalf("failed to configure storage: %v", err)
 	}
@@ -675,7 +675,7 @@ func TestLocalEncryptionWithListOptions(t *testing.T) {
 func TestLocalEncryptionContextCancellation(t *testing.T) {
 	tmpDir := t.TempDir()
 	storage := New().(*Local)
-	err := storage.Configure(map[string]string{"path": tmpDir})
+	err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 	if err != nil {
 		t.Fatalf("failed to configure storage: %v", err)
 	}
@@ -721,7 +721,7 @@ func TestLocalEncryptionContextCancellation(t *testing.T) {
 func TestLocalEncryptionLargeFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	storage := New().(*Local)
-	err := storage.Configure(map[string]string{"path": tmpDir})
+	err := storage.Configure(map[string]string{"path": tmpDir}, noCreds)
 	if err != nil {
 		t.Fatalf("failed to configure storage: %v", err)
 	}

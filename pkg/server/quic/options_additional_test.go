@@ -24,7 +24,7 @@ import (
 
 func TestOptionsValidateWithAdapterTLSConfig(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 
 	// Create a valid adapter TLS config
 	adapterTLS := adapters.NewTLSConfig().
@@ -55,7 +55,7 @@ func TestOptionsValidateWithAdapterTLSConfig(t *testing.T) {
 
 func TestOptionsValidateWithAdapterTLSConfigError(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 
 	// Create an adapter TLS config that will fail to build
 	adapterTLS := adapters.NewTLSConfig().
@@ -75,7 +75,7 @@ func TestOptionsValidateWithAdapterTLSConfigError(t *testing.T) {
 
 func TestOptionsValidateAutoFillsDefaults(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
 	opts := &Options{
@@ -114,7 +114,7 @@ func TestOptionsValidateAutoFillsDefaults(t *testing.T) {
 
 func TestOptionsValidateNilQUICConfig(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
 	opts := &Options{
@@ -137,7 +137,7 @@ func TestOptionsValidateNilQUICConfig(t *testing.T) {
 
 func TestOptionsValidateZeroTimeouts(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
 	opts := &Options{
@@ -170,7 +170,7 @@ func TestOptionsValidateZeroTimeouts(t *testing.T) {
 
 func TestOptionsValidateZeroMaxRequestBodySize(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
 	opts := &Options{
@@ -192,7 +192,7 @@ func TestOptionsValidateZeroMaxRequestBodySize(t *testing.T) {
 
 func TestOptionsValidateNegativeMaxRequestBodySize(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
 	opts := &Options{
@@ -214,7 +214,7 @@ func TestOptionsValidateNegativeMaxRequestBodySize(t *testing.T) {
 
 func TestOptionsChaining(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	tlsConfig, _ := GenerateSelfSignedCert()
 	logger := adapters.NewDefaultLogger()
 	auth := adapters.NewNoOpAuthenticator()
@@ -255,7 +255,7 @@ func TestOptionsChaining(t *testing.T) {
 
 func TestOptionsQUICConfigSync(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
 	opts := &Options{
@@ -339,7 +339,7 @@ func TestOptionsDefaultLoggerAndAuth(t *testing.T) {
 
 func TestOptionsEmptyAddr(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	tlsConfig, _ := GenerateSelfSignedCert()
 
 	opts := &Options{
@@ -386,7 +386,7 @@ func TestOptionsNilTLSConfig(t *testing.T) {
 
 func TestOptionsValidateWithFailingAdapterTLS(t *testing.T) {
 	storage := local.New()
-	storage.Configure(map[string]string{"path": t.TempDir()})
+	storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 
 	// This test would need a mock that implements the adapter interface
 	// For now, we'll just use an invalid cert path which will cause Build to fail

@@ -28,7 +28,7 @@ func TestGCS_BasicOps(t *testing.T) {
 	bucket := "objstore-gcs"
 	testcommon.CreateGCSBucket(t, bucket)
 
-	st, err := factory.NewStorage("gcs", map[string]string{"bucket": bucket})
+	st, err := factory.NewStorage("gcs", map[string]string{"bucket": bucket}, testcommon.NoCreds())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestGCS_EmptyFile(t *testing.T) {
 	bucket := "objstore-gcs-empty"
 	testcommon.CreateGCSBucket(t, bucket)
 
-	st, err := factory.NewStorage("gcs", map[string]string{"bucket": bucket})
+	st, err := factory.NewStorage("gcs", map[string]string{"bucket": bucket}, testcommon.NoCreds())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestGCS_ErrorHandling(t *testing.T) {
 	bucket := "objstore-gcs-errors"
 	testcommon.CreateGCSBucket(t, bucket)
 
-	st, err := factory.NewStorage("gcs", map[string]string{"bucket": bucket})
+	st, err := factory.NewStorage("gcs", map[string]string{"bucket": bucket}, testcommon.NoCreds())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestGCS_Lifecycle(t *testing.T) {
 	bucket := "objstore-gcs-lifecycle"
 	testcommon.CreateGCSBucket(t, bucket)
 
-	st, err := factory.NewStorage("gcs", map[string]string{"bucket": bucket})
+	st, err := factory.NewStorage("gcs", map[string]string{"bucket": bucket}, testcommon.NoCreds())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestGCS_ComprehensiveSuite(t *testing.T) {
 	bucket := "objstore-gcs-comprehensive"
 	testcommon.CreateGCSBucket(t, bucket)
 
-	st, err := factory.NewStorage("gcs", map[string]string{"bucket": bucket})
+	st, err := factory.NewStorage("gcs", map[string]string{"bucket": bucket}, testcommon.NoCreds())
 	if err != nil {
 		t.Fatal(err)
 	}

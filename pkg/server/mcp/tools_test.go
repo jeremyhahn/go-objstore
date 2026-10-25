@@ -39,7 +39,7 @@ func NewMockStorage() *MockStorage {
 	}
 }
 
-func (m *MockStorage) Configure(settings map[string]string) error {
+func (m *MockStorage) Configure(settings map[string]string, _ common.Credentials) error {
 	return nil
 }
 
@@ -208,7 +208,7 @@ type ErrorMockStorage struct {
 	readError     bool
 }
 
-func (m *ErrorMockStorage) Configure(settings map[string]string) error {
+func (m *ErrorMockStorage) Configure(settings map[string]string, _ common.Credentials) error {
 	return nil
 }
 

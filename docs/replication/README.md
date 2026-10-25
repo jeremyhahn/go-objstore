@@ -351,11 +351,15 @@ Settings: map[string]string{
     "bucket":         "my-bucket",
     "endpoint":       "http://localhost:4566",
     "forcePathStyle": "true",
-    "accessKey":      "test",
-    "secretKey":      "test",
     "region":         "us-east-1",
 }
 ```
+
+Settings maps never carry credentials: a key such as `accessKey` or
+`accountKey` is rejected. Replication backends authenticate through the vendor
+SDK's default credential chain (environment, shared config, instance or
+workload identity); for the S3-compatible example above set
+`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` in the environment.
 
 **GCS Backend:**
 ```go
@@ -369,10 +373,12 @@ Settings: map[string]string{
 ```go
 Settings: map[string]string{
     "accountName":   "mystorageaccount",
-    "accountKey":    "base64encodedkey==",
     "containerName": "mycontainer",
 }
 ```
+
+The Azure account key is a credential and cannot be set in the map; it must be
+supplied as a `common.Credentials` handle by the embedding application.
 
 ### YAML Configuration File
 

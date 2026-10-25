@@ -34,6 +34,7 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
 	"github.com/jeremyhahn/go-objstore/pkg/local"
 	"github.com/jeremyhahn/go-objstore/pkg/replication"
+	testcommon "github.com/jeremyhahn/go-objstore/test/integration/common"
 )
 
 // TestHelper provides common test setup and teardown functionality
@@ -60,10 +61,10 @@ func NewTestHelper(t *testing.T) *TestHelper {
 	require.NoError(t, os.MkdirAll(destDir, 0755))
 
 	// Create storage backends
-	sourceStore, err := factory.NewStorage("local", map[string]string{"path": sourceDir})
+	sourceStore, err := factory.NewStorage("local", map[string]string{"path": sourceDir}, testcommon.NoCreds())
 	require.NoError(t, err)
 
-	destStore, err := factory.NewStorage("local", map[string]string{"path": destDir})
+	destStore, err := factory.NewStorage("local", map[string]string{"path": destDir}, testcommon.NoCreds())
 	require.NoError(t, err)
 
 	return &TestHelper{

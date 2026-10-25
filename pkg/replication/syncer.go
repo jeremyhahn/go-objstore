@@ -71,12 +71,12 @@ func NewSyncer(
 ) (*Syncer, error) {
 
 	// Create source and destination backends
-	source, err := factory.NewStorage(policy.SourceBackend, policy.SourceSettings)
+	source, err := factory.NewStorage(policy.SourceBackend, policy.SourceSettings, common.Credentials{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create source backend: %w", err)
 	}
 
-	dest, err := factory.NewStorage(policy.DestinationBackend, policy.DestinationSettings)
+	dest, err := factory.NewStorage(policy.DestinationBackend, policy.DestinationSettings, common.Credentials{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create destination backend: %w", err)
 	}

@@ -520,7 +520,7 @@ func TestAzureDeleteBucketListsFirst(t *testing.T) {
 func TestAzureNewManagerSettings(t *testing.T) {
 	settings := map[string]string{"accountName": "acct", "accountKey": base64.StdEncoding.EncodeToString([]byte("key"))}
 
-	m, err := NewManager(settings)
+	m, err := NewManager(splitKey(t, settings))
 	if err != nil {
 		t.Fatalf("NewManager without container = %v", err)
 	}
@@ -534,10 +534,10 @@ func TestAzureNewManagerSettings(t *testing.T) {
 		t.Errorf("initiate on a manager = %v", err)
 	}
 
-	if err := (&Azure{}).Configure(settings); !errors.Is(err, common.ErrAccountNotSet) {
+	if err := (&Azure{}).Configure(splitKey(t, settings)); !errors.Is(err, common.ErrAccountNotSet) {
 		t.Errorf("Configure without container = %v", err)
 	}
-	if _, err := NewManager(map[string]string{"accountName": "acct"}); !errors.Is(err, common.ErrAccountNotSet) {
+	if _, err := NewManager(map[string]string{"accountName": "acct"}, noCreds); !errors.Is(err, common.ErrAccountNotSet) {
 		t.Errorf("NewManager without key = %v", err)
 	}
 
@@ -546,17 +546,17 @@ func TestAzureNewManagerSettings(t *testing.T) {
 		withExpiry[k] = v
 	}
 	a := &Azure{}
-	if err := a.Configure(withExpiry); err != nil {
+	if err := a.Configure(splitKey(t, withExpiry)); err != nil {
 		t.Fatal(err)
 	}
 	if a.multipartExpiry != 2*time.Hour || a.container == nil {
 		t.Errorf("expiry %v, container %v", a.multipartExpiry, a.container)
 	}
 	withExpiry["multipartExpiry"] = "soon"
-	if err := (&Azure{}).Configure(withExpiry); !errors.Is(err, common.ErrInvalidArgument) {
+	if err := (&Azure{}).Configure(splitKey(t, withExpiry)); !errors.Is(err, common.ErrInvalidArgument) {
 		t.Errorf("bad expiry = %v", err)
 	}
-	if _, err := NewManager(withExpiry); !errors.Is(err, common.ErrInvalidArgument) {
+	if _, err := NewManager(splitKey(t, withExpiry)); !errors.Is(err, common.ErrInvalidArgument) {
 		t.Errorf("bad expiry on a manager = %v", err)
 	}
 

@@ -178,7 +178,7 @@ Same filesystem code works identically across Local, S3, Azure, and GCS backends
 storage, _ := factory.NewStorage("s3", map[string]string{
     "bucket": "my-bucket",
     "region": "us-east-1",
-})
+}, common.Credentials{})
 
 // Wrap with filesystem interface
 fs := storagefs.New(storage)
@@ -196,11 +196,11 @@ content, _ := io.ReadAll(fs.Open("docs/examples/readme.txt"))
 ### Switching Backends
 ```go
 // Local
-localStorage, _ := factory.NewStorage("local", map[string]string{"basePath": "/tmp"})
+localStorage, _ := factory.NewStorage("local", map[string]string{"basePath": "/tmp"}, common.Credentials{})
 localFS := storagefs.New(localStorage)
 
 // S3 (identical API!)
-s3Storage, _ := factory.NewStorage("s3", map[string]string{"bucket": "my-bucket"})
+s3Storage, _ := factory.NewStorage("s3", map[string]string{"bucket": "my-bucket"}, common.Credentials{})
 s3FS := storagefs.New(s3Storage)
 
 // Both use the same filesystem operations

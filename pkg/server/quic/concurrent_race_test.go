@@ -36,7 +36,7 @@ import (
 // touching the backend, keeping the test focused on the logger race.
 func TestServeHTTPConcurrentNoBadLoggerRace(t *testing.T) {
 	storage := local.New()
-	if err := storage.Configure(map[string]string{"path": t.TempDir()}); err != nil {
+	if err := storage.Configure(map[string]string{"path": t.TempDir()}, noCreds); err != nil {
 		t.Fatalf("storage.Configure: %v", err)
 	}
 	initTestFacade(t, storage)

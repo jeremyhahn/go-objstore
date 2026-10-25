@@ -262,7 +262,7 @@ Enable encryption by wrapping your storage:
 
 ```go
 // Create storage backend
-storage, err := factory.NewStorage("s3", settings)
+storage, err := factory.NewStorage("s3", settings, creds)
 
 // Create your encrypter factory (any implementation)
 encrypterFactory := yourapp.NewEncrypterFactory(config)
@@ -286,7 +286,7 @@ type EncryptedStorageCreator struct {
 
 func (c *EncryptedStorageCreator) Create(backendType string, settings map[string]string) (common.Storage, error) {
     // Create underlying storage
-    storage, err := factory.NewStorage(backendType, settings)
+    storage, err := factory.NewStorage(backendType, settings, creds)
     if err != nil {
         return nil, err
     }

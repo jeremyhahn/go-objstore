@@ -25,6 +25,7 @@ import (
 	"sync"
 	"unsafe"
 
+	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
 )
 
@@ -202,7 +203,7 @@ func ObjstoreNewStorage(backendType *C.char, settingsKeys **C.char, settingsValu
 	}
 
 	// Create storage backend
-	storage, err := factory.NewStorage(goBackendType, settings)
+	storage, err := factory.NewStorage(goBackendType, settings, common.Credentials{})
 	if err != nil {
 		setLastError(err)
 		return -1

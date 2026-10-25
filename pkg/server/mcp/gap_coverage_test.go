@@ -293,7 +293,7 @@ func TestRPCHandler_HandleResourcesRead_BinaryBlob(t *testing.T) {
 // binaryMockStorage returns non-UTF8 bytes so the blob path is exercised.
 type binaryMockStorage struct{}
 
-func (b *binaryMockStorage) Configure(_ map[string]string) error { return nil }
+func (b *binaryMockStorage) Configure(_ map[string]string, _ common.Credentials) error { return nil }
 func (b *binaryMockStorage) GetMetadata(_ context.Context, _ string) (*common.Metadata, error) {
 	return &common.Metadata{ContentType: "application/octet-stream"}, nil
 }
@@ -776,8 +776,10 @@ type applyPoliciesErrorStorage struct {
 	listError bool
 }
 
-func (s *applyPoliciesErrorStorage) Configure(_ map[string]string) error { return nil }
-func (s *applyPoliciesErrorStorage) Put(_ string, _ io.Reader) error     { return nil }
+func (s *applyPoliciesErrorStorage) Configure(_ map[string]string, _ common.Credentials) error {
+	return nil
+}
+func (s *applyPoliciesErrorStorage) Put(_ string, _ io.Reader) error { return nil }
 func (s *applyPoliciesErrorStorage) PutWithContext(_ context.Context, _ string, _ io.Reader) error {
 	return nil
 }
@@ -1086,7 +1088,9 @@ func TestResourceManager_ReadResource_CopyError(t *testing.T) {
 // metadataOKGetErrStorage returns valid metadata but fails on GetWithContext.
 type metadataOKGetErrStorage struct{}
 
-func (s *metadataOKGetErrStorage) Configure(_ map[string]string) error { return nil }
+func (s *metadataOKGetErrStorage) Configure(_ map[string]string, _ common.Credentials) error {
+	return nil
+}
 func (s *metadataOKGetErrStorage) GetMetadata(_ context.Context, _ string) (*common.Metadata, error) {
 	return &common.Metadata{ContentType: "text/plain"}, nil
 }
@@ -1127,7 +1131,9 @@ func (s *metadataOKGetErrStorage) GetPolicies() ([]common.LifecyclePolicy, error
 // metadataOKBadReadStorage returns valid metadata and a reader that fails.
 type metadataOKBadReadStorage struct{}
 
-func (s *metadataOKBadReadStorage) Configure(_ map[string]string) error { return nil }
+func (s *metadataOKBadReadStorage) Configure(_ map[string]string, _ common.Credentials) error {
+	return nil
+}
 func (s *metadataOKBadReadStorage) GetMetadata(_ context.Context, _ string) (*common.Metadata, error) {
 	return &common.Metadata{ContentType: "text/plain"}, nil
 }
@@ -1192,8 +1198,10 @@ func TestToolExecutor_ExecuteUpdateMetadata_UpdateError(t *testing.T) {
 // updateMetaErrorStorage succeeds on all ops except UpdateMetadata.
 type updateMetaErrorStorage struct{}
 
-func (s *updateMetaErrorStorage) Configure(_ map[string]string) error { return nil }
-func (s *updateMetaErrorStorage) Put(_ string, _ io.Reader) error     { return nil }
+func (s *updateMetaErrorStorage) Configure(_ map[string]string, _ common.Credentials) error {
+	return nil
+}
+func (s *updateMetaErrorStorage) Put(_ string, _ io.Reader) error { return nil }
 func (s *updateMetaErrorStorage) PutWithContext(_ context.Context, _ string, _ io.Reader) error {
 	return nil
 }

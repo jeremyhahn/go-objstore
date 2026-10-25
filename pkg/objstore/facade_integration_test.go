@@ -35,14 +35,14 @@ func TestFacadeIntegrationMultipleBackends(t *testing.T) {
 	// Create local storage backends
 	local1, err := factory.NewStorage("local", map[string]string{
 		"path": localPath,
-	})
+	}, noCreds)
 	if err != nil {
 		t.Fatalf("Failed to create local storage 1: %v", err)
 	}
 
 	local2, err := factory.NewStorage("local", map[string]string{
 		"path": localPath2,
-	})
+	}, noCreds)
 	if err != nil {
 		t.Fatalf("Failed to create local storage 2: %v", err)
 	}
@@ -331,7 +331,7 @@ func TestFacadeIntegrationSecurity(t *testing.T) {
 
 	local, err := factory.NewStorage("local", map[string]string{
 		"path": localPath,
-	})
+	}, noCreds)
 	if err != nil {
 		t.Fatalf("Failed to create local storage: %v", err)
 	}

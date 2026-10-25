@@ -33,7 +33,7 @@ import (
 
 func setupTestHandler(t *testing.T) (*Handler, common.Storage) {
 	storage := local.New()
-	err := storage.Configure(map[string]string{"path": t.TempDir()})
+	err := storage.Configure(map[string]string{"path": t.TempDir()}, noCreds)
 	if err != nil {
 		t.Fatalf("Failed to configure storage: %v", err)
 	}

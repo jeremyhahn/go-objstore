@@ -53,7 +53,7 @@ func newClockedLocal(t *testing.T, settings map[string]string) (*Local, *fakeClo
 		s[k] = v
 	}
 	l := New().(*Local)
-	if err := l.Configure(s); err != nil {
+	if err := l.Configure(s, noCreds); err != nil {
 		t.Fatal(err)
 	}
 	c := &fakeClock{t: time.Now()}
@@ -90,7 +90,7 @@ func TestLocal_Configure_MultipartExpiry(t *testing.T) {
 				settings["multipartExpiry"] = tt.value
 			}
 			l := New().(*Local)
-			err := l.Configure(settings)
+			err := l.Configure(settings, noCreds)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
 			}

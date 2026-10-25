@@ -56,7 +56,7 @@ func (c *clock) now() time.Time { return c.t }
 func newClocked(t *testing.T, settings map[string]string) (*Memory, *clock) {
 	t.Helper()
 	m := New().(*Memory)
-	if err := m.Configure(settings); err != nil {
+	if err := m.Configure(settings, noCreds); err != nil {
 		t.Fatal(err)
 	}
 	c := &clock{t: time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)}
@@ -79,7 +79,7 @@ func TestMemory_Configure_MultipartExpiry(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := New().(*Memory)
-			err := m.Configure(tt.settings)
+			err := m.Configure(tt.settings, noCreds)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
 			}

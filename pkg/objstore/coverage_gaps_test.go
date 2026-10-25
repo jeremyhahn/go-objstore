@@ -266,7 +266,7 @@ func TestEnableReplication(t *testing.T) {
 
 	local, err := factory.NewStorage("local", map[string]string{
 		"path": tmpDir,
-	})
+	}, noCreds)
 	if err != nil {
 		t.Fatalf("failed to create local storage: %v", err)
 	}
@@ -298,7 +298,7 @@ func TestEnableReplication_WithConfig(t *testing.T) {
 
 	local, err := factory.NewStorage("local", map[string]string{
 		"path": tmpDir,
-	})
+	}, noCreds)
 	if err != nil {
 		t.Fatalf("failed to create local storage: %v", err)
 	}
@@ -336,7 +336,7 @@ func TestEnableReplication_DefaultBackend(t *testing.T) {
 
 	local, err := factory.NewStorage("local", map[string]string{
 		"path": tmpDir,
-	})
+	}, noCreds)
 	if err != nil {
 		t.Fatalf("failed to create local storage: %v", err)
 	}

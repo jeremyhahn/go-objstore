@@ -26,6 +26,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	awss3 "github.com/aws/aws-sdk-go/service/s3"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
+	testcommon "github.com/jeremyhahn/go-objstore/test/integration/common"
 )
 
 // TestS3_RealCloud tests against real AWS S3
@@ -72,7 +73,7 @@ func TestS3_RealCloud(t *testing.T) {
 	storage, err := factory.NewStorage("s3", map[string]string{
 		"bucket": bucket,
 		"region": region,
-	})
+	}, testcommon.NoCreds())
 	if err != nil {
 		t.Fatalf("Failed to create S3 storage: %v", err)
 	}

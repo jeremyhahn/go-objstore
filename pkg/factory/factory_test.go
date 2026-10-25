@@ -32,7 +32,7 @@ func TestLocal(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(tmpdir) }()
 
-	storage, err := NewStorage("local", map[string]string{"path": tmpdir})
+	storage, err := NewStorage("local", map[string]string{"path": tmpdir}, noCreds)
 	if err != nil {
 		// Local backend may not be available without build tag
 		if errors.Is(err, ErrUnknownBackend) {
@@ -78,7 +78,7 @@ func TestLocal(t *testing.T) {
 func TestLocal_Configure_NoPath(t *testing.T) {
 	// Test that local backend returns error when path is not set
 	// This will either work (if local backend is compiled in) or return ErrUnknownBackend
-	_, err := NewStorage("local", map[string]string{})
+	_, err := NewStorage("local", map[string]string{}, noCreds)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -99,7 +99,7 @@ func TestLocal_Put_Error(t *testing.T) {
 	}
 	_ = file.Close()
 
-	storage, err := NewStorage("local", map[string]string{"path": tmpdir})
+	storage, err := NewStorage("local", map[string]string{"path": tmpdir}, noCreds)
 	if err != nil {
 		if errors.Is(err, ErrUnknownBackend) {
 			t.Skip("local backend not available (requires -tags local)")
@@ -123,7 +123,7 @@ func TestLocal_Get_NotFound(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(tmpdir) }()
 
-	storage, err := NewStorage("local", map[string]string{"path": tmpdir})
+	storage, err := NewStorage("local", map[string]string{"path": tmpdir}, noCreds)
 	if err != nil {
 		if errors.Is(err, ErrUnknownBackend) {
 			t.Skip("local backend not available (requires -tags local)")
@@ -144,7 +144,7 @@ func TestLocal_Delete_NotFound(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(tmpdir) }()
 
-	storage, err := NewStorage("local", map[string]string{"path": tmpdir})
+	storage, err := NewStorage("local", map[string]string{"path": tmpdir}, noCreds)
 	if err != nil {
 		if errors.Is(err, ErrUnknownBackend) {
 			t.Skip("local backend not available (requires -tags local)")
@@ -165,7 +165,7 @@ func TestLocal_Delete_PermissionError(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(tmpdir) }()
 
-	storage, err := NewStorage("local", map[string]string{"path": tmpdir})
+	storage, err := NewStorage("local", map[string]string{"path": tmpdir}, noCreds)
 	if err != nil {
 		if errors.Is(err, ErrUnknownBackend) {
 			t.Skip("local backend not available (requires -tags local)")
@@ -206,7 +206,7 @@ func TestLocal_Archive_DestinationError(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(tmpdir) }()
 
-	storage, err := NewStorage("local", map[string]string{"path": tmpdir})
+	storage, err := NewStorage("local", map[string]string{"path": tmpdir}, noCreds)
 	if err != nil {
 		if errors.Is(err, ErrUnknownBackend) {
 			t.Skip("local backend not available (requires -tags local)")
@@ -229,7 +229,7 @@ func TestLocal_Archive_DestinationError(t *testing.T) {
 }
 
 func TestFactory_NewStorage_S3_Config(t *testing.T) {
-	st, err := NewStorage("s3", map[string]string{"bucket": "b", "region": "us-east-1"})
+	st, err := NewStorage("s3", map[string]string{"bucket": "b", "region": "us-east-1"}, noCreds)
 
 	// Either the backend is available (success) or not compiled in (error)
 	if err != nil {
@@ -251,10 +251,9 @@ func TestFactory_NewStorage_S3_Config(t *testing.T) {
 func TestFactory_NewStorage_Azure_Config(t *testing.T) {
 	storage, err := NewStorage("azure", map[string]string{
 		"accountName":   "testaccount",
-		"accountKey":    "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MA==",
 		"containerName": "testcontainer",
 		"endpoint":      "http://127.0.0.1:10000/testaccount",
-	})
+	}, keyCreds(t, "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MA=="))
 
 	if err != nil {
 		if !errors.Is(err, ErrUnknownBackend) {
@@ -276,7 +275,7 @@ func TestS3(t *testing.T) {
 	storage, err := NewStorage("s3", map[string]string{
 		"bucket": bucket,
 		"region": region,
-	})
+	}, noCreds)
 
 	// If S3 backend not compiled in, verify we get the expected error
 	if err != nil {
@@ -339,7 +338,7 @@ func TestGCS(t *testing.T) {
 
 	storage, err := NewStorage("gcs", map[string]string{
 		"bucket": bucket,
-	})
+	}, noCreds)
 
 	if err != nil {
 		expectedErr := "unknown backend type: gcs"
@@ -398,9 +397,8 @@ func TestAzure(t *testing.T) {
 
 	storage, err := NewStorage("azure", map[string]string{
 		"accountName":   accountName,
-		"accountKey":    accountKey,
 		"containerName": containerName,
-	})
+	}, keyCreds(t, accountKey))
 
 	if err != nil {
 		expectedErr := "unknown backend type: azure"
@@ -453,7 +451,7 @@ func TestAzure(t *testing.T) {
 }
 
 func TestFactory_NewStorage_GCS_Config(t *testing.T) {
-	storage, err := NewStorage("gcs", map[string]string{"bucket": "test-bucket", "skip_client": "true"})
+	storage, err := NewStorage("gcs", map[string]string{"bucket": "test-bucket", "skip_client": "true"}, noCreds)
 
 	if err != nil {
 		if !errors.Is(err, ErrUnknownBackend) {
@@ -478,7 +476,7 @@ func TestFactory_NewStorage_ArchiveOnlyError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := NewStorage(tt.backendType, map[string]string{})
+			_, err := NewStorage(tt.backendType, map[string]string{}, noCreds)
 			if err == nil {
 				t.Fatal("expected error for archive-only backend, got nil")
 			}
@@ -490,7 +488,7 @@ func TestFactory_NewStorage_ArchiveOnlyError(t *testing.T) {
 }
 
 func TestFactory_NewStorage_UnknownBackend(t *testing.T) {
-	_, err := NewStorage("unknown", map[string]string{})
+	_, err := NewStorage("unknown", map[string]string{}, noCreds)
 	if err == nil {
 		t.Fatal("expected error for unknown backend, got nil")
 	}
@@ -513,7 +511,8 @@ func TestFactory_NewStorage_ConfigureErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := NewStorage(tt.backendType, tt.settings)
+			settings, creds := splitKey(t, tt.settings)
+			_, err := NewStorage(tt.backendType, settings, creds)
 			if err == nil {
 				t.Fatalf("expected error for %s with missing config, got nil", tt.backendType)
 			}
@@ -525,7 +524,7 @@ func TestFactory_NewArchiver_Glacier(t *testing.T) {
 	archiver, err := NewArchiver("glacier", map[string]string{
 		"vaultName": "test-vault",
 		"region":    "us-east-1",
-	})
+	}, noCreds)
 
 	if err != nil {
 		if !errors.Is(err, ErrUnknownArchiver) {
@@ -542,9 +541,8 @@ func TestFactory_NewArchiver_Glacier(t *testing.T) {
 func TestFactory_NewArchiver_AzureArchive(t *testing.T) {
 	archiver, err := NewArchiver("azurearchive", map[string]string{
 		"accountName":   "testaccount",
-		"accountKey":    "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MA==",
 		"containerName": "testcontainer",
-	})
+	}, keyCreds(t, "MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MA=="))
 
 	if err != nil {
 		if !errors.Is(err, ErrUnknownArchiver) {
@@ -561,7 +559,7 @@ func TestFactory_NewArchiver_AzureArchive(t *testing.T) {
 func TestFactory_NewArchiver_Local(t *testing.T) {
 	archiver, err := NewArchiver("local", map[string]string{
 		"path": "/tmp/test-archive",
-	})
+	}, noCreds)
 	// Either the backend is available (success) or not compiled in (error)
 	if err != nil {
 		// If build tag not present, should get ErrUnknownArchiver error
@@ -577,7 +575,7 @@ func TestFactory_NewArchiver_Local(t *testing.T) {
 }
 
 func TestFactory_NewArchiver_UnknownType(t *testing.T) {
-	_, err := NewArchiver("unknown", map[string]string{})
+	_, err := NewArchiver("unknown", map[string]string{}, noCreds)
 	if err == nil {
 		t.Fatal("expected error for unknown archiver type, got nil")
 	}
@@ -599,7 +597,8 @@ func TestFactory_NewArchiver_ConfigureErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := NewArchiver(tt.archType, tt.settings)
+			settings, creds := splitKey(t, tt.settings)
+			_, err := NewArchiver(tt.archType, settings, creds)
 			if err == nil {
 				t.Fatalf("expected error for %s with missing config, got nil", tt.archType)
 			}

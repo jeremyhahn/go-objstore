@@ -35,7 +35,7 @@ func TestLocal_BasicOps(t *testing.T) {
 
 	st, err := factory.NewStorage("local", map[string]string{
 		"path": tmpDir,
-	})
+	}, testcommon.NoCreds())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestLocal_EmptyFile(t *testing.T) {
 
 	st, err := factory.NewStorage("local", map[string]string{
 		"path": tmpDir,
-	})
+	}, testcommon.NoCreds())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestLocal_SpecialCharacters(t *testing.T) {
 
 	st, err := factory.NewStorage("local", map[string]string{
 		"path": tmpDir,
-	})
+	}, testcommon.NoCreds())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestLocal_LargeFile(t *testing.T) {
 
 	st, err := factory.NewStorage("local", map[string]string{
 		"path": tmpDir,
-	})
+	}, testcommon.NoCreds())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func TestLocal_Lifecycle(t *testing.T) {
 
 	st, err := factory.NewStorage("local", map[string]string{
 		"path": tmpDir,
-	})
+	}, testcommon.NoCreds())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +209,7 @@ func TestLocal_PersistentLifecycleManager(t *testing.T) {
 		"path":                 tmpDir,
 		"lifecycleManagerType": "persistent",
 		"lifecyclePolicyFile":  "test-policies.json",
-	})
+	}, testcommon.NoCreds())
 	if err != nil {
 		t.Fatalf("Failed to create first storage instance: %v", err)
 	}
@@ -262,7 +262,7 @@ func TestLocal_PersistentLifecycleManager(t *testing.T) {
 		"path":                 tmpDir,
 		"lifecycleManagerType": "persistent",
 		"lifecyclePolicyFile":  "test-policies.json",
-	})
+	}, testcommon.NoCreds())
 	if err != nil {
 		t.Fatalf("Failed to create second storage instance: %v", err)
 	}
@@ -320,7 +320,7 @@ func TestLocal_PersistentLifecycleManager(t *testing.T) {
 		"path":                 tmpDir,
 		"lifecycleManagerType": "persistent",
 		"lifecyclePolicyFile":  "test-policies.json",
-	})
+	}, testcommon.NoCreds())
 	if err != nil {
 		t.Fatalf("Failed to create third storage instance: %v", err)
 	}
@@ -347,7 +347,7 @@ func TestLocal_InMemoryLifecycleManager(t *testing.T) {
 	// Create first instance without specifying lifecycle manager type (defaults to in-memory)
 	st1, err := factory.NewStorage("local", map[string]string{
 		"path": tmpDir,
-	})
+	}, testcommon.NoCreds())
 	if err != nil {
 		t.Fatalf("Failed to create first storage instance: %v", err)
 	}
@@ -376,7 +376,7 @@ func TestLocal_InMemoryLifecycleManager(t *testing.T) {
 	// Create second instance (simulating process restart)
 	st2, err := factory.NewStorage("local", map[string]string{
 		"path": tmpDir,
-	})
+	}, testcommon.NoCreds())
 	if err != nil {
 		t.Fatalf("Failed to create second storage instance: %v", err)
 	}
@@ -402,7 +402,7 @@ func TestLocal_PersistentLifecycleManager_DefaultFile(t *testing.T) {
 	st, err := factory.NewStorage("local", map[string]string{
 		"path":                 tmpDir,
 		"lifecycleManagerType": "persistent",
-	})
+	}, testcommon.NoCreds())
 	if err != nil {
 		t.Fatalf("Failed to create storage instance: %v", err)
 	}
@@ -436,7 +436,7 @@ func TestLocal_InvalidLifecycleManagerType(t *testing.T) {
 	_, err := factory.NewStorage("local", map[string]string{
 		"path":                 tmpDir,
 		"lifecycleManagerType": "invalid-type",
-	})
+	}, testcommon.NoCreds())
 	if err == nil {
 		t.Fatal("Expected error for invalid lifecycle manager type")
 	}
@@ -453,7 +453,7 @@ func TestLocal_PersistentLifecycleWithData(t *testing.T) {
 	st1, err := factory.NewStorage("local", map[string]string{
 		"path":                 tmpDir,
 		"lifecycleManagerType": "persistent",
-	})
+	}, testcommon.NoCreds())
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
@@ -486,7 +486,7 @@ func TestLocal_PersistentLifecycleWithData(t *testing.T) {
 	st2, err := factory.NewStorage("local", map[string]string{
 		"path":                 tmpDir,
 		"lifecycleManagerType": "persistent",
-	})
+	}, testcommon.NoCreds())
 	if err != nil {
 		t.Fatalf("Failed to create second storage: %v", err)
 	}
@@ -525,7 +525,7 @@ func TestLocal_MultiplePersistentInstances(t *testing.T) {
 		"path":                 tmpDir,
 		"lifecycleManagerType": "persistent",
 		"lifecyclePolicyFile":  "shared-policies.json",
-	})
+	}, testcommon.NoCreds())
 	if err != nil {
 		t.Fatalf("Failed to create first instance: %v", err)
 	}
@@ -546,7 +546,7 @@ func TestLocal_MultiplePersistentInstances(t *testing.T) {
 		"path":                 tmpDir,
 		"lifecycleManagerType": "persistent",
 		"lifecyclePolicyFile":  "shared-policies.json",
-	})
+	}, testcommon.NoCreds())
 	if err != nil {
 		t.Fatalf("Failed to create second instance: %v", err)
 	}
@@ -576,7 +576,7 @@ func TestLocal_MultiplePersistentInstances(t *testing.T) {
 		"path":                 tmpDir,
 		"lifecycleManagerType": "persistent",
 		"lifecyclePolicyFile":  "shared-policies.json",
-	})
+	}, testcommon.NoCreds())
 	if err != nil {
 		t.Fatalf("Failed to create third instance: %v", err)
 	}
@@ -599,7 +599,7 @@ func TestLocal_ComprehensiveSuite(t *testing.T) {
 
 	st, err := factory.NewStorage("local", map[string]string{
 		"path": tmpDir,
-	})
+	}, testcommon.NoCreds())
 	if err != nil {
 		t.Fatal(err)
 	}

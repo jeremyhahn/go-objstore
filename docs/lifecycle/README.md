@@ -52,7 +52,7 @@ Move objects to Glacier after 90 days:
 glacier, _ := factory.NewArchiver("glacier", map[string]string{
     "region": "us-east-1",
     "vault":  "long-term-archive",
-})
+}, common.Credentials{})
 
 // Create policy
 policy := common.LifecyclePolicy{
@@ -106,7 +106,7 @@ local, _ := factory.NewStorage("local", map[string]string{
     "path":                 "/var/data",
     "lifecycleManagerType": "persistent",           // Use persistent manager
     "lifecyclePolicyFile":  ".lifecycle-policies.json", // Optional, this is the default
-})
+}, common.Credentials{})
 
 // Add delete policy - will be saved to disk
 policy := common.LifecyclePolicy{
@@ -132,7 +132,7 @@ The in-memory manager is available for programmatic use when you don't need pers
 local, _ := factory.NewStorage("local", map[string]string{
     "path": "/var/data",
     "lifecycleManagerType": "memory",  // Explicitly use in-memory manager
-})
+}, common.Credentials{})
 
 // Add delete policy - stored only in memory
 policy := common.LifecyclePolicy{
@@ -157,7 +157,7 @@ S3 policies are **stored in S3 configuration** using native S3 lifecycle rules:
 s3, _ := factory.NewStorage("s3", map[string]string{
     "region": "us-east-1",
     "bucket": "my-bucket",
-})
+}, common.Credentials{})
 
 policy := common.LifecyclePolicy{
     ID:     "s3-cleanup",
@@ -178,7 +178,7 @@ GCS policies use **native GCS lifecycle management**:
 ```go
 gcs, _ := factory.NewStorage("gcs", map[string]string{
     "bucket": "my-gcs-bucket",
-})
+}, common.Credentials{})
 
 policy := common.LifecyclePolicy{
     ID:     "gcs-archive",
@@ -199,9 +199,8 @@ Azure policies use **blob lifecycle management**:
 ```go
 azure, _ := factory.NewStorage("azure", map[string]string{
     "accountName":   "myaccount",
-    "accountKey":    "key==",
     "containerName": "data",
-})
+}, common.Credentials{Secret: accountKey}) // accountKey is an enclave.ByteAccess
 
 policy := common.LifecyclePolicy{
     ID:     "azure-tiering",
@@ -253,7 +252,7 @@ Archive to a different local directory, mount point, or network filesystem:
 // Archive to a different local directory (e.g., NFS mount)
 localArchiver, _ := factory.NewArchiver("local", map[string]string{
     "path": "/mnt/nfs/backups",
-})
+}, common.Credentials{})
 
 policy := common.LifecyclePolicy{
     ID:          "to-nfs-backup",
@@ -276,7 +275,7 @@ policy := common.LifecyclePolicy{
 glacier, _ := factory.NewArchiver("glacier", map[string]string{
     "region": "us-east-1",
     "vault":  "archive-vault",
-})
+}, common.Credentials{})
 
 policy := common.LifecyclePolicy{
     ID:          "to-glacier",
@@ -292,9 +291,8 @@ policy := common.LifecyclePolicy{
 ```go
 azureArchive, _ := factory.NewArchiver("azure-archive", map[string]string{
     "accountName":   "myaccount",
-    "accountKey":    "key==",
     "containerName": "archive",
-})
+}, common.Credentials{Secret: accountKey}) // accountKey is an enclave.ByteAccess
 
 policy := common.LifecyclePolicy{
     ID:          "to-azure-archive",
@@ -421,7 +419,7 @@ import (
 policyStorage, _ := factory.NewStorage("s3", map[string]string{
     "region": "us-east-1",
     "bucket": "my-lifecycle-policies",
-})
+}, common.Credentials{})
 
 // Wrap with storagefs
 fs := storagefs.New(policyStorage)

@@ -492,7 +492,7 @@ func TestS3_BucketsConformance(t *testing.T) {
 
 func TestS3_Configure_MultipartExpiry(t *testing.T) {
 	s := &S3{}
-	if err := s.Configure(map[string]string{"bucket": "b", "region": "us-east-1", "multipartExpiry": "2h"}); err != nil {
+	if err := s.Configure(map[string]string{"bucket": "b", "region": "us-east-1", "multipartExpiry": "2h"}, noCreds); err != nil {
 		t.Fatal(err)
 	}
 	if s.multipartExpiry != 2*time.Hour {
@@ -502,7 +502,7 @@ func TestS3_Configure_MultipartExpiry(t *testing.T) {
 		t.Errorf("region = %q", s.region)
 	}
 	for _, bad := range []string{"x", "-1h", "0s"} {
-		err := (&S3{}).Configure(map[string]string{"bucket": "b", "multipartExpiry": bad})
+		err := (&S3{}).Configure(map[string]string{"bucket": "b", "multipartExpiry": bad}, noCreds)
 		if !errors.Is(err, common.ErrInvalidArgument) {
 			t.Errorf("multipartExpiry %q: err = %v", bad, err)
 		}
@@ -513,14 +513,14 @@ func TestS3_Configure_MultipartExpiry(t *testing.T) {
 }
 
 func TestNewManager(t *testing.T) {
-	m, err := NewManager(map[string]string{"region": "eu-west-1", "endpoint": "http://localhost:9000"})
+	m, err := NewManager(map[string]string{"region": "eu-west-1", "endpoint": "http://localhost:9000"}, noCreds)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if m.svc == nil || m.bucket != "" || m.region != "eu-west-1" {
 		t.Errorf("manager = %+v", m)
 	}
-	if _, err := NewManager(map[string]string{"multipartExpiry": "nope"}); !errors.Is(err, common.ErrInvalidArgument) {
+	if _, err := NewManager(map[string]string{"multipartExpiry": "nope"}, noCreds); !errors.Is(err, common.ErrInvalidArgument) {
 		t.Errorf("bad expiry = %v", err)
 	}
 }

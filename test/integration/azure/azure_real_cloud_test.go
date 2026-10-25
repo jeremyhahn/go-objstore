@@ -26,6 +26,7 @@ import (
 
 	"github.com/Azure/azure-storage-blob-go/azblob"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
+	testcommon "github.com/jeremyhahn/go-objstore/test/integration/common"
 )
 
 // TestAzure_RealCloud tests against real Azure Blob Storage
@@ -75,9 +76,8 @@ func TestAzure_RealCloud(t *testing.T) {
 	// Create storage
 	storage, err := factory.NewStorage("azure", map[string]string{
 		"accountName":   accountName,
-		"accountKey":    accountKey,
 		"containerName": container,
-	})
+	}, testcommon.Creds(t, "", accountKey))
 	if err != nil {
 		t.Fatalf("Failed to create Azure storage: %v", err)
 	}

@@ -52,7 +52,7 @@ func newMockErrorStorage() *mockErrorStorage {
 	}
 }
 
-func (m *mockErrorStorage) Configure(config map[string]string) error {
+func (m *mockErrorStorage) Configure(config map[string]string, _ common.Credentials) error {
 	return nil
 }
 

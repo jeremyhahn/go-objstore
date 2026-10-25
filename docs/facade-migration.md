@@ -44,7 +44,7 @@ The facade pattern provides a centralized, secure API for object storage operati
 
 ```go
 // Old pattern - creates leaky abstraction
-storage, err := factory.NewStorage("local", settings)
+storage, err := factory.NewStorage("local", settings, creds)
 if err != nil {
     return err
 }
@@ -76,8 +76,8 @@ For advanced use cases or when you need to configure storage backends manually:
 
 ```go
 // Create backends manually using factory
-local, _ := factory.NewStorage("local", map[string]string{"path": "/data"})
-s3, _ := factory.NewStorage("s3", map[string]string{"bucket": "mybucket"})
+local, _ := factory.NewStorage("local", map[string]string{"path": "/data"}, common.Credentials{})
+s3, _ := factory.NewStorage("s3", map[string]string{"bucket": "mybucket"}, common.Credentials{})
 
 // Initialize facade with pre-configured storage instances
 err := objstore.Initialize(&objstore.FacadeConfig{
@@ -230,7 +230,7 @@ func (s *Server) handlePutObject(w http.ResponseWriter, r *http.Request) {
 **Before:**
 ```go
 func putCommand(cfg *Config) error {
-    storage, err := factory.NewStorage(cfg.Backend, cfg.BackendSettings)
+    storage, err := factory.NewStorage(cfg.Backend, cfg.BackendSettings, creds)
     if err != nil {
         return err
     }
@@ -246,7 +246,7 @@ func initializeStorageFromConfig(cfg *Config) error {
     backends := make(map[string]common.Storage)
 
     for name, settings := range cfg.Backends {
-        storage, err := factory.NewStorage(name, settings)
+        storage, err := factory.NewStorage(name, settings, creds)
         if err != nil {
             return fmt.Errorf("failed to create backend %s: %w", name, err)
         }
@@ -402,7 +402,7 @@ Integration tests with real backends:
 func TestServerIntegration(t *testing.T) {
     local, err := factory.NewStorage("local", map[string]string{
         "path": t.TempDir(),
-    })
+    }, common.Credentials{})
     require.NoError(t, err)
 
     server := createTestServer(t, local)

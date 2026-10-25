@@ -476,14 +476,14 @@ func TestGCS_Configure_ProjectAndExpiry(t *testing.T) {
 	g := &GCS{}
 	if err := g.Configure(map[string]string{
 		"bucket": "b", "skip_client": "true", "project": "proj", "multipartExpiry": "2h",
-	}); err != nil {
+	}, noCreds); err != nil {
 		t.Fatal(err)
 	}
 	if g.project != "proj" || g.multipartExpiry != 2*time.Hour {
 		t.Errorf("project = %q, expiry = %v", g.project, g.multipartExpiry)
 	}
 	for _, bad := range []string{"x", "-1h", "0s"} {
-		err := (&GCS{}).Configure(map[string]string{"bucket": "b", "skip_client": "true", "multipartExpiry": bad})
+		err := (&GCS{}).Configure(map[string]string{"bucket": "b", "skip_client": "true", "multipartExpiry": bad}, noCreds)
 		if !errors.Is(err, common.ErrInvalidArgument) {
 			t.Errorf("multipartExpiry %q: err = %v", bad, err)
 		}

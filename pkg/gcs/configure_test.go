@@ -32,7 +32,7 @@ func TestGCS_Configure_Success_WithStubClient(t *testing.T) {
 	defer func() { gcsNewClient = old }()
 
 	g := &GCS{}
-	if err := g.Configure(map[string]string{"bucket": "b"}); err != nil {
+	if err := g.Configure(map[string]string{"bucket": "b"}, noCreds); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if g.client == nil {
@@ -46,14 +46,14 @@ func TestGCS_Configure_NewClientError(t *testing.T) {
 	defer func() { gcsNewClient = old }()
 
 	g := &GCS{}
-	if err := g.Configure(map[string]string{"bucket": "b"}); err == nil {
+	if err := g.Configure(map[string]string{"bucket": "b"}, noCreds); err == nil {
 		t.Fatalf("expected error from new client")
 	}
 }
 
 func TestGCS_Configure_SkipClient(t *testing.T) {
 	g := &GCS{}
-	err := g.Configure(map[string]string{"bucket": "test-bucket", "skip_client": "true"})
+	err := g.Configure(map[string]string{"bucket": "test-bucket", "skip_client": "true"}, noCreds)
 	if err != nil {
 		t.Fatalf("unexpected error with skip_client: %v", err)
 	}
@@ -73,12 +73,12 @@ func TestGCS_Configure_ReuseExistingClient(t *testing.T) {
 
 	g := &GCS{}
 	// First configure - should create client
-	if err := g.Configure(map[string]string{"bucket": "b"}); err != nil {
+	if err := g.Configure(map[string]string{"bucket": "b"}, noCreds); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	// Second configure - should not create new client
-	if err := g.Configure(map[string]string{"bucket": "b"}); err != nil {
+	if err := g.Configure(map[string]string{"bucket": "b"}, noCreds); err != nil {
 		t.Fatalf("unexpected error on second configure: %v", err)
 	}
 

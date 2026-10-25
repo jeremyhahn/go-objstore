@@ -27,7 +27,7 @@ func TestPathAccessor_LocalSatisfies(t *testing.T) {
 	tempDir := t.TempDir()
 
 	storage := local.New()
-	if err := storage.Configure(map[string]string{"path": tempDir}); err != nil {
+	if err := storage.Configure(map[string]string{"path": tempDir}, common.Credentials{}); err != nil {
 		t.Fatalf("Configure failed: %v", err)
 	}
 
@@ -94,7 +94,7 @@ func pathAccessorCheck(t *testing.T, label string, storage common.Storage, wantS
 func TestPathAccessor_HelperVerifiesBothPaths(t *testing.T) {
 	tempDir := t.TempDir()
 	localStorage := local.New()
-	if err := localStorage.Configure(map[string]string{"path": tempDir}); err != nil {
+	if err := localStorage.Configure(map[string]string{"path": tempDir}, common.Credentials{}); err != nil {
 		t.Fatalf("Configure failed: %v", err)
 	}
 

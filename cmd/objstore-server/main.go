@@ -54,7 +54,7 @@ func main() {
 	settings := make(map[string]string)
 	settings["path"] = cfg.Path
 
-	storage, err := factory.NewStorage(cfg.Backend, settings)
+	storage, err := factory.NewStorage(cfg.Backend, settings, common.Credentials{})
 	if err != nil {
 		slog.Error("Failed to create storage backend", "error", err)
 		os.Exit(1)

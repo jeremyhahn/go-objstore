@@ -53,7 +53,7 @@ func main() {
     // Create storage backends
     local, _ := factory.NewStorage("local", map[string]string{
         "path": "/tmp/my-storage",
-    })
+    }, common.Credentials{})
 
     // Initialize facade (do this once at app startup)
     objstore.Initialize(&objstore.FacadeConfig{
@@ -88,7 +88,7 @@ For backward compatibility, you can still use direct storage access:
 // Create a storage backend
 storage, err := factory.NewStorage("local", map[string]string{
     "path": "/tmp/my-storage",
-})
+}, common.Credentials{})
 if err != nil {
     panic(err)
 }
@@ -118,13 +118,13 @@ storage.Put("greeting.txt", bytes.NewReader(data))
 ```go
 storage, _ := factory.NewStorage("local", map[string]string{
     "path": "/var/data/storage",
-})
+}, common.Credentials{})
 ```
 
 ### Memory Storage
 
 ```go
-storage, _ := factory.NewStorage("memory", map[string]string{})
+storage, _ := factory.NewStorage("memory", map[string]string{}, common.Credentials{})
 ```
 
 ### Amazon S3
@@ -136,17 +136,33 @@ storage, _ := factory.NewStorage("s3", map[string]string{
     // Optional: point at an S3-compatible endpoint (for example Floci or LocalStack)
     "endpoint":       "http://localhost:4566",
     "forcePathStyle": "true",
-    "accessKey":      "test",
-    "secretKey":      "test",
-})
+}, common.Credentials{Key: accessKey, Secret: secretKey})
 ```
+
+Credentials never travel in the settings map. `common.Credentials` carries them
+as [go-enclave](https://github.com/jeremyhahn/go-enclave) handles
+(`enclave.ByteAccess`); a credential key such as `accessKey` or `accountKey` in
+the map is rejected with `common.ErrCredentialInSettings`. Leave a field nil to
+use the SDK's default credential chain.
+
+```go
+accessKey, _ := enclave.NewMemory([]byte(id))   // id is wiped
+secretKey, _ := enclave.NewMemory([]byte(sec))  // sec is wiped
+defer accessKey.Destroy()
+defer secretKey.Destroy()
+```
+
+The backend copies a credential out of its handle only while it builds the SDK
+credential, zeroizes that copy, and keeps no reference to the handle. The vendor
+SDK keeps its own copy; see
+[Protected Memory](docs/architecture/protected-memory.md).
 
 ### Google Cloud Storage
 
 ```go
 storage, _ := factory.NewStorage("gcs", map[string]string{
     "bucket": "my-gcs-bucket",
-})
+}, common.Credentials{})
 ```
 
 ### Azure Blob Storage
@@ -154,9 +170,8 @@ storage, _ := factory.NewStorage("gcs", map[string]string{
 ```go
 storage, _ := factory.NewStorage("azure", map[string]string{
     "accountName":   "myaccount",
-    "accountKey":    "base64key==",
     "containerName": "mycontainer",
-})
+}, common.Credentials{Secret: accountKey}) // accountKey is an enclave.ByteAccess
 ```
 
 ## Advanced Features
@@ -185,12 +200,12 @@ import (
 // Create multiple storage backends
 local, _ := factory.NewStorage("local", map[string]string{
     "path": "/tmp/local-storage",
-})
+}, common.Credentials{})
 
 s3, _ := factory.NewStorage("s3", map[string]string{
     "bucket": "my-bucket",
     "region": "us-east-1",
-})
+}, common.Credentials{})
 
 // Initialize facade once at application startup
 objstore.Initialize(&objstore.FacadeConfig{
@@ -289,7 +304,7 @@ storage.AddPolicy(deletePolicy)
 glacier, _ := factory.NewArchiver("glacier", map[string]string{
     "vaultName": "long-term-archive",
     "region":    "us-east-1",
-})
+}, common.Credentials{})
 
 archivePolicy := common.LifecyclePolicy{
     ID:          "archive-old-data",
@@ -795,8 +810,8 @@ type Storage interface {
 The factory creates backends through a single function:
 
 ```go
-storage, err := factory.NewStorage(backendType, config)
-archiver, err := factory.NewArchiver(archiverType, config)
+storage, err := factory.NewStorage(backendType, config, creds)
+archiver, err := factory.NewArchiver(archiverType, config, creds)
 ```
 
 It hides backend-specific initialization behind one interface.

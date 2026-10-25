@@ -188,7 +188,7 @@ func TestAzure_Configure_Success(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			a := &Azure{}
-			err := a.Configure(tt.settings)
+			err := a.Configure(splitKey(t, tt.settings))
 			if err != nil {
 				t.Fatalf("Configure() error = %v", err)
 			}
@@ -239,7 +239,7 @@ func TestAzure_Configure_Errors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			a := &Azure{}
-			err := a.Configure(tt.settings)
+			err := a.Configure(splitKey(t, tt.settings))
 			if err == nil {
 				t.Fatal("Configure() expected error, got nil")
 			}
@@ -256,7 +256,7 @@ func TestAzure_Configure_WithTestContainer(t *testing.T) {
 	testURL := azblob.NewContainerURL(*u, azblob.NewPipeline(azblob.NewAnonymousCredential(), azblob.PipelineOptions{}))
 
 	a := &Azure{TestContainerURL: testURL}
-	err := a.Configure(map[string]string{})
+	err := a.Configure(map[string]string{}, noCreds)
 	if err != nil {
 		t.Fatalf("Configure with TestContainerURL should not error, got: %v", err)
 	}
@@ -275,7 +275,7 @@ func TestAzure_Configure_WithCustomEndpoint(t *testing.T) {
 	}
 
 	a := &Azure{}
-	err := a.Configure(settings)
+	err := a.Configure(splitKey(t, settings))
 	if err != nil {
 		t.Fatalf("Configure with custom endpoint should not error, got: %v", err)
 	}
@@ -300,7 +300,7 @@ func TestAzure_Configure_SubscriptionIDAndResourceGroup(t *testing.T) {
 	}
 
 	a := &Azure{}
-	err := a.Configure(settings)
+	err := a.Configure(splitKey(t, settings))
 	// Should not error even if management client setup fails
 	if err != nil {
 		t.Fatalf("Configure should handle management client failure gracefully, got: %v", err)

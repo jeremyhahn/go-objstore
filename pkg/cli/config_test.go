@@ -190,11 +190,10 @@ func TestGetStorageSettings(t *testing.T) {
 		if settings["region"] != "us-west-2" {
 			t.Errorf("Expected region 'us-west-2', got %s", settings["region"])
 		}
-		if settings["access_key_id"] != "test-key" {
-			t.Errorf("Expected key, got %s", settings["access_key_id"])
-		}
-		if settings["secret_access_key"] != "test-secret" {
-			t.Errorf("Expected secret, got %s", settings["secret_access_key"])
+		for k, v := range settings {
+			if v == "test-key" || v == "test-secret" {
+				t.Errorf("settings[%q] carries credential material", k)
+			}
 		}
 	})
 

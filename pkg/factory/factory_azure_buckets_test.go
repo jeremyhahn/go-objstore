@@ -27,7 +27,7 @@ func TestNewBucketManager_Azure(t *testing.T) {
 	key := base64.StdEncoding.EncodeToString([]byte("key"))
 
 	// The container setting is not required: the manager serves every container.
-	bm, err := NewBucketManager("azure", map[string]string{"accountName": "acct", "accountKey": key})
+	bm, err := NewBucketManager("azure", map[string]string{"accountName": "acct"}, keyCreds(t, key))
 	if err != nil || bm == nil {
 		t.Fatalf("NewBucketManager = %v, %v", bm, err)
 	}
@@ -35,12 +35,12 @@ func TestNewBucketManager_Azure(t *testing.T) {
 		t.Error("the azure manager does not offer multipart upload")
 	}
 
-	bm, err = NewBucketManager("azure", map[string]string{"accountName": "acct"})
+	bm, err = NewBucketManager("azure", map[string]string{"accountName": "acct"}, noCreds)
 	if !errors.Is(err, common.ErrAccountNotSet) || bm != nil {
 		t.Errorf("no key = %v, %v", bm, err)
 	}
 
-	bm, err = NewBucketManager("azure", map[string]string{"accountName": "acct", "accountKey": key, "multipartExpiry": "x"})
+	bm, err = NewBucketManager("azure", map[string]string{"accountName": "acct", "multipartExpiry": "x"}, keyCreds(t, key))
 	if !errors.Is(err, common.ErrInvalidArgument) || bm != nil {
 		t.Errorf("bad expiry = %v, %v", bm, err)
 	}

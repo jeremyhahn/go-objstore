@@ -22,6 +22,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/jeremyhahn/go-enclave"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
 )
@@ -56,7 +57,7 @@ func localStorageExample() {
 	// Create local storage backend
 	storage, err := factory.NewStorage("local", map[string]string{
 		"path": "/tmp/objstore-demo",
-	})
+	}, common.Credentials{})
 	if err != nil {
 		log.Fatalf("Failed to create storage: %v", err)
 	}
@@ -96,14 +97,26 @@ func s3StorageExample() {
 	// For this example to work, you need the Floci AWS emulator running locally:
 	// docker run -p 4566:4566 floci/floci
 
+	// Credentials travel as protected-memory handles, never as settings.
+	key, err := enclave.NewMemory([]byte("test"))
+	if err != nil {
+		fmt.Printf("  ⚠ Skipping S3 example (no protected memory): %v\n", err)
+		return
+	}
+	defer key.Destroy()
+	secret, err := enclave.NewMemory([]byte("test"))
+	if err != nil {
+		fmt.Printf("  ⚠ Skipping S3 example (no protected memory): %v\n", err)
+		return
+	}
+	defer secret.Destroy()
+
 	storage, err := factory.NewStorage("s3", map[string]string{
 		"bucket":         "demo-bucket",
 		"region":         "us-east-1",
 		"endpoint":       "http://localhost:4566",
 		"forcePathStyle": "true",
-		"accessKey":      "test",
-		"secretKey":      "test",
-	})
+	}, common.Credentials{Key: key, Secret: secret})
 
 	if err != nil {
 		fmt.Printf("  ⚠ Skipping S3 example (Floci not running): %v\n", err)
@@ -137,7 +150,7 @@ func s3StorageExample() {
 func contextExample() {
 	storage, _ := factory.NewStorage("local", map[string]string{
 		"path": "/tmp/objstore-context",
-	})
+	}, common.Credentials{})
 
 	// Example 1: Context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -177,7 +190,7 @@ func contextExample() {
 func metadataExample() {
 	storage, _ := factory.NewStorage("local", map[string]string{
 		"path": "/tmp/objstore-metadata",
-	})
+	}, common.Credentials{})
 
 	ctx := context.Background()
 
@@ -227,7 +240,7 @@ func metadataExample() {
 func listExample() {
 	storage, _ := factory.NewStorage("local", map[string]string{
 		"path": "/tmp/objstore-list",
-	})
+	}, common.Credentials{})
 
 	ctx := context.Background()
 

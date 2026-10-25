@@ -63,29 +63,38 @@ func New() common.Storage {
 	return &S3{}
 }
 
-// Configure sets up the backend with the necessary settings.
-func (s *S3) Configure(settings map[string]string) error {
+// Configure sets up the backend with the necessary settings. The access key
+// and secret key come from creds, never from settings; with a zero creds the
+// SDK's default credential chain applies.
+func (s *S3) Configure(settings map[string]string, creds common.Credentials) error {
+	if err := common.RejectCredentialSettings(settings); err != nil {
+		return err
+	}
 	s.bucket = settings["bucket"]
 	if s.bucket == "" {
 		return common.ErrBucketNotSet
 	}
-	return s.configureClient(settings)
+	return s.configureClient(settings, creds)
 }
 
 // NewManager returns an S3 that manages buckets and has no bucket of its own,
 // so the bucket setting is not required. Bucket returns the Storage of a
 // bucket that reuses the manager's client and credentials.
-func NewManager(settings map[string]string) (*S3, error) {
+func NewManager(settings map[string]string, creds common.Credentials) (*S3, error) {
+	if err := common.RejectCredentialSettings(settings); err != nil {
+		return nil, err
+	}
 	s := &S3{}
-	if err := s.configureClient(settings); err != nil {
+	if err := s.configureClient(settings, creds); err != nil {
 		return nil, err
 	}
 	return s, nil
 }
 
-// configureClient builds the client from the region, endpoint and credential
-// settings and reads the multipartExpiry setting.
-func (s *S3) configureClient(settings map[string]string) error {
+// configureClient builds the client from the region and endpoint settings and
+// the credential handles, and reads the multipartExpiry setting. The handles
+// are opened only to build the SDK credential and are not retained.
+func (s *S3) configureClient(settings map[string]string, creds common.Credentials) error {
 	expiry, err := multipart.ParseExpiry(settings)
 	if err != nil {
 		return err
@@ -100,9 +109,20 @@ func (s *S3) configureClient(settings map[string]string) error {
 		cfg.Endpoint = aws.String(ep)
 		cfg.S3ForcePathStyle = aws.Bool(settings["forcePathStyle"] == "true")
 	}
-	if ak := settings["accessKey"]; ak != "" {
-		sk := settings["secretKey"]
-		cfg.Credentials = credentials.NewStaticCredentials(ak, sk, "")
+	if !creds.IsZero() {
+		if creds.Key == nil {
+			return common.ErrAccessKeyNotSet
+		}
+		if creds.Secret == nil {
+			return common.ErrSecretKeyNotSet
+		}
+		err := creds.Open(func(key, secret []byte) error {
+			cfg.Credentials = credentials.NewStaticCredentials(string(key), string(secret), "")
+			return nil
+		})
+		if err != nil {
+			return err
+		}
 	}
 
 	sess, err := session.NewSession(cfg)

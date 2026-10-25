@@ -10,7 +10,7 @@ How applications consume go-objstore: as a Go library, through the `objstore` CL
 | Mode | Entry point | Use when |
 |---|---|---|
 | Library facade | `pkg/objstore` (`Initialize`, `Put`, `Get`, ...) | The application owns the process and wants one validated entry point over named backends. |
-| Backend factory | `factory.NewStorage(type, settings)` | The application wants a `common.Storage` directly, or builds its own facade `Backends` map. |
+| Backend factory | `factory.NewStorage(type, settings, creds)` | The application wants a `common.Storage` directly, or builds its own facade `Backends` map. |
 | CLI | `cmd/objstore` | Scripts and operators. |
 | Servers | `objstore-server` and the single-transport binaries | Other processes reach storage over gRPC, REST, QUIC, MCP or a Unix socket. |
 | C API | [../c_client/](../c_client/README.md) | C/C++ callers. |

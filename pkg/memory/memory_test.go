@@ -34,12 +34,12 @@ func TestNew(t *testing.T) {
 
 func TestConfigure(t *testing.T) {
 	storage := New()
-	err := storage.Configure(nil)
+	err := storage.Configure(nil, noCreds)
 	if err != nil {
 		t.Fatalf("Configure() returned error: %v", err)
 	}
 
-	err = storage.Configure(map[string]string{"any": "setting"})
+	err = storage.Configure(map[string]string{"any": "setting"}, noCreds)
 	if err != nil {
 		t.Fatalf("Configure() with settings returned error: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestConfigure(t *testing.T) {
 
 func TestPutAndGet(t *testing.T) {
 	storage := New()
-	_ = storage.Configure(nil)
+	_ = storage.Configure(nil, noCreds)
 
 	testData := []byte("hello world")
 	err := storage.Put("test-key", bytes.NewReader(testData))
@@ -73,7 +73,7 @@ func TestPutAndGet(t *testing.T) {
 
 func TestPutWithContext(t *testing.T) {
 	storage := New()
-	_ = storage.Configure(nil)
+	_ = storage.Configure(nil, noCreds)
 
 	ctx := context.Background()
 	testData := []byte("context data")
@@ -100,7 +100,7 @@ func TestPutWithContext(t *testing.T) {
 
 func TestPutWithMetadata(t *testing.T) {
 	storage := New()
-	_ = storage.Configure(nil)
+	_ = storage.Configure(nil, noCreds)
 
 	ctx := context.Background()
 	testData := []byte("metadata data")
@@ -134,7 +134,7 @@ func TestPutWithMetadata(t *testing.T) {
 
 func TestGetNotFound(t *testing.T) {
 	storage := New()
-	_ = storage.Configure(nil)
+	_ = storage.Configure(nil, noCreds)
 
 	_, err := storage.Get("nonexistent-key")
 	if err == nil {
@@ -148,7 +148,7 @@ func TestGetNotFound(t *testing.T) {
 
 func TestGetMetadataNotFound(t *testing.T) {
 	storage := New()
-	_ = storage.Configure(nil)
+	_ = storage.Configure(nil, noCreds)
 
 	ctx := context.Background()
 	_, err := storage.GetMetadata(ctx, "nonexistent-key")
@@ -163,7 +163,7 @@ func TestGetMetadataNotFound(t *testing.T) {
 
 func TestUpdateMetadata(t *testing.T) {
 	storage := New()
-	_ = storage.Configure(nil)
+	_ = storage.Configure(nil, noCreds)
 
 	ctx := context.Background()
 	testData := []byte("update metadata data")
@@ -198,7 +198,7 @@ func TestUpdateMetadata(t *testing.T) {
 
 func TestUpdateMetadataNotFound(t *testing.T) {
 	storage := New()
-	_ = storage.Configure(nil)
+	_ = storage.Configure(nil, noCreds)
 
 	ctx := context.Background()
 	err := storage.UpdateMetadata(ctx, "nonexistent-key", &common.Metadata{})
@@ -213,7 +213,7 @@ func TestUpdateMetadataNotFound(t *testing.T) {
 
 func TestDelete(t *testing.T) {
 	storage := New()
-	_ = storage.Configure(nil)
+	_ = storage.Configure(nil, noCreds)
 
 	testData := []byte("delete me")
 	err := storage.Put("delete-key", bytes.NewReader(testData))
@@ -234,7 +234,7 @@ func TestDelete(t *testing.T) {
 
 func TestDeleteNotFound(t *testing.T) {
 	storage := New()
-	_ = storage.Configure(nil)
+	_ = storage.Configure(nil, noCreds)
 
 	err := storage.Delete("nonexistent-key")
 	if err == nil {
@@ -248,7 +248,7 @@ func TestDeleteNotFound(t *testing.T) {
 
 func TestDeleteWithContext(t *testing.T) {
 	storage := New()
-	_ = storage.Configure(nil)
+	_ = storage.Configure(nil, noCreds)
 
 	ctx := context.Background()
 	testData := []byte("delete me with context")
@@ -270,7 +270,7 @@ func TestDeleteWithContext(t *testing.T) {
 
 func TestExists(t *testing.T) {
 	storage := New()
-	_ = storage.Configure(nil)
+	_ = storage.Configure(nil, noCreds)
 
 	ctx := context.Background()
 
@@ -298,7 +298,7 @@ func TestExists(t *testing.T) {
 
 func TestList(t *testing.T) {
 	storage := New()
-	_ = storage.Configure(nil)
+	_ = storage.Configure(nil, noCreds)
 
 	// Put some test objects
 	keys := []string{"prefix/a", "prefix/b", "prefix/c", "other/d"}
@@ -328,7 +328,7 @@ func TestList(t *testing.T) {
 
 func TestListAll(t *testing.T) {
 	storage := New()
-	_ = storage.Configure(nil)
+	_ = storage.Configure(nil, noCreds)
 
 	keys := []string{"a", "b", "c"}
 	for _, key := range keys {
@@ -350,7 +350,7 @@ func TestListAll(t *testing.T) {
 
 func TestListWithContext(t *testing.T) {
 	storage := New()
-	_ = storage.Configure(nil)
+	_ = storage.Configure(nil, noCreds)
 
 	ctx := context.Background()
 	err := storage.PutWithContext(ctx, "ctx-key", bytes.NewReader([]byte("data")))
@@ -370,7 +370,7 @@ func TestListWithContext(t *testing.T) {
 
 func TestListWithOptions(t *testing.T) {
 	storage := New()
-	_ = storage.Configure(nil)
+	_ = storage.Configure(nil, noCreds)
 
 	ctx := context.Background()
 
@@ -407,7 +407,7 @@ func TestListWithOptions(t *testing.T) {
 
 func TestListWithOptionsPagination(t *testing.T) {
 	storage := New()
-	_ = storage.Configure(nil)
+	_ = storage.Configure(nil, noCreds)
 
 	ctx := context.Background()
 
@@ -452,7 +452,7 @@ func TestListWithOptionsPagination(t *testing.T) {
 
 func TestContextCancellation(t *testing.T) {
 	storage := New()
-	_ = storage.Configure(nil)
+	_ = storage.Configure(nil, noCreds)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
@@ -500,7 +500,7 @@ func TestContextCancellation(t *testing.T) {
 
 func TestInvalidKey(t *testing.T) {
 	storage := New()
-	_ = storage.Configure(nil)
+	_ = storage.Configure(nil, noCreds)
 
 	ctx := context.Background()
 
@@ -523,7 +523,7 @@ func TestInvalidKey(t *testing.T) {
 
 func TestLifecyclePolicies(t *testing.T) {
 	storage := New()
-	_ = storage.Configure(nil)
+	_ = storage.Configure(nil, noCreds)
 
 	// Add a policy
 	policy := common.LifecyclePolicy{
@@ -570,7 +570,7 @@ func TestLifecyclePolicies(t *testing.T) {
 
 func TestClearAndCount(t *testing.T) {
 	storage := New().(*Memory)
-	_ = storage.Configure(nil)
+	_ = storage.Configure(nil, noCreds)
 
 	// Add some objects
 	for i := 0; i < 5; i++ {
@@ -594,7 +594,7 @@ func TestClearAndCount(t *testing.T) {
 
 func TestDataIsolation(t *testing.T) {
 	storage := New()
-	_ = storage.Configure(nil)
+	_ = storage.Configure(nil, noCreds)
 
 	// Put data
 	originalData := []byte("original data")
@@ -630,11 +630,11 @@ func TestDataIsolation(t *testing.T) {
 func TestArchive(t *testing.T) {
 	// Create source storage
 	source := New()
-	_ = source.Configure(nil)
+	_ = source.Configure(nil, noCreds)
 
 	// Create destination storage (mock archiver)
 	dest := New()
-	_ = dest.Configure(nil)
+	_ = dest.Configure(nil, noCreds)
 
 	// Put data in source
 	testData := []byte("archive me")
@@ -664,10 +664,10 @@ func TestArchive(t *testing.T) {
 
 func TestArchiveNotFound(t *testing.T) {
 	storage := New()
-	_ = storage.Configure(nil)
+	_ = storage.Configure(nil, noCreds)
 
 	dest := New()
-	_ = dest.Configure(nil)
+	_ = dest.Configure(nil, noCreds)
 
 	err := storage.Archive("nonexistent-key", dest)
 	if err == nil {
@@ -677,7 +677,7 @@ func TestArchiveNotFound(t *testing.T) {
 
 func TestArchiveNilDestination(t *testing.T) {
 	storage := New()
-	_ = storage.Configure(nil)
+	_ = storage.Configure(nil, noCreds)
 
 	err := storage.Put("test-key", bytes.NewReader([]byte("data")))
 	if err != nil {

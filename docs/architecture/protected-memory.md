@@ -1,6 +1,6 @@
 # Protected Memory
 
-> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-25
 > Conflicts with this document are defects. Fix them here first.
 
 Keys, passphrases, tokens and credentials live in protected storage for their
@@ -123,10 +123,14 @@ teardown — after which the plain field beside it may still hold a stale value.
 If a fallback read that field, it would silently authenticate with unprotected
 material the caller believed it had replaced.
 
-- `cli.Config.StorageSettings` returns the error. `GetStorageSettings` cannot —
-  its signature predates this — so it is deprecated and **omits** the
-  credential instead, and the backend fails to authenticate rather than using
-  the stale one.
+- `cli.Config.Credentials` returns a `*cli.CredentialUnavailableError`
+  wrapping `ErrEnclaveDestroyed`, so the command context is never built from
+  an unreadable credential.
+- Every backend's `Configure` does the same on its own side: a `Credentials`
+  handle that is destroyed or holds no material fails with
+  `*common.CredentialUnavailableError`, and the backend is left unconfigured.
+  The SDK default credential chain is never substituted for a credential that
+  was supplied but is unusable.
 - `adapters.TLSConfig.Build` returns `ErrEnclaveDestroyed` rather than serving
   TLS from `ServerKeyPEM`.
 
@@ -198,25 +202,37 @@ rather than through `tls.LoadX509KeyPair`.
 *custody within this repository*: between the boundaries listed below, a
 credential lives only in locked, zeroized memory and is never held as a plain
 string in a struct for the process lifetime, which is exactly what the
-deprecated fields did. They are not end-to-end protection. `StorageSettings`
-materializes each credential as a Go string again at `Configure`, and the
-backend and its vendor SDK retain copies of that string for their own
-lifetime; `Config.Destroy` wipes the enclaves and cannot reach those copies.
-Read the boundary list as part of the guarantee, not as a footnote to it.
+deprecated fields did. They are not end-to-end protection. The backend copies
+a credential out of its handle to build the vendor SDK credential, and the SDK
+retains its own copy for the SDK's lifetime; `Config.Destroy` wipes the
+enclaves and cannot reach the SDK's copy. Read the boundary list as part of the
+guarantee, not as a footnote to it.
 
 ## Residual plain-memory boundaries
 
 These are boundaries with APIs this repository does not own. They are recorded
 here rather than silently left:
 
-- **Backend `Configure(map[string]string)`** — `pkg/s3`,
-  `pkg/azure`, `pkg/azurearchive` receive credentials as plain map values and
-  hand them to vendor SDK credential types (`credentials.NewStaticCredentials`,
-  `azblob.NewSharedKeyCredential`) that keep plain copies. `cli.Config`
-  materializes a credential only at this call, never for the process lifetime.
-  Closing this requires changing the `Storage` interface, which is a breaking
-  Layer 0/1 change reserved for the coordinated wave — and the vendor SDKs
-  would still hold plain copies. Tracked as issue #16.
+- **Backend `Configure(settings, common.Credentials)` — closed in the
+  interface, open inside the vendor SDKs.** `Configure` takes the credential as
+  a go-enclave handle (`common.Credentials{Key, Secret enclave.ByteAccess}`);
+  plain settings stay in the `map[string]string`, and a credential found there
+  (`accessKey`, `secretKey`, `accountKey`, `sasToken`, ...) is rejected with
+  `*common.CredentialSettingError`. `cli.Config` hands its own handles to
+  `Configure` and puts no credential in `StorageSettings()`. A backend borrows
+  the handle through `Credentials.Open` only for the length of the call that
+  builds the SDK credential, zeroizes its copy, and keeps neither the handle
+  nor the bytes: no backend struct has a field of type `enclave.ByteAccess` or
+  `common.Credentials`, which `TestBackendsHoldNoCredentialHandle` enforces.
+  **Residual:** `credentials.NewStaticCredentials` (`pkg/s3`) and
+  `azblob.NewSharedKeyCredential` (`pkg/azure`, `pkg/azurearchive`) take
+  `string` arguments, so one transient string copy exists while the SDK
+  credential is built, and the SDK keeps its own copy for the lifetime of the
+  client it configures (the Azure backend also keeps the
+  `*azblob.SharedKeyCredential`). Strings cannot be wiped and the SDKs are not
+  ours to change; destroying the enclave removes the custody copy, not the
+  SDK's. Backends that use the SDK default chain (`pkg/gcs`, `pkg/glacier`)
+  receive no credential from this repository. Closed by issue #16.
 - **Flag and configuration parsing** — cobra and viper hand out `string`
   values, which cannot be wiped. One unprotected copy therefore exists between
   the parser and the enclave.

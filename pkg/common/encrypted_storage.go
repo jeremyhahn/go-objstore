@@ -60,9 +60,10 @@ func NewEncryptedStorage(underlying Storage, encrypterFactory EncrypterFactory) 
 	}
 }
 
-// Configure passes through configuration to the underlying storage
-func (e *encryptedStorage) Configure(settings map[string]string) error {
-	return e.underlying.Configure(settings)
+// Configure passes the settings and the credential handles through to the
+// underlying storage unchanged.
+func (e *encryptedStorage) Configure(settings map[string]string, creds Credentials) error {
+	return e.underlying.Configure(settings, creds)
 }
 
 // Put encrypts data and stores it in the underlying storage

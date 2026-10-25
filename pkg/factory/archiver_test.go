@@ -22,7 +22,7 @@ import (
 
 func TestNewArchiver(t *testing.T) {
 	// Test Glacier archiver - either succeeds or returns ErrUnknownArchiver
-	_, err := NewArchiver("glacier", map[string]string{"vaultName": "test-vault", "region": "us-east-1"})
+	_, err := NewArchiver("glacier", map[string]string{"vaultName": "test-vault", "region": "us-east-1"}, noCreds)
 	if err != nil {
 		if !errors.Is(err, ErrUnknownArchiver) {
 			t.Fatalf("expected ErrUnknownArchiver or success, got: %v", err)
@@ -30,7 +30,7 @@ func TestNewArchiver(t *testing.T) {
 	}
 
 	// Test Azure Archive archiver - either succeeds or returns ErrUnknownArchiver
-	_, err = NewArchiver("azurearchive", map[string]string{"accountName": "test-account", "accountKey": "dGVzdC1rZXk=", "containerName": "test-container"})
+	_, err = NewArchiver("azurearchive", map[string]string{"accountName": "test-account", "containerName": "test-container"}, keyCreds(t, "dGVzdC1rZXk="))
 	if err != nil {
 		if !errors.Is(err, ErrUnknownArchiver) {
 			t.Fatalf("expected ErrUnknownArchiver or success, got: %v", err)
@@ -38,19 +38,19 @@ func TestNewArchiver(t *testing.T) {
 	}
 
 	// Test unknown archiver - should always fail
-	_, err = NewArchiver("unknown", nil)
+	_, err = NewArchiver("unknown", nil, noCreds)
 	if err == nil {
 		t.Fatal("expected error for unknown archiver, got nil")
 	}
 }
 
 func TestArchiveOnlyBackend(t *testing.T) {
-	_, err := NewStorage("glacier", nil)
+	_, err := NewStorage("glacier", nil, noCreds)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
 
-	_, err = NewStorage("azurearchive", nil)
+	_, err = NewStorage("azurearchive", nil, noCreds)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -63,7 +63,7 @@ func TestGlacier(t *testing.T) {
 	archiver, err := NewArchiver("glacier", map[string]string{
 		"vaultName": vaultName,
 		"region":    region,
-	})
+	}, noCreds)
 
 	if err != nil {
 		if errors.Is(err, ErrUnknownArchiver) {
@@ -96,9 +96,8 @@ func TestAzureArchive(t *testing.T) {
 
 	archiver, err := NewArchiver("azurearchive", map[string]string{
 		"accountName":   accountName,
-		"accountKey":    accountKey,
 		"containerName": containerName,
-	})
+	}, keyCreds(t, accountKey))
 
 	if err != nil {
 		if errors.Is(err, ErrUnknownArchiver) {
