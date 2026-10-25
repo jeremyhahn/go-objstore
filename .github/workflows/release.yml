@@ -1,3 +1,5 @@
+# 2026-10-25: release jobs run on the release-only runner on Gitea (ubuntu-latest
+# on GitHub); the Trivy gate image is pinned by digest.
 name: Release
 
 on:
@@ -17,7 +19,7 @@ permissions:
 jobs:
   create-release:
     name: Create Release
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'release' }}
     outputs:
       version: ${{ steps.get_version.outputs.version }}
 
@@ -105,7 +107,7 @@ jobs:
 
   build-binaries:
     name: Build Binaries
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'release' }}
     needs: create-release
     strategy:
       matrix:
@@ -214,7 +216,7 @@ jobs:
 
   build-libraries:
     name: Build Shared Libraries
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'release' }}
     needs: create-release
     strategy:
       matrix:
@@ -295,7 +297,7 @@ jobs:
 
   publish-npm:
     name: Publish TypeScript SDK to npm
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'release' }}
     needs: create-release
     # Skip prerelease versions (alpha/beta/rc) so only stable releases hit npm.
     if: ${{ !contains(needs.create-release.outputs.version, 'alpha') && !contains(needs.create-release.outputs.version, 'beta') && !contains(needs.create-release.outputs.version, 'rc') }}
@@ -326,7 +328,7 @@ jobs:
 
   build-docker-cli:
     name: Build CLI Docker Image
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'release' }}
     needs: create-release
     # ghcr.io and the GITHUB_TOKEN that authenticates to it exist only on
     # GitHub; elsewhere the login is denied and the release fails after the
@@ -406,7 +408,7 @@ jobs:
       run: |
         docker run --rm \
           -v /var/run/docker.sock:/var/run/docker.sock \
-          aquasec/trivy:latest image \
+          aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c image \
             --format table \
             --severity CRITICAL,HIGH \
             --exit-code 1 \
@@ -429,7 +431,7 @@ jobs:
 
   build-docker-server:
     name: Build Server Docker Image
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'release' }}
     needs: create-release
     # ghcr.io and the GITHUB_TOKEN that authenticates to it exist only on
     # GitHub; elsewhere the login is denied and the release fails after the
@@ -508,7 +510,7 @@ jobs:
       run: |
         docker run --rm \
           -v /var/run/docker.sock:/var/run/docker.sock \
-          aquasec/trivy:latest image \
+          aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c image \
             --format table \
             --severity CRITICAL,HIGH \
             --exit-code 1 \
@@ -532,7 +534,7 @@ jobs:
   create-checksums:
     name: Create Master Checksums
     needs: [create-release, build-binaries, build-libraries]
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'release' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
