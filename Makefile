@@ -215,6 +215,11 @@ generate-proto:
 # flags and their precedence) lives in internal/serverconfig so that it IS
 # gated here (go-objstore#34). Widening the coverage gate to cover the binaries
 # is a deliberate decision, not a side effect of this list.
+#
+# The backup agent is its own module, which ./... does not reach, so the
+# target ends with backup-test: its race tests and per-package coverage gate
+# run wherever `make test` does, CI included. It writes no coverage profile,
+# so unit.out stays the root module's alone.
 test:
 	@echo "$(CYAN)$(BOLD)→ Running unit tests with coverage (race detector)...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
@@ -224,6 +229,7 @@ test:
 	@echo "$(CYAN)$(BOLD)→ Coverage Summary:$(RESET)"
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/unit.out | tail -1 | awk '{print "  $(GREEN)Total Coverage: " $$NF "$(RESET)"}' || true
 	@echo "$(GREEN)✓ Unit tests complete$(RESET)"
+	@$(MAKE) --no-print-directory backup-test
 
 .PHONY: integration-test
 ## integration-test: Run all integration tests (all backends + CLI + replication)
@@ -374,6 +380,39 @@ test-sdk-typescript:
 ## test-sdk-go: Run Go SDK unit tests
 test-sdk-go:
 	@cd api/sdks/go && $(MAKE) test
+
+# The backup agent is its own module (backup/go.mod), so `make lint` and
+# `make test` at the root do not reach it. These two targets gate it: vet,
+# gofmt and golangci-lint with the root configuration, then the race-enabled
+# unit tests with COVERAGE_THRESHOLD applied to each library package
+# (backup/pkg/... and backup/internal/...; the command is tested, not gated,
+# as at the root).
+BACKUP_DIR := backup
+
+.PHONY: backup-lint
+## backup-lint: Vet, gofmt and golangci-lint the backup agent module
+backup-lint:
+	@echo "$(CYAN)$(BOLD)→ Linting the backup agent module...$(RESET)"
+	@cd $(BACKUP_DIR) && $(GO) vet ./...
+	@UNFORMATTED=$$(gofmt -l $(BACKUP_DIR)); if [ -n "$$UNFORMATTED" ]; then \
+		echo "$(RED)✗ gofmt needed:$(RESET) $$UNFORMATTED"; exit 1; fi
+	@BIN=$$($(REQUIRE_TOOL) golangci-lint $(GOLANGCI_LINT_VERSION)) || { echo "$(RED)✗ golangci-lint $(GOLANGCI_LINT_VERSION) required$(RESET)"; exit 1; }; \
+	cd $(BACKUP_DIR) && "$$BIN" run --timeout=10m --config ../.golangci.yml ./... && \
+	echo "$(GREEN)✓ Backup agent lint passed$(RESET)"
+
+.PHONY: backup-test
+## backup-test: Run the backup agent module's unit tests (race detector, per-package coverage gate)
+backup-test:
+	@echo "$(CYAN)$(BOLD)→ Running backup agent unit tests (race detector)...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@cd $(BACKUP_DIR) && $(GO) test -race -timeout=20m -cover ./... > ../$(COVERAGE_DIR)/backup-test.log 2>&1; \
+	rc=$$?; cat ../$(COVERAGE_DIR)/backup-test.log; exit $$rc
+	@awk -v min=$(COVERAGE_THRESHOLD) ' \
+		$$1 == "ok" && $$2 ~ /\/backup\/(pkg|internal)\// { \
+			for (i = 1; i <= NF; i++) if ($$i == "coverage:") { c = $$(i + 1); sub(/%/, "", c); \
+				if (c + 0 < min) { printf "✗ %s coverage %s%% is below %s%%\n", $$2, c, min; bad = 1 } } } \
+		END { exit bad }' $(COVERAGE_DIR)/backup-test.log
+	@echo "$(GREEN)✓ Backup agent unit tests complete$(RESET)"
 
 .PHONY: test-sdk-python
 ## test-sdk-python: Run Python SDK unit tests

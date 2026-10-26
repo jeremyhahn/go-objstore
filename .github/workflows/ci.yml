@@ -3,6 +3,11 @@
 # automatethethings repo (devops.md §1/§8/§9). Divergence outside the
 # repo-specific blocks below is a defect.
 #
+# v1.15 (2026-10-25): the backup agent module (backup/) is gated. Lint runs
+# golangci-lint in it as a second step, Test and FIPS reach its race tests and
+# per-package coverage gate through `make test`, and Security Scan's
+# govulncheck loop already discovers its go.mod.
+#
 # v1.15 (2026-10-23): docs-only filter (ci-standard.md §10 (a)). A PR that
 # changes only markdown or docs/ runs Lint and the CI Gate; the `changes` job
 # decides, and ci-gate reads a skipped job as passed only then.
@@ -174,6 +179,17 @@ jobs:
       with:
         version: v2.14.0
         install-mode: goinstall
+        args: --timeout=10m
+
+    # The backup agent is its own module, which the step above does not reach.
+    # Same pin and settings; golangci-lint finds the root .golangci.yml by
+    # walking up from backup/.
+    - name: Run golangci-lint (backup module)
+      uses: golangci/golangci-lint-action@v9
+      with:
+        version: v2.14.0
+        install-mode: goinstall
+        working-directory: backup
         args: --timeout=10m
 
   build:
