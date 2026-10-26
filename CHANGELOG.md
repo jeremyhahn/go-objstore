@@ -6,6 +6,86 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [0.8.0-alpha] - 2026-10-26
+
+### Added
+
+- `objstore-backup service --config <file>` runs the backup agent as a
+  scheduled service on Linux, macOS and Windows, issue #114. The JSON
+  configuration file names the backup identity's connection, the repository,
+  the passphrase file, the sources, the host, the schedule (`every` a fixed
+  interval or `daily` at `HH:MM`, with optional `jitter`) and an optional
+  retention policy run as the prune identity over its own connection. Unknown
+  settings, an inline passphrase or token, and a file group or others can
+  write are refused. Each run reads the passphrase from its file and closes
+  the repository after it, so the data key is not held between runs. Runs
+  are logged with `log/slog`.
+- `backup/packaging` holds a hardened systemd service, a launchd daemon plist
+  and an example configuration file. On Windows the binary runs under the
+  service control manager and is installed with `sc.exe`.
+
+- Source snapshots for crash-consistent backups, issue #114. The service's
+  `source_snapshot` setting and the `backup` command's `--snapshot` flags
+  snapshot each source volume once per run, read the sources inside the
+  snapshots, and remove them after the run, on failure and on cancellation
+  too. The methods are `lvm`, `btrfs`, `zfs`, `apfs` (macOS), `vss` (Windows
+  Server) and `auto`, which picks one by file system; the default `none`
+  reads the live sources. The tools run by absolute path with an argument
+  vector, never through a shell. Snapshot names carry a fixed prefix and a
+  random suffix; leftovers with the prefix are removed at service start and
+  before each run, and nothing without it is touched. The failure policy is
+  `fail` (the default) or `fallback`, which logs a warning and backs up the
+  live sources. Snapshots record the original source paths, so a restore is
+  unchanged. Package `backup/pkg/srcsnap` holds the seam, and
+  `backup.Options.ReadFrom` points a backup at the snapshot.
+
+- The gRPC server's message limits are settable: `grpc.max_recv_msg_size` and
+  `grpc.max_send_msg_size` (`OBJSTORE_GRPC_MAX_RECV_MSG_SIZE`,
+  `OBJSTORE_GRPC_MAX_SEND_MSG_SIZE`; `-grpc-max-recv-msg-size` and
+  `-grpc-max-send-msg-size` on objstore-server, `-max-recv-msg-size` and
+  `-max-send-msg-size` on objstore-grpc-server), issue #114. A value below
+  1 MiB or above 2147483647 bytes is a configuration error.
+  `grpcserver.WithMaxReceiveMessageSize` and `grpcserver.WithMaxSendMessageSize`
+  set each limit on its own.
+
+- The backup agent's module, `backup/` (`github.com/jeremyhahn/go-objstore/backup`,
+  its own go.mod), issue #92. It consumes the Go client SDK module
+  (`api/sdks/go`) and go-enclave, and nothing else first-party; it never
+  imports go-xkms. A stub `objstore-backup` command builds and prints usage;
+  it has no backup commands yet.
+- The key seam, `backup/pkg/keyseam`: `Provider` with
+  `WrapKey(ctx, dataKey enclave.ByteAccess) ([]byte, error)` and
+  `UnwrapKey(ctx, wrapped []byte) (enclave.ByteAccess, error)`, which a go-xkms
+  client implements outside this repository. Errors are `*keyseam.Error`,
+  matching `ErrUnwrap`, `ErrMalformedWrappedKey`, `ErrKeyDestroyed` or
+  `ErrInvalidKey`, and never carry key material. `DataKey` holds the
+  unwrapped repository data key in go-enclave locked memory until `Close`
+  destroys it; only the wrapped form is persisted.
+- The standalone provider, `keyseam.PassphraseProvider`: the KEK is derived
+  with PBKDF2-HMAC-SHA-256 (`crypto/pbkdf2`) from a passphrase in locked
+  memory, over a random 16-byte salt stored in the wrapped key's
+  authenticated header, with at least 600000 iterations, and held in locked
+  memory; the data key is wrapped with AES-256-GCM.
+- The chunk and seal core: a FastCDC chunker (`backup/pkg/chunker`, standard
+  library only, min, average and max sizes configurable, deterministic);
+  chunk IDs as HMAC-SHA-256 under a subkey of the data key; sealed objects
+  (`backup/pkg/seal`) as AES-256-GCM with a random 96-bit nonce under
+  per-purpose HKDF-SHA-256 subkeys (chunk ID, pack, index, snapshot), the
+  additional data binding the object's type and ID. The sealed format
+  records a compression identifier; only `none` is implemented.
+- `make backup-lint` and `make backup-test` gate the module, which the root
+  `make lint` and `make test` do not reach.
+
+### Changed
+
+- On Windows, objstore-backup checks a passphrase, token or configuration
+  file against its ACL rather than its permission bits, which there reflect
+  only the read-only attribute.
+
+- The gRPC server's default receive limit is 32 MiB, up from 10 MiB, so the
+  backup agent's default 16 MiB packs upload over gRPC. The send limit stays
+  10 MiB.
+
 ## [0.7.0-alpha] - 2026-10-25
 
 ### Changed
