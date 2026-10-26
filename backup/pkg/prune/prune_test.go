@@ -7,6 +7,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -119,12 +120,14 @@ type fixture struct {
 	// r is the repository backups write through; it cannot remove.
 	r  *repo.Repository
 	pr *Pruner
+	// dir holds the source directories backed up.
+	dir string
 }
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	ctx := context.Background()
-	fx := &fixture{mem: store.NewMemory()}
+	fx := &fixture{mem: store.NewMemory(), dir: t.TempDir()}
 	fx.st = &pruning{Memory: fx.mem}
 	fx.hook = &hooked{Store: fx.mem}
 	var err error
@@ -150,13 +153,13 @@ func content(seed byte, n int) []byte {
 // backup stores files as a snapshot taken at at.
 func (fx *fixture) backup(t *testing.T, at time.Time, files map[string][]byte) seal.ID {
 	t.Helper()
-	root := t.TempDir()
-	for name, data := range files {
-		if err := os.WriteFile(filepath.Join(root, name), data, 0o600); err != nil {
-			t.Fatalf("WriteFile: %v", err)
-		}
-	}
-	res, err := backup.Run(context.Background(), fx.r, root, backup.Options{Host: "h", Now: func() time.Time { return at }})
+	return fx.backupOf(t, "h", "src", at, files)
+}
+
+// backupOf backs up files as host's source directory src at at.
+func (fx *fixture) backupOf(t *testing.T, host, src string, at time.Time, files map[string][]byte) seal.ID {
+	t.Helper()
+	res, err := backup.Run(context.Background(), fx.r, fx.tree(t, src, files), backup.Options{Host: host, Now: func() time.Time { return at }})
 	if err != nil {
 		t.Fatalf("backup.Run: %v", err)
 	}
@@ -401,7 +404,7 @@ func TestBackupBetweenMarkAndSweep(t *testing.T) {
 	fx.backup(t, t0.Add(time.Hour), map[string][]byte{"b": fileB})
 	oldP := fx.packsOf(t, fx.chunksOf(t, s1))
 	fx.run(t, Policy{Last: 1}, mark)
-	res, err := backup.Run(ctx, fx.r, writeTree(t, map[string][]byte{"a": fileA}),
+	res, err := backup.Run(ctx, fx.r, fx.tree(t, "src", map[string][]byte{"a": fileA}),
 		backup.Options{Host: "h", Now: func() time.Time { return mark.Add(time.Hour) }})
 	if err != nil {
 		t.Fatalf("backup.Run: %v", err)
@@ -433,9 +436,17 @@ func TestBackupBetweenMarkAndSweep(t *testing.T) {
 	fx.restored(t, res.Snapshot, map[string][]byte{"a": fileA})
 }
 
-func writeTree(t *testing.T, files map[string][]byte) string {
+// tree replaces the source directory src with one holding files and returns
+// its path, which stays the same for every backup of src.
+func (fx *fixture) tree(t *testing.T, src string, files map[string][]byte) string {
 	t.Helper()
-	root := t.TempDir()
+	root := filepath.Join(fx.dir, src)
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatalf("RemoveAll: %v", err)
+	}
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
 	for name, data := range files {
 		if err := os.WriteFile(filepath.Join(root, name), data, 0o600); err != nil {
 			t.Fatalf("WriteFile: %v", err)
@@ -526,5 +537,84 @@ func TestKeepsNothing(t *testing.T) {
 	sameContents(t, before, contents(fx.mem))
 	if fx.st.removes != 0 {
 		t.Fatalf("%d removals", fx.st.removes)
+	}
+}
+
+// TestKeepsNothingOfAGroup refuses a policy that keeps another group's
+// snapshots but none of one group's.
+func TestKeepsNothingOfAGroup(t *testing.T) {
+	ctx := context.Background()
+	fx := newFixture(t)
+	fx.backupOf(t, "h", "old", t0, map[string][]byte{"a": fileA})
+	fx.backupOf(t, "h", "new", mark.Add(-time.Second), map[string][]byte{"b": fileB})
+	before := contents(fx.mem)
+	_, err := fx.pr.Run(ctx, Policy{Within: time.Minute}, Options{Now: func() time.Time { return mark }})
+	if e := assertPruneError(t, err, ErrKeepsNothing); e.Object != "h:"+filepath.Join(fx.dir, "old") {
+		t.Fatalf("refused group %q", e.Object)
+	}
+	sameContents(t, before, contents(fx.mem))
+	if fx.st.removes != 0 {
+		t.Fatalf("%d removals", fx.st.removes)
+	}
+}
+
+// TestGroups applies the shipped example configuration's policy to three
+// sources backed up in the same periods: each source keeps its own newest
+// snapshot, where one policy over the whole repository would keep only the
+// newest of all three.
+func TestGroups(t *testing.T) {
+	ctx := context.Background()
+	fx := newFixture(t)
+	pol := Policy{Daily: 7, Weekly: 4, Monthly: 12}
+	srcs := []string{"etc", "home", "srv"}
+	var want []Group
+	for i, src := range srcs {
+		at := t0.Add(time.Duration(i) * time.Minute)
+		older := fx.backupOf(t, "h", src, at, map[string][]byte{"a": fileA})
+		newest := fx.backupOf(t, "h", src, at.Add(time.Hour), map[string][]byte{"b": fileB})
+		want = append(want, Group{Host: "h", Root: filepath.Join(fx.dir, src), Kept: []seal.ID{newest}, Forgotten: []seal.ID{older}})
+	}
+	check := func(rep *Report) {
+		t.Helper()
+		if len(rep.Groups) != len(want) || len(rep.Kept) != len(srcs) || len(rep.Forgotten) != len(srcs) {
+			t.Fatalf("groups %+v, kept %d, forgot %d", rep.Groups, len(rep.Kept), len(rep.Forgotten))
+		}
+		for i, g := range rep.Groups {
+			if g.Host != want[i].Host || g.Root != want[i].Root || !slices.Equal(g.Kept, want[i].Kept) ||
+				!slices.Equal(g.Forgotten, want[i].Forgotten) {
+				t.Fatalf("group %d = %+v, want %+v", i, g, want[i])
+			}
+		}
+	}
+	before := contents(fx.mem)
+	dry, err := fx.pr.Run(ctx, pol, Options{DryRun: true, Now: func() time.Time { return mark }})
+	if err != nil {
+		t.Fatalf("dry run: %v", err)
+	}
+	check(dry)
+	sameContents(t, before, contents(fx.mem))
+	if fx.st.removes != 0 {
+		t.Fatalf("the dry run removed %d objects", fx.st.removes)
+	}
+	check(fx.run(t, pol, mark))
+	for _, g := range want {
+		fx.restored(t, g.Kept[0], map[string][]byte{"b": fileB})
+	}
+}
+
+// TestHostsAreGroups keeps the same directory of two hosts apart.
+func TestHostsAreGroups(t *testing.T) {
+	fx := newFixture(t)
+	a1 := fx.backupOf(t, "a", "src", t0, map[string][]byte{"a": fileA})
+	a2 := fx.backupOf(t, "a", "src", t0.Add(time.Hour), map[string][]byte{"a": fileA})
+	b1 := fx.backupOf(t, "b", "src", t0.Add(2*time.Hour), map[string][]byte{"b": fileB})
+	rep := fx.run(t, Policy{Last: 1}, mark)
+	root := filepath.Join(fx.dir, "src")
+	if len(rep.Groups) != 2 ||
+		rep.Groups[0].Host != "a" || rep.Groups[0].Root != root || !slices.Equal(rep.Groups[0].Kept, []seal.ID{a2}) ||
+		!slices.Equal(rep.Groups[0].Forgotten, []seal.ID{a1}) ||
+		rep.Groups[1].Host != "b" || rep.Groups[1].Root != root || !slices.Equal(rep.Groups[1].Kept, []seal.ID{b1}) ||
+		len(rep.Groups[1].Forgotten) != 0 {
+		t.Fatalf("groups %+v", rep.Groups)
 	}
 }

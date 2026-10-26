@@ -1,0 +1,29 @@
+{
+  "connection": {
+    "protocol": "grpc",
+    "address": "objstore.example.internal:9090",
+    "tls": true,
+    "ca_file": "/etc/objstore-backup/ca.pem",
+    "token_file": "/etc/objstore-backup/backup-token",
+    "timeout": "5m"
+  },
+  "repo": "hosts/web1",
+  "passphrase_file": "/etc/objstore-backup/passphrase",
+  "sources": ["/etc", "/srv", "/home"],
+  "host": "web1",
+  "schedule": {"daily": "02:30", "jitter": "30m"},
+  "prune": {
+    "connection": {
+      "protocol": "grpc",
+      "address": "objstore.example.internal:9090",
+      "tls": true,
+      "ca_file": "/etc/objstore-backup/ca.pem",
+      "token_file": "/etc/objstore-backup/prune-token"
+    },
+    "keep_daily": 7,
+    "keep_weekly": 4,
+    "keep_monthly": 12,
+    "grace": "24h"
+  },
+  "log_format": "text"
+}

@@ -12,8 +12,9 @@ import (
 var (
 	// ErrInvalidOptions reports a policy or option out of range.
 	ErrInvalidOptions = errors.New("prune: invalid options")
-	// ErrKeepsNothing reports a policy that would keep no snapshot. Prune
-	// removes nothing then.
+	// ErrKeepsNothing reports a policy that would keep no snapshot of a
+	// group, or a repository with no snapshot. The error's Object names the
+	// group. Prune removes nothing then.
 	ErrKeepsNothing = errors.New("prune: policy keeps no snapshot")
 	// ErrCorrupt reports a repository object that does not open or decode.
 	// Prune removes nothing it has not already removed.

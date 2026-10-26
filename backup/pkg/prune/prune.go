@@ -45,6 +45,9 @@ type Report struct {
 	DryRun bool
 	// Kept and Forgotten are the snapshots the policy kept and forgot.
 	Kept, Forgotten []seal.ID
+	// Groups are the same snapshots by host and root, ordered by host and
+	// root; the policy is applied to each group on its own.
+	Groups []Group
 	// Index is the index object that replaces the Superseded ones. It is the
 	// zero ID when the run wrote none, and always with DryRun, when
 	// Superseded lists every index read.
@@ -164,11 +167,22 @@ func (ru *run) run(pol Policy) error {
 			return fromRepo("read snapshot", err)
 		}
 		manifests[id] = s
-		snaps = append(snaps, dated{id: id, time: s.Time})
+		snaps = append(snaps, dated{id: id, time: s.Time, group: source{host: s.Host, root: s.Root}})
 	}
-	kept := pol.keep(snaps, start)
-	if len(kept) == 0 {
+	if len(snaps) == 0 {
 		return newError("apply policy", "", ErrKeepsNothing, nil)
+	}
+	// A group the policy would empty is refused, so a source whose backups
+	// stopped never loses its last snapshot to a time-based rule.
+	ru.rep.Groups = pol.keepGroups(snaps, start)
+	kept := make(map[seal.ID]bool, len(snaps))
+	for _, g := range ru.rep.Groups {
+		if len(g.Kept) == 0 {
+			return newError("apply policy", g.String(), ErrKeepsNothing, nil)
+		}
+		for _, id := range g.Kept {
+			kept[id] = true
+		}
 	}
 	live := make(map[seal.ID]bool)
 	for _, id := range snapIDs {

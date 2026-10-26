@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  objstore-backup as a launchd daemon. The schedule is in the configuration
+  file; launchd keeps the process running and restarts it if it fails.
+
+  Install:
+    sudo install -m 0755 objstore-backup /usr/local/bin/objstore-backup
+    sudo install -d -m 0700 /usr/local/etc/objstore-backup
+    sudo install -m 0600 config.json /usr/local/etc/objstore-backup/config.json
+    sudo install -m 0400 passphrase /usr/local/etc/objstore-backup/passphrase
+    sudo install -m 0644 com.github.jeremyhahn.objstore-backup.plist /Library/LaunchDaemons/
+    sudo launchctl bootstrap system /Library/LaunchDaemons/com.github.jeremyhahn.objstore-backup.plist
+
+  Grant /usr/local/bin/objstore-backup Full Disk Access (System Settings,
+  Privacy and Security) to back up folders macOS protects.
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.github.jeremyhahn.objstore-backup</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/local/bin/objstore-backup</string>
+		<string>service</string>
+		<string>--config</string>
+		<string>/usr/local/etc/objstore-backup/config.json</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>ThrottleInterval</key>
+	<integer>30</integer>
+	<key>ExitTimeOut</key>
+	<integer>60</integer>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>LowPriorityIO</key>
+	<true/>
+	<key>Nice</key>
+	<integer>10</integer>
+	<!-- 0077: files the service creates are private. -->
+	<key>Umask</key>
+	<integer>63</integer>
+	<key>StandardOutPath</key>
+	<string>/var/log/objstore-backup.log</string>
+	<key>StandardErrorPath</key>
+	<string>/var/log/objstore-backup.log</string>
+</dict>
+</plist>

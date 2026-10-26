@@ -33,35 +33,63 @@ func (e *secretError) Error() string {
 func (e *secretError) Unwrap() error { return e.err }
 
 // readSecretFile reads a secret from the file at path, which must be a
-// regular file with no group or other permission bits. The caller clears
+// regular file that gives group and others no access. The caller clears
 // the returned buffer.
 func readSecretFile(path string) ([]byte, error) {
+	f, err := openRestricted(path, othersNone, errSecretMode)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	return readSecret(f)
+}
+
+// access is the access a file must give group and others none of.
+type access int
+
+const (
+	// othersNone refuses a file group or others can read or write.
+	othersNone access = iota
+	// othersWrite refuses a file group or others can write.
+	othersWrite
+)
+
+// openRestricted opens the regular file at path, or returns refused unless
+// it gives group and others none of the access a names: in its permission
+// bits or, on Windows, in its ACL.
+func openRestricted(path string, a access, refused error) (*os.File, error) {
 	path = filepath.Clean(path)
 	// Stat before opening, so a FIFO or device is refused without blocking.
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, pathless(err)
 	}
-	if !owned(info) {
-		return nil, errSecretMode
+	if !restricted(info, a) {
+		return nil, refused
 	}
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, pathless(err)
 	}
-	defer func() { _ = f.Close() }()
 	// Check again on the open file, in case path changed in between.
-	if info, err = f.Stat(); err != nil {
+	if info, err = f.Stat(); err == nil && !restricted(info, a) {
+		err = refused
+	}
+	if err == nil {
+		var ok bool
+		if ok, err = aclRestricted(f, a); err == nil && !ok {
+			err = refused
+		}
+	}
+	if err != nil {
+		_ = f.Close()
 		return nil, pathless(err)
 	}
-	if !owned(info) {
-		return nil, errSecretMode
-	}
-	return readSecret(f)
+	return f, nil
 }
 
-func owned(info fs.FileInfo) bool {
-	return info.Mode().IsRegular() && info.Mode().Perm()&0o077 == 0
+func restricted(info fs.FileInfo, a access) bool {
+	return info.Mode().IsRegular() && modeRestricted(info, a)
 }
 
 // pathless drops the path a file error repeats; the caller names it.

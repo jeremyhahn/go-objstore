@@ -67,6 +67,36 @@ func TestPolicy(t *testing.T) {
 	}
 }
 
+func TestPolicyGroups(t *testing.T) {
+	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	// Two snapshots of each source on one day, listed newest source first.
+	srcs := []source{{"h2", "/home"}, {"h1", "/srv"}, {"h1", "/home"}}
+	var snaps []dated
+	for i, src := range srcs {
+		at := now.Add(-time.Duration(i+1) * time.Minute)
+		snaps = append(snaps,
+			dated{id: seal.ID{byte(2*i + 1)}, time: at.Add(-time.Hour), group: src},
+			dated{id: seal.ID{byte(2*i + 2)}, time: at, group: src})
+	}
+	groups := Policy{Daily: 7, Weekly: 4, Monthly: 12}.keepGroups(snaps, now)
+	want := []Group{
+		{Host: "h1", Root: "/home", Kept: []seal.ID{{6}}, Forgotten: []seal.ID{{5}}},
+		{Host: "h1", Root: "/srv", Kept: []seal.ID{{4}}, Forgotten: []seal.ID{{3}}},
+		{Host: "h2", Root: "/home", Kept: []seal.ID{{2}}, Forgotten: []seal.ID{{1}}},
+	}
+	if len(groups) != len(want) {
+		t.Fatalf("groups %+v", groups)
+	}
+	for i, g := range groups {
+		if g.String() != want[i].String() || !slices.Equal(g.Kept, want[i].Kept) || !slices.Equal(g.Forgotten, want[i].Forgotten) {
+			t.Fatalf("group %d = %+v, want %+v", i, g, want[i])
+		}
+	}
+	if groups := (Policy{Last: 1}).keepGroups(nil, now); len(groups) != 0 {
+		t.Fatalf("groups %+v of no snapshots", groups)
+	}
+}
+
 func TestPolicyValidate(t *testing.T) {
 	for _, pol := range []Policy{{Last: -1}, {Within: -1}, {Daily: -1}, {Weekly: -1}, {Monthly: -1}, {Yearly: -1}} {
 		if err := pol.validate(); !errors.Is(err, ErrInvalidOptions) {

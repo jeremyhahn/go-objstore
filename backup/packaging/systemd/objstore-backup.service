@@ -1,0 +1,66 @@
+# objstore-backup as a long-running systemd service. The schedule is in the
+# configuration file, so no timer unit is needed.
+#
+# Install:
+#   useradd --system --no-create-home --shell /usr/sbin/nologin objstore-backup
+#   install -m 0755 objstore-backup /usr/local/bin/objstore-backup
+#   install -d -m 0700 -o objstore-backup -g objstore-backup /etc/objstore-backup
+#   install -m 0600 -o objstore-backup -g objstore-backup config.json /etc/objstore-backup/config.json
+#   install -m 0400 -o objstore-backup -g objstore-backup passphrase /etc/objstore-backup/passphrase
+#   install -m 0644 objstore-backup.service /etc/systemd/system/objstore-backup.service
+#   systemctl daemon-reload && systemctl enable --now objstore-backup
+#   journalctl -u objstore-backup -f
+
+[Unit]
+Description=objstore-backup scheduled backup agent
+Documentation=https://github.com/jeremyhahn/go-objstore/tree/main/docs/backup-agent
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=objstore-backup
+Group=objstore-backup
+ExecStart=/usr/local/bin/objstore-backup service --config /etc/objstore-backup/config.json
+Restart=on-failure
+RestartSec=30s
+TimeoutStopSec=60s
+Nice=10
+IOSchedulingClass=idle
+
+# Read every source without owning it: CAP_DAC_READ_SEARCH bypasses read and
+# directory search permission checks, and grants nothing else.
+AmbientCapabilities=CAP_DAC_READ_SEARCH
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+# The passphrase and data key are held in locked memory.
+LimitMEMLOCK=64M
+
+NoNewPrivileges=yes
+# The whole file system is read-only to the service, so it can read the
+# sources and write nothing; it logs to the journal.
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+UMask=0077
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service @memlock
+SystemCallFilter=~@privileged
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

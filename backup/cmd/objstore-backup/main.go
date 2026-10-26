@@ -11,8 +11,11 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"syscall"
 
 	objstore "github.com/jeremyhahn/go-objstore/api/sdks/go"
+	"github.com/jeremyhahn/go-objstore/backup/internal/schedule"
+	"github.com/jeremyhahn/go-objstore/backup/pkg/srcsnap"
 )
 
 // Exit codes.
@@ -36,6 +39,7 @@ Commands:
   restore     Restore a snapshot into a directory
   verify      Check the repository's data
   prune       Forget snapshots by a retention policy and remove unused data
+  service     Back up on a schedule from a configuration file
   help        Show this help, or a command's
 
 Run "objstore-backup help <command>" or "objstore-backup <command> -h" for a
@@ -51,7 +55,7 @@ func main() {
 // run executes the command line in args against an objstore server and
 // returns the process exit code.
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return runWith(ctx, &env{stdin: stdin, stdout: stdout, stderr: stderr, open: openSDK}, args)
 }
@@ -62,6 +66,13 @@ type env struct {
 	stdin          io.Reader
 	stdout, stderr io.Writer
 	open           opener
+	// clock is the service's time source; nil means the system clock.
+	clock schedule.Clock
+	// ran, if set, is called after each scheduled run of the service.
+	ran func()
+	// snap is the source snapshot environment; the zero value runs the
+	// platform's tools.
+	snap srcsnap.Env
 }
 
 // command is one subcommand. run receives the arguments after its name.
@@ -77,6 +88,7 @@ var commands = map[string]command{
 	"restore":   {cmdRestore, restoreHelp},
 	"verify":    {cmdVerify, verifyHelp},
 	"prune":     {cmdPrune, pruneHelp},
+	"service":   {cmdService, serviceHelp},
 }
 
 // runWith dispatches args to its command.

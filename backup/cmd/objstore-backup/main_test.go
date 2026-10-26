@@ -14,6 +14,7 @@ import (
 	"time"
 
 	objstore "github.com/jeremyhahn/go-objstore/api/sdks/go"
+	"github.com/jeremyhahn/go-objstore/backup/pkg/srcsnap"
 	"github.com/jeremyhahn/go-objstore/backup/pkg/store"
 )
 
@@ -29,6 +30,7 @@ type harness struct {
 	secrets []string
 	openErr error
 	closErr error
+	snap    srcsnap.Env
 
 	mu      sync.Mutex
 	configs []*objstore.ClientConfig
@@ -80,7 +82,7 @@ func (h *harness) run(stdin string, args ...string) (int, string, string) {
 func (h *harness) runOut(stdout io.Writer, stdin string, args ...string) (int, string) {
 	h.t.Helper()
 	var stderr bytes.Buffer
-	e := &env{stdin: strings.NewReader(stdin), stdout: stdout, stderr: &stderr, open: h.open}
+	e := &env{stdin: strings.NewReader(stdin), stdout: stdout, stderr: &stderr, open: h.open, snap: h.snap}
 	code := runWith(context.Background(), e, args)
 	for _, s := range h.secrets {
 		if strings.Contains(stderr.String(), s) {
@@ -291,21 +293,34 @@ func TestEndToEnd(t *testing.T) {
 		t.Errorf("verify --json: %+v", vr)
 	}
 
+	// Retention applies to each host's snapshots of each directory on its
+	// own: a second backup of first as web-1 makes firstID the one to forget,
+	// and second, the other group's only snapshot, stays.
+	againID := strings.Fields(h.must(exitOK, h.repo("backup", first, "--host", "web-1")...))[1]
 	var pr pruneReport
 	if err := json.Unmarshal([]byte(h.must(exitOK, h.pruner("prune", "--keep-last", "1", "--dry-run", "--json")...)), &pr); err != nil {
 		t.Fatal(err)
 	}
-	if !pr.DryRun || len(pr.Kept) != 1 || len(pr.Forgotten) != 1 || pr.Forgotten[0].String() != firstID {
-		t.Errorf("prune --dry-run --json: %+v", pr)
+	if !pr.DryRun || len(pr.Kept) != 2 || len(pr.Forgotten) != 1 || pr.Forgotten[0].String() != firstID || len(pr.Groups) != 2 {
+		t.Fatalf("prune --dry-run --json: %+v", pr)
+	}
+	for _, g := range pr.Groups {
+		web := g.Host == "web-1"
+		if root := map[bool]string{true: first, false: second}[web]; g.Root != root || len(g.Kept) != 1 ||
+			(web && (g.Kept[0].String() != againID || len(g.Forgotten) != 1 || g.Forgotten[0].String() != firstID)) ||
+			(!web && len(g.Forgotten) != 0) {
+			t.Errorf("prune --dry-run --json group %+v", g)
+		}
 	}
 	if out := h.must(exitOK, h.pruner("prune", "--dry-run", "--keep-within", "30d")...); !strings.Contains(out, "dry run") {
 		t.Errorf("prune --dry-run: %q", out)
 	}
 	out = h.must(exitOK, h.pruner("prune", "--keep-last", "1", "--grace", "1d")...)
-	if !strings.Contains(out, "forgot "+firstID) || !strings.Contains(out, "unused packs marked") {
+	if !strings.Contains(out, "forgot "+firstID) || !strings.Contains(out, "host web-1, "+first+": kept 1, forgot 1\n") ||
+		!strings.Contains(out, "unused packs marked") {
 		t.Errorf("prune: %q", out)
 	}
-	if err := json.Unmarshal([]byte(h.must(exitOK, h.repo("snapshots", "--json")...)), &list); err != nil || len(list) != 1 {
+	if err := json.Unmarshal([]byte(h.must(exitOK, h.repo("snapshots", "--json")...)), &list); err != nil || len(list) != 2 {
 		t.Errorf("snapshots after prune: %+v, %v", list, err)
 	}
 
@@ -363,8 +378,9 @@ func TestOutputFailures(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.mustFailOutput(h.repo("init")...)
-	h.mustFailOutput(h.repo("backup", h.source(map[string]string{"a.txt": "hello"}))...)
-	id := strings.Fields(h.must(exitOK, h.repo("backup", h.source(map[string]string{"b.txt": "world"}))...))[1]
+	src := h.source(map[string]string{"a.txt": "hello"})
+	h.mustFailOutput(h.repo("backup", src)...)
+	id := strings.Fields(h.must(exitOK, h.repo("backup", src)...))[1]
 	for _, args := range [][]string{
 		h.repo("snapshots"),
 		h.repo("snapshots", "--json"),

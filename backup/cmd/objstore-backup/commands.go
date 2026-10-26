@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"slices"
 	"strings"
 	"text/tabwriter"
@@ -39,7 +40,7 @@ const backupHelp = `Usage: objstore-backup backup [flags] <path>...
 
 Back up each directory, one snapshot per path. Only chunks the repository
 does not hold yet are uploaded. The backup identity needs no delete right.
-` + connHelp
+` + snapHelp + connHelp
 
 const snapshotsHelp = `Usage: objstore-backup snapshots [flags]
 
@@ -63,7 +64,9 @@ snapshots by default), without writing files. Exits 3 if problems are found.
 const pruneHelp = `Usage: objstore-backup prune [flags]
 
 Forget the snapshots the retention policy does not keep, and remove the data
-only they used. A pack no kept snapshot uses is first marked, and removed by
+only they used. The policy applies to each host's snapshots of each source
+directory on its own, and prune refuses a run that would forget every
+snapshot of one. A pack no kept snapshot uses is first marked, and removed by
 a later run once the grace period has passed; the grace period must exceed
 the longest backup.
 
@@ -208,6 +211,8 @@ func cmdBackup(ctx context.Context, e *env, args []string) int {
 	fs := newFlags(name)
 	var o repoOpts
 	o.register(fs)
+	var so snapOpts
+	so.register(fs)
 	host := fs.String("host", "", "host name recorded in the snapshots (default: this system's)")
 	paths, code, ok := e.parse(name, backupHelp, fs, args, 1, -1)
 	if !ok {
@@ -216,9 +221,27 @@ func cmdBackup(ctx context.Context, e *env, args []string) int {
 	if err := o.check(); err != nil {
 		return e.usageError(name, err)
 	}
-	return e.withRepo(ctx, name, &o, func(r *repo.Repository, w io.Writer) (int, error) {
+	scfg, err := so.config()
+	if err != nil {
+		return e.usageError(name, err)
+	}
+	return e.withRepo(ctx, name, &o, func(r *repo.Repository, w io.Writer) (code int, err error) {
+		log := slog.New(slog.NewTextHandler(e.stderr, nil))
+		snap, err := e.snapshotter(scfg, log)
+		if err != nil {
+			return exitFailure, err
+		}
+		set, err := snapshot(ctx, snap, paths, log)
+		if err != nil {
+			return exitFailure, err
+		}
+		defer func() {
+			if cerr := set.Close(); cerr != nil {
+				code, err = exitFailure, errors.Join(err, cerr)
+			}
+		}()
 		for _, path := range paths {
-			res, err := backup.Run(ctx, r, path, backup.Options{Host: *host})
+			res, err := backup.Run(ctx, r, path, backup.Options{Host: *host, ReadFrom: set.Path(path), Skip: set.Skip()})
 			if err != nil {
 				return exitFailure, err
 			}
@@ -440,16 +463,34 @@ func cmdVerify(ctx context.Context, e *env, args []string) int {
 
 // pruneReport is prune's report, as JSON.
 type pruneReport struct {
-	DryRun       bool      `json:"dry_run"`
-	Kept         []seal.ID `json:"kept"`
-	Forgotten    []seal.ID `json:"forgotten"`
-	Index        string    `json:"index,omitempty"`
-	Superseded   []seal.ID `json:"superseded"`
-	Marked       int       `json:"marked"`
-	Removed      []seal.ID `json:"removed"`
-	RemovedBytes int64     `json:"removed_bytes"`
-	Partial      int       `json:"partial"`
-	UnusedBytes  int64     `json:"unused_bytes"`
+	DryRun       bool         `json:"dry_run"`
+	Kept         []seal.ID    `json:"kept"`
+	Forgotten    []seal.ID    `json:"forgotten"`
+	Groups       []pruneGroup `json:"groups"`
+	Index        string       `json:"index,omitempty"`
+	Superseded   []seal.ID    `json:"superseded"`
+	Marked       int          `json:"marked"`
+	Removed      []seal.ID    `json:"removed"`
+	RemovedBytes int64        `json:"removed_bytes"`
+	Partial      int          `json:"partial"`
+	UnusedBytes  int64        `json:"unused_bytes"`
+}
+
+// pruneGroup is one host's snapshots of one directory, which the policy
+// applies to on its own.
+type pruneGroup struct {
+	Host      string    `json:"host"`
+	Root      string    `json:"root"`
+	Kept      []seal.ID `json:"kept"`
+	Forgotten []seal.ID `json:"forgotten"`
+}
+
+func pruneGroups(gs []prune.Group) []pruneGroup {
+	out := make([]pruneGroup, 0, len(gs))
+	for _, g := range gs {
+		out = append(out, pruneGroup{Host: g.Host, Root: g.Root, Kept: nonNil(g.Kept), Forgotten: nonNil(g.Forgotten)})
+	}
+	return out
 }
 
 func cmdPrune(ctx context.Context, e *env, args []string) int {
@@ -494,7 +535,7 @@ func cmdPrune(ctx context.Context, e *env, args []string) int {
 		return e.fail(name, err)
 	}
 	out := pruneReport{
-		DryRun: rep.DryRun, Kept: nonNil(rep.Kept), Forgotten: nonNil(rep.Forgotten),
+		DryRun: rep.DryRun, Kept: nonNil(rep.Kept), Forgotten: nonNil(rep.Forgotten), Groups: pruneGroups(rep.Groups),
 		Superseded: nonNil(rep.Superseded), Marked: rep.Marked, Removed: nonNil(rep.Removed),
 		RemovedBytes: rep.RemovedBytes, Partial: rep.Partial, UnusedBytes: rep.UnusedBytes,
 	}
@@ -535,8 +576,14 @@ func printPrune(w io.Writer, r pruneReport) {
 		fmt.Fprintln(w, "dry run: nothing was written or removed")
 	}
 	fmt.Fprintf(w, "kept %d snapshots, forgot %d\n", len(r.Kept), len(r.Forgotten))
-	for _, id := range r.Forgotten {
-		fmt.Fprintf(w, "  forgot %s\n", id)
+	for _, g := range r.Groups {
+		fmt.Fprintf(w, "host %s, %s: kept %d, forgot %d\n", g.Host, g.Root, len(g.Kept), len(g.Forgotten))
+		for _, id := range g.Kept {
+			fmt.Fprintf(w, "  kept %s\n", id)
+		}
+		for _, id := range g.Forgotten {
+			fmt.Fprintf(w, "  forgot %s\n", id)
+		}
 	}
 	if r.Index != "" {
 		fmt.Fprintf(w, "wrote index %s, superseding %d\n", r.Index, len(r.Superseded))

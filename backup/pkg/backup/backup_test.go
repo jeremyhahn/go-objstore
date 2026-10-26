@@ -6,9 +6,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -394,6 +396,102 @@ func TestRunErrors(t *testing.T) {
 	_ = r.Close()
 	_, err = Run(ctx, r, root, Options{})
 	assertBackupError(t, err, ErrRepository, repo.ErrKeys)
+}
+
+// TestReadFrom reads a copy of the source, as a source snapshot does: the
+// manifest records the source's own root and the same tree as a backup
+// of the source.
+func TestReadFrom(t *testing.T) {
+	ctx := context.Background()
+	r := newRepo(t, store.NewMemory())
+	src, _, _ := tree(t)
+	frozen, _, _ := tree(t)
+	nodes := func(id seal.ID) (string, []string) {
+		t.Helper()
+		snap, err := r.ReadSnapshot(ctx, id)
+		if err != nil {
+			t.Fatalf("ReadSnapshot: %v", err)
+		}
+		var out []string
+		for _, n := range snap.Nodes {
+			out = append(out, fmt.Sprintf("%s %v %v %d %s %s", n.Path, n.Type, n.Mode, n.Size, n.Target, n.SHA256))
+		}
+		return snap.Root, out
+	}
+	live, err := Run(ctx, r, src, Options{})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	read, err := Run(ctx, r, src, Options{ReadFrom: frozen})
+	if err != nil {
+		t.Fatalf("Run with ReadFrom: %v", err)
+	}
+	liveRoot, liveNodes := nodes(live.Snapshot)
+	readRoot, readNodes := nodes(read.Snapshot)
+	if liveRoot != src || readRoot != src {
+		t.Fatalf("roots %q and %q, want %q", liveRoot, readRoot, src)
+	}
+	if !slices.Equal(liveNodes, readNodes) {
+		t.Fatalf("nodes differ:\n%v\n%v", liveNodes, readNodes)
+	}
+	if read.Stats.ChunksNew != 0 {
+		t.Fatalf("the copy stored %d new chunks, want 0", read.Stats.ChunksNew)
+	}
+
+	_, err = Run(ctx, r, src, Options{ReadFrom: filepath.Join(frozen, "missing")})
+	assertBackupError(t, err, ErrFilesystem, os.ErrNotExist)
+	_, err = Run(ctx, r, src, Options{ReadFrom: filepath.Join(frozen, smallName)})
+	assertBackupError(t, err, ErrInvalidRoot)
+}
+
+// TestSkip checks that a skipped directory is neither recorded nor read, on
+// the live tree and, matched by its live path, under ReadFrom.
+func TestSkip(t *testing.T) {
+	ctx := context.Background()
+	r := newRepo(t, store.NewMemory())
+	layout := func() string {
+		dir := t.TempDir()
+		for _, p := range []string{"keep/a", "snaps/s/b"} {
+			if err := os.MkdirAll(filepath.Join(dir, filepath.Dir(p)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, p), []byte(p), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return dir
+	}
+	paths := func(id seal.ID) []string {
+		t.Helper()
+		snap, err := r.ReadSnapshot(ctx, id)
+		if err != nil {
+			t.Fatalf("ReadSnapshot: %v", err)
+		}
+		var out []string
+		for _, n := range snap.Nodes {
+			out = append(out, filepath.ToSlash(n.Path))
+		}
+		return out
+	}
+	src, frozen := layout(), layout()
+	skip := []string{filepath.Join(src, "snaps"), src}
+	for _, opts := range []Options{{Skip: skip}, {Skip: skip, ReadFrom: frozen}} {
+		res, err := Run(ctx, r, src, opts)
+		if err != nil {
+			t.Fatalf("Run(%+v): %v", opts, err)
+		}
+		got := paths(res.Snapshot)
+		kept := false
+		for _, p := range got {
+			if strings.Contains(p, "snaps") {
+				t.Errorf("ReadFrom %q recorded %q", opts.ReadFrom, p)
+			}
+			kept = kept || strings.HasSuffix(p, "keep/a")
+		}
+		if !kept {
+			t.Errorf("ReadFrom %q: keep/a missing from %q", opts.ReadFrom, got)
+		}
+	}
 }
 
 // TestMarkedPacks checks that a run neither dedups against nor rewrites a

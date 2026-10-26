@@ -32,6 +32,16 @@ type Options struct {
 	Host string
 	// Now returns the run's time. Nil means time.Now.
 	Now func() time.Time
+	// ReadFrom, if set, is the directory the walk reads instead of root: a
+	// frozen view of root, such as the same directory inside a source
+	// snapshot. The manifest still records root, so a restore is the same
+	// as one of a backup that read root itself. Empty means read root.
+	ReadFrom string
+	// Skip lists directories, by their absolute paths in the live tree,
+	// that the walk neither records nor descends into, such as those that
+	// hold source snapshots. With ReadFrom, an entry is skipped when its
+	// path under root is listed.
+	Skip []string
 }
 
 // Stats count what a run did.
@@ -87,12 +97,18 @@ func Run(ctx context.Context, r *repo.Repository, root string, opts Options) (*R
 	if err != nil {
 		return nil, newError("resolve root", root, ErrFilesystem, err)
 	}
-	info, err := os.Lstat(abs)
+	walk := abs
+	if opts.ReadFrom != "" {
+		if walk, err = filepath.Abs(opts.ReadFrom); err != nil {
+			return nil, newError("resolve root", opts.ReadFrom, ErrFilesystem, err)
+		}
+	}
+	info, err := os.Lstat(walk)
 	if err != nil {
-		return nil, newError("resolve root", abs, ErrFilesystem, err)
+		return nil, newError("resolve root", walk, ErrFilesystem, err)
 	}
 	if !info.IsDir() {
-		return nil, newError("resolve root", abs, ErrInvalidRoot, nil)
+		return nil, newError("resolve root", walk, ErrInvalidRoot, nil)
 	}
 	now := time.Now
 	if opts.Now != nil {
@@ -121,14 +137,23 @@ func Run(ctx context.Context, r *repo.Repository, root string, opts Options) (*R
 		snap:      repo.Snapshot{Time: now().UTC(), Host: host, Root: abs},
 	}
 	b.packer.Avoid(condemned)
-	if err := filepath.WalkDir(abs, func(path string, d fs.DirEntry, err error) error {
+	skip := make(map[string]bool, len(opts.Skip))
+	for _, p := range opts.Skip {
+		skip[filepath.Clean(p)] = true
+	}
+	if err := filepath.WalkDir(walk, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return newError("walk", path, ErrFilesystem, err)
 		}
 		if err := ctx.Err(); err != nil {
 			return newError("walk", path, ErrCanceled, err)
 		}
-		return b.visit(ctx, abs, path, d)
+		if d.IsDir() && path != walk && len(skip) > 0 {
+			if rel, err := filepath.Rel(walk, path); err == nil && skip[filepath.Join(abs, rel)] {
+				return filepath.SkipDir
+			}
+		}
+		return b.visit(ctx, walk, path, d)
 	}); err != nil {
 		return nil, err
 	}
