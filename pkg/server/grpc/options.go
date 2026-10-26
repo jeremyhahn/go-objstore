@@ -104,13 +104,24 @@ type ServerOptions struct {
 	Backend string
 }
 
+const (
+	// DefaultMaxReceiveMessageSize is the default largest message the server
+	// accepts: 32 MiB, twice a backup repository's default 16 MiB pack, so a
+	// pack Put fits with its trailer and the protobuf framing to spare.
+	DefaultMaxReceiveMessageSize = 32 * 1024 * 1024
+
+	// DefaultMaxSendMessageSize is the default largest message the server
+	// sends. Get streams objects in ChunkSize pieces, so it stays at 10 MiB.
+	DefaultMaxSendMessageSize = 10 * 1024 * 1024
+)
+
 // DefaultServerOptions returns the default server options.
 func DefaultServerOptions() *ServerOptions {
 	return &ServerOptions{
 		Address:               ":50051",
 		MaxConcurrentStreams:  100,
-		MaxReceiveMessageSize: 10 * 1024 * 1024, // 10MB
-		MaxSendMessageSize:    10 * 1024 * 1024, // 10MB
+		MaxReceiveMessageSize: DefaultMaxReceiveMessageSize,
+		MaxSendMessageSize:    DefaultMaxSendMessageSize,
 		ConnectionTimeout:     30 * time.Second,
 		KeepAliveTime:         2 * time.Hour,
 		KeepAliveTimeout:      20 * time.Second,
@@ -161,6 +172,20 @@ func WithMaxConcurrentStreams(max uint32) ServerOption {
 func WithMaxMessageSize(size int) ServerOption {
 	return func(o *ServerOptions) {
 		o.MaxReceiveMessageSize = size
+		o.MaxSendMessageSize = size
+	}
+}
+
+// WithMaxReceiveMessageSize sets the largest message in bytes the server accepts.
+func WithMaxReceiveMessageSize(size int) ServerOption {
+	return func(o *ServerOptions) {
+		o.MaxReceiveMessageSize = size
+	}
+}
+
+// WithMaxSendMessageSize sets the largest message in bytes the server sends.
+func WithMaxSendMessageSize(size int) ServerOption {
+	return func(o *ServerOptions) {
 		o.MaxSendMessageSize = size
 	}
 }

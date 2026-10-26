@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -61,6 +62,8 @@ func TestDefaults_ComeFromTransportPackages(t *testing.T) {
 		got, want any
 	}{
 		{"grpc.addr", d.GRPC.Addr, grpcserver.DefaultServerOptions().Address},
+		{"grpc.max_recv_msg_size", d.GRPC.MaxRecvMsgSize, grpcserver.DefaultServerOptions().MaxReceiveMessageSize},
+		{"grpc.max_send_msg_size", d.GRPC.MaxSendMsgSize, grpcserver.DefaultServerOptions().MaxSendMessageSize},
 		{"rest.host", d.REST.Host, rest.Host},
 		{"rest.port", d.REST.Port, rest.Port},
 		{"quic.addr", d.QUIC.Addr, quic.Addr},
@@ -167,6 +170,9 @@ func TestLoad_EveryListenerSettableByEveryPath(t *testing.T) {
 		return sc.HTTPAddress
 	}
 	unixSocket := func(c *Config) string { return c.Unix.Socket }
+	grpcRecv := func(c *Config) string { return strconv.Itoa(applyGRPC(t, c, c.Middleware()).MaxReceiveMessageSize) }
+	grpcSend := func(c *Config) string { return strconv.Itoa(applyGRPC(t, c, c.Middleware()).MaxSendMessageSize) }
+	sizes := [3]string{"20971520", "41943040", "67108864"}
 	addrs := [3]string{"10.1.0.1:7001", "10.1.0.2:7002", "10.1.0.3:7003"}
 	hosts := [3]string{"10.1.0.1", "10.1.0.2", "10.1.0.3"}
 	ports := [3]string{"7001", "7002", "7003"}
@@ -178,7 +184,11 @@ func TestLoad_EveryListenerSettableByEveryPath(t *testing.T) {
 		{"objstore-server", Defaults(), BindServerFlags, "quic.addr", "quic-addr", addrs, quicAddr},
 		{"objstore-server", Defaults(), BindServerFlags, "mcp.addr", "mcp-addr", addrs, mcpAddr},
 		{"objstore-server", Defaults(), BindServerFlags, "unix.socket", "unix-socket", [3]string{"/a.sock", "/b.sock", "/c.sock"}, unixSocket},
+		{"objstore-server", Defaults(), BindServerFlags, "grpc.max_recv_msg_size", "grpc-max-recv-msg-size", sizes, grpcRecv},
+		{"objstore-server", Defaults(), BindServerFlags, "grpc.max_send_msg_size", "grpc-max-send-msg-size", sizes, grpcSend},
 		{"objstore-grpc-server", Defaults(), BindGRPCServerFlags, "grpc.addr", "addr", addrs, grpcAddr},
+		{"objstore-grpc-server", Defaults(), BindGRPCServerFlags, "grpc.max_recv_msg_size", "max-recv-msg-size", sizes, grpcRecv},
+		{"objstore-grpc-server", Defaults(), BindGRPCServerFlags, "grpc.max_send_msg_size", "max-send-msg-size", sizes, grpcSend},
 		{"objstore-rest-server", RESTServerDefaults(), BindRESTServerFlags, "rest.host", "host", hosts, restHost},
 		{"objstore-rest-server", RESTServerDefaults(), BindRESTServerFlags, "rest.port", "port", ports, restPort},
 		{"objstore-quic-server", QUICServerDefaults(), BindQUICServerFlags, "quic.addr", "addr", addrs, quicAddr},
@@ -345,6 +355,9 @@ func TestLoad_Errors(t *testing.T) {
 			}
 		}},
 		{name: "invalid mcp mode", args: []string{"-mcp-mode", "sse"}, check: isInvalid("mcp.mode")},
+		{name: "grpc receive limit zero", args: []string{"-grpc-max-recv-msg-size", "0"}, check: isInvalid("grpc.max_recv_msg_size")},
+		{name: "grpc receive limit negative", env: map[string]string{"OBJSTORE_GRPC_MAX_RECV_MSG_SIZE": "-1"}, check: isInvalid("grpc.max_recv_msg_size")},
+		{name: "grpc send limit below floor", yaml: "grpc:\n  max_send_msg_size: 1048575\n", check: isInvalid("grpc.max_send_msg_size")},
 		{name: "grpc cert without key", args: []string{"-grpc-tls-cert", "/etc/objstore/grpc.crt"}, check: isInvalid("grpc.tls_cert/grpc.tls_key")},
 		{name: "quic key without cert", env: map[string]string{"OBJSTORE_QUIC_TLS_KEY": "/etc/objstore/quic.key"}, check: isInvalid("quic.tls_cert/quic.tls_key")},
 		{name: "empty backend", args: []string{"-backend", ""}, check: isInvalid("backend")},
@@ -393,6 +406,22 @@ func TestValidate_ReportsEveryProblem(t *testing.T) {
 		if !strings.Contains(err.Error(), key) {
 			t.Errorf("error does not name %s: %v", key, err)
 		}
+	}
+}
+
+func TestValidate_GRPCMessageLimitBounds(t *testing.T) {
+	for _, size := range []int{MinGRPCMessageSize, MaxGRPCMessageSize} {
+		cfg := Defaults()
+		cfg.GRPC.MaxRecvMsgSize, cfg.GRPC.MaxSendMsgSize = size, size
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("limit %d refused: %v", size, err)
+		}
+	}
+	cfg := Defaults()
+	cfg.GRPC.MaxRecvMsgSize, cfg.GRPC.MaxSendMsgSize = MinGRPCMessageSize-1, 0
+	want := []string{"grpc.max_recv_msg_size", "grpc.max_send_msg_size"}
+	if got := invalidKeys(cfg.Validate()); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("invalid keys = %v, want %v", got, want)
 	}
 }
 

@@ -25,6 +25,7 @@ const (
 	labelIndex    = "go-objstore backup v1 index"
 	labelSnapshot = "go-objstore backup v1 snapshot"
 	labelConfig   = "go-objstore backup v1 config"
+	labelMark     = "go-objstore backup v1 mark"
 )
 
 // IDSize is the length in bytes of a chunk or object ID.
@@ -77,6 +78,7 @@ type Keys struct {
 	index    enclave.ByteAccess
 	snapshot enclave.ByteAccess
 	config   enclave.ByteAccess
+	mark     enclave.ByteAccess
 }
 
 // DeriveKeys derives the per-purpose subkeys from dataKey, which it only reads:
@@ -104,6 +106,7 @@ func DeriveKeys(dataKey enclave.ByteAccess) (*Keys, error) {
 		{&k.index, labelIndex},
 		{&k.snapshot, labelSnapshot},
 		{&k.config, labelConfig},
+		{&k.mark, labelMark},
 	} {
 		sub, err := derive(dataKey, d.label)
 		if err != nil {
@@ -133,7 +136,7 @@ func derive(dataKey enclave.ByteAccess, label string) (enclave.ByteAccess, error
 // fails with ErrKeysDestroyed.
 func (k *Keys) Close() error {
 	var errs []error
-	for _, h := range []enclave.ByteAccess{k.chunkID, k.objectID, k.pack, k.index, k.snapshot, k.config} {
+	for _, h := range []enclave.ByteAccess{k.chunkID, k.objectID, k.pack, k.index, k.snapshot, k.config, k.mark} {
 		if h == nil {
 			continue
 		}
@@ -185,6 +188,8 @@ func (k *Keys) keyFor(op string, t Type) (enclave.ByteAccess, error) {
 		h = k.snapshot
 	case TypeConfig:
 		h = k.config
+	case TypeMark:
+		h = k.mark
 	default:
 		return nil, newError(op, ErrUnknownType, nil)
 	}

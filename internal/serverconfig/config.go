@@ -15,6 +15,7 @@ package serverconfig
 
 import (
 	"errors"
+	"math"
 	"net"
 	"strconv"
 	"time"
@@ -45,12 +46,22 @@ type Config struct {
 	Audit     AuditConfig     `mapstructure:"audit"`
 }
 
+// Bounds of grpc.max_recv_msg_size and grpc.max_send_msg_size. Below 1 MiB a
+// server cannot carry a Get chunk with its framing or any useful object; gRPC
+// itself cannot frame a message above math.MaxInt32 bytes.
+const (
+	MinGRPCMessageSize = 1 << 20
+	MaxGRPCMessageSize = math.MaxInt32
+)
+
 // GRPCConfig configures the gRPC transport.
 type GRPCConfig struct {
-	Enabled bool   `mapstructure:"enabled"`
-	Addr    string `mapstructure:"addr"`
-	TLSCert string `mapstructure:"tls_cert"`
-	TLSKey  string `mapstructure:"tls_key"`
+	Enabled        bool   `mapstructure:"enabled"`
+	Addr           string `mapstructure:"addr"`
+	TLSCert        string `mapstructure:"tls_cert"`
+	TLSKey         string `mapstructure:"tls_key"`
+	MaxRecvMsgSize int    `mapstructure:"max_recv_msg_size"`
+	MaxSendMsgSize int    `mapstructure:"max_send_msg_size"`
 }
 
 // RESTConfig configures the REST transport.
@@ -112,8 +123,10 @@ func Defaults() Config {
 		Backend: "local",
 		Path:    "/tmp/objstore",
 		GRPC: GRPCConfig{
-			Enabled: true,
-			Addr:    grpcserver.DefaultServerOptions().Address,
+			Enabled:        true,
+			Addr:           grpcserver.DefaultServerOptions().Address,
+			MaxRecvMsgSize: grpcserver.DefaultMaxReceiveMessageSize,
+			MaxSendMsgSize: grpcserver.DefaultMaxSendMessageSize,
 		},
 		REST: RESTConfig{
 			Enabled:       true,
@@ -214,6 +227,20 @@ func (c *Config) Validate() error {
 				Key:    pair.section + ".tls_cert/" + pair.section + ".tls_key",
 				Value:  pair.cert + "/" + pair.key,
 				Reason: "certificate and key must be set together",
+			})
+		}
+	}
+	for _, m := range []struct {
+		key  string
+		size int
+	}{
+		{"grpc.max_recv_msg_size", c.GRPC.MaxRecvMsgSize},
+		{"grpc.max_send_msg_size", c.GRPC.MaxSendMsgSize},
+	} {
+		if m.size < MinGRPCMessageSize || m.size > MaxGRPCMessageSize {
+			errs = append(errs, &InvalidSettingError{
+				Key: m.key, Value: strconv.Itoa(m.size),
+				Reason: "must be within " + strconv.Itoa(MinGRPCMessageSize) + "-" + strconv.Itoa(MaxGRPCMessageSize),
 			})
 		}
 	}

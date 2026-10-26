@@ -367,6 +367,9 @@ func TestRunErrors(t *testing.T) {
 	defer fr.Close()
 	_, err = Run(ctx, fr, root, Options{})
 	assertBackupError(t, err, ErrRepository, repo.ErrStorage)
+	f.fail = failing("list", "/marks/")(nil)
+	_, err = Run(ctx, fr, root, Options{})
+	assertBackupError(t, err, ErrRepository, repo.ErrStorage)
 	f.fail = failing("put", "/packs/")(nil)
 	_, err = Run(ctx, fr, root, Options{})
 	assertBackupError(t, err, ErrRepository, repo.ErrStorage)
@@ -391,4 +394,47 @@ func TestRunErrors(t *testing.T) {
 	_ = r.Close()
 	_, err = Run(ctx, r, root, Options{})
 	assertBackupError(t, err, ErrRepository, repo.ErrKeys)
+}
+
+// TestMarkedPacks checks that a run neither dedups against nor rewrites a
+// pack a prune mark names, so prune can remove it while backups run.
+func TestMarkedPacks(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory()
+	r := newRepo(t, st)
+	root, _, _ := tree(t)
+	first, err := Run(ctx, r, root, at(0))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	packs, err := r.ListPacks(ctx)
+	if err != nil {
+		t.Fatalf("ListPacks: %v", err)
+	}
+	m := &repo.Mark{Time: time.Date(2026, 10, 26, 9, 0, 30, 0, time.UTC)}
+	marked := map[seal.ID]bool{}
+	for _, id := range packs {
+		marked[id] = true
+		m.Packs = append(m.Packs, repo.Marked{Pack: id, Since: m.Time})
+	}
+	if _, err := r.WriteMark(ctx, m); err != nil {
+		t.Fatalf("WriteMark: %v", err)
+	}
+	second, err := Run(ctx, r, root, at(1))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if second.Stats.ChunksNew != first.Stats.ChunksNew || second.Stats.PacksWritten != first.Stats.PacksWritten ||
+		second.Stats.PacksReused != 0 || countPacks(t, st) != 2*len(packs) {
+		t.Fatalf("second run %+v after %+v; %d packs", second.Stats, first.Stats, countPacks(t, st))
+	}
+	entries, err := r.ReadIndex(ctx, second.Index)
+	if err != nil {
+		t.Fatalf("ReadIndex: %v", err)
+	}
+	for _, e := range entries {
+		if marked[e.Pack] {
+			t.Fatalf("chunk %s was stored in a marked pack", e.Chunk)
+		}
+	}
 }

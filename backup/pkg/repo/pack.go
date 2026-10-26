@@ -67,11 +67,18 @@ type Packer struct {
 	entries []Entry
 	written int
 	reused  int
+	avoid   map[seal.ID]bool
 }
 
 // NewPacker returns a Packer that writes packs to r.
 func (r *Repository) NewPacker() *Packer {
 	return &Packer{r: r, held: map[seal.ID]bool{}}
+}
+
+// Avoid makes the Packer never write a pack under, or reuse, any ID in packs.
+// A pack whose natural ID is avoided is written under a derived one instead.
+func (p *Packer) Avoid(packs map[seal.ID]bool) {
+	p.avoid = packs
 }
 
 // Has reports whether the packer already holds the chunk, written or pending.
@@ -120,6 +127,12 @@ func (p *Packer) Flush(ctx context.Context) error {
 	packID, err := p.r.keys.ObjectID(seal.TypePack, ids)
 	if err != nil {
 		return fromSeal(op, "", err)
+	}
+	for n := uint32(0); p.avoid[packID]; n++ {
+		packID, err = p.r.keys.ObjectID(seal.TypePack, binary.BigEndian.AppendUint32(slices.Clip(ids), n))
+		if err != nil {
+			return fromSeal(op, "", err)
+		}
 	}
 	for i := range p.pending {
 		p.pending[i].Pack = packID

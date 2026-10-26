@@ -67,11 +67,14 @@ type Result struct {
 
 // run is the state of one backup run.
 type run struct {
-	r      *repo.Repository
-	index  *repo.Index
-	packer *repo.Packer
-	snap   repo.Snapshot
-	stats  Stats
+	// condemned holds the packs a prune run marked: the run neither reuses
+	// nor rewrites them.
+	condemned map[seal.ID]bool
+	r         *repo.Repository
+	index     *repo.Index
+	packer    *repo.Packer
+	snap      repo.Snapshot
+	stats     Stats
 }
 
 // Run backs up the tree under root into r and returns the manifest's ID.
@@ -102,16 +105,22 @@ func Run(ctx context.Context, r *repo.Repository, root string, opts Options) (*R
 			host = h
 		}
 	}
+	condemned, err := r.Condemned(ctx)
+	if err != nil {
+		return nil, newError("load marks", "", ErrRepository, err)
+	}
 	index, err := r.LoadIndex(ctx)
 	if err != nil {
 		return nil, newError("load index", "", ErrRepository, err)
 	}
 	b := &run{
-		r:      r,
-		index:  index,
-		packer: r.NewPacker(),
-		snap:   repo.Snapshot{Time: now().UTC(), Host: host, Root: abs},
+		r:         r,
+		index:     index,
+		packer:    r.NewPacker(),
+		condemned: condemned,
+		snap:      repo.Snapshot{Time: now().UTC(), Host: host, Root: abs},
 	}
+	b.packer.Avoid(condemned)
 	if err := filepath.WalkDir(abs, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return newError("walk", path, ErrFilesystem, err)
@@ -203,7 +212,7 @@ func (b *run) file(ctx context.Context, path string, node *repo.Node) (err error
 			return newError("read file", path, ErrRepository, err)
 		}
 		node.Chunks = append(node.Chunks, id)
-		if _, ok := b.index.Lookup(id); ok || b.packer.Has(id) {
+		if e, ok := b.index.Lookup(id); (ok && !b.condemned[e.Pack]) || b.packer.Has(id) {
 			b.stats.ChunksDeduped++
 			continue
 		}

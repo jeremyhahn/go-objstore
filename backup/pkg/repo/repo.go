@@ -215,7 +215,30 @@ func newRepository(st store.Store, layout Layout, dk *keyseam.DataKey, cfg Confi
 	if err != nil {
 		return nil, errors.Join(newError("derive keys", "", ErrKeys, err), dk.Close())
 	}
-	return &Repository{st: st, layout: layout, dk: dk, keys: keys, cfg: cfg}, nil
+	return &Repository{st: writeOnce{st}, layout: layout, dk: dk, keys: keys, cfg: cfg}, nil
+}
+
+// writeOnce forwards the write-once operations of a Store and nothing more,
+// so a repository opened on a store that can also remove objects never
+// exposes removal to the code it is handed to.
+type writeOnce struct {
+	s store.Store
+}
+
+func (w writeOnce) Put(ctx context.Context, name string, data []byte) error {
+	return w.s.Put(ctx, name, data)
+}
+
+func (w writeOnce) Get(ctx context.Context, name string) ([]byte, error) {
+	return w.s.Get(ctx, name)
+}
+
+func (w writeOnce) List(ctx context.Context, prefix string) ([]string, error) {
+	return w.s.List(ctx, prefix)
+}
+
+func (w writeOnce) Exists(ctx context.Context, name string) (bool, error) {
+	return w.s.Exists(ctx, name)
 }
 
 // Close destroys the data key and its subkeys. Every later operation that

@@ -100,6 +100,38 @@ func (f *fakeClient) Exists(_ context.Context, key string) (bool, error) {
 	return ok, nil
 }
 
+func (f *fakeClient) Delete(_ context.Context, key string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return f.err
+	}
+	if _, ok := f.objects[key]; !ok {
+		return objstore.ErrObjectNotFound
+	}
+	delete(f.objects, key)
+	return nil
+}
+
+// removeContract checks Remove on s, which contract has filled.
+func removeContract(t *testing.T, s PruneStore) {
+	t.Helper()
+	ctx := context.Background()
+	if err := s.Remove(ctx, "p/b"); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	if ok, err := s.Exists(ctx, "p/b"); err != nil || ok {
+		t.Fatalf("Exists after Remove = %v, %v", ok, err)
+	}
+	assertStoreError(t, s.Remove(ctx, "p/b"), ErrNotFound)
+	assertStoreError(t, s.Remove(ctx, ""), ErrInvalidName)
+	assertStoreError(t, s.Remove(canceled(), "p/c"), context.Canceled)
+	// A removed name can be written again.
+	if err := s.Put(ctx, "p/b", []byte("data p/b")); err != nil {
+		t.Fatalf("Put after Remove: %v", err)
+	}
+}
+
 func assertStoreError(t *testing.T, err, want error) {
 	t.Helper()
 	var e *Error
@@ -160,6 +192,7 @@ func contract(t *testing.T, s Store) {
 func TestMemory(t *testing.T) {
 	m := NewMemory()
 	contract(t, m)
+	removeContract(t, m)
 	_, err := m.List(canceled(), "p/")
 	assertStoreError(t, err, context.Canceled)
 
@@ -200,6 +233,7 @@ func TestSDK(t *testing.T) {
 	if f.puts != 4 {
 		t.Fatalf("%d puts reached the server, want 4: an existing name was overwritten", f.puts)
 	}
+	removeContract(t, s)
 
 	f.stream = true
 	if got, err := s.Get(context.Background(), "q/c"); err != nil || string(got) != "data q/c" {
@@ -234,6 +268,7 @@ func TestSDK(t *testing.T) {
 	assertStoreError(t, err, errDown)
 	_, err = s.Exists(ctx, "x")
 	assertStoreError(t, err, ErrBackend)
+	assertStoreError(t, s.Remove(ctx, "x"), errDown)
 
 	// The server's own conflict answer, as from a WORM bucket.
 	f.err = nil

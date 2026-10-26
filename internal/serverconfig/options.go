@@ -86,6 +86,8 @@ func (c *Config) RateLimitConfig() *middleware.RateLimitConfig {
 func (c *Config) GRPCOptions(mw Middleware) ([]grpcserver.ServerOption, error) {
 	opts := []grpcserver.ServerOption{
 		grpcserver.WithAddress(c.GRPC.Addr),
+		grpcserver.WithMaxReceiveMessageSize(c.GRPC.MaxRecvMsgSize),
+		grpcserver.WithMaxSendMessageSize(c.GRPC.MaxSendMsgSize),
 		grpcserver.WithRateLimit(mw.RateLimit, mw.RateLimitConfig),
 		grpcserver.WithAudit(mw.Audit),
 	}

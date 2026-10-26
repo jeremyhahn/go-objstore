@@ -21,7 +21,8 @@ flag's default never masks a value from the environment or the file. `-config`
 wins over `OBJSTORE_CONFIG`. The file is optional; when one is named it must
 exist, and unknown keys are rejected at startup, as are invalid values
 (for example a port outside 0-65535, an address that is not `host:port`, a TLS
-certificate without its key or a key without its certificate, or an MCP mode
+certificate without its key or a key without its certificate, a gRPC message
+limit outside 1048576-2147483647 bytes, or an MCP mode
 other than `stdio`/`http`). A configured TLS key pair that cannot be loaded
 stops that transport; it never falls back to plaintext.
 
@@ -47,6 +48,8 @@ Each binary reads the sections for the transports it serves.
 | `grpc.addr` | `OBJSTORE_GRPC_ADDR` | `:50051` | `-grpc-addr` | `-addr` (grpc) |
 | `grpc.tls_cert` | `OBJSTORE_GRPC_TLS_CERT` | — | `-grpc-tls-cert` | `-tls-cert` (grpc) |
 | `grpc.tls_key` | `OBJSTORE_GRPC_TLS_KEY` | — | `-grpc-tls-key` | `-tls-key` (grpc) |
+| `grpc.max_recv_msg_size` | `OBJSTORE_GRPC_MAX_RECV_MSG_SIZE` | `33554432` | `-grpc-max-recv-msg-size` | `-max-recv-msg-size` (grpc) |
+| `grpc.max_send_msg_size` | `OBJSTORE_GRPC_MAX_SEND_MSG_SIZE` | `10485760` | `-grpc-max-send-msg-size` | `-max-send-msg-size` (grpc) |
 | `rest.enabled` | `OBJSTORE_REST_ENABLED` | `true` | `-rest` | — |
 | `rest.host` | `OBJSTORE_REST_HOST` | `0.0.0.0` (`localhost` for objstore-rest-server) | `-rest-host` | `-host` (rest) |
 | `rest.port` | `OBJSTORE_REST_PORT` | `8080` | `-rest-port` | `-port` (rest) |

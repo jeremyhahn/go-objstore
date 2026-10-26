@@ -41,6 +41,9 @@ const (
 	TypeSnapshot Type = 3
 	// TypeConfig is the repository config.
 	TypeConfig Type = 4
+	// TypeMark is the record a prune run leaves of the packs it found
+	// unreferenced.
+	TypeMark Type = 5
 )
 
 // String returns the type's name.
@@ -54,6 +57,8 @@ func (t Type) String() string {
 		return "snapshot"
 	case TypeConfig:
 		return "config"
+	case TypeMark:
+		return "mark"
 	default:
 		return "type(" + strconv.Itoa(int(t)) + ")"
 	}

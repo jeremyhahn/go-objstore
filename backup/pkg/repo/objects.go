@@ -12,10 +12,14 @@ import (
 // kindType maps an object kind to the seal type, and so the subkey, that
 // seals it.
 func kindType(k Kind) seal.Type {
-	if k == KindIndex {
+	switch k {
+	case KindIndex:
 		return seal.TypeIndex
+	case KindMark:
+		return seal.TypeMark
+	default:
+		return seal.TypeSnapshot
 	}
-	return seal.TypeSnapshot
 }
 
 // putSealed seals plain as an object of kind k, index or snapshot, under its

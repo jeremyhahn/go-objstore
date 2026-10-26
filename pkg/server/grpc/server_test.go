@@ -28,7 +28,9 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 // mockStorage implements the common.Storage interface for testing.
@@ -255,6 +257,41 @@ func TestWithMaxMessageSize(t *testing.T) {
 
 	if opts.MaxSendMessageSize != 20*1024*1024 {
 		t.Errorf("MaxSendMessageSize not set correctly")
+	}
+}
+
+func TestWithMaxReceiveAndSendMessageSize(t *testing.T) {
+	opts := DefaultServerOptions()
+	if opts.MaxReceiveMessageSize != DefaultMaxReceiveMessageSize || opts.MaxSendMessageSize != DefaultMaxSendMessageSize {
+		t.Fatalf("defaults = %d/%d, want %d/%d", opts.MaxReceiveMessageSize, opts.MaxSendMessageSize,
+			DefaultMaxReceiveMessageSize, DefaultMaxSendMessageSize)
+	}
+	WithMaxReceiveMessageSize(40 << 20)(opts)
+	WithMaxSendMessageSize(5 << 20)(opts)
+	if opts.MaxReceiveMessageSize != 40<<20 || opts.MaxSendMessageSize != 5<<20 {
+		t.Errorf("limits = %d/%d, want %d/%d", opts.MaxReceiveMessageSize, opts.MaxSendMessageSize, 40<<20, 5<<20)
+	}
+}
+
+// TestMaxReceiveMessageSize_BackupPack puts a 16 MiB object, the size of a
+// backup repository's default pack, at the default receive limit, and the same
+// object against a lowered limit, which the server refuses.
+func TestMaxReceiveMessageSize_BackupPack(t *testing.T) {
+	data := bytes.Repeat([]byte{0x5a}, 16<<20)
+	ctx := context.Background()
+
+	_, client, cleanup := setupTestServer(t)
+	defer cleanup()
+	resp, err := client.Put(ctx, &objstorepb.PutRequest{Key: "pack", Data: data})
+	if err != nil || !resp.GetSuccess() {
+		t.Fatalf("Put of 16 MiB at the default limit = %v, %v", resp, err)
+	}
+
+	_, lowered, cleanupLowered := setupTestServer(t, WithMaxReceiveMessageSize(8<<20))
+	defer cleanupLowered()
+	_, err = lowered.Put(ctx, &objstorepb.PutRequest{Key: "pack", Data: data})
+	if status.Code(err) != codes.ResourceExhausted {
+		t.Errorf("Put of 16 MiB above an 8 MiB limit = %v, want ResourceExhausted", err)
 	}
 }
 

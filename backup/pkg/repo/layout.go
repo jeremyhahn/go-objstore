@@ -18,6 +18,9 @@ const (
 	KindIndex
 	// KindSnapshot is a snapshot manifest.
 	KindSnapshot
+	// KindMark is the record a prune run leaves of the packs it found
+	// unreferenced.
+	KindMark
 )
 
 // dir returns the kind's directory under the repository prefix.
@@ -31,6 +34,8 @@ func (k Kind) dir() string {
 		return "index/"
 	case KindSnapshot:
 		return "snapshots/"
+	case KindMark:
+		return "marks/"
 	default:
 		return "unknown/"
 	}
@@ -43,6 +48,7 @@ func (k Kind) dir() string {
 //	<prefix>packs/<id[:2]>/<id>     a pack
 //	<prefix>index/<id>              an index object
 //	<prefix>snapshots/<id>          a snapshot manifest
+//	<prefix>marks/<id>              a prune mark
 //
 // Every id is 64 lowercase hex digits. A pack, index or snapshot id is the
 // keyed object ID of its content (seal.Keys.ObjectID), so names reveal

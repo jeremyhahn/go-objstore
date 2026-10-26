@@ -43,20 +43,15 @@ func (ix *Index) Len() int {
 // LoadIndex reads every index object and merges them. When two objects list
 // the same chunk, the first in name order wins; both locations hold it.
 func (r *Repository) LoadIndex(ctx context.Context) (*Index, error) {
-	const op = "read index"
-	ids, err := r.listIDs(ctx, op, KindIndex)
+	ids, err := r.listIDs(ctx, "read index", KindIndex)
 	if err != nil {
 		return nil, err
 	}
 	ix := &Index{m: map[seal.ID]Entry{}}
 	for _, id := range ids {
-		plain, err := r.getSealed(ctx, op, KindIndex, id)
+		entries, err := r.ReadIndex(ctx, id)
 		if err != nil {
 			return nil, err
-		}
-		entries, ok := decodeIndex(plain)
-		if !ok {
-			return nil, newError(op, r.layout.Name(KindIndex, id), ErrCorrupt, nil)
 		}
 		for _, e := range entries {
 			if _, dup := ix.m[e.Chunk]; !dup {
@@ -65,6 +60,26 @@ func (r *Repository) LoadIndex(ctx context.Context) (*Index, error) {
 		}
 	}
 	return ix, nil
+}
+
+// ListIndexes returns the IDs of every index object, in name order.
+func (r *Repository) ListIndexes(ctx context.Context) ([]seal.ID, error) {
+	return r.listIDs(ctx, "list indexes", KindIndex)
+}
+
+// ReadIndex reads and opens the index object with ID id and returns its
+// entries, sorted by chunk ID.
+func (r *Repository) ReadIndex(ctx context.Context, id seal.ID) ([]Entry, error) {
+	const op = "read index"
+	plain, err := r.getSealed(ctx, op, KindIndex, id)
+	if err != nil {
+		return nil, err
+	}
+	entries, ok := decodeIndex(plain)
+	if !ok {
+		return nil, newError(op, r.layout.Name(KindIndex, id), ErrCorrupt, nil)
+	}
+	return entries, nil
 }
 
 // WriteIndex writes an index object listing entries and returns its ID. A

@@ -22,6 +22,8 @@ environment variables behind every flag below. Two binaries serve gRPC:
 | `--path` | `/tmp/objstore` | Storage path for the local backend |
 | `--tls-cert` | (none) | TLS certificate file |
 | `--tls-key` | (none) | TLS key file |
+| `--max-recv-msg-size` | `33554432` (32 MiB) | Largest message the server accepts, in bytes |
+| `--max-send-msg-size` | `10485760` (10 MiB) | Largest message the server sends, in bytes |
 
 ```bash
 objstore-grpc-server --addr :50051 --backend local --path /var/lib/objstore
@@ -44,6 +46,8 @@ the server listens in plaintext.
 | `--grpc-addr` | `:50051` | gRPC server address |
 | `--grpc-tls-cert` | — | gRPC TLS certificate file (set together with `--grpc-tls-key`) |
 | `--grpc-tls-key` | — | gRPC TLS key file (set together with `--grpc-tls-cert`) |
+| `--grpc-max-recv-msg-size` | `33554432` (32 MiB) | Largest message the gRPC server accepts, in bytes |
+| `--grpc-max-send-msg-size` | `10485760` (10 MiB) | Largest message the gRPC server sends, in bytes |
 | `--rate-limit` | `false` | Enable rate limiting on all transports |
 | `--rate-limit-rps` | `100` | Rate limit requests per second |
 | `--rate-limit-burst` | `200` | Rate limit burst size |
@@ -54,8 +58,14 @@ the server listens in plaintext.
 The server runs with these defaults (`pkg/server/grpc` options):
 
 - `address`: `:50051`
-- `max_receive_message_size`: 10MB (10485760 bytes)
-- `max_send_message_size`: 10MB (10485760 bytes)
+- `max_receive_message_size`: 32 MiB (33554432 bytes), twice the backup agent's
+  default 16 MiB pack, so a pack upload fits with its framing
+- `max_send_message_size`: 10 MiB (10485760 bytes); `Get` streams objects in
+  64 KiB chunks, so no single response approaches it
+
+Both limits are settable as `grpc.max_recv_msg_size` and
+`grpc.max_send_msg_size` (see [servers.md](servers.md)). A value below 1 MiB
+(1048576) or above 2147483647 is a configuration error.
 - Server reflection: disabled
 - Health check service: registered (see below)
 
@@ -71,7 +81,7 @@ grpc_health_probe -addr=localhost:50051
 
 ## Advanced Settings (Programmatic)
 
-The binaries do not expose flags for message limits, mTLS, reflection, or auth
+The binaries do not expose flags for mTLS, reflection, or auth
 adapters. When embedding the server, configure these through
 `grpcserver.ServerOption` values (see `pkg/server/grpc`):
 

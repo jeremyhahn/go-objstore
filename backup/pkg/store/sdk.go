@@ -113,6 +113,20 @@ func (s *SDK) Exists(ctx context.Context, name string) (bool, error) {
 	return ok, nil
 }
 
+// Remove deletes name on the server.
+func (s *SDK) Remove(ctx context.Context, name string) error {
+	const op = "remove"
+	if err := check(ctx, op, name); err != nil {
+		return err
+	}
+	if err := s.c.Delete(ctx, name); err != nil {
+		return mapError(op, name, err)
+	}
+	return nil
+}
+
+var _ PruneStore = (*SDK)(nil)
+
 // mapError maps the SDK's sentinels onto the store's.
 func mapError(op, name string, err error) *Error {
 	switch {

@@ -3,7 +3,8 @@
 //
 // Objects are put once. The backup identity never deletes or overwrites, so a
 // repository can live in a WORM bucket: a Put of a name that already exists
-// fails with ErrExists and leaves the existing object as it was.
+// fails with ErrExists and leaves the existing object as it was. Removing
+// objects is a separate capability, PruneStore, that only prune holds.
 package store
 
 import (
@@ -25,6 +26,16 @@ type Store interface {
 	Exists(ctx context.Context, name string) (bool, error)
 }
 
+// PruneStore is a Store that can also remove objects. It is the privileged
+// capability prune runs with; the backup and restore paths take a Store, and
+// a repository never exposes removal from the store it is opened on.
+type PruneStore interface {
+	Store
+	// Remove deletes name. Removing a name that does not exist fails with
+	// ErrNotFound, or succeeds on a backend that cannot tell.
+	Remove(ctx context.Context, name string) error
+}
+
 var (
 	// ErrExists means a Put named an object that already exists.
 	ErrExists = errors.New("store: object already exists")
@@ -42,7 +53,7 @@ var (
 // Error is a failed store operation. It matches its sentinel and its cause
 // with errors.Is.
 type Error struct {
-	// Op is the operation: "put", "get", "list" or "exists".
+	// Op is the operation: "put", "get", "list", "exists" or "remove".
 	Op string
 	// Name is the object name or list prefix.
 	Name string

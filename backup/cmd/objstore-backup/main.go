@@ -1,47 +1,127 @@
-// Command objstore-backup is the go-objstore backup agent. It backs a system up
-// to a bucket on an objstore server, compressed, encrypted and incremental.
-//
-// This build carries the agent's cryptographic core only; it has no commands
-// yet and prints its usage.
+// Command objstore-backup is the go-objstore backup agent. It backs
+// directories up to a repository on an objstore server, encrypted,
+// deduplicated and incremental, and restores, verifies and prunes that
+// repository.
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"strings"
 
 	objstore "github.com/jeremyhahn/go-objstore/api/sdks/go"
 )
 
-const usage = `Usage: objstore-backup <command> [arguments]
+// Exit codes.
+const (
+	exitOK       = 0
+	exitFailure  = 1
+	exitUsage    = 2
+	exitProblems = 3
+)
 
-objstore-backup backs a system up to a bucket on an objstore server.
+const usage = `Usage: objstore-backup <command> [flags] [arguments]
+
+objstore-backup backs directories up to a repository on an objstore server.
+Every object it stores is encrypted under the repository's data key, which a
+passphrase wraps.
 
 Commands:
-  help      Show this help
+  init        Create a repository
+  backup      Back up one or more directories
+  snapshots   List the snapshots
+  restore     Restore a snapshot into a directory
+  verify      Check the repository's data
+  prune       Forget snapshots by a retention policy and remove unused data
+  help        Show this help, or a command's
 
-No backup commands are available in this build.
+Run "objstore-backup help <command>" or "objstore-backup <command> -h" for a
+command's flags.
+
+Exit status: 0 success, 1 failure, 2 usage error, 3 verify found problems.
 `
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
-// run executes the command line in args and returns the process exit code:
-// 0 for help, 2 for a missing or unknown command.
-func run(args []string, stdout, stderr io.Writer) int {
+// run executes the command line in args against an objstore server and
+// returns the process exit code.
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	return runWith(ctx, &env{stdin: stdin, stdout: stdout, stderr: stderr, open: openSDK}, args)
+}
+
+// env is what a command runs with. open is the store seam: it connects to
+// the repository's server, and tests replace it with an in-memory store.
+type env struct {
+	stdin          io.Reader
+	stdout, stderr io.Writer
+	open           opener
+}
+
+// command is one subcommand. run receives the arguments after its name.
+type command struct {
+	run  func(ctx context.Context, e *env, args []string) int
+	help string
+}
+
+var commands = map[string]command{
+	"init":      {cmdInit, initHelp},
+	"backup":    {cmdBackup, backupHelp},
+	"snapshots": {cmdSnapshots, snapshotsHelp},
+	"restore":   {cmdRestore, restoreHelp},
+	"verify":    {cmdVerify, verifyHelp},
+	"prune":     {cmdPrune, pruneHelp},
+}
+
+// runWith dispatches args to its command.
+func runWith(ctx context.Context, e *env, args []string) int {
 	if len(args) == 0 {
-		fmt.Fprint(stderr, usage)
-		return 2
+		fmt.Fprint(e.stderr, usage)
+		return exitUsage
 	}
-	switch args[0] {
+	switch name := args[0]; name {
 	case "help", "-h", "-help", "--help":
-		fmt.Fprint(stdout, usage)
-		fmt.Fprintf(stdout, "\nBuilt with the go-objstore Go SDK %s.\n", objstore.Version)
-		return 0
+		if len(args) > 1 {
+			if c, ok := commands[args[1]]; ok {
+				return c.run(ctx, e, []string{"-h"})
+			}
+			return e.unknown(args[1])
+		}
+		fmt.Fprint(e.stdout, usage)
+		fmt.Fprintf(e.stdout, "\nBuilt with the go-objstore Go SDK %s.\n", objstore.Version)
+		return exitOK
 	default:
-		fmt.Fprintf(stderr, "objstore-backup: unknown command %q\n\n", args[0])
-		fmt.Fprint(stderr, usage)
-		return 2
+		if c, ok := commands[name]; ok {
+			return c.run(ctx, e, args[1:])
+		}
+		return e.unknown(name)
 	}
+}
+
+func (e *env) unknown(name string) int {
+	fmt.Fprintf(e.stderr, "objstore-backup: unknown command %q\n\n", name)
+	fmt.Fprint(e.stderr, usage)
+	return exitUsage
+}
+
+// usageError prints a usage error for command name and returns exitUsage.
+func (e *env) usageError(name string, err error) int {
+	fmt.Fprintf(e.stderr, "objstore-backup %s: %v\nRun \"objstore-backup %s -h\" for usage.\n", name, err, name)
+	return exitUsage
+}
+
+// fail prints err, a typed error from the library or this command, and
+// returns exitFailure. The library's errors name operations and objects and
+// never carry key material or file content; this command's name the source
+// of a secret and never its bytes.
+func (e *env) fail(name string, err error) int {
+	msg := strings.ReplaceAll(err.Error(), "\n", "\n  ")
+	fmt.Fprintf(e.stderr, "objstore-backup %s: %s\n", name, msg)
+	return exitFailure
 }

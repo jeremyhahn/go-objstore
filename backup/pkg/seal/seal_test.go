@@ -57,7 +57,7 @@ func assertTyped(t *testing.T, err, want error) {
 	}
 }
 
-var allTypes = []Type{TypePack, TypeIndex, TypeSnapshot, TypeConfig}
+var allTypes = []Type{TypePack, TypeIndex, TypeSnapshot, TypeConfig, TypeMark}
 
 func TestSealOpenRoundTrip(t *testing.T) {
 	k := newKeys(t, 1)
@@ -317,7 +317,7 @@ func TestRejects(t *testing.T) {
 
 func TestStrings(t *testing.T) {
 	for want, s := range map[string]interface{ String() string }{
-		"pack": TypePack, "index": TypeIndex, "snapshot": TypeSnapshot, "config": TypeConfig, "type(7)": Type(7),
+		"pack": TypePack, "index": TypeIndex, "snapshot": TypeSnapshot, "config": TypeConfig, "mark": TypeMark, "type(7)": Type(7),
 		"none": CompressionNone, "compression(3)": Compression(3),
 	} {
 		if s.String() != want {

@@ -297,6 +297,7 @@ func TestLayout(t *testing.T) {
 		KindPack:     "r/packs/ab/" + hexID,
 		KindIndex:    "r/index/" + hexID,
 		KindSnapshot: "r/snapshots/" + hexID,
+		KindMark:     "r/marks/" + hexID,
 	} {
 		name := l.Name(k, id)
 		if name != want {

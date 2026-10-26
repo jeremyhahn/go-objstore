@@ -74,6 +74,22 @@ func (m *Memory) Exists(ctx context.Context, name string) (bool, error) {
 	return ok, nil
 }
 
+// Remove deletes name, or fails with ErrNotFound.
+func (m *Memory) Remove(ctx context.Context, name string) error {
+	if err := check(ctx, "remove", name); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.objects[name]; !ok {
+		return newError("remove", name, ErrNotFound, nil)
+	}
+	delete(m.objects, name)
+	return nil
+}
+
+var _ PruneStore = (*Memory)(nil)
+
 // Replace overwrites or creates an object, bypassing put-once. It exists so
 // tests can play an attacker who controls the bucket.
 func (m *Memory) Replace(name string, data []byte) {

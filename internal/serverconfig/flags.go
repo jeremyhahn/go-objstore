@@ -37,6 +37,8 @@ func BindServerFlags(fs *flag.FlagSet, c *Config) {
 	stringVar(fs, &c.GRPC.Addr, "grpc-addr", "grpc.addr", "gRPC server address")
 	stringVar(fs, &c.GRPC.TLSCert, "grpc-tls-cert", "grpc.tls_cert", "gRPC TLS certificate file")
 	stringVar(fs, &c.GRPC.TLSKey, "grpc-tls-key", "grpc.tls_key", "gRPC TLS key file")
+	intVar(fs, &c.GRPC.MaxRecvMsgSize, "grpc-max-recv-msg-size", "grpc.max_recv_msg_size", "gRPC maximum received message size in bytes")
+	intVar(fs, &c.GRPC.MaxSendMsgSize, "grpc-max-send-msg-size", "grpc.max_send_msg_size", "gRPC maximum sent message size in bytes")
 
 	stringVar(fs, &c.REST.Host, "rest-host", "rest.host", "REST server host (interface to bind)")
 	intVar(fs, &c.REST.Port, "rest-port", "rest.port", "REST server port")
@@ -61,6 +63,8 @@ func BindGRPCServerFlags(fs *flag.FlagSet, c *Config) {
 	stringVar(fs, &c.GRPC.Addr, "addr", "grpc.addr", "gRPC server address")
 	stringVar(fs, &c.GRPC.TLSCert, "tls-cert", "grpc.tls_cert", "TLS certificate file")
 	stringVar(fs, &c.GRPC.TLSKey, "tls-key", "grpc.tls_key", "TLS key file")
+	intVar(fs, &c.GRPC.MaxRecvMsgSize, "max-recv-msg-size", "grpc.max_recv_msg_size", "Maximum received message size in bytes")
+	intVar(fs, &c.GRPC.MaxSendMsgSize, "max-send-msg-size", "grpc.max_send_msg_size", "Maximum sent message size in bytes")
 	bindMiddlewareFlags(fs, c)
 }
 
