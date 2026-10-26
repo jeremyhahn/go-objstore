@@ -1,0 +1,28 @@
+# ALLOWLIST for the devcontainer build context (BuildKit reads
+# <Dockerfile>.dockerignore in preference to a root .dockerignore).
+#
+# Everything is excluded, then exactly what the stages read is re-admitted:
+# the toolchain's inputs (every module's go.mod/go.sum and the tool installer
+# with its pins), and for the integration stage the Go sources of the root
+# module's api/proto, cmd, pkg and internal trees and of the integration
+# suite. Each stage COPYs its own part by name. Neither image can carry .git,
+# a credentials file, build output or a coverage profile — whatever lands in
+# the checkout tomorrow, it is excluded until someone admits it here on
+# purpose.
+*
+!go.mod
+!go.sum
+!backup/go.mod
+!backup/go.sum
+!api/sdks/go/go.mod
+!api/sdks/go/go.sum
+!examples/encryption/go.mod
+!examples/encryption/go.sum
+!scripts/tool-pins.sh
+!scripts/install-tools.sh
+!api/proto/**/*.go
+!cmd/**/*.go
+!cmd/**/*.h
+!pkg/**/*.go
+!internal/**/*.go
+!test/integration/**/*.go

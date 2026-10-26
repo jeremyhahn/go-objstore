@@ -100,7 +100,9 @@ DOCKER_COMPOSE := docker compose
 # job's `down -v --remove-orphans` remove another job's running containers.
 # Unique per CI job (run id + job), stable for a local run; each target adds
 # its own suffix. Sanitised to compose's charset: lowercase, digits, - and _.
-COMPOSE_PROJECT ?= $(shell printf '%s' "objstore-$(or $(GITHUB_RUN_ID),local)-$(or $(GITHUB_JOB),$(USER),user)" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9_\n-' '-')
+# CI names the prefix itself with IT_PROJECT, which ci.yml's tear-down steps
+# pass to `make clean-test-containers` as well.
+COMPOSE_PROJECT ?= $(shell printf '%s' "$(or $(IT_PROJECT),objstore-$(or $(GITHUB_RUN_ID),local)-$(or $(GITHUB_JOB),$(USER),user))" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9_\n-' '-')
 
 # Project structure
 PROJECT_NAME := go-objstore
@@ -110,9 +112,69 @@ MODULE := go-objstore
 BIN_DIR := bin
 COVERAGE_DIR := coverage
 
-# Minimum total unit-test coverage enforced by `make ci` (mirrors the
-# COVERAGE_THRESHOLD used by .github/workflows/ci.yml).
-COVERAGE_THRESHOLD := 89
+# Minimum total unit-test coverage enforced by `make coverage` and `make ci`.
+# ci.yml passes its own COVERAGE_THRESHOLD, the same number.
+COVERAGE_THRESHOLD ?= 89
+
+# Module authentication for docker builds. github.com/jeremyhahn/go-enclave is
+# private, so every image build that runs `go mod download` needs the forge
+# credentials. They reach a build only as a BuildKit secret file outside the
+# checkout: never a build arg, an ENV or a COPY, so no image layer carries
+# them. Two formats are in use:
+#   MODULE_ENV_FILE   GOPRIVATE, GIT_CONFIG_COUNT, GIT_CONFIG_KEY_0 and
+#                     GIT_CONFIG_VALUE_0 as KEY=value lines: the devcontainer's
+#                     secret, and the file ci.yml hands to every make call.
+#   GOMODAUTH_SECRET  the bare GIT_CONFIG_KEY_0 value: the secret the root
+#                     Dockerfile and the integration and SDK compose files
+#                     read, through GOMODAUTH_ENV.
+# `make stage-gomodauth` writes MODULE_ENV_FILE from the environment unless
+# the caller names one; `make stage-gomodauth-secret` derives GOMODAUTH_SECRET
+# from it. Both are mode 0600 and `make clean-gomodauth` removes them. The
+# recipes read values from the environment and from files only; none is ever
+# expanded into a command line, so neither `make -n` nor the log can show a
+# token. No credentials stage empty files, and the builds resolve from the
+# public proxy.
+GOMODAUTH_DIR := $(or $(RUNNER_TEMP),$(TMPDIR),/tmp)/$(PROJECT_NAME)-gomodauth-$(shell id -u)
+GOMODAUTH_FILE := $(GOMODAUTH_DIR)/gomodauth.env
+GOMODAUTH_SECRET := $(GOMODAUTH_DIR)/gomodauth.secret
+MODULE_ENV_FILE ?= $(GOMODAUTH_FILE)
+
+# The devcontainer images (build/docker/devcontainer/Dockerfile): the
+# toolchain image CI runs its gates in, and the integration image it scans.
+# TOOLCHAIN_INPUTS is every file the tools, base and toolchain stages read;
+# the toolchain tag is their content hash, so a change to any of them is a new
+# image and nothing else is. IT_CI_IMAGE names the integration image by the
+# checkout's content: tree, uncommitted diff and untracked files.
+DEVCONTAINER_DIR := build/docker/devcontainer
+TOOLCHAIN_INPUTS := $(DEVCONTAINER_DIR)/Dockerfile $(DEVCONTAINER_DIR)/Dockerfile.dockerignore \
+	scripts/tool-pins.sh scripts/install-tools.sh \
+	go.mod go.sum backup/go.mod backup/go.sum api/sdks/go/go.mod api/sdks/go/go.sum \
+	examples/encryption/go.mod examples/encryption/go.sum
+TOOLCHAIN_TAG = $(shell { cat $(TOOLCHAIN_INPUTS); printf '%s' "$(GO_IMAGE)"; } | sha256sum | cut -c1-16)
+TOOLCHAIN_IMAGE = $(PROJECT_NAME)-toolchain:$(TOOLCHAIN_TAG)
+# The glibc image `make lib-test` runs in (the Dockerfile's capi stage): a Go
+# c-shared library cannot load on the toolchain image's musl.
+CAPI_IMAGE = $(PROJECT_NAME)-capi:$(TOOLCHAIN_TAG)
+IT_IMAGE ?= $(PROJECT_NAME)-it:local
+# The release image's tag (root Dockerfile); CI names one per run.
+RELEASE_IMAGE ?= $(PROJECT_NAME)
+IT_CI_IMAGE = $(PROJECT_NAME)-ci-it:$(shell { git rev-parse 'HEAD^{tree}'; git diff HEAD; \
+	git ls-files -oz --exclude-standard | xargs -0r sha256sum; } 2>/dev/null | sha256sum | cut -c1-16)
+# GO_IMAGE overrides the Dockerfile's Go base image; unset, its default
+# applies. GO_BUILD_PROXY_ARG hands the caller's GOPROXY to the stages that
+# fetch; the shell expands $$GOPROXY, so make never echoes its value.
+GO_IMAGE ?=
+GO_BUILD_PROXY_ARG = $(if $(GOPROXY),--build-arg GO_BUILD_PROXY="$$GOPROXY")
+DEVCONTAINER_BUILD = DOCKER_BUILDKIT=1 docker buildx build --load \
+	$(if $(GO_IMAGE),--build-arg GO_IMAGE=$(GO_IMAGE)) \
+	$(GO_BUILD_PROXY_ARG) \
+	--secret id=gomodauth,src=$(MODULE_ENV_FILE) \
+	-f $(DEVCONTAINER_DIR)/Dockerfile
+
+# The nested modules: each has its own go.mod and replaces the root module by
+# relative path. `make build` builds them; CI tests them in its nested-module
+# jobs.
+NESTED_MODULES := backup api/sdks/go examples/encryption
 
 # Test coverage packages
 PKG_COVER := github.com/jeremyhahn/go-objstore/pkg/adapters,github.com/jeremyhahn/go-objstore/pkg/azure,github.com/jeremyhahn/go-objstore/pkg/azurearchive,github.com/jeremyhahn/go-objstore/pkg/local,github.com/jeremyhahn/go-objstore/pkg/s3,github.com/jeremyhahn/go-objstore/pkg/factory,github.com/jeremyhahn/go-objstore/pkg/glacier,github.com/jeremyhahn/go-objstore/pkg/gcs,github.com/jeremyhahn/go-objstore/pkg/storagefs,github.com/jeremyhahn/go-objstore/pkg/cli,github.com/jeremyhahn/go-objstore/pkg/server/grpc,github.com/jeremyhahn/go-objstore/pkg/server/rest,github.com/jeremyhahn/go-objstore/pkg/server/quic,github.com/jeremyhahn/go-objstore/pkg/server/mcp
@@ -151,6 +213,14 @@ build:
 	@echo "$(CYAN)  Build tags: $(GO_BUILD_TAGS)$(RESET)"
 	@$(GOBUILD) ./...
 	@echo "$(GREEN)✓ Library packages compiled$(RESET)"
+	@echo "$(CYAN)$(BOLD)→ Building the library packages in FIPS 140-3 mode (GOFIPS140=latest)...$(RESET)"
+	@GOFIPS140=latest $(GOBUILD) ./...
+	@echo "$(GREEN)✓ FIPS build compiled$(RESET)"
+	@for m in $(NESTED_MODULES); do \
+		echo "$(CYAN)$(BOLD)→ Building the nested module $$m...$(RESET)"; \
+		(cd $$m && $(GO) build ./...) || exit 1; \
+	done
+	@echo "$(GREEN)✓ Nested modules compiled$(RESET)"
 	@$(MAKE) --no-print-directory build-cli
 	@$(MAKE) --no-print-directory build-server
 	@$(MAKE) --no-print-directory lib
@@ -220,7 +290,12 @@ generate-proto:
 # target ends with backup-test: its race tests and per-package coverage gate
 # run wherever `make test` does, CI included. It writes no coverage profile,
 # so unit.out stays the root module's alone.
-test:
+test: test-unit
+	@$(MAKE) --no-print-directory backup-test
+
+.PHONY: test-unit
+## test-unit: Run the root module's unit tests (race detector) into coverage/unit.out
+test-unit:
 	@echo "$(CYAN)$(BOLD)→ Running unit tests with coverage (race detector)...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
 	$(GO) test -race -timeout=20m $(TAG_FLAGS) -coverprofile=$(COVERAGE_DIR)/unit.out -covermode=atomic ./pkg/... ./internal/... ./cmd/objstorelib/...
@@ -229,12 +304,49 @@ test:
 	@echo "$(CYAN)$(BOLD)→ Coverage Summary:$(RESET)"
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/unit.out | tail -1 | awk '{print "  $(GREEN)Total Coverage: " $$NF "$(RESET)"}' || true
 	@echo "$(GREEN)✓ Unit tests complete$(RESET)"
+
+.PHONY: coverage
+## coverage: Run test-unit and fail below COVERAGE_THRESHOLD (the CI coverage gate)
+# The backup module is gated by backup-test, in CI's nested-module-test job.
+coverage: test-unit
+	@total=$$($(GO) tool cover -func=$(COVERAGE_DIR)/unit.out | awk '/^total:/ {print $$3}' | tr -d %); \
+	echo "Total coverage: $${total}% (threshold: $(COVERAGE_THRESHOLD)%)"; \
+	awk -v c="$$total" -v t="$(COVERAGE_THRESHOLD)" 'BEGIN { if (c + 0 < t + 0) { print "coverage below " t "%"; exit 1 } }'
+
+.PHONY: test-fips
+## test-fips: Run coverage and backup-test in FIPS 140-3 only mode (GOFIPS140=latest GODEBUG=fips140=only)
+# A test that reaches a non-approved algorithm fails here, not in a FIPS
+# deployment.
+test-fips: export GOFIPS140 := latest
+test-fips: export GODEBUG := fips140=only
+test-fips:
+	@$(MAKE) --no-print-directory coverage
 	@$(MAKE) --no-print-directory backup-test
 
 .PHONY: integration-test
 ## integration-test: Run all integration tests (all backends + CLI + replication)
 integration-test: integration-test-local integration-test-s3 integration-test-azure integration-test-gcs integration-test-factory integration-test-replication integration-test-cli
 	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
+
+# The suites under test/integration, each its own compose project
+# $(COMPOSE_PROJECT)-<suite>.
+IT_SUITES := local s3 azure gcs factory replication cli
+SDKS := typescript go python ruby rust csharp
+
+# Every target whose docker build fetches go-enclave reads the staged bare-key
+# secret through GOMODAUTH_ENV (see stage-gomodauth).
+GOMODAUTH_TARGETS := $(addprefix integration-test-,$(IT_SUITES)) \
+	$(addprefix test-sdk-,$(SDKS)) $(addprefix integration-test-sdk-,$(SDKS)) \
+	test-sdks integration-test-sdks docker-build-release
+$(GOMODAUTH_TARGETS): stage-gomodauth-secret
+$(GOMODAUTH_TARGETS): export GOMODAUTH_ENV = $(GOMODAUTH_SECRET)
+
+.PHONY: clean-test-containers
+## clean-test-containers: Remove the integration suites' compose stacks and volumes (IT_PROJECT names CI's)
+clean-test-containers:
+	@for s in $(IT_SUITES); do \
+		$(DOCKER_COMPOSE) -p "$(COMPOSE_PROJECT)-$$s" -f test/integration/$$s/docker-compose.yml down -v --remove-orphans || true; \
+	done
 
 .PHONY: integration-test-local
 ## integration-test-local: Run local storage integration tests
@@ -618,24 +730,119 @@ coverage-report: test
 	fi
 	@echo "$(GREEN)✓ Coverage report complete$(RESET)"
 
+.PHONY: stage-gomodauth
+## stage-gomodauth: Stage the module credentials for docker builds, mode 0600, outside the checkout
+stage-gomodauth:
+	@umask 077; mkdir -p "$(GOMODAUTH_DIR)"; \
+	[ "$$(stat -c %u "$(GOMODAUTH_DIR)")" = "$$(id -u)" ] || { echo "$(RED)✗ $(GOMODAUTH_DIR) is not owned by $$(id -un)$(RESET)"; exit 1; }; \
+	if [ "$(MODULE_ENV_FILE)" = "$(GOMODAUTH_FILE)" ]; then \
+		: > "$(GOMODAUTH_FILE)"; \
+		for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do \
+			eval "val=\$${$$v:-}"; \
+			[ -z "$$val" ] || printf '%s=%s\n' "$$v" "$$val" >> "$(GOMODAUTH_FILE)"; \
+		done; \
+	fi; \
+	[ -f "$(MODULE_ENV_FILE)" ] || { echo "$(RED)✗ MODULE_ENV_FILE $(MODULE_ENV_FILE) does not exist$(RESET)"; exit 1; }
+
+.PHONY: stage-gomodauth-secret
+## stage-gomodauth-secret: Stage the bare-key secret the root Dockerfile and the compose files read
+stage-gomodauth-secret: stage-gomodauth
+	@umask 077; sed -n 's/^\(export \)\{0,1\}GIT_CONFIG_KEY_0=//p' "$(MODULE_ENV_FILE)" | \
+		sed "s/^['\"]//; s/['\"]$$//" | tr -d '\n' > "$(GOMODAUTH_SECRET)"; \
+	if [ -s "$(GOMODAUTH_SECRET)" ]; then echo "staged the module credential"; \
+	else echo "no module credential staged; builds resolve from the public proxy"; fi
+
+.PHONY: clean-gomodauth
+## clean-gomodauth: Remove the staged module credentials
+clean-gomodauth:
+	@rm -rf "$(GOMODAUTH_DIR)"
+
 .PHONY: docker-build
-## docker-build: Build Docker container
-docker-build:
-	@echo "$(CYAN)$(BOLD)→ Building docker container...$(RESET)"
-	@docker build -t $(PROJECT_NAME) .
-	@echo "$(GREEN)✓ Docker image built: $(PROJECT_NAME)$(RESET)"
+## docker-build: Build the devcontainer's toolchain and integration images
+docker-build: docker-build-toolchain docker-build-capi docker-build-it
+
+# A present image is reused: its tag is its content. Two jobs that build the
+# same tag at once race to it, and the loser succeeds if the winner's image is
+# there.
+.PHONY: docker-build-toolchain
+## docker-build-toolchain: Build the toolchain image CI runs its gates in (tag: make toolchain-image)
+docker-build-toolchain: stage-gomodauth
+	@if docker image inspect $(TOOLCHAIN_IMAGE) >/dev/null 2>&1; then \
+		echo "$(TOOLCHAIN_IMAGE) is present"; \
+	else \
+		$(DEVCONTAINER_BUILD) --target toolchain -t $(TOOLCHAIN_IMAGE) . || \
+			docker image inspect $(TOOLCHAIN_IMAGE) >/dev/null 2>&1; \
+	fi
+
+.PHONY: docker-build-capi
+## docker-build-capi: Build the glibc image CI runs make lib-test in (tag: make capi-image)
+docker-build-capi: stage-gomodauth
+	@if docker image inspect $(CAPI_IMAGE) >/dev/null 2>&1; then \
+		echo "$(CAPI_IMAGE) is present"; \
+	else \
+		$(DEVCONTAINER_BUILD) --target capi -t $(CAPI_IMAGE) . || \
+			docker image inspect $(CAPI_IMAGE) >/dev/null 2>&1; \
+	fi
+
+.PHONY: docker-build-it
+## docker-build-it: Build the integration image as IT_IMAGE (CI: make it-image)
+docker-build-it: stage-gomodauth
+	@if [ "$(IT_IMAGE)" = "$(IT_CI_IMAGE)" ] && docker image inspect $(IT_IMAGE) >/dev/null 2>&1; then \
+		echo "$(IT_IMAGE) is present"; \
+	else \
+		$(DEVCONTAINER_BUILD) --target integration -t $(IT_IMAGE) . || \
+			{ [ "$(IT_IMAGE)" = "$(IT_CI_IMAGE)" ] && docker image inspect $(IT_IMAGE) >/dev/null 2>&1; }; \
+	fi
+
+.PHONY: toolchain-image
+## toolchain-image: Print the toolchain image's content-addressed tag
+toolchain-image:
+	@echo $(TOOLCHAIN_IMAGE)
+
+.PHONY: capi-image
+## capi-image: Print the C API image's content-addressed tag
+capi-image:
+	@echo $(CAPI_IMAGE)
+
+.PHONY: it-image
+## it-image: Print the integration image's content-addressed tag
+it-image:
+	@echo $(IT_CI_IMAGE)
+
+.PHONY: deps-check
+## deps-check: Fail on a module requirement behind its latest release (scripts/deps-check.sh)
+deps-check:
+	@./scripts/deps-check.sh
+
+.PHONY: lint-gates
+## lint-gates: The tree-wide gates: VERSION consistency and go mod verify for every module
+lint-gates: version-check
+	@for m in . $(NESTED_MODULES); do \
+		echo "$(CYAN)→ go mod verify in $$m$(RESET)"; \
+		(cd $$m && $(GO) mod verify) || exit 1; \
+	done
+	@echo "$(GREEN)✓ Lint gates passed$(RESET)"
+
+.PHONY: docker-build-release
+## docker-build-release: Build the release image (root Dockerfile) as RELEASE_IMAGE
+docker-build-release:
+	@echo "$(CYAN)$(BOLD)→ Building the release image...$(RESET)"
+	@DOCKER_BUILDKIT=1 docker buildx build --load \
+		--secret id=gomodauth,src=$(GOMODAUTH_SECRET) \
+		-t $(RELEASE_IMAGE) -f Dockerfile .
+	@echo "$(GREEN)✓ Docker image built: $(RELEASE_IMAGE)$(RESET)"
 
 .PHONY: docker-run
 ## docker-run: Run Docker container interactively
 docker-run:
 	@echo "$(CYAN)$(BOLD)→ Running docker container...$(RESET)"
-	@docker run -it $(PROJECT_NAME)
+	@docker run -it $(RELEASE_IMAGE)
 
 .PHONY: docker-test
 ## docker-test: Run tests in Docker container
-docker-test: docker-build
+docker-test: docker-build-release
 	@echo "$(CYAN)$(BOLD)→ Running tests in docker container...$(RESET)"
-	@docker run $(PROJECT_NAME) make test
+	@docker run $(RELEASE_IMAGE) make test
 	@echo "$(GREEN)$(BOLD)✓ Docker tests complete!$(RESET)"
 
 .PHONY: lint
@@ -669,50 +876,26 @@ install-security-tools:
 # An explicit GO_BUILD_TAGS overrides the default.
 SECURITY_TAGS = $(if $(filter file,$(origin GO_BUILD_TAGS)),local$(COMMA)awss3$(COMMA)gcpstorage$(COMMA)azureblob$(COMMA)glacier,$(GO_BUILD_TAGS_CSV))
 
-# Kept identical to the gosec step in .github/workflows/ci.yml -- devops.md §8
-# makes `make security` the contract, so the two must not drift. test/ and
-# coverage/ are deliberately NOT excluded: CI scans them, so a developer must
-# too. No -exclude-generated: CI does not pass it.
-GOSEC_ARGS = -tags $(SECURITY_TAGS) \
-	-fmt json -out gosec-results.json -stdout -verbose text \
-	-exclude-dir=examples
-
 .PHONY: security
 ## security: Full devops.md §8 suite (gosec, govulncheck, go mod verify, trivy fs)
 # Container images are NOT scanned here -- `make trivy-image` builds and scans
 # the release image, which needs a Docker daemon and several minutes. CI scans
-# the same image in the docker job.
+# the same image in its image job, on the full tier. The gosec half is
+# scripts/gosec-scan.sh, which explains its two scans.
 security:
 	@echo "$(CYAN)$(BOLD)→ Running security checks...$(RESET)"
 	@echo "$(CYAN)  Running gosec...$(RESET)"
-	@GOPATH=$$(go env GOPATH); \
-	if [ -x "$$GOPATH/bin/gosec" ]; then \
-		cd $(PWD) && $$GOPATH/bin/gosec $(GOSEC_ARGS) ./... && echo "$(GREEN)✓ gosec passed$(RESET)"; \
-	elif command -v gosec > /dev/null 2>&1; then \
-		cd $(PWD) && gosec $(GOSEC_ARGS) ./... && echo "$(GREEN)✓ gosec passed$(RESET)"; \
-	else \
-		echo "$(RED)✗ gosec not found$(RESET)"; \
-		echo "$(YELLOW)  Install: make install-security-tools$(RESET)"; \
-		echo "$(YELLOW)  Or manually: go install github.com/securego/gosec/v2/cmd/gosec@latest$(RESET)"; \
-		echo "$(YELLOW)  Note: You may need to add \$$GOPATH/bin to your PATH$(RESET)"; \
-		exit 1; \
-	fi
-	@echo "$(CYAN)  Running govulncheck...$(RESET)"
-	@GOPATH=$$(go env GOPATH); \
+	@PATH="$$PATH:$$(go env GOPATH)/bin" ./scripts/gosec-scan.sh "$(SECURITY_TAGS)" && echo "$(GREEN)✓ gosec passed$(RESET)"
+	@echo "$(CYAN)  Running govulncheck in every module...$(RESET)"
+	@BIN=$$($(REQUIRE_TOOL) govulncheck) || { echo "$(RED)✗ govulncheck required$(RESET)"; exit 1; }; \
 	export GOFLAGS="-tags=$(SECURITY_TAGS)"; \
-	if [ -x "$$GOPATH/bin/govulncheck" ]; then \
-		$$GOPATH/bin/govulncheck ./... && echo "$(GREEN)✓ govulncheck passed$(RESET)" || { echo "$(RED)✗ govulncheck found vulnerabilities (blocking, mirrors GitHub CI)$(RESET)"; exit 1; }; \
-	elif command -v govulncheck > /dev/null 2>&1; then \
-		govulncheck ./... && echo "$(GREEN)✓ govulncheck passed$(RESET)" || { echo "$(RED)✗ govulncheck found vulnerabilities (blocking, mirrors GitHub CI)$(RESET)"; exit 1; }; \
-	else \
-		echo "$(RED)✗ govulncheck not found$(RESET)"; \
-		echo "$(YELLOW)  Install: make install-security-tools$(RESET)"; \
-		echo "$(YELLOW)  Or manually: go install golang.org/x/vuln/cmd/govulncheck@latest$(RESET)"; \
-		echo "$(YELLOW)  Note: You may need to add \$$GOPATH/bin to your PATH$(RESET)"; \
-		exit 1; \
-	fi
+	for m in . $(NESTED_MODULES); do \
+		echo "$(CYAN)  govulncheck in $$m$(RESET)"; \
+		(cd $$m && "$$BIN" ./...) || { echo "$(RED)✗ govulncheck found vulnerabilities in $$m$(RESET)"; exit 1; }; \
+	done; \
+	echo "$(GREEN)✓ govulncheck passed$(RESET)"
 	@echo "$(CYAN)  Verifying module integrity...$(RESET)"
-	@$(GO) mod verify || { echo "$(RED)✗ go mod verify failed$(RESET)"; exit 1; }
+	@for m in . $(NESTED_MODULES); do (cd $$m && $(GO) mod verify) || { echo "$(RED)✗ go mod verify failed in $$m$(RESET)"; exit 1; }; done
 	@echo "$(GREEN)✓ go mod verify passed$(RESET)"
 	# test/ and examples/ do not ship. coverage/ and bin/ are build output.
 	# **/vendor is gitignored language-SDK tooling that is not in a CI checkout.
@@ -732,12 +915,12 @@ security:
 # Mirrors the gate in the ci.yml docker job so the same failure reproduces
 # locally (devops.md §4). Builds the image, so it needs Docker and is not part
 # of `make security`.
-trivy-image: docker-build
+trivy-image: docker-build-release
 	@echo "$(CYAN)$(BOLD)→ Scanning container image with Trivy...$(RESET)"
 	@BIN=$$($(REQUIRE_TOOL) trivy) || { echo "$(RED)✗ trivy required for the image scan$(RESET)"; exit 1; }; \
-	"$$BIN" image --severity CRITICAL,HIGH --exit-code 1 --no-progress $(PROJECT_NAME) \
+	"$$BIN" image --severity CRITICAL,HIGH --exit-code 1 --no-progress $(RELEASE_IMAGE) \
 		&& echo "$(GREEN)✓ trivy image passed$(RESET)" \
-		|| { echo "$(RED)✗ trivy found CRITICAL/HIGH findings in $(PROJECT_NAME)$(RESET)"; exit 1; }
+		|| { echo "$(RED)✗ trivy found CRITICAL/HIGH findings in $(RELEASE_IMAGE)$(RESET)"; exit 1; }
 
 .PHONY: ci
 ## ci: Run the full CI pipeline locally (mirrors .github/workflows/ci.yml, Go-core only; SDK suites run via test-sdks/test-sdks-all)
