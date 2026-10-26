@@ -15,22 +15,23 @@
 #                              into the version's CHANGELOG section and commits
 #                              it, signed, BEFORE any tag exists
 #                              (release-versioning.md §5)
-#   2. the template recipe     writes VERSION, runs version-sync and version-check,
-#                              re-pins every requirement the nested modules have
-#                              on the root and SDK modules to the version, drops
-#                              their in-repo replace directives, and commits that
-#                              as the release commit, which carries the three
-#                              annotated tags. It then commits the replaces back
-#                              (requirements still at the new version) so main
-#                              keeps building against the in-tree modules, pushes
-#                              both commits and exactly the three tags in one
-#                              atomic push, and runs release-consumer-check.
+#   2. the template recipe     writes VERSION, re-pins every requirement the
+#                              nested modules have on the root and SDK modules to
+#                              the version, drops the in-repo replaces of the
+#                              RELEASE_REPLACES modules, runs RELEASE_SYNC_TARGETS,
+#                              and commits that as the release commit, which
+#                              carries the three annotated tags. It then commits
+#                              the replaces back (requirements still at the new
+#                              version) so main keeps building against the
+#                              in-tree modules, pushes both commits and exactly
+#                              the three tags in one atomic push, and checks each
+#                              RELEASE_CONSUMER_MODULES module as an outside
+#                              consumer at the new tag.
 #
-# mk/template/ is ../handbook/software/templates/make/ (release-alpha.mk,
-# release-common.mk, release.mk, release-candidate.mk and the regression harness
-# testdata/release-alpha-tests.sh) plus the local additions listed in the header
-# of mk/template/release-common.mk. Update it by re-copying from the handbook and
-# re-applying those additions; other repo-specific behaviour lives in this file.
+# mk/template/ is ../handbook/software/templates/make/ byte for byte
+# (release-common.mk 1.2.0, release-alpha.mk, release.mk, release-candidate.mk
+# and the regression harness testdata/release-alpha-tests.sh). Update it by
+# re-copying from the handbook; repo-specific behaviour lives in this file.
 #
 # The version is explicit (release-versioning.md decides patch/minor/major),
 # every git write signs through agent-git.sh as agent-go-objstore, the tags are
@@ -47,6 +48,19 @@ REPO_NAME ?= go-objstore
 RELEASE_REMOTE ?= origin
 ifeq ($(origin LOCKSTEP_MODULES),undefined)
 LOCKSTEP_MODULES := backup api/sdks/go
+endif
+# The template's opt-in inputs (release-common.mk 1.2.0 header). backup and
+# api/sdks/go replace the root and SDK modules with their in-tree directories;
+# the release commit drops those replaces so `go install <module>/cmd/<x>@<tag>`
+# works, and the restore commit after the tags puts them back.
+ifeq ($(origin RELEASE_REPLACES),undefined)
+RELEASE_REPLACES := backup api/sdks/go
+endif
+ifeq ($(origin RELEASE_SYNC_TARGETS),undefined)
+RELEASE_SYNC_TARGETS := version-sync version-check
+endif
+ifeq ($(origin RELEASE_CONSUMER_MODULES),undefined)
+RELEASE_CONSUMER_MODULES := . backup api/sdks/go
 endif
 
 # The directory holding this file, captured before any further include moves
@@ -76,28 +90,6 @@ changelog-assemble:
 # Its pre-flight checks the same tags the template's guard does, so a release the
 # template would refuse never commits CHANGELOG changes.
 release-alpha: changelog-assemble
-
-# consumer-check — post-tag consumer verification of one module at one tag:
-#   make consumer-check MODULE=github.com/jeremyhahn/go-objstore/backup VERSION=v0.9.0-alpha
-# Inputs cross into the recipe as changelog-assemble's do.
-.PHONY: consumer-check
-unexport CC_MODULE CC_VERSION MODULE
-consumer-check: override export CC_MODULE  := $(value MODULE)
-consumer-check: override export CC_VERSION := $(value VERSION)
-consumer-check:
-	@bash '$(RELEASE_MK_DIR)consumer-check.sh'
-
-# release-consumer-check — consumer-check once per released module: the root and
-# every LOCKSTEP_MODULES entry, at the version in VERSION. release-alpha runs it
-# after the push; run it by hand to re-verify a published release.
-.PHONY: release-consumer-check
-unexport RCC_MODULES
-release-consumer-check: override export RCC_MODULES := $(value LOCKSTEP_MODULES)
-release-consumer-check:
-	@set -e; v="v$$(cat VERSION)"; root="$$(GOWORK=off GOFLAGS= go list -m)"; \
-	for m in "$$root" $$(for d in $$RCC_MODULES; do printf '%s/%s ' "$$root" "$$d"; done); do \
-	  $(MAKE) --no-print-directory consumer-check MODULE="$$m" VERSION="$$v"; \
-	done
 
 .PHONY: test-release-alpha
 ## test-release-alpha: Run the release-alpha regression harnesses against a throwaway remote

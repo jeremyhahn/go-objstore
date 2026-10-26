@@ -1,5 +1,8 @@
-# release-common-template: v1.1.0 (2026-10-08). The one implementation behind
+# release-common-template: v1.2.0 (2026-10-26). The one implementation behind
 # the three release recipes of release-versioning.md §1a, all of which tag main.
+# v1.2.0 adds three opt-in inputs, RELEASE_REPLACES, RELEASE_SYNC_TARGETS and
+# RELEASE_CONSUMER_MODULES, upstreamed from go-objstore's vendored copy
+# (go-objstore#122). With all three empty, the recipes behave as in v1.1.0.
 # v1.1.0 adds release-candidate.mk and renames release-public.mk to release.mk
 # (target `make release`), per the owner's rulings of 2026-10-07 (§1a). v1.0.0
 # (2026-09-27 — automatethethings#173) had two recipes.
@@ -36,29 +39,32 @@
 #                     discovered: fleet repos carry nested go.mod files that are
 #                     not released (web/desktop, test/performance/*).
 #
-# LOCAL ADDITIONS (go-objstore, NOT in the fleet template; every other line is
-# release-common-template v1.1.0 verbatim). All four are in RELEASE_CUT, and
-# each is a no-op for a repo that does not use it:
-#  (L1) after VERSION and the pins are written, the recipe runs this repo's own
-#       `version-sync` and then `version-check` (the Makefile targets, never a
-#       copy) and stages the synced SDK manifests with `add -u`, so the release
-#       commit carries them. The tree is clean at that point (RELEASE_GUARDS),
-#       so `add -u` stages exactly what the sync changed.
-#  (L2) the release commit drops every replace directive in a published go.mod
-#       that points one of the repo's own modules at a local directory. The
-#       tags then name modules that resolve through their requirements alone,
-#       and `go install <module>/cmd/<x>@<tag>` (which refuses any replace) works.
-#  (L3) after tagging, a second commit restores those go.mod files to their
-#       pre-release form with the requirements on the release version, so main
-#       keeps building the nested modules against the working tree
-#       (dependency-resolution.md §2: the intra-repo replace). The push carries
-#       both commits and the tags, atomically; the tags name the release commit,
-#       main's tip is the restore commit.
-#  (L4) after the push, the recipe runs this repo's `release-consumer-check`,
-#       the post-tag consumer build of release-versioning.md §2 for each module.
-# Adopters without those targets, or without own-module replaces, must not take
-# L1 and L4. Re-copying the template over this file drops all four: re-apply
-# them, and the stubs in testdata/release-alpha-tests.sh.
+# OPT-IN INPUTS (v1.2.0; each is empty by default, and empty changes nothing):
+#   RELEASE_REPLACES  published modules whose go.mod replaces the repo's own
+#                     modules with a local directory (dependency-resolution.md
+#                     §2), e.g. `backup api/sdks/go`; `.` is the root. Each entry
+#                     is `.` or a LOCKSTEP_MODULES entry, and its go.mod must
+#                     carry at least one such replace. The release commit drops
+#                     those replaces, so `go install <module>/cmd/<x>@<tag>`
+#                     works, and the tags name it. A second commit, the restore
+#                     commit, then puts the replaces back with the requirements
+#                     at the release version. The atomic push carries both
+#                     commits, so the tags point at main~1, never at main's tip
+#                     (release-versioning.md §1a). A committed go.work stays
+#                     forbidden. Setting it also runs the consumer check below.
+#   RELEASE_SYNC_TARGETS  this repo's own Make targets, run in order after
+#                     VERSION and the pins are written, e.g. `version-sync
+#                     version-check`. The release commit then stages every
+#                     tracked file they changed (`add -u`); the tree was clean
+#                     (RELEASE_GUARDS), so that is exactly what they wrote.
+#   RELEASE_CONSUMER_MODULES  the modules checked as an outside consumer after
+#                     the push (release-versioning.md §2), `.` or LOCKSTEP_MODULES
+#                     entries. Empty with RELEASE_REPLACES set means `.` (the root).
+#                     In a scratch module, with GOWORK=off and GOFLAGS=-mod=mod,
+#                     the check runs `go get <module>@<tag>`, builds every
+#                     package, and `go install`s every command at the tag. It
+#                     needs the proxy or the Gitea server the tag reached. A
+#                     failure comes after the push: the tags never move (§3).
 #
 # SECURITY — the v2.3.3/v2.3.7/v2.3.8 rules, extended to the new names:
 #  - every settable input reaches the recipe as $(value ...) through an
@@ -71,18 +77,25 @@
 # ADOPTER CHECK: over each recipe BODY, `grep -P '(?<!\$)\$\((?!\()'` may match
 # ONLY the canned sequences defined here (RELEASE_GUARDS, RELEASE_PIN_GATE,
 # RELEASE_CUT, RELEASE_LOCKSTEP_COMPLETE, RELEASE_MONOTONIC, RELEASE_MAJOR_GATE,
-# and inside them RELEASE_MODFILES and RELEASE_REQUIRES) — and every settable
-# input must be on the `unexport` lines.
+# and inside them RELEASE_MODFILES, RELEASE_REQUIRES and RELEASE_LOCAL_REPLACES)
+# — and every settable input must be on the `unexport` lines.
 
-unexport VERSION RELEASE_REMOTE REPO_NAME AGENT_GIT LOCKSTEP_MODULES
-unexport REL_VERSION REL_REMOTE REL_REPO REL_AGENT_GIT REL_MODULES REL_VERSION_ORIGIN
-unexport RELEASE_GUARDS RELEASE_PIN_GATE RELEASE_CUT RELEASE_MODFILES RELEASE_REQUIRES RELEASE_REPLACES RELEASE_LOCKSTEP_COMPLETE RELEASE_MONOTONIC RELEASE_MAJOR_GATE
+unexport VERSION RELEASE_REMOTE REPO_NAME AGENT_GIT LOCKSTEP_MODULES RELEASE_REPLACES RELEASE_SYNC_TARGETS RELEASE_CONSUMER_MODULES
+unexport REL_VERSION REL_REMOTE REL_REPO REL_AGENT_GIT REL_MODULES REL_VERSION_ORIGIN REL_REPLACES REL_SYNC_TARGETS REL_CONSUMER_MODULES REL_MAKE
+unexport RELEASE_GUARDS RELEASE_PIN_GATE RELEASE_CUT RELEASE_MODFILES RELEASE_REQUIRES RELEASE_LOCAL_REPLACES RELEASE_LOCKSTEP_COMPLETE RELEASE_MONOTONIC RELEASE_MAJOR_GATE
 
 release-alpha release-candidate release: override export REL_VERSION   := $(value VERSION)
 release-alpha release-candidate release: override export REL_REMOTE    := $(value RELEASE_REMOTE)
 release-alpha release-candidate release: override export REL_REPO      := $(value REPO_NAME)
 release-alpha release-candidate release: override export REL_AGENT_GIT := $(value AGENT_GIT)
 release-alpha release-candidate release: override export REL_MODULES   := $(value LOCKSTEP_MODULES)
+release-alpha release-candidate release: override export REL_REPLACES  := $(value RELEASE_REPLACES)
+release-alpha release-candidate release: override export REL_SYNC_TARGETS     := $(value RELEASE_SYNC_TARGETS)
+release-alpha release-candidate release: override export REL_CONSUMER_MODULES := $(value RELEASE_CONSUMER_MODULES)
+# The make that runs RELEASE_SYNC_TARGETS. The recipe never writes $(MAKE): a
+# command-line MAKE=... would be expanded as Make text. The shell runs this
+# value as one quoted word, so nothing in it is expanded.
+release-alpha release-candidate release: override export REL_MAKE := $(value MAKE_COMMAND)
 # Where VERSION came from. `unexport` stops a command-line value from being
 # re-exported, but it does not stop an EXPORTED environment variable (or
 # `make -e`) from supplying the Make variable in the first place, so a bare
@@ -108,6 +121,20 @@ if printf '%s\n' "$$urls" | grep -qi 'github\.com'; then echo "ERROR: $$REL_REMO
   case "$$seen" in *" $$m "*) echo "ERROR: LOCKSTEP_MODULES lists $$m twice"; exit 1 ;; esac; seen="$$seen$$m "; \
   git ls-files --error-unmatch -- "$$m/go.mod" >/dev/null 2>&1 || { echo "ERROR: LOCKSTEP_MODULES entry $$m has no tracked go.mod — a lockstep tag must name a real nested module"; exit 1; }; \
   test -f "$$m/go.mod" || { echo "ERROR: $$m/go.mod is tracked but not checked out (a sparse checkout?); the release gates would skip it. Check out the whole tree"; exit 1; }; \
+done
+@set -f; seen=' '; for d in $$REL_REPLACES; do \
+  case " . $$REL_MODULES " in *" $$d "*) ;; *) echo "ERROR: RELEASE_REPLACES entry $$d is neither . (the root) nor a LOCKSTEP_MODULES entry; only a published go.mod has its replaces dropped"; exit 1 ;; esac; \
+  case "$$seen" in *" $$d "*) echo "ERROR: RELEASE_REPLACES lists $$d twice"; exit 1 ;; esac; seen="$$seen$$d "; \
+done; \
+for d in $$REL_CONSUMER_MODULES; do \
+  case " . $$REL_MODULES " in *" $$d "*) ;; *) echo "ERROR: RELEASE_CONSUMER_MODULES entry $$d is neither . (the root) nor a LOCKSTEP_MODULES entry; only a module this release tags can be checked at the tag"; exit 1 ;; esac; \
+done; \
+for d in $$REL_REPLACES $$REL_CONSUMER_MODULES; do \
+  test "$$d" = . || continue; \
+  git ls-files --error-unmatch -- go.mod >/dev/null 2>&1 && test -f go.mod || { echo "ERROR: RELEASE_REPLACES or RELEASE_CONSUMER_MODULES names . (the root), which has no tracked go.mod"; exit 1; }; \
+done; \
+for t in $$REL_SYNC_TARGETS; do \
+  printf '%s' "$$t" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*$$' || { echo "ERROR: RELEASE_SYNC_TARGETS entry is not a plain Make target name: $$t"; exit 1; }; \
 done
 @for t in "$$REL_VERSION" $$(for m in $$REL_MODULES; do printf '%s/%s ' "$$m" "$$REL_VERSION"; done); do \
   git check-ref-format "refs/tags/$$t" || { echo "ERROR: refs/tags/$$t is not a valid tag name; fix LOCKSTEP_MODULES before anything is written"; exit 1; }; \
@@ -226,11 +253,12 @@ override define RELEASE_REQUIRES
 awk '   { sub(/\/\/.*/, "") }   blk && $$1 == ")" { blk = 0; next }   blk && NF >= 2 { print $$1, $$2; next }   $$1 == "require" && $$2 == "(" { blk = 1; next }   $$1 == "require" && NF >= 3 { print $$2, $$3 }'
 endef
 
-# RELEASE_REPLACES — local addition L2/L3: awk program printing "old new" for
-# every replace directive in the go.mod named after it, single-line and block
-# form, comments stripped; "old" is the module path, "new" the replacement.
-override define RELEASE_REPLACES
-awk '   { sub(/\/\/.*/, "") }   blk && $$1 == ")" { blk = 0; next }   $$1 == "replace" && $$2 == "(" { blk = 1; next }   blk || $$1 == "replace" { s = ($$1 == "replace") ? 2 : 1; for (i = s + 1; i < NF; i++) if ($$i == "=>") { print $$s, $$(i + 1); break } }'
+# RELEASE_LOCAL_REPLACES — awk program printing the module path of every
+# unversioned replace whose target is a local directory (., .., ./..., ../...
+# or an absolute path) in the go.mod named after it, single-line and block
+# form, comments stripped. Used only when RELEASE_REPLACES is set.
+override define RELEASE_LOCAL_REPLACES
+awk '   { sub(/\/\/.*/, "") }   blk && $$1 == ")" { blk = 0; next }   $$1 == "replace" && $$2 == "(" { blk = 1; next }   blk || $$1 == "replace" { s = ($$1 == "replace") ? 2 : 1; if ($$(s + 1) == "=>" && $$(s + 2) ~ /^(\.|\.\.|\.\/.*|\.\.\/.*|\/.*)$$/) print $$s }'
 endef
 
 # RELEASE_PIN_GATE — the upstream gate. Every first-party requirement
@@ -266,6 +294,10 @@ endef
 # modules pin each other needs the go toolchain to release; one whose modules
 # do not never invokes it. Every edit is first tried on a copy, so a toolchain
 # that cannot edit a module fails before VERSION or any go.mod is touched.
+# The opt-in inputs (header) add four steps, each a no-op when its input is
+# empty: RELEASE_SYNC_TARGETS run before the release commit, RELEASE_REPLACES
+# drops the in-repo replaces from it and restores them in a commit after the
+# tags, and the consumer check runs after the push.
 override define RELEASE_CUT
 @$(RELEASE_MODFILES) \
 tmp="$$(mktemp -d)" || exit 1; trap 'rm -rf "$$tmp"' EXIT; \
@@ -276,52 +308,68 @@ for f in $$files; do \
     cp "$$f" "$$tmp/go.mod" && GOTOOLCHAIN=local GOFLAGS= go mod edit -require="$$p@$$REL_VERSION" "$$tmp/go.mod" \
       || { echo "ERROR: go mod edit cannot re-pin $$p in $$f (tried on a copy). Nothing was written"; exit 1; }; \
   done; \
-  $(RELEASE_REPLACES) "$$f" | while read -r p r; do \
-    case "$$own" in *" $$p "*) ;; *) continue ;; esac; \
-    case "$$r" in .|..|./*|../*|/*) ;; *) continue ;; esac; \
-    command -v go >/dev/null 2>&1 || { echo "ERROR: $$f replaces $$p with $$r, which this release drops with go mod edit, and go is not on PATH. Nothing was written"; exit 1; }; \
-    cp "$$f" "$$tmp/go.mod" && GOTOOLCHAIN=local GOFLAGS= go mod edit -dropreplace="$$p" "$$tmp/go.mod" \
-      || { echo "ERROR: go mod edit cannot drop the replace of $$p in $$f (tried on a copy). Nothing was written"; exit 1; }; \
-  done || exit 1; \
+done; \
+set -f; for d in $$REL_REPLACES; do \
+  f=go.mod; test "$$d" = . || f="$$d/go.mod"; \
+  ps="$$($(RELEASE_LOCAL_REPLACES) "$$f")" || { echo "ERROR: could not read $$f"; exit 1; }; \
+  drop=''; for p in $$ps; do case "$$own" in *" $$p "*) drop="$$drop $$p" ;; esac; done; \
+  test -n "$$drop" || { echo "ERROR: RELEASE_REPLACES lists $$d, but $$f replaces none of this repo's own modules with a local directory. Nothing was written"; exit 1; }; \
+  command -v go >/dev/null 2>&1 || { echo "ERROR: $$f has in-repo replaces, which this release drops with go mod edit, and go is not on PATH. Nothing was written"; exit 1; }; \
+  cp "$$f" "$$tmp/go.mod" || exit 1; \
+  for p in $$drop; do \
+    GOTOOLCHAIN=local GOFLAGS= go mod edit -dropreplace="$$p" "$$tmp/go.mod" || { echo "ERROR: go mod edit cannot drop the replace of $$p in $$f (tried on a copy). Nothing was written"; exit 1; }; \
+  done; \
 done
 @printf '%s\n' "$${REL_VERSION#v}" > VERSION
 @$(RELEASE_MODFILES) \
-rec="$$(git rev-parse --git-dir)/release-unpinned" && : > "$$rec" || { echo "ERROR: could not record the go.mod files whose replaces this release drops"; exit 1; }; \
 for f in $$files; do \
   for p in $$($(RELEASE_REQUIRES) "$$f" | awk '{ print $$1 }'); do \
     case "$$own" in *" $$p "*) ;; *) continue ;; esac; \
     GOTOOLCHAIN=local GOFLAGS= go mod edit -require="$$p@$$REL_VERSION" "$$f" || { echo "ERROR: could not re-pin $$p in $$f"; exit 1; }; \
     echo "re-pinned $$p to $$REL_VERSION in $$f"; \
   done; \
-  dropped="$$($(RELEASE_REPLACES) "$$f" | while read -r p r; do \
+done; \
+set -f; for d in $$REL_REPLACES; do \
+  f=go.mod; test "$$d" = . || f="$$d/go.mod"; \
+  ps="$$($(RELEASE_LOCAL_REPLACES) "$$f")" || { echo "ERROR: could not read $$f"; exit 1; }; \
+  for p in $$ps; do \
     case "$$own" in *" $$p "*) ;; *) continue ;; esac; \
-    case "$$r" in .|..|./*|../*|/*) ;; *) continue ;; esac; \
-    GOTOOLCHAIN=local GOFLAGS= go mod edit -dropreplace="$$p" "$$f" || { echo "ERROR: could not drop the replace of $$p in $$f" >&2; exit 1; }; \
-    printf ' %s' "$$p"; \
-  done)" || exit 1; \
-  test -z "$$dropped" || { printf '%s\n' "$$f" >> "$$rec"; echo "dropped the in-repo replace of$$dropped in $$f for the release commit"; }; \
-done
-@$(MAKE) --no-print-directory version-sync
-@$(MAKE) --no-print-directory version-check
-@$(RELEASE_MODFILES) \
-"$$REL_AGENT_GIT" "$$REL_REPO" add -- VERSION $$files
-"$$REL_AGENT_GIT" "$$REL_REPO" add -u
+    GOTOOLCHAIN=local GOFLAGS= go mod edit -dropreplace="$$p" "$$f" || { echo "ERROR: could not drop the replace of $$p in $$f"; exit 1; }; \
+    echo "dropped the in-repo replace of $$p in $$f for the release commit"; \
+  done; \
+done; \
+for t in $$REL_SYNC_TARGETS; do "$$REL_MAKE" --no-print-directory "$$t" || { echo "ERROR: RELEASE_SYNC_TARGETS target $$t failed; VERSION and the go.mod files are written, nothing is committed"; exit 1; }; done; \
+"$$REL_AGENT_GIT" "$$REL_REPO" add -- VERSION $$files && \
+if test -n "$$REL_SYNC_TARGETS"; then "$$REL_AGENT_GIT" "$$REL_REPO" add -u; fi
 @if git diff --cached --quiet; then echo "VERSION and pins already read $$REL_VERSION; tagging HEAD without a release commit"; else "$$REL_AGENT_GIT" "$$REL_REPO" commit -m "chore(release): $$REL_VERSION"; fi
 for t in "$$REL_VERSION" $$(for m in $$REL_MODULES; do printf '%s/%s ' "$$m" "$$REL_VERSION"; done); do "$$REL_AGENT_GIT" "$$REL_REPO" tag -a "$$t" -m "$$t" || exit 1; done
-@rec="$$(git rev-parse --git-dir)/release-unpinned"; test -s "$$rec" || exit 0; \
+@test -n "$$REL_REPLACES" || exit 0; \
 $(RELEASE_MODFILES) \
-restored=''; while read -r f; do \
-  git show "HEAD^:$$f" > "$$f" || { echo "ERROR: could not restore $$f from the commit before $$REL_VERSION"; exit 1; }; \
+restored=''; set -f; for d in $$REL_REPLACES; do \
+  f=go.mod; test "$$d" = . || f="$$d/go.mod"; \
+  git show "HEAD^:$$f" > "$$f" || { echo "ERROR: could not restore $$f from the commit before $$REL_VERSION; nothing is pushed"; exit 1; }; \
   for p in $$($(RELEASE_REQUIRES) "$$f" | awk '{ print $$1 }'); do \
     case "$$own" in *" $$p "*) ;; *) continue ;; esac; \
-    GOTOOLCHAIN=local GOFLAGS= go mod edit -require="$$p@$$REL_VERSION" "$$f" || { echo "ERROR: could not re-pin $$p in $$f"; exit 1; }; \
+    GOTOOLCHAIN=local GOFLAGS= go mod edit -require="$$p@$$REL_VERSION" "$$f" || { echo "ERROR: could not re-pin $$p in $$f; nothing is pushed"; exit 1; }; \
   done; \
   restored="$$restored $$f"; \
-done < "$$rec"; \
-rm -f "$$rec"; \
-echo "restoring the in-repo replaces in$$restored, required at $$REL_VERSION, after the tagged commit"; \
+done; \
+echo "restoring the in-repo replaces in$$restored, required at $$REL_VERSION, after the tagged release commit"; \
 "$$REL_AGENT_GIT" "$$REL_REPO" add -- $$restored && "$$REL_AGENT_GIT" "$$REL_REPO" commit -m "chore(release): restore in-repo replaces after $$REL_VERSION"
 "$$REL_AGENT_GIT" "$$REL_REPO" push --atomic --no-follow-tags "$$REL_REMOTE" HEAD "refs/tags/$$REL_VERSION" $$(for m in $$REL_MODULES; do printf 'refs/tags/%s/%s ' "$$m" "$$REL_VERSION"; done)
 @echo "Released $$REL_VERSION$$(for m in $$REL_MODULES; do printf ' + %s/%s' "$$m" "$$REL_VERSION"; done) (signed, annotated; only these tags pushed)"
-@$(MAKE) --no-print-directory release-consumer-check
+@test -n "$$REL_REPLACES$$REL_CONSUMER_MODULES" || exit 0; \
+command -v go >/dev/null 2>&1 || { echo "ERROR: go is not on PATH, so the consumer check (release-versioning.md §2) cannot run. $$REL_VERSION is pushed; run the check by hand"; exit 1; }; \
+tmp="$$(mktemp -d)" || exit 1; trap 'rm -rf "$$tmp"' EXIT; \
+set -f; for d in $${REL_CONSUMER_MODULES:-.}; do \
+  f=go.mod; test "$$d" = . || f="$$d/go.mod"; \
+  mod="$$(awk '$$1 == "module" { print $$2; exit }' "$$f")"; \
+  c="$$(mktemp -d "$$tmp/c.XXXXXX")" && ( cd "$$c" && export GOWORK=off GOFLAGS=-mod=mod GOBIN="$$c/bin" && \
+    go mod init example.invalid/release-consumer-check >/dev/null 2>&1 && \
+    go get "$$mod@$$REL_VERSION" && go build "$$mod/..." && \
+    mains="$$(go list -f '{{if eq .Name "main"}}{{.ImportPath}}{{end}}' "$$mod/...")" && \
+    for p in $$mains; do go install "$$p@$$REL_VERSION" || exit 1; done ) \
+    || { echo "ERROR: the consumer check of $$mod@$$REL_VERSION failed (release-versioning.md §2). The tags are pushed and never move (§3): fix forward in the next version"; exit 1; }; \
+  echo "consumer check passed: $$mod@$$REL_VERSION"; \
+done
 endef

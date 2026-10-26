@@ -70,10 +70,13 @@ EOF
 	cat > Makefile <<EOF
 AGENT_GIT := $DIR/agent-git
 LOCKSTEP_MODULES := $LOCKSTEP
+RELEASE_REPLACES :=
+RELEASE_CONSUMER_MODULES :=
 include $WIRING
-# Stubs for the targets the template recipe calls after writing VERSION and
-# after the push; the real ones are exercised by the sdk_lockstep case below.
-version-sync version-check release-consumer-check: ; @:
+# Stubs for RELEASE_SYNC_TARGETS, which the template recipe runs after writing
+# VERSION; the real ones, the replaces and the consumer check are exercised by
+# the sdk_lockstep case below.
+version-sync version-check: ; @:
 EOF
 	printf '0.0.1-alpha\n' > VERSION
 	mkdir changelog.d
@@ -111,6 +114,22 @@ publish() { git add -A; git commit -q -m setup; git push -q origin main; }
 fragment() { printf '%s\n' "$2" > "changelog.d/$1"; }
 
 release() { make -s release-alpha "$@" >"$ROOT/out" 2>&1; }
+
+# fakego — a go first on PATH ($DIR/fakego) that runs everything for real except
+# the template's post-push consumer check (GOWORK=off GOFLAGS=-mod=mod), whose
+# commands it records in $DIR/go.log instead of reaching a module proxy.
+fakego() {
+	local real; real="$(command -v go)" || return 1
+	mkdir -p "$DIR/fakego"
+	# shellcheck disable=SC2016 # the stub expands its own variables
+	printf '%s\n' '#!/bin/sh' \
+		'if [ "${GOWORK:-}" = off ] && [ "${GOFLAGS:-}" = -mod=mod ]; then' \
+		"	printf '%s\\n' \"\$*\" >> '$DIR/go.log'; exit 0" \
+		'fi' \
+		"exec '$real' \"\$@\"" > "$DIR/fakego/go"
+	chmod +x "$DIR/fakego/go"
+	: > "$DIR/go.log"
+}
 
 remote_tags() { git ls-remote --tags --refs origin | sed 's|.*refs/tags/||' | sort | tr '\n' ' '; }
 
@@ -223,14 +242,16 @@ api/sdks/typescript/package-lock.json api/sdks/csharp/ObjStore.SDK.csproj"
 # The go.mod files of the root and the nested modules released in lockstep.
 MOD_FILES="go.mod backup/go.mod api/sdks/go/go.mod"
 sdk_lockstep() (
-	local name="sdk lockstep" repo f
+	local name="sdk lockstep" repo f m
 	repo="$(cd "$HERE/../.." && pwd)"
 	fixture sdk-lockstep
 	export AGENT_GIT="$DIR/agent-git"
-	# The real Makefile, with only the post-push consumer check stubbed: it
-	# resolves the tags through the module proxy, which a throwaway remote is not.
-	cp "$repo/Makefile" Makefile.real
-	printf '%s\n' 'include Makefile.real' 'release-consumer-check: ; @echo consumer-check-stub' > Makefile
+	# The real Makefile. Only the post-push consumer check's go commands are
+	# stubbed (fakego): they resolve the tags through the module proxy, which a
+	# throwaway remote is not.
+	cp "$repo/Makefile" Makefile
+	fakego || { bad "$name" "go is not on PATH"; return 1; }
+	export PATH="$DIR/fakego:$PATH"
 	cp "$repo/VERSION" VERSION
 	# The next minor above the real VERSION: a release never lowers it. This
 	# function runs in a subshell, so the shadowed VER stays here.
@@ -246,7 +267,9 @@ sdk_lockstep() (
 	fragment 1-a.md "$(printf '### Added\n\n- a')"; publish
 	: > "$DIR/wrapper.log"
 	if ! release VERSION="$VER"; then bad "$name" "recipe refused: $(tail -n3 "$ROOT/out")"; return 1; fi
-	grep -qx consumer-check-stub "$ROOT/out" || { bad "$name" "the consumer check did not run after the push"; return 1; }
+	for m in github.com/jeremyhahn/go-objstore github.com/jeremyhahn/go-objstore/backup github.com/jeremyhahn/go-objstore/api/sdks/go; do
+		grep -qx "get $m@$VER" "$DIR/go.log" || { bad "$name" "the consumer check did not get $m@$VER after the push: $(tr '\n' ' ' < "$DIR/go.log")"; return 1; }
+	done
 
 	# One release commit, signed through the wrapper, holding VERSION, every
 	# manifest and the re-pinned nested go.mod files; then the restore commit.
@@ -269,7 +292,7 @@ $want"; return 1; }
 	for mod in backup/go.mod api/sdks/go/go.mod; do
 		git show "HEAD^:$mod" > "$ROOT/at" || { bad "$name" "no $mod at the tag"; return 1; }
 		! grep -q '=>' "$ROOT/at" || { bad "$name" "$mod keeps a replace at the tag"; return 1; }
-		[ "$(grep -Ec "github\.com/jeremyhahn/go-objstore(/api/sdks/go)? $VER\$" "$ROOT/at")" = "$([ "$mod" = backup/go.mod ] && echo 2 || echo 1)" ] \
+		[ "$(grep -Ec "github\.com/jeremyhahn/go-objstore(/api/sdks/go)? $VER( //.*)?\$" "$ROOT/at")" = "$([ "$mod" = backup/go.mod ] && echo 2 || echo 1)" ] \
 			|| { bad "$name" "$mod does not require the repo's own modules at $VER: $(grep jeremyhahn/go-objstore "$ROOT/at" | tr '\n' ' ')"; return 1; }
 		grep -q '=> \.\.' "$mod" || { bad "$name" "$mod lost its in-repo replace on main"; return 1; }
 	done
@@ -518,7 +541,9 @@ nested_release() (
 	nested nested-release
 	fragment 1-a.md "$(printf '### Added\n\n- a')"; publish
 	: > "$DIR/wrapper.log"
-	if ! release VERSION="$VER"; then bad "$name" "recipe refused: $(tail -n3 "$ROOT/out")"; return 1; fi
+	fakego || { bad "$name" "go is not on PATH"; return 1; }
+	if ! PATH="$DIR/fakego:$PATH" release VERSION="$VER" RELEASE_REPLACES="sdk/go tool"; then bad "$name" "recipe refused: $(tail -n3 "$ROOT/out")"; return 1; fi
+	grep -qx "get example.invalid/fx@$VER" "$DIR/go.log" || { bad "$name" "the consumer check of the root did not run: $(tr '\n' ' ' < "$DIR/go.log")"; return 1; }
 
 	local rel; rel="$(git rev-parse HEAD^)"
 	[ "$(git log -1 --format=%s HEAD^)" = "chore(release): $VER" ] || { bad "$name" "HEAD^ is not the release commit: $(git log -1 --format=%s HEAD^)"; return 1; }
@@ -583,12 +608,13 @@ no_injection() (
 		make -s release-alpha "$var=\$(shell touch $DIR/fired-$var)x" >/dev/null 2>&1
 		[ ! -e "$DIR/fired-$var" ] || { bad "$name" "$var executed its payload"; return 1; }
 	done
-	# The consumer check's inputs, on its own target (the fixture stubs only the
-	# per-release loop, so consumer-check itself is the real one).
-	for var in MODULE VERSION CC_MODULE CC_VERSION; do
+	# The template's opt-in inputs are not changelog-assemble's, so the assembly
+	# commits before the template refuses them: undo it after each.
+	for var in RELEASE_REPLACES RELEASE_SYNC_TARGETS RELEASE_CONSUMER_MODULES REL_REPLACES REL_SYNC_TARGETS REL_CONSUMER_MODULES REL_MAKE; do
 		# shellcheck disable=SC2016 # the payload must reach make unexpanded
-		make -s consumer-check MODULE=example.invalid/m VERSION="$VER" "$var=\$(shell touch $DIR/fired-cc-$var)x" >/dev/null 2>&1
-		[ ! -e "$DIR/fired-cc-$var" ] || { bad "$name" "consumer-check: $var executed its payload"; return 1; }
+		make -s release-alpha "$var=\$(shell touch $DIR/fired-$var)x" >/dev/null 2>&1
+		[ ! -e "$DIR/fired-$var" ] || { bad "$name" "$var executed its payload"; return 1; }
+		git reset -q --hard "$head"
 	done
 	nothing_happened "$name" "$head" || return 1
 	ok "$name, and nothing is written"

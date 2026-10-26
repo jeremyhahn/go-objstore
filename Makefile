@@ -1275,8 +1275,8 @@ export GOWORK=off
 
 # ---- release-alpha: see mk/release.mk (issue #32) ----
 # The signed -alpha release path: CHANGELOG fragment assembly, then the company
-# release-alpha template (vendored at mk/template/, local additions listed in
-# mk/template/release-common.mk), tagging the root, backup and api/sdks/go
+# release-alpha template (vendored byte for byte at mk/template/, release-common.mk
+# 1.2.0), tagging the root, backup and api/sdks/go
 # modules in lockstep.
 #
 #   make release-alpha VERSION=vX.Y.Z-alpha

@@ -18,6 +18,11 @@
 # §1a): `make release-candidate` cuts vX.Y.Z-rc.N, `make release` (formerly
 # release-public) cuts vX.Y.Z, and each target refuses the other kinds.
 #
+# The opt-in cases are go-objstore#122: RELEASE_REPLACES tags a release commit
+# without the in-repo replaces and restores them in a commit on top, so the
+# tags are on main~1; RELEASE_SYNC_TARGETS and RELEASE_CONSUMER_MODULES; and,
+# with all three unset, the v1.1.0 behaviour.
+#
 # Nothing here touches the caller's git config or any real remote: HOME and the
 # global config are private to each case, and AGENT_GIT is a stub that runs
 # plain git (signing is agent-git.sh's contract, not this recipe's).
@@ -69,10 +74,6 @@ LOCKSTEP_MODULES ?= $modules
 include $TEMPLATE
 include $HERE/../release.mk
 include $HERE/../release-candidate.mk
-# Stubs for the go-objstore local additions (see the header of release-common.mk):
-# the recipe calls the adopter's own version-sync, version-check and
-# release-consumer-check. The real targets are exercised by release-path-tests.sh.
-version-sync version-check release-consumer-check: ; @:
 EOF
 	printf '0.0.1-alpha\n' > VERSION
 	printf '# Changelog\n' > CHANGELOG.md
@@ -428,6 +429,132 @@ env_version() ( fixture "envv$n"; changelog "$PUB_HEAD"
 	VERSION="$PUB" expect_refusal "refuses VERSION from the environment under make -e" 'must be given on the make command line' -e release )
 rcase env_version
 
+echo "=== opt-in RELEASE_REPLACES, RELEASE_SYNC_TARGETS, RELEASE_CONSUMER_MODULES (go-objstore#122) ==="
+# fakego <dir> — a go first on PATH that runs everything for real except the
+# consumer check's commands, which it records with GOWORK and GOFLAGS in
+# <dir>/go.log instead of reaching a module proxy. <dir>/go.fail fails them.
+fakego() {
+	local d="$1" real; real="$(command -v go)" || { echo "FATAL: the replace cases need go on PATH"; return 1; }
+	mkdir -p "$d/fakego"
+	# shellcheck disable=SC2016 # the stub expands its own variables
+	printf '%s\n' '#!/bin/sh' \
+		'if [ "$1" != mod ] || [ "$2" = init ]; then case "$1" in get|build|list|install|mod)' \
+		"	printf 'GOWORK=%s GOFLAGS=%s %s\\n' \"\$GOWORK\" \"\$GOFLAGS\" \"\$*\" >> '$d/go.log'" \
+		"	[ ! -e '$d/go.fail' ] || exit 1" \
+		'	if [ "$1" = list ]; then for a; do l="$a"; done; printf "%s/cmd/tool\n" "${l%/...}"; fi' \
+		'	exit 0 ;; esac; fi' \
+		"exec '$real' \"\$@\"" > "$d/fakego/go"
+	chmod +x "$d/fakego/go"
+	: > "$d/go.log"
+}
+
+# replaces — commit and publish a root that replaces sdk/go in a block, and an
+# sdk/go that replaces the root and a third-party module.
+replaces() {
+	printf '%s\n' 'module github.com/jeremyhahn/fixture' '' 'go 1.24' '' \
+		'require github.com/jeremyhahn/fixture/sdk/go v0.0.1-alpha' '' \
+		'replace (' '	github.com/jeremyhahn/fixture/sdk/go => ./sdk/go // in-repo' ')' > go.mod
+	printf '%s\n' 'module github.com/jeremyhahn/fixture/sdk/go' '' 'go 1.24' '' \
+		'require (' '	github.com/jeremyhahn/fixture v0.0.1-alpha' '	github.com/other/lib v1.0.0' ')' '' \
+		'replace github.com/jeremyhahn/fixture => ../..' '' \
+		'replace github.com/other/lib => github.com/fork/lib v1.0.0' > sdk/go/go.mod
+	git commit -q -am replaces
+	git push -q origin main
+}
+
+# expect_replaced <name> <want-tags> <make args...> — make succeeds; the remote
+# has exactly <want-tags>; main's tip is the restore commit, every tag names
+# the release commit directly under it, and the tree is clean.
+expect_replaced() {
+	local name="$1" want="$2"; shift 2
+	if ! mk "$@"; then bad "$name" "recipe refused: $(tail -n1 "$ROOT/out")"; return 1; fi
+	local tags t; tags="$(remote_tags)"
+	[ "$tags" = "$want" ] || { bad "$name" "remote tags are [$tags], want [$want]"; return 1; }
+	[ "$(git ls-remote origin refs/heads/main | cut -f1)" = "$(git rev-parse HEAD)" ] || { bad "$name" "remote main is not the local HEAD"; return 1; }
+	[ "$(git log -1 --format=%s)" = "chore(release): restore in-repo replaces after $PUB" ] || { bad "$name" "HEAD is not the restore commit: $(git log -1 --format=%s)"; return 1; }
+	[ "$(git log -1 --format=%s HEAD^)" = "chore(release): $PUB" ] || { bad "$name" "HEAD^ is not the release commit"; return 1; }
+	for t in $tags; do
+		[ "$(git rev-parse "refs/tags/$t^{commit}")" = "$(git rev-parse HEAD^)" ] || { bad "$name" "tag $t is not on main~1, the release commit"; return 1; }
+	done
+	[ -z "$(git status --porcelain)" ] || { bad "$name" "working tree was left modified"; return 1; }
+	ok "$name"
+}
+
+rr_unset() ( fixture "rru$n" "sdk/go"; changelog "$PUB_HEAD"; replaces; fakego "$ROOT/rru$n"
+	PATH="$ROOT/rru$n/fakego:$PATH" expect_tags "unset: the tags are on main's tip, as in v1.1.0" "sdk/go/$PUB $PUB " release VERSION="$PUB" || return 1
+	git show "$PUB:sdk/go/go.mod" | grep -q '=> \.\./\.\.' || { bad "unset keeps replaces" "the tag lost sdk/go's replace"; return 1; }
+	[ "$(git log -1 --format=%s)" = "chore(release): $PUB" ] || { bad "unset makes no restore commit" "HEAD is $(git log -1 --format=%s)"; return 1; }
+	[ ! -s "$ROOT/rru$n/go.log" ] || { bad "unset runs no consumer check" "$(cat "$ROOT/rru$n/go.log")"; return 1; }
+	ok "unset: the release commit keeps its replaces, no restore commit, no consumer check" )
+rcase rr_unset
+rr_set() ( fixture "rrs$n" "sdk/go"; changelog "$PUB_HEAD"; replaces; fakego "$ROOT/rrs$n"
+	PATH="$ROOT/rrs$n/fakego:$PATH" expect_replaced "set: the tags name the release commit, main's tip is the restore commit" \
+		"sdk/go/$PUB $PUB " release VERSION="$PUB" RELEASE_REPLACES='. sdk/go' || return 1
+	local at
+	at="$(git show "$PUB:go.mod")"
+	! printf '%s\n' "$at" | grep -q '=> ./sdk/go' || { bad "set drops replaces" "the root keeps its replace at the tag: $at"; return 1; }
+	printf '%s\n' "$at" | grep -q "github.com/jeremyhahn/fixture/sdk/go $PUB" || { bad "set drops replaces" "the root does not require sdk/go at $PUB: $at"; return 1; }
+	at="$(git show "$PUB:sdk/go/go.mod")"
+	! printf '%s\n' "$at" | grep -q '=> \.\./\.\.' || { bad "set drops replaces" "sdk/go keeps its replace at the tag: $at"; return 1; }
+	printf '%s\n' "$at" | grep -q 'github.com/other/lib => github.com/fork/lib v1.0.0' || { bad "set drops replaces" "a third-party replace was dropped: $at"; return 1; }
+	ok "set: the tagged go.mod files drop only the in-repo replaces and require $PUB"
+	{ grep -q '=> ./sdk/go' go.mod && grep -q '=> \.\./\.\.' sdk/go/go.mod; } || { bad "set restores replaces" "main lost an in-repo replace"; return 1; }
+	grep -q "github.com/jeremyhahn/fixture $PUB" sdk/go/go.mod || { bad "set restores replaces" "main's sdk/go does not require $PUB"; return 1; }
+	ok "set: main has the in-repo replaces back, required at $PUB"
+	{ [ "$(grep -c 'get ' "$ROOT/rrs$n/go.log")" = 1 ] && grep -q "^GOWORK=off GOFLAGS=-mod=mod get github.com/jeremyhahn/fixture@$PUB\$" "$ROOT/rrs$n/go.log" \
+		&& grep -q "install github.com/jeremyhahn/fixture/cmd/tool@$PUB\$" "$ROOT/rrs$n/go.log"; } \
+		|| { bad "set runs the consumer check" "go.log: $(cat "$ROOT/rrs$n/go.log")"; return 1; }
+	ok "set: the consumer check gets, builds and installs the root at $PUB with GOWORK=off" )
+rcase rr_set
+rr_consumers() ( fixture "rrc$n" "sdk/go"; changelog "$PUB_HEAD"; replaces; fakego "$ROOT/rrc$n"
+	PATH="$ROOT/rrc$n/fakego:$PATH" expect_replaced "set with RELEASE_CONSUMER_MODULES='. sdk/go'" \
+		"sdk/go/$PUB $PUB " release VERSION="$PUB" RELEASE_REPLACES=sdk/go RELEASE_CONSUMER_MODULES='. sdk/go' || return 1
+	{ grep -q "get github.com/jeremyhahn/fixture@$PUB\$" "$ROOT/rrc$n/go.log" && grep -q "get github.com/jeremyhahn/fixture/sdk/go@$PUB\$" "$ROOT/rrc$n/go.log"; } \
+		|| { bad "a consumer check per module" "go.log: $(cat "$ROOT/rrc$n/go.log")"; return 1; }
+	{ grep -q '=> ./sdk/go' "$(git rev-parse --show-toplevel)/go.mod" && git show "$PUB:go.mod" | grep -q '=> ./sdk/go'; } \
+		|| { bad "only the listed go.mod" "the unlisted root's replace was touched"; return 1; }
+	ok "a consumer check per listed module; an unlisted go.mod keeps its replace at the tag" )
+rcase rr_consumers
+rr_consumer_only() ( fixture "rro$n"; changelog "$PUB_HEAD"; fakego "$ROOT/rro$n"
+	PATH="$ROOT/rro$n/fakego:$PATH" expect_tags "RELEASE_CONSUMER_MODULES alone: the tag stays on main's tip" "$PUB " release VERSION="$PUB" RELEASE_CONSUMER_MODULES=. || return 1
+	grep -q "get github.com/jeremyhahn/fixture@$PUB\$" "$ROOT/rro$n/go.log" || { bad "consumer check alone" "go.log: $(cat "$ROOT/rro$n/go.log")"; return 1; }
+	ok "RELEASE_CONSUMER_MODULES alone runs the consumer check" )
+rcase rr_consumer_only
+rr_consumer_fail() ( fixture "rrf$n" "sdk/go"; changelog "$PUB_HEAD"; replaces; fakego "$ROOT/rrf$n"
+	touch "$ROOT/rrf$n/go.fail"
+	PATH="$ROOT/rrf$n/fakego:$PATH" mk release VERSION="$PUB" RELEASE_REPLACES='. sdk/go' && { bad "a failed consumer check fails the release" "recipe succeeded"; return 1; }
+	grep -q "consumer check of github.com/jeremyhahn/fixture@$PUB failed" "$ROOT/out" || { bad "a failed consumer check fails the release" "wrong reason: $(tail -n1 "$ROOT/out")"; return 1; }
+	[ "$(remote_tags)" = "sdk/go/$PUB $PUB " ] || { bad "a failed consumer check fails the release" "remote has [$(remote_tags)]"; return 1; }
+	ok "a failed consumer check fails the recipe after the push, and says so" )
+rcase rr_consumer_fail
+rr_refuse() ( fixture "rrr$n" "sdk/go"; changelog "$PUB_HEAD"
+	expect_refusal "refuses RELEASE_REPLACES on a go.mod without in-repo replaces" 'replaces none of this repo' release VERSION="$PUB" RELEASE_REPLACES=sdk/go || return 1
+	replaces
+	expect_refusal "refuses a RELEASE_REPLACES entry that is not published" 'neither \. \(the root\) nor a LOCKSTEP_MODULES' release VERSION="$PUB" RELEASE_REPLACES=xkey || return 1
+	expect_refusal "refuses a RELEASE_REPLACES entry listed twice" 'lists sdk/go twice' release VERSION="$PUB" RELEASE_REPLACES='sdk/go sdk/go' || return 1
+	expect_refusal "refuses a RELEASE_CONSUMER_MODULES entry that is not published" 'RELEASE_CONSUMER_MODULES entry web' release VERSION="$PUB" RELEASE_CONSUMER_MODULES=web || return 1
+	expect_refusal "refuses a RELEASE_SYNC_TARGETS entry that is not a plain target" 'not a plain Make target name' release VERSION="$PUB" RELEASE_SYNC_TARGETS='a;b' || return 1
+	mkdir -p "$ROOT/rrr$n/nogo" && ln -s "$(command -v git)" "$ROOT/rrr$n/nogo/git"
+	# shellcheck disable=SC2123 # a PATH without go, on purpose
+	PATH="$ROOT/rrr$n/nogo:/usr/bin:/bin" expect_refusal "refuses RELEASE_REPLACES without go on PATH, writing nothing" 'go is not on PATH' release VERSION="$PUB" RELEASE_REPLACES=sdk/go )
+rcase rr_refuse
+rr_sync() ( fixture "rry$n"; changelog "$PUB_HEAD"
+	printf 'sdk 0.0.1\n' > sdk.txt
+	# shellcheck disable=SC2016 # Make expands these in the recipe, not the shell here
+	printf '%s\n' 'version-sync: ; @printf '"'"'sdk %s\n'"'"' "$$(cat VERSION)" > sdk.txt' 'version-check: ; @grep -qx "sdk $$(cat VERSION)" sdk.txt' >> Makefile
+	git add sdk.txt Makefile && git commit -q -m sync && git push -q origin main
+	expect_tags "RELEASE_SYNC_TARGETS run before the release commit" "$PUB " release VERSION="$PUB" RELEASE_SYNC_TARGETS='version-sync version-check' || return 1
+	[ "$(git show "$PUB:sdk.txt")" = "sdk ${PUB#v}" ] || { bad "sync output is committed" "sdk.txt at the tag: $(git show "$PUB:sdk.txt")"; return 1; }
+	ok "the files RELEASE_SYNC_TARGETS change are in the release commit"
+	printf '%s\n' 'broken-check: ; @false' >> Makefile && git commit -q -am broken && git push -q origin main
+	changelog "$(printf '%s\n\n%s\n' '## [0.1.1]' "$PUB_HEAD")"
+	local head; head="$(git rev-parse HEAD)"
+	mk release VERSION=v0.1.1 RELEASE_SYNC_TARGETS=broken-check && { bad "a failed sync target stops the release" "recipe succeeded"; return 1; }
+	grep -q 'RELEASE_SYNC_TARGETS target broken-check failed' "$ROOT/out" || { bad "a failed sync target stops the release" "wrong reason: $(tail -n1 "$ROOT/out")"; return 1; }
+	[ "$(git rev-parse HEAD)" = "$head" ] && [ "$(remote_tags)" = "$PUB " ] || { bad "a failed sync target stops the release" "a commit or tag was made"; return 1; }
+	ok "a failed RELEASE_SYNC_TARGETS target stops the recipe before any commit" )
+rcase rr_sync
+
 echo "=== command-line injection: new inputs and the canned sequences ==="
 inject() ( fixture "inj$n"; changelog "$(printf '%s\n\n%s\n' "$PUB_HEAD" "$HEADING")"
 	# Each value would create the canary if Make expanded it. A release may
@@ -438,13 +565,17 @@ inject() ( fixture "inj$n"; changelog "$(printf '%s\n\n%s\n' "$PUB_HEAD" "$HEADI
 		for a in "LOCKSTEP_MODULES=\$(shell touch $canary)" "REL_MODULES=\$(shell touch $canary)" \
 			"REL_VERSION_ORIGIN=\$(shell touch $canary)" \
 			"RELEASE_CUT=\$(shell touch $canary)" "RELEASE_GUARDS=\$(shell touch $canary)" \
-			"RELEASE_PIN_GATE=\$(shell touch $canary)" "RELEASE_MONOTONIC=\$(shell touch $canary)"; do
+			"RELEASE_PIN_GATE=\$(shell touch $canary)" "RELEASE_MONOTONIC=\$(shell touch $canary)" \
+			"RELEASE_REPLACES=\$(shell touch $canary)" "RELEASE_SYNC_TARGETS=\$(shell touch $canary)" \
+			"RELEASE_SYNC_TARGETS=\$\$(touch $canary)" "RELEASE_CONSUMER_MODULES=\$(shell touch $canary)" \
+			"REL_REPLACES=\$(shell touch $canary)" "REL_MAKE=\$(shell touch $canary)" \
+			"RELEASE_LOCAL_REPLACES=\$(shell touch $canary)"; do
 			# shellcheck disable=SC2086 # $r is the target and its VERSION, split on purpose
 			mk $r "$a" || true
 			[ ! -e "$canary" ] || { bad "injection" "payload fired via ${a%%=*} (${r%% *})"; return 1; }
 		done
 	done
-	ok "no payload fires via LOCKSTEP_MODULES, REL_* or the canned sequences, on any recipe" )
+	ok "no payload fires via LOCKSTEP_MODULES, the RELEASE_* opt-in inputs, REL_* or the canned sequences, on any recipe" )
 rcase inject
 
 echo
