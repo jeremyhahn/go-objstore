@@ -1074,14 +1074,13 @@ release-push:
 	@echo "$(GREEN)✓ Release v$(BUILD_VERSION) pushed to origin$(RESET)"
 
 
-SUBMODULE_TAGS := 
 # Builds never resolve through a workspace: modules come from Gitea tags
 # (dependency-resolution.md §2). Immunizes against stray go.work files.
 export GOWORK=off
 
 # ---- dependency-resolution.md targets (2026-08-13 cutover) ----
-# SUBMODULE_TAGS lists nested modules tagged in lockstep with the root
-# (release-versioning.md P2). deps-latest runs before compiling in a
+# The nested modules tagged in lockstep with the root are LOCKSTEP_MODULES in
+# mk/release.mk (release-versioning.md P2). deps-latest runs before compiling in a
 # consumer repo. deps-latest picks the highest tag INCLUDING -alpha
 # prereleases — bare 'go get @latest' ignores prereleases and would downgrade
 # to legacy v0.0.0.
@@ -1090,7 +1089,9 @@ export GOWORK=off
 
 # ---- release-alpha: see mk/release.mk (issue #32) ----
 # The signed -alpha release path: CHANGELOG fragment assembly, then the company
-# release-alpha template (vendored verbatim at mk/release-alpha.mk).
+# release-alpha template (vendored at mk/template/, local additions listed in
+# mk/template/release-common.mk), tagging the root, backup and api/sdks/go
+# modules in lockstep.
 #
 #   make release-alpha VERSION=vX.Y.Z-alpha
 include mk/release.mk

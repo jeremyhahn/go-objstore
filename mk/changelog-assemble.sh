@@ -13,6 +13,7 @@
 #   CL_AGENT_GIT  the agent-git.sh wrapper; every git write goes through it
 #   CL_REPO       the literal repo name the wrapper signs as
 #   CL_REMOTE     the Gitea remote the release is pushed to
+#   CL_MODULES    the nested modules tagged in lockstep (LOCKSTEP_MODULES)
 #
 # The pre-flight guards mirror the template's, so an assembly commit is never
 # made for a release the template would then refuse. Every failure exits
@@ -36,13 +37,26 @@ branch="$(git rev-parse --abbrev-ref HEAD)"
 remote="${CL_REMOTE:-}"
 [ -n "$remote" ] || die 'RELEASE_REMOTE is empty — set it to the Gitea remote'
 git remote get-url "$remote" >/dev/null 2>&1 || die "no git remote named $remote"
-! git rev-parse -q --verify "refs/tags/$ver" >/dev/null || die "tag $ver already exists locally"
-rc=0; git ls-remote --exit-code --tags "$remote" "refs/tags/$ver" >/dev/null 2>&1 || rc=$?
-case "$rc" in
-	0) die "tag $ver already exists on $remote" ;;
-	2) : ;;
-	*) die "could not reach $remote to check whether tag $ver exists. Refusing to continue: an unreachable remote is not an absent tag" ;;
-esac
+tags=("$ver")
+seen=' '
+for m in ${CL_MODULES:-}; do
+	printf '%s' "$m" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)*$' \
+		|| die "LOCKSTEP_MODULES entry is not a plain repo-relative directory: $m"
+	case "$seen" in *" $m "*) die "LOCKSTEP_MODULES lists $m twice" ;; esac
+	seen="$seen$m "
+	git ls-files --error-unmatch -- "$m/go.mod" >/dev/null 2>&1 \
+		|| die "LOCKSTEP_MODULES entry $m has no tracked go.mod — a lockstep tag must name a real nested module"
+	tags+=("$m/$ver")
+done
+for t in "${tags[@]}"; do
+	! git rev-parse -q --verify "refs/tags/$t" >/dev/null || die "tag $t already exists locally"
+	rc=0; git ls-remote --exit-code --tags "$remote" "refs/tags/$t" >/dev/null 2>&1 || rc=$?
+	case "$rc" in
+		0) die "tag $t already exists on $remote" ;;
+		2) : ;;
+		*) die "could not reach $remote to check whether tag $t exists. Refusing to continue: an unreachable remote is not an absent tag" ;;
+	esac
+done
 [ -z "$(git status --porcelain)" ] || die 'working tree not clean'
 [ -f CHANGELOG.md ] || die 'no CHANGELOG.md'
 

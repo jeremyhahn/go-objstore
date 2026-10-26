@@ -1,4 +1,12 @@
-# release-alpha-template: v2.3.9 (2026-09-22 — two recipe defects, go-quicbaas#967,
+# release-alpha-template: v2.4.0 (2026-09-25 — automatethethings#173): the recipe
+# BODY moved to release-common.mk, shared with the new release-public.mk
+# (release-versioning.md §1a). Behaviour is unchanged for a
+# repo that sets nothing new; copy release-common.mk beside this file, since
+# this file now includes it from its own directory. New, opt-in:
+# LOCKSTEP_MODULES (e.g. `sdk/go xkey`) tags each nested module at the same
+# version on the release commit and pushes all the tags in one atomic push.
+# Regression tests: testdata/release-alpha-tests.sh (both recipes).
+# v2.3.9 (2026-09-22 — two recipe defects, go-quicbaas#967,
 # found by codex adopting v2.3.8 verbatim in go-truststrap PR #72; regression
 # tests in testdata/release-alpha-tests.sh run this recipe against a real remote):
 #  (a) --no-follow-tags on the release push. With push.followTags=true (a common
@@ -14,16 +22,6 @@
 #      a ```` block would "close" it and re-admit the quoted heading.
 #  This header is on line 1 so the first line always names the CURRENT revision;
 #  v2.3.6-v2.3.8 were stamped lower down and #967 read this file as v2.3.5.
-# LOCAL ADDITION (go-objstore, NOT in the fleet template; the revision above is
-# unchanged): after VERSION is written the recipe runs this repo's own
-# `version-sync` and then `version-check` (the Makefile targets, never a copy), and
-# stages the synced SDK manifests with `add -u` beside VERSION, so the signed
-# release commit carries them. The tree is clean at that point (guard below), so
-# `add -u` stages exactly what the sync changed. v0.4.0-alpha cut a release commit
-# with VERSION alone and left main red on version-check until a manual
-# `make version-sync`. Adopters without those two targets must not take this.
-# Re-copying the template over this file drops it: re-apply it, and the stub
-# targets in mk/testdata/release-alpha-tests.sh and release-path-tests.sh.
 # release-alpha-template: v2.3.5 (guidance only). Two release-WORKFLOW safety
 # patterns from go-blockstore #8, for any repo whose pipeline re-validates VERSION
 # or splits validate/publish across jobs:
@@ -248,14 +246,10 @@
 # — no $(...) carrying a settable value below the export lines — AND every
 # settable input named on the `unexport` line.
 .PHONY: release-alpha
-# Command-line variables are auto-exported; the export expands them. See above.
-# BOTH name families must be listed: the public inputs an operator sets, AND the
-# internal REL_* names, which are just as settable from a command line.
-unexport VERSION RELEASE_REMOTE REPO_NAME AGENT_GIT
-unexport REL_VERSION REL_REMOTE REL_REPO REL_AGENT_GIT
-# `override` is load-bearing, not decoration. A command-line variable outranks a
-# target-specific assignment, so WITHOUT it an attacker simply uses the internal
-# name and skips the sanitiser entirely:
+# v2.4.0: the export/unexport lines that stood here, and every guard after the
+# version-form check, now live in release-common.mk — one implementation for
+# the alpha and public recipes. The `override` explanation kept below is
+# why those lines look the way they do there:
 #
 #   make release-alpha VERSION=v1.2.3-alpha 'REL_REMOTE=$(shell id >&2)origin'
 #
@@ -265,43 +259,10 @@ unexport REL_VERSION REL_REMOTE REL_REPO REL_AGENT_GIT
 # four internal aliases open — a fix that moves the hole rather than shutting
 # it. With `override` the same command yields an EMPTY REL_REMOTE and no
 # execution, so the existing empty-value guard rejects it.
-release-alpha: override export REL_VERSION   := $(value VERSION)
-release-alpha: override export REL_REMOTE    := $(value RELEASE_REMOTE)
-release-alpha: override export REL_REPO      := $(value REPO_NAME)
-release-alpha: override export REL_AGENT_GIT := $(value AGENT_GIT)
+include $(dir $(lastword $(MAKEFILE_LIST)))release-common.mk
 release-alpha:
 	@test -n "$$REL_VERSION" || { echo 'ERROR: state the version explicitly: make release-alpha VERSION=vX.Y.Z-alpha (release-versioning.md decides patch/minor/major — the recipe refuses to guess)'; exit 1; }
 	@printf '%s' "$$REL_VERSION" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-alpha$$' || { echo "ERROR: VERSION is not of the form vX.Y.Z-alpha (no leading zeroes): $$REL_VERSION"; exit 1; }
-	@test "$$(git rev-parse --abbrev-ref HEAD)" = main || { echo "ERROR: releases are cut from main; you are on $$(git rev-parse --abbrev-ref HEAD). 'push $$REL_REMOTE HEAD' would publish this branch."; exit 1; }
-	@test -n "$$REL_REPO" || { echo 'ERROR: REPO_NAME is empty — set it to the literal repo name in the Makefile, never $$(notdir $$(CURDIR))'; exit 1; }
-	@test -x "$$REL_AGENT_GIT" || { echo 'ERROR: AGENT_GIT does not point at an executable agent-git.sh — every git write in this recipe signs through it, and a bad path must fail before VERSION is written'; exit 1; }
-	@test -n "$$REL_REMOTE" || { echo 'ERROR: RELEASE_REMOTE is empty — set it to the Gitea remote (origin in every fleet repo as of 2026-08-27)'; exit 1; }
-	@git remote get-url "$$REL_REMOTE" >/dev/null 2>&1 || { echo "ERROR: no git remote named $$REL_REMOTE. Set RELEASE_REMOTE to the Gitea remote; the duplicate-tag check below cannot answer against a remote that does not resolve"; exit 1; }
-	@! git rev-parse -q --verify "refs/tags/$$REL_VERSION" >/dev/null || { echo "ERROR: tag $$REL_VERSION already exists locally"; exit 1; }
-	@rc=0; git ls-remote --exit-code --tags "$$REL_REMOTE" "refs/tags/$$REL_VERSION" >/dev/null 2>&1 || rc=$$?; \
-	case "$$rc" in \
-	  0) echo "ERROR: tag $$REL_VERSION already exists on $$REL_REMOTE (a local check alone would miss this and fail the push AFTER committing VERSION)"; exit 1 ;; \
-	  2) : ;; \
-	  *) echo "ERROR: could not reach $$REL_REMOTE to check whether tag $$REL_VERSION exists. Refusing to continue: an unreachable remote is not an absent tag"; exit 1 ;; \
-	esac
-	@test -z "$$(git status --porcelain)" || { echo 'ERROR: working tree not clean'; exit 1; }
-	@ver="## [$${REL_VERSION#v}]"; awk -v ver="$$ver" ' \
-	  function fence(s,   i, n) { \
-	    i = 1; while (i <= 3 && substr(s, i, 1) == " ") i++; \
-	    fch = substr(s, i, 1); if (fch != "~" && fch != "\140") return 0; \
-	    n = 0; while (substr(s, i + n, 1) == fch) n++; \
-	    info = substr(s, i + n); return n >= 3 ? n : 0 } \
-	  { n = fence($$0) } \
-	  open { if (n >= open && fch == opench && info ~ /^[ \t]*$$/) open = 0; next } \
-	  n && !(fch == "\140" && index(info, "\140")) { open = n; opench = fch; next } \
-	  index($$0, ver) == 1 { f = 1 } \
-	  END { exit f ? 0 : 1 }' CHANGELOG.md || { echo "ERROR: CHANGELOG.md has no \"$$ver\" section heading. Matched LITERALLY and anchored at the line start, exactly as .github/workflows/release.yml matches it — an unanchored prose mention does not count, neither does a near-miss heading, and neither does a heading quoted inside a fenced code block"; exit 1; }
-	@printf '%s\n' "$${REL_VERSION#v}" > VERSION
-	@$(MAKE) --no-print-directory version-sync
-	@$(MAKE) --no-print-directory version-check
-	"$$REL_AGENT_GIT" "$$REL_REPO" add VERSION
-	"$$REL_AGENT_GIT" "$$REL_REPO" add -u
-	"$$REL_AGENT_GIT" "$$REL_REPO" commit -m "chore(release): $$REL_VERSION"
-	"$$REL_AGENT_GIT" "$$REL_REPO" tag -a "$$REL_VERSION" -m "$$REL_VERSION"
-	"$$REL_AGENT_GIT" "$$REL_REPO" push --atomic --no-follow-tags "$$REL_REMOTE" HEAD "refs/tags/$$REL_VERSION"
-	@echo "Released $$REL_VERSION (signed, annotated, single tag pushed)"
+	$(RELEASE_GUARDS)
+	$(RELEASE_MONOTONIC)
+	$(RELEASE_CUT)

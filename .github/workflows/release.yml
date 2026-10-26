@@ -177,36 +177,57 @@ jobs:
         fi
 
         LDFLAGS="-s -w -X github.com/jeremyhahn/go-objstore/pkg/version.Version=${VERSION}"
-
-        # Determine file extension and archive type
+        EXT=""
         if [ "$GOOS" = "windows" ]; then
-          BINARY_NAME="objstore${FIPS_SUFFIX}.exe"
-        else
-          BINARY_NAME="objstore${FIPS_SUFFIX}"
+          EXT=".exe"
         fi
 
-        # Build CLI binary
-        echo "Building objstore CLI for ${GOOS}/${GOARCH}${FIPS_SUFFIX}..."
-        go build -tags "${BUILD_TAGS}" \
-          -ldflags="${LDFLAGS}" \
-          -o "${BINARY_NAME}" \
-          ./cmd/objstore
+        # Every command in cmd/ (objstorelib is the shared library, built by
+        # build-libraries), each with its own checksum.
+        FILES=""
+        for CMD in objstore objstore-server objstore-grpc-server objstore-rest-server objstore-quic-server objstore-mcp-server; do
+          BINARY_NAME="${CMD}${FIPS_SUFFIX}${EXT}"
+          echo "Building ${CMD} for ${GOOS}/${GOARCH}${FIPS_SUFFIX}..."
+          go build -tags "${BUILD_TAGS}" \
+            -ldflags="${LDFLAGS}" \
+            -o "${BINARY_NAME}" \
+            "./cmd/${CMD}"
+          sha256sum "${BINARY_NAME}" > "${BINARY_NAME}.sha256"
+          FILES="${FILES} ${BINARY_NAME} ${BINARY_NAME}.sha256"
+        done
 
-        # Create checksum
+        # objstore-backup is the backup/ module. At a release tag it requires
+        # the root and Go SDK modules at that same tag with no replace; point
+        # them at this checkout, which is that tagged source, so the build does
+        # not wait on the new tags reaching a module proxy. The edit is never
+        # committed.
+        BINARY_NAME="objstore-backup${FIPS_SUFFIX}${EXT}"
+        echo "Building objstore-backup for ${GOOS}/${GOARCH}${FIPS_SUFFIX}..."
+        (
+          cd backup
+          go mod edit \
+            -replace=github.com/jeremyhahn/go-objstore=.. \
+            -replace=github.com/jeremyhahn/go-objstore/api/sdks/go=../api/sdks/go
+          GOWORK=off go build -ldflags="-s -w" -o "../${BINARY_NAME}" ./cmd/objstore-backup
+        )
         sha256sum "${BINARY_NAME}" > "${BINARY_NAME}.sha256"
+        FILES="${FILES} ${BINARY_NAME} ${BINARY_NAME}.sha256"
 
         # Create archive
         ARCHIVE_NAME="go-objstore-${VERSION}-${GOOS}-${GOARCH}${FIPS_SUFFIX}"
         if [ "$GOOS" = "windows" ]; then
-          zip "${ARCHIVE_NAME}.zip" "${BINARY_NAME}" "${BINARY_NAME}.sha256"
+          # shellcheck disable=SC2086 # FILES is a space-separated list of plain names
+          zip "${ARCHIVE_NAME}.zip" ${FILES}
           sha256sum "${ARCHIVE_NAME}.zip" > "${ARCHIVE_NAME}.zip.sha256"
         else
-          tar czf "${ARCHIVE_NAME}.tar.gz" "${BINARY_NAME}" "${BINARY_NAME}.sha256"
+          # shellcheck disable=SC2086 # FILES is a space-separated list of plain names
+          tar czf "${ARCHIVE_NAME}.tar.gz" ${FILES}
           sha256sum "${ARCHIVE_NAME}.tar.gz" > "${ARCHIVE_NAME}.tar.gz.sha256"
         fi
 
         # Clean up temporary files
-        rm "${BINARY_NAME}" "${BINARY_NAME}.sha256"
+        # shellcheck disable=SC2086 # FILES is a space-separated list of plain names
+        rm ${FILES}
 
     - name: Upload release assets
       uses: softprops/action-gh-release@v2

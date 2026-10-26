@@ -33,6 +33,8 @@ ROOT="$(mktemp -d)"
 trap 'rm -rf "$ROOT"' EXIT
 VER=v0.1.0-alpha
 PLAIN="${VER#v}"
+# The nested modules a fixture releases in lockstep; most fixtures have none.
+LOCKSTEP=
 TODAY_RE='[0-9]{4}-[0-9]{2}-[0-9]{2}'
 
 ok()  { printf '  PASS  %s\n' "$1"; }
@@ -67,10 +69,11 @@ EOF
 	chmod +x "$DIR/agent-git"
 	cat > Makefile <<EOF
 AGENT_GIT := $DIR/agent-git
+LOCKSTEP_MODULES := $LOCKSTEP
 include $WIRING
-# Stubs for the targets the template recipe calls after writing VERSION; the
-# real ones are exercised by the sdk_lockstep case below.
-version-sync version-check: ; @:
+# Stubs for the targets the template recipe calls after writing VERSION and
+# after the push; the real ones are exercised by the sdk_lockstep case below.
+version-sync version-check release-consumer-check: ; @:
 EOF
 	printf '0.0.1-alpha\n' > VERSION
 	mkdir changelog.d
@@ -78,6 +81,25 @@ EOF
 	printf '# Changelog\n\n## [Unreleased]\n\n## [0.0.1-alpha] - 2026-01-01\n\n### Added\n\n- The first release.\n' > CHANGELOG.md
 	git add -A
 	git commit -q -m initial
+	git push -q origin main
+	: > "$DIR/wrapper.log"
+}
+
+# nested <dir> — a fixture whose root module has two nested modules released in
+# lockstep, laid out as backup/ and api/sdks/go are here: sdk/go requires the
+# root, tool requires both (the SDK at the placeholder version), and each
+# reaches them through an in-repo replace. tool also replaces a third-party
+# module, which the release must keep.
+nested() {
+	LOCKSTEP="sdk/go tool" fixture "$1"
+	mkdir -p sdk/go tool
+	printf 'module example.invalid/fx\n\ngo 1.22\n' > go.mod
+	printf 'module example.invalid/fx/sdk/go\n\ngo 1.22\n\nrequire example.invalid/fx v0.0.1-alpha\n\nreplace example.invalid/fx => ../..\n' > sdk/go/go.mod
+	printf '%s\n' 'module example.invalid/fx/tool' '' 'go 1.22' '' '// in-repo' 'replace (' \
+		'	example.invalid/fx => ..' '	example.invalid/fx/sdk/go => ../sdk/go' '	example.invalid/other => example.invalid/fork v1.0.0' ')' '' \
+		'require (' '	example.invalid/fx v0.0.1-alpha' '	example.invalid/fx/sdk/go v0.0.0-00010101000000-000000000000' '	example.invalid/other v1.0.0' ')' > tool/go.mod
+	git add -A
+	git commit -q -m modules
 	git push -q origin main
 	: > "$DIR/wrapper.log"
 }
@@ -148,7 +170,7 @@ full_release() (
 		"go-objstore add CHANGELOG.md" \
 		"go-objstore rm -q -- changelog.d/10-b.md changelog.d/2-a.md" \
 		"go-objstore commit -m docs(changelog): assemble $PLAIN for $VER" \
-		"go-objstore add VERSION" \
+		"go-objstore add -- VERSION" \
 		"go-objstore add -u" \
 		"go-objstore commit -m chore(release): $VER" \
 		"go-objstore tag -a $VER -m $VER" \
@@ -198,40 +220,70 @@ SDK_FILES="api/sdks/go/version.go api/sdks/python/setup.py api/sdks/python/pypro
 api/sdks/python/objstore/__init__.py api/sdks/ruby/lib/objstore/version.rb
 api/sdks/ruby/objstore.gemspec api/sdks/rust/Cargo.toml api/sdks/typescript/package.json
 api/sdks/typescript/package-lock.json api/sdks/csharp/ObjStore.SDK.csproj"
+# The go.mod files of the root and the nested modules released in lockstep.
+MOD_FILES="go.mod backup/go.mod api/sdks/go/go.mod"
 sdk_lockstep() (
 	local name="sdk lockstep" repo f
 	repo="$(cd "$HERE/../.." && pwd)"
 	fixture sdk-lockstep
 	export AGENT_GIT="$DIR/agent-git"
-	cp "$repo/Makefile" Makefile
+	# The real Makefile, with only the post-push consumer check stubbed: it
+	# resolves the tags through the module proxy, which a throwaway remote is not.
+	cp "$repo/Makefile" Makefile.real
+	printf '%s\n' 'include Makefile.real' 'release-consumer-check: ; @echo consumer-check-stub' > Makefile
 	cp "$repo/VERSION" VERSION
-	mkdir -p mk scripts
+	# The next minor above the real VERSION: a release never lowers it. This
+	# function runs in a subshell, so the shadowed VER stays here.
+	local maj min
+	IFS=. read -r maj min _ < VERSION
+	VER="v$maj.$((min + 1)).0-alpha"
+	mkdir -p mk/template scripts
 	cp "$repo"/mk/*.mk "$repo"/mk/*.sh mk/
+	cp "$repo"/mk/template/*.mk mk/template/
 	cp "$repo/scripts/sync-version.sh" "$repo/scripts/check-version.sh" scripts/
-	for f in $SDK_FILES; do mkdir -p "$(dirname "$f")"; cp "$repo/$f" "$f"; done
+	for f in $SDK_FILES $MOD_FILES; do mkdir -p "$(dirname "$f")"; cp "$repo/$f" "$f"; done
 	make -s version-check >/dev/null 2>&1 || { bad "$name" "the fixture does not start with matching SDK versions"; return 1; }
 	fragment 1-a.md "$(printf '### Added\n\n- a')"; publish
 	: > "$DIR/wrapper.log"
 	if ! release VERSION="$VER"; then bad "$name" "recipe refused: $(tail -n3 "$ROOT/out")"; return 1; fi
+	grep -qx consumer-check-stub "$ROOT/out" || { bad "$name" "the consumer check did not run after the push"; return 1; }
 
-	# One release commit, signed through the wrapper, holding VERSION and every manifest.
+	# One release commit, signed through the wrapper, holding VERSION, every
+	# manifest and the re-pinned nested go.mod files; then the restore commit.
 	grep -qx "go-objstore add -u" "$DIR/wrapper.log" || { bad "$name" "the synced manifests were never staged: $(cat "$DIR/wrapper.log")"; return 1; }
-	[ "$(git log -1 --format=%s)" = "chore(release): $VER" ] || { bad "$name" "HEAD is not the release commit: $(git log -1 --format=%s)"; return 1; }
-	local changed; changed="$(git diff-tree --no-commit-id --name-only -r HEAD | sort)"
-	local want; want="$(printf '%s\n' VERSION $SDK_FILES | sort)"
+	[ "$(git log -1 --format=%s HEAD^)" = "chore(release): $VER" ] || { bad "$name" "HEAD^ is not the release commit: $(git log -1 --format=%s HEAD^)"; return 1; }
+	local changed; changed="$(git diff-tree --no-commit-id --name-only -r HEAD^ | sort)"
+	local want; want="$(printf '%s\n' VERSION $SDK_FILES backup/go.mod api/sdks/go/go.mod | sort)"
 	[ "$changed" = "$want" ] || { bad "$name" "the release commit changed:
 $changed
 want:
 $want"; return 1; }
+	[ "$(git diff-tree --no-commit-id --name-only -r HEAD | sort | tr '\n' ' ')" = "api/sdks/go/go.mod backup/go.mod " ] \
+		|| { bad "$name" "the restore commit changed: $(git diff-tree --no-commit-id --name-only -r HEAD | tr '\n' ' ')"; return 1; }
 	[ -z "$(git status --porcelain)" ] || { bad "$name" "the working tree is dirty after the release: $(git status --porcelain | tr '\n' ' ')"; return 1; }
-	ok "the release commit holds VERSION and all ten SDK manifests, and leaves the tree clean"
+	ok "the release commit holds VERSION, all ten SDK manifests and both nested go.mod files; the tree ends clean"
 
-	# The published tag's tree passes the gate.
+	# The tagged go.mod files: own-module requirements at the release version, no
+	# replace directive left; on main the in-repo replaces are back.
+	local mod
+	for mod in backup/go.mod api/sdks/go/go.mod; do
+		git show "HEAD^:$mod" > "$ROOT/at" || { bad "$name" "no $mod at the tag"; return 1; }
+		! grep -q '=>' "$ROOT/at" || { bad "$name" "$mod keeps a replace at the tag"; return 1; }
+		[ "$(grep -Ec "github\.com/jeremyhahn/go-objstore(/api/sdks/go)? $VER\$" "$ROOT/at")" = "$([ "$mod" = backup/go.mod ] && echo 2 || echo 1)" ] \
+			|| { bad "$name" "$mod does not require the repo's own modules at $VER: $(grep jeremyhahn/go-objstore "$ROOT/at" | tr '\n' ' ')"; return 1; }
+		grep -q '=> \.\.' "$mod" || { bad "$name" "$mod lost its in-repo replace on main"; return 1; }
+	done
+	ok "the nested go.mod files require $VER without replaces at the tag and keep them on main"
+
+	# The published tags name the release commit, and its tree passes the gate.
+	local t
+	for t in "$VER" "backup/$VER" "api/sdks/go/$VER"; do
+		[ "$(git ls-remote origin "refs/tags/$t^{}" | cut -f1)" = "$(git rev-parse HEAD^)" ] || { bad "$name" "tag $t is not the release commit"; return 1; }
+	done
 	git fetch -q origin "refs/tags/$VER:refs/tags/fetched" || { bad "$name" "could not fetch the tag"; return 1; }
-	[ "$(git rev-parse 'refs/tags/fetched^{commit}')" = "$(git rev-parse HEAD)" ] || { bad "$name" "the tag is not the release commit"; return 1; }
 	git checkout -q --detach refs/tags/fetched || { bad "$name" "could not check out the tag"; return 1; }
 	make -s version-check >"$ROOT/out" 2>&1 || { bad "$name" "version-check fails on the release commit: $(tail -n5 "$ROOT/out")"; return 1; }
-	ok "version-check passes on the tagged release commit"
+	ok "the three tags name the release commit, and version-check passes on it"
 )
 tally sdk_lockstep
 
@@ -416,22 +468,109 @@ echo "=== the lockstep guard runs before assembly ==="
 # SUBMODULE_TAGS set: release-alpha must refuse, and under make -j2 the
 # assembly step must not run beside the failing lockstep check.
 lockstep_parallel() (
-	local name="a lockstep rejection under make -j2"
-	fixture lockstep
+	local name="a bad LOCKSTEP_MODULES entry under make -j2"
+	nested lockstep
 	fragment 1-a.md "$(printf '### Added\n\n- a')"; publish
 	local head; head="$(git rev-parse HEAD)"
-	if make -s -j2 release-alpha VERSION="$VER" SUBMODULE_TAGS=sdk/go >"$ROOT/out" 2>&1; then bad "$name" "the release ran"; return 1; fi
-	grep -q 'SUBMODULE_TAGS is set' "$ROOT/out" || { bad "$name" "refused for the wrong reason: $(tail -n1 "$ROOT/out")"; return 1; }
+	: > "$DIR/wrapper.log"
+	if make -s -j2 release-alpha VERSION="$VER" LOCKSTEP_MODULES="sdk/go ../escape" >"$ROOT/out" 2>&1; then bad "$name" "the release ran"; return 1; fi
+	grep -q 'not a plain repo-relative directory: ../escape' "$ROOT/out" || { bad "$name" "refused for the wrong reason: $(tail -n1 "$ROOT/out")"; return 1; }
 	nothing_happened "$name" "$head" || return 1
 	[ -f changelog.d/1-a.md ] || { bad "$name" "the fragment was consumed"; return 1; }
 	[ ! -s "$DIR/wrapper.log" ] || { bad "$name" "the wrapper ran: $(cat "$DIR/wrapper.log")"; return 1; }
-	# Deterministic form of the same ordering: assembly alone must refuse too.
-	if make -s -j2 changelog-assemble VERSION="$VER" SUBMODULE_TAGS=sdk/go >"$ROOT/out" 2>&1; then bad "$name" "changelog-assemble ran without the lockstep check"; return 1; fi
+	# Deterministic form of the same ordering: assembly alone must refuse too,
+	# here for a module directory with no go.mod.
+	if make -s -j2 changelog-assemble VERSION="$VER" LOCKSTEP_MODULES="sdk/go nope" >"$ROOT/out" 2>&1; then bad "$name" "changelog-assemble ran without the lockstep check"; return 1; fi
+	grep -q 'entry nope has no tracked go.mod' "$ROOT/out" || { bad "$name" "refused for the wrong reason: $(tail -n1 "$ROOT/out")"; return 1; }
 	nothing_happened "$name" "$head" || return 1
 	[ ! -s "$DIR/wrapper.log" ] || { bad "$name" "the wrapper ran: $(cat "$DIR/wrapper.log")"; return 1; }
 	ok "$name leaves HEAD, the working tree and the remote unchanged"
 )
+
+# A nested module's tag already on the remote, or only local: refused before the
+# assembly commit, so no CHANGELOG change is ever committed for it.
+nested_tag_exists() (
+	local name="a nested module tag that already exists" where
+	for where in remote local; do
+		nested "nested-tag-$where"
+		fragment 1-a.md "$(printf '### Added\n\n- a')"; publish
+		git tag -a "tool/$VER" -m x || { bad "$name" "fixture tag"; return 1; }
+		if [ "$where" = remote ]; then git push -q origin "refs/tags/tool/$VER" && git tag -d "tool/$VER" >/dev/null; fi
+		local head; head="$(git rev-parse HEAD)"
+		: > "$DIR/wrapper.log"
+		if release VERSION="$VER"; then bad "$name ($where)" "the release ran"; return 1; fi
+		local want="tag tool/$VER already exists locally"; [ "$where" = local ] || want="tag tool/$VER already exists on origin"
+		grep -q "$want" "$ROOT/out" || { bad "$name ($where)" "refused for the wrong reason: $(tail -n1 "$ROOT/out")"; return 1; }
+		[ "$(git rev-parse HEAD)" = "$head" ] || { bad "$name ($where)" "an assembly commit was made"; return 1; }
+		[ -z "$(git status --porcelain)" ] || { bad "$name ($where)" "working tree was modified"; return 1; }
+		[ ! -s "$DIR/wrapper.log" ] || { bad "$name ($where)" "the wrapper ran: $(cat "$DIR/wrapper.log")"; return 1; }
+		[ "$(git ls-remote origin "refs/tags/$VER" "refs/tags/sdk/go/$VER")" = "" ] || { bad "$name ($where)" "a release tag reached the remote"; return 1; }
+	done
+	ok "$name, locally or on the remote, is refused before the assembly commit"
+)
+
+# The lockstep release: three tags on one release commit whose nested go.mod
+# files require the root and SDK at the new version with no in-repo replace,
+# then a second commit restoring the replaces, all in one atomic push.
+nested_release() (
+	local name="a lockstep release of the nested modules"
+	command -v go >/dev/null 2>&1 || { bad "$name" "go is not on PATH"; return 1; }
+	nested nested-release
+	fragment 1-a.md "$(printf '### Added\n\n- a')"; publish
+	: > "$DIR/wrapper.log"
+	if ! release VERSION="$VER"; then bad "$name" "recipe refused: $(tail -n3 "$ROOT/out")"; return 1; fi
+
+	local rel; rel="$(git rev-parse HEAD^)"
+	[ "$(git log -1 --format=%s HEAD^)" = "chore(release): $VER" ] || { bad "$name" "HEAD^ is not the release commit: $(git log -1 --format=%s HEAD^)"; return 1; }
+	[ "$(git log -1 --format=%s)" = "chore(release): restore in-repo replaces after $VER" ] || { bad "$name" "HEAD is not the restore commit: $(git log -1 --format=%s)"; return 1; }
+	local t
+	for t in "$VER" "sdk/go/$VER" "tool/$VER"; do
+		[ "$(git ls-remote origin "refs/tags/$t^{}" | cut -f1)" = "$rel" ] || { bad "$name" "remote tag $t does not name the release commit"; return 1; }
+	done
+	[ "$(remote_tags)" = "sdk/go/$VER tool/$VER $VER " ] || { bad "$name" "the remote has other tags: $(remote_tags)"; return 1; }
+	[ "$(git ls-remote origin refs/heads/main | cut -f1)" = "$(git rev-parse HEAD)" ] || { bad "$name" "remote main is not the restore commit"; return 1; }
+	[ "$(grep -c '^go-objstore push ' "$DIR/wrapper.log")" -eq 1 ] || { bad "$name" "not exactly one push: $(cat "$DIR/wrapper.log")"; return 1; }
+	grep -qx "go-objstore push --atomic --no-follow-tags origin HEAD refs/tags/$VER refs/tags/sdk/go/$VER refs/tags/tool/$VER" "$DIR/wrapper.log" \
+		|| { bad "$name" "unexpected push: $(grep push "$DIR/wrapper.log")"; return 1; }
+	ok "three tags on the release commit, the restore commit on main, one atomic push"
+
+	local at; at="$(git show "$rel:tool/go.mod")"
+	printf '%s\n' "$at" | grep -q '=> \.\.' && { bad "$name" "tool/go.mod keeps an in-repo replace at the tag:
+$at"; return 1; }
+	printf '%s\n' "$at" | grep -Eq "^[[:space:]]*(require )?example\.invalid/fx $VER\$" || { bad "$name" "tool/go.mod does not require the root at $VER:
+$at"; return 1; }
+	printf '%s\n' "$at" | grep -Eq "^[[:space:]]*(require )?example\.invalid/fx/sdk/go $VER\$" || { bad "$name" "tool/go.mod does not require the SDK at $VER:
+$at"; return 1; }
+	printf '%s\n' "$at" | grep -q 'example.invalid/other => example.invalid/fork v1.0.0' || { bad "$name" "a third-party replace was dropped:
+$at"; return 1; }
+	at="$(git show "$rel:sdk/go/go.mod")"
+	printf '%s\n' "$at" | grep -q '^replace' && { bad "$name" "sdk/go/go.mod keeps its replace at the tag:
+$at"; return 1; }
+	printf '%s\n' "$at" | grep -Eq "^require example\.invalid/fx $VER\$" || { bad "$name" "sdk/go/go.mod does not require the root at $VER:
+$at"; return 1; }
+	[ "$(git diff-tree --no-commit-id --name-only -r "$rel" | sort | tr '\n' ' ')" = "VERSION sdk/go/go.mod tool/go.mod " ] \
+		|| { bad "$name" "the release commit changed: $(git diff-tree --no-commit-id --name-only -r "$rel" | tr '\n' ' ')"; return 1; }
+	ok "the tagged go.mod files require the release version and drop only the in-repo replaces"
+
+	[ "$(git diff-tree --no-commit-id --name-only -r HEAD | sort | tr '\n' ' ')" = "sdk/go/go.mod tool/go.mod " ] \
+		|| { bad "$name" "the restore commit changed: $(git diff-tree --no-commit-id --name-only -r HEAD | tr '\n' ' ')"; return 1; }
+	at="$(cat tool/go.mod)"
+	printf '%s\n' "$at" | grep -q '// in-repo' || { bad "$name" "the restored tool/go.mod lost its comment:
+$at"; return 1; }
+	printf '%s\n' "$at" | grep -q 'example.invalid/fx/sdk/go => ../sdk/go' || { bad "$name" "the SDK replace was not restored:
+$at"; return 1; }
+	printf '%s\n' "$at" | grep -Eq "^[[:space:]]*example\.invalid/fx/sdk/go $VER\$" || { bad "$name" "the restored SDK requirement is not $VER:
+$at"; return 1; }
+	grep -q '^replace example.invalid/fx => ../..$' sdk/go/go.mod || { bad "$name" "the root replace in sdk/go was not restored"; return 1; }
+	grep -Eq "^require example\.invalid/fx $VER\$" sdk/go/go.mod || { bad "$name" "the restored root requirement in sdk/go is not $VER"; return 1; }
+	[ "$(cat VERSION)" = "$PLAIN" ] || { bad "$name" "VERSION is $(cat VERSION) after the restore"; return 1; }
+	[ -z "$(git status --porcelain)" ] || { bad "$name" "the working tree is dirty: $(git status --porcelain | tr '\n' ' ')"; return 1; }
+	[ ! -e "$(git rev-parse --git-dir)/release-unpinned" ] || { bad "$name" "the drop record was left behind"; return 1; }
+	ok "main keeps the in-repo replaces, required at $VER, with a clean tree"
+)
 tally lockstep_parallel
+tally nested_tag_exists
+tally nested_release
 
 echo "=== inputs are data, never recipe text ==="
 no_injection() (
@@ -439,10 +578,17 @@ no_injection() (
 	fixture injection
 	fragment 1-a.md "$(printf '### Added\n\n- a')"; publish
 	local head var; head="$(git rev-parse HEAD)"
-	for var in VERSION RELEASE_REMOTE REPO_NAME AGENT_GIT CL_VERSION CL_REMOTE CL_REPO CL_AGENT_GIT RELEASE_MK_DIR; do
+	for var in VERSION RELEASE_REMOTE REPO_NAME AGENT_GIT LOCKSTEP_MODULES CL_VERSION CL_REMOTE CL_REPO CL_AGENT_GIT CL_MODULES RELEASE_MK_DIR; do
 		# shellcheck disable=SC2016 # the payload must reach make unexpanded
 		make -s release-alpha "$var=\$(shell touch $DIR/fired-$var)x" >/dev/null 2>&1
 		[ ! -e "$DIR/fired-$var" ] || { bad "$name" "$var executed its payload"; return 1; }
+	done
+	# The consumer check's inputs, on its own target (the fixture stubs only the
+	# per-release loop, so consumer-check itself is the real one).
+	for var in MODULE VERSION CC_MODULE CC_VERSION; do
+		# shellcheck disable=SC2016 # the payload must reach make unexpanded
+		make -s consumer-check MODULE=example.invalid/m VERSION="$VER" "$var=\$(shell touch $DIR/fired-cc-$var)x" >/dev/null 2>&1
+		[ ! -e "$DIR/fired-cc-$var" ] || { bad "$name" "consumer-check: $var executed its payload"; return 1; }
 	done
 	nothing_happened "$name" "$head" || return 1
 	ok "$name, and nothing is written"
