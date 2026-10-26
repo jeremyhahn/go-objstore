@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -93,32 +94,24 @@ func TestWorkerPool_Concurrency(t *testing.T) {
 		Logger:      logger,
 	})
 
-	// Track concurrent executions
-	var activeWorkers sync.Map
-	var maxConcurrent int32
-	var mu sync.Mutex
+	// Track concurrent executions with an exact in-flight counter: ranging a
+	// sync.Map is not a consistent snapshot and can over-count by one.
+	var inFlight atomic.Int32
+	var maxConcurrent atomic.Int32
 
 	processor := func(ctx context.Context, item WorkItem) WorkResult {
-		// Mark worker as active
-		activeWorkers.Store(item.Key, true)
+		count := inFlight.Add(1)
+		defer inFlight.Add(-1)
 
-		// Count active workers
-		count := 0
-		activeWorkers.Range(func(key, value interface{}) bool {
-			count++
-			return true
-		})
-
-		mu.Lock()
-		if int32(count) > maxConcurrent {
-			maxConcurrent = int32(count)
+		for {
+			current := maxConcurrent.Load()
+			if count <= current || maxConcurrent.CompareAndSwap(current, count) {
+				break
+			}
 		}
-		mu.Unlock()
 
 		// Simulate work
 		time.Sleep(10 * time.Millisecond)
-
-		activeWorkers.Delete(item.Key)
 
 		return WorkResult{
 			Key:       item.Key,
@@ -144,10 +137,8 @@ func TestWorkerPool_Concurrency(t *testing.T) {
 	pool.Shutdown()
 
 	// Verify we had concurrent execution
-	mu.Lock()
-	assert.Greater(t, maxConcurrent, int32(1), "Expected concurrent execution")
-	assert.LessOrEqual(t, maxConcurrent, int32(workerCount), "Should not exceed worker count")
-	mu.Unlock()
+	assert.Greater(t, maxConcurrent.Load(), int32(1), "Expected concurrent execution")
+	assert.LessOrEqual(t, maxConcurrent.Load(), int32(workerCount), "Should not exceed worker count")
 }
 
 func TestWorkerPool_ErrorHandling(t *testing.T) {
