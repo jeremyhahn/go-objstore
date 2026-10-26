@@ -20,15 +20,19 @@ const DataKeySize = 32
 // format: changing one makes every existing repository unreadable.
 const (
 	labelChunkID  = "go-objstore backup v1 chunk-id"
+	labelObjectID = "go-objstore backup v1 object-id"
 	labelPack     = "go-objstore backup v1 pack"
 	labelIndex    = "go-objstore backup v1 index"
 	labelSnapshot = "go-objstore backup v1 snapshot"
+	labelConfig   = "go-objstore backup v1 config"
 )
 
-// IDSize is the length in bytes of a chunk ID.
+// IDSize is the length in bytes of a chunk or object ID.
 const IDSize = sha256.Size
 
-// ID is a chunk ID: HMAC-SHA-256 of the chunk under the chunk-ID subkey.
+// ID is a chunk ID, HMAC-SHA-256 of the chunk under the chunk-ID subkey, or
+// an object ID, HMAC-SHA-256 of the object's content under the object-ID
+// subkey.
 type ID [IDSize]byte
 
 // String returns the ID in lowercase hex.
@@ -36,13 +40,43 @@ func (id ID) String() string {
 	return hex.EncodeToString(id[:])
 }
 
+// MarshalText returns the ID in lowercase hex.
+func (id ID) MarshalText() ([]byte, error) {
+	return []byte(id.String()), nil
+}
+
+// UnmarshalText parses an ID from hex, failing with ErrMalformedID.
+func (id *ID) UnmarshalText(text []byte) error {
+	parsed, err := ParseID(string(text))
+	if err != nil {
+		return err
+	}
+	*id = parsed
+	return nil
+}
+
+// ParseID parses an ID from its lowercase hex form, failing with
+// ErrMalformedID.
+func ParseID(s string) (ID, error) {
+	var id ID
+	if len(s) != 2*IDSize {
+		return ID{}, newError("parse id", ErrMalformedID, nil)
+	}
+	if _, err := hex.Decode(id[:], []byte(s)); err != nil || id.String() != s {
+		return ID{}, newError("parse id", ErrMalformedID, nil)
+	}
+	return id, nil
+}
+
 // Keys holds a repository's subkeys in locked memory. It is safe for
 // concurrent use until Close.
 type Keys struct {
 	chunkID  enclave.ByteAccess
+	objectID enclave.ByteAccess
 	pack     enclave.ByteAccess
 	index    enclave.ByteAccess
 	snapshot enclave.ByteAccess
+	config   enclave.ByteAccess
 }
 
 // DeriveKeys derives the per-purpose subkeys from dataKey, which it only reads:
@@ -65,9 +99,11 @@ func DeriveKeys(dataKey enclave.ByteAccess) (*Keys, error) {
 		label string
 	}{
 		{&k.chunkID, labelChunkID},
+		{&k.objectID, labelObjectID},
 		{&k.pack, labelPack},
 		{&k.index, labelIndex},
 		{&k.snapshot, labelSnapshot},
+		{&k.config, labelConfig},
 	} {
 		sub, err := derive(dataKey, d.label)
 		if err != nil {
@@ -78,7 +114,7 @@ func DeriveKeys(dataKey enclave.ByteAccess) (*Keys, error) {
 	return k, nil
 }
 
-// derive returns the HKDF-SHA-256 subkey of dataKey for label, in locked memory.
+// derive returns the subkey for label in locked memory.
 func derive(dataKey enclave.ByteAccess, label string) (enclave.ByteAccess, error) {
 	var sub []byte
 	err := dataKey.WithBytes(func(dk []byte) error {
@@ -93,11 +129,11 @@ func derive(dataKey enclave.ByteAccess, label string) (enclave.ByteAccess, error
 	return enclave.NewMemory(sub) // wipes sub on every path
 }
 
-// Close destroys every subkey. It is idempotent; after it every operation fails
-// with ErrKeysDestroyed.
+// Close destroys every subkey. Later calls return nil; every other method
+// fails with ErrKeysDestroyed.
 func (k *Keys) Close() error {
 	var errs []error
-	for _, h := range []enclave.ByteAccess{k.chunkID, k.pack, k.index, k.snapshot} {
+	for _, h := range []enclave.ByteAccess{k.chunkID, k.objectID, k.pack, k.index, k.snapshot, k.config} {
 		if h == nil {
 			continue
 		}
@@ -108,17 +144,31 @@ func (k *Keys) Close() error {
 	return errors.Join(errs...)
 }
 
-// ChunkID returns the chunk ID of data.
+// ChunkID returns the chunk's ID: HMAC-SHA-256 of data under the chunk-ID
+// subkey.
 func (k *Keys) ChunkID(data []byte) (ID, error) {
+	return mac("chunk id", k.chunkID, nil, data)
+}
+
+// ObjectID returns a content-derived name for an object of type t:
+// HMAC-SHA-256 of the type and content under the object-ID subkey. Equal
+// content gives the same ID, and the ID reveals nothing about the content.
+func (k *Keys) ObjectID(t Type, content []byte) (ID, error) {
+	return mac("object id", k.objectID, []byte{byte(t)}, content)
+}
+
+// mac returns HMAC-SHA-256 of prefix and data under key.
+func mac(op string, key enclave.ByteAccess, prefix, data []byte) (ID, error) {
 	var id ID
-	err := k.chunkID.WithBytes(func(key []byte) error {
-		m := hmac.New(sha256.New, key)
+	err := key.WithBytes(func(b []byte) error {
+		m := hmac.New(sha256.New, b)
+		m.Write(prefix)
 		m.Write(data)
 		m.Sum(id[:0])
 		return nil
 	})
 	if err != nil {
-		return ID{}, newError("chunk id", ErrInvalidKey, err)
+		return ID{}, newError(op, ErrInvalidKey, err)
 	}
 	return id, nil
 }
@@ -133,6 +183,8 @@ func (k *Keys) keyFor(op string, t Type) (enclave.ByteAccess, error) {
 		h = k.index
 	case TypeSnapshot:
 		h = k.snapshot
+	case TypeConfig:
+		h = k.config
 	default:
 		return nil, newError(op, ErrUnknownType, nil)
 	}

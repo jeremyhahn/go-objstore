@@ -18,6 +18,9 @@ var (
 	// ErrUnknownType reports an object type this version does not know.
 	ErrUnknownType = errors.New("seal: unknown object type")
 
+	// ErrMalformedID means a string is not an ID in lowercase hex.
+	ErrMalformedID = errors.New("seal: malformed ID")
+
 	// ErrUnsupportedCompression reports a compression algorithm this version
 	// does not implement.
 	ErrUnsupportedCompression = errors.New("seal: unsupported compression")

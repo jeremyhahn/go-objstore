@@ -57,7 +57,7 @@ func assertTyped(t *testing.T, err, want error) {
 	}
 }
 
-var allTypes = []Type{TypePack, TypeIndex, TypeSnapshot}
+var allTypes = []Type{TypePack, TypeIndex, TypeSnapshot, TypeConfig}
 
 func TestSealOpenRoundTrip(t *testing.T) {
 	k := newKeys(t, 1)
@@ -159,7 +159,8 @@ func TestSubkeysDiffer(t *testing.T) {
 	dk := newDataKey(t, 5)
 	seen := map[string]string{string(readKey(t, dk)): "data key"}
 	for name, h := range map[string]enclave.ByteAccess{
-		"chunk-id": k.chunkID, "pack": k.pack, "index": k.index, "snapshot": k.snapshot,
+		"chunk-id": k.chunkID, "object-id": k.objectID, "pack": k.pack, "index": k.index,
+		"snapshot": k.snapshot, "config": k.config,
 	} {
 		b := string(readKey(t, h))
 		if prev, ok := seen[b]; ok {
@@ -197,6 +198,52 @@ func TestChunkID(t *testing.T) {
 	}
 }
 
+func TestObjectID(t *testing.T) {
+	k := newKeys(t, 12)
+	a, err := k.ObjectID(TypePack, []byte("content"))
+	if err != nil {
+		t.Fatalf("ObjectID: %v", err)
+	}
+	again, _ := k.ObjectID(TypePack, []byte("content"))
+	asIndex, _ := k.ObjectID(TypeIndex, []byte("content"))
+	chunk, _ := k.ChunkID(append([]byte{byte(TypePack)}, "content"...))
+	other, _ := newKeys(t, 13).ObjectID(TypePack, []byte("content"))
+	if a != again {
+		t.Fatal("ObjectID is not stable for one key")
+	}
+	if a == asIndex || a == chunk || a == other {
+		t.Fatal("ObjectID collides across types, with a chunk ID, or across keys")
+	}
+}
+
+func TestParseID(t *testing.T) {
+	k := newKeys(t, 14)
+	id, _ := k.ChunkID([]byte("x"))
+	got, err := ParseID(id.String())
+	if err != nil || got != id {
+		t.Fatalf("ParseID(%s) = %s, %v", id, got, err)
+	}
+	text, err := id.MarshalText()
+	if err != nil {
+		t.Fatalf("MarshalText: %v", err)
+	}
+	var back ID
+	if err := back.UnmarshalText(text); err != nil || back != id {
+		t.Fatalf("UnmarshalText = %s, %v", back, err)
+	}
+	upper := strings.ToUpper(id.String())
+	for _, bad := range []string{"", "abc", id.String()[1:], upper, strings.Repeat("zz", IDSize)} {
+		if _, err := ParseID(bad); err == nil {
+			t.Fatalf("ParseID(%q) succeeded", bad)
+		} else {
+			assertTyped(t, err, ErrMalformedID)
+		}
+		if err := back.UnmarshalText([]byte(bad)); !errors.Is(err, ErrMalformedID) {
+			t.Fatalf("UnmarshalText(%q) = %v", bad, err)
+		}
+	}
+}
+
 func TestDestroyedKeys(t *testing.T) {
 	k, err := DeriveKeys(newDataKey(t, 8))
 	if err != nil {
@@ -217,6 +264,8 @@ func TestDestroyedKeys(t *testing.T) {
 	_, err = k.Open(TypeIndex, nil, sealed)
 	assertTyped(t, err, ErrKeysDestroyed)
 	_, err = k.ChunkID([]byte("x"))
+	assertTyped(t, err, ErrKeysDestroyed)
+	_, err = k.ObjectID(TypePack, []byte("x"))
 	assertTyped(t, err, ErrKeysDestroyed)
 
 	dead, err := enclave.NewMemory(bytes.Repeat([]byte{9}, DataKeySize))
@@ -268,7 +317,7 @@ func TestRejects(t *testing.T) {
 
 func TestStrings(t *testing.T) {
 	for want, s := range map[string]interface{ String() string }{
-		"pack": TypePack, "index": TypeIndex, "snapshot": TypeSnapshot, "type(7)": Type(7),
+		"pack": TypePack, "index": TypeIndex, "snapshot": TypeSnapshot, "config": TypeConfig, "type(7)": Type(7),
 		"none": CompressionNone, "compression(3)": Compression(3),
 	} {
 		if s.String() != want {

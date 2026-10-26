@@ -2,12 +2,14 @@
 // subkeys derived from the data key, keyed chunk IDs, and sealed objects.
 //
 // Subkeys are derived from the repository data key with HKDF-SHA-256 (RFC 5869,
-// NIST SP 800-56C), one distinct info label per purpose: chunk IDs, packs,
-// indexes and snapshots. Every subkey is held in go-enclave locked memory until
-// Keys.Close destroys it.
+// NIST SP 800-56C), one distinct info label per purpose: chunk IDs, object
+// IDs, packs, indexes, snapshots and the repository config. Every subkey is
+// held in go-enclave locked memory until Keys.Close destroys it.
 //
 // A chunk ID is HMAC-SHA-256 of the chunk under the chunk-ID subkey, so equal
-// chunks deduplicate without exposing a plaintext hash.
+// chunks deduplicate without exposing a plaintext hash. An object ID, the
+// name of a pack, index or snapshot, is HMAC-SHA-256 of the object's type and
+// content under the object-ID subkey.
 //
 // A sealed object is AES-256-GCM (NIST SP 800-38D) under its type's subkey,
 // with a random 96-bit nonce:
@@ -37,6 +39,8 @@ const (
 	TypeIndex Type = 2
 	// TypeSnapshot is a snapshot manifest.
 	TypeSnapshot Type = 3
+	// TypeConfig is the repository config.
+	TypeConfig Type = 4
 )
 
 // String returns the type's name.
@@ -48,6 +52,8 @@ func (t Type) String() string {
 		return "index"
 	case TypeSnapshot:
 		return "snapshot"
+	case TypeConfig:
+		return "config"
 	default:
 		return "type(" + strconv.Itoa(int(t)) + ")"
 	}

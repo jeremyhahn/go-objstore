@@ -24,8 +24,8 @@ The agent stores a snapshot repository of immutable packs, an index and snapshot
 - **Chunking.** FastCDC splits each file into content-defined chunks, so an edit inside a large file re-uploads only the changed chunks.
 - **Chunk identity.** Each chunk ID is HMAC-SHA-256 of the chunk under a repository secret. The agent uploads only chunks the index does not already hold.
 - **Packing.** Chunks are compressed with the algorithm the sealed format records (`none` today; zstd or gzip waits on the open item below), then encrypted, then grouped into immutable pack objects written once.
-- **Encryption.** Each pack, index and snapshot object is sealed with AES-256-GCM under a subkey derived with HKDF-SHA-256 from the repository data key.
-- **Snapshot format.** Immutable packs, one index that maps chunk IDs to packs, and one snapshot manifest per backup run (tree, file metadata, chunk lists).
+- **Encryption.** Each pack, index, snapshot and config object is sealed with AES-256-GCM under a subkey derived with HKDF-SHA-256 from the repository data key.
+- **Snapshot format.** Immutable packs; an index object per backup run that stores new chunks, mapping chunk IDs to packs, with all of them merged on load; and one snapshot manifest per backup run (tree, file metadata, chunk lists), written last. Objects are written once under `config`, `keys/`, `packs/<id[:2]>/`, `index/` and `snapshots/`, each named by a keyed ID of its content; time and host are only inside the sealed manifest.
 - **Key seam.** The data key is wrapped by a KEK that a key provider supplies. The interface is `keyseam.Provider` in the `backup/` module (`backup/pkg/keyseam`): `WrapKey(ctx, dataKey)` and `UnwrapKey(ctx, wrapped)`, with typed errors that carry no key material. The provider is a go-xkms client that implements the interface downward, in go-xkms; neither go-objstore module imports go-xkms. The unwrapped data key lives in go-enclave locked memory and is destroyed when the repository closes; only its wrapped form is persisted. Standalone mode, with no KMS, derives the KEK from a passphrase with PBKDF2-HMAC-SHA-256 (a random 16-byte salt stored beside the wrapped key, at least 600000 iterations) and holds it in go-enclave locked memory.
 - **Restore.** Restore reads a snapshot manifest, fetches and decrypts the chunks it lists, rebuilds files and metadata, and verifies every chunk ID and file digest end to end. `verify` runs the same check on a repository without writing files.
 - **Prune.** Retention prunes snapshots from a separate, privileged identity. The backup identity needs no delete right, so the repository works on a WORM bucket.
@@ -36,7 +36,7 @@ The agent stores a snapshot repository of immutable packs, an index and snapshot
 | Concern | Standard | Use |
 |---|---|---|
 | Encryption | NIST SP 800-38D (AES-GCM), AES-256 | Authenticated encryption of every chunk pack, index and snapshot object |
-| Key derivation | RFC 5869 / NIST SP 800-56C (HKDF-SHA-256) | Per-pack subkeys from the repository data key, so no single key nears the SP 800-38D §8.3 limit of 2^32 random-nonce invocations |
+| Key derivation | RFC 5869 / NIST SP 800-56C (HKDF-SHA-256) | Per-purpose subkeys (chunk IDs, object IDs, packs, index, snapshots, config) from the repository data key; the pack subkey, the busiest, nears the SP 800-38D §8.3 limit of 2^32 random-nonce invocations only after 2^32 sealed chunks |
 | Passphrase keys | NIST SP 800-132 (PBKDF2-HMAC-SHA-256) | Standalone mode only, where no KMS is available; Argon2id and scrypt are not FIPS-approved |
 | Key wrapping | Envelope encryption through the agent's key seam | The data key is wrapped by a KEK from go-xkms (KMS or HSM), or from a local key held in go-enclave locked memory |
 | FIPS | FIPS 140-3 through Go's `crypto/fips140` | The agent builds and passes its tests under `make test-fips`, like the rest of the repository |
