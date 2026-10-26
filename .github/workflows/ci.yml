@@ -838,11 +838,9 @@ jobs:
         if: always()
         run: |
           rm -f "$RUNNER_TEMP/gomodauth.env"
-          GO_QUICRAFT_IT_IMAGE="$IT_IMAGE" docker compose -f build/docker/devcontainer/compose.yaml -p "$IT_PROJECT" down --volumes || true
           [ -z "${IT_LEASE:-}" ] || docker rm "$IT_LEASE" >/dev/null || true
       # >>> CUSTOMIZE (go-objstore)
-      # The suites' stacks are <IT_PROJECT>-<suite> compose projects, so the
-      # template's `down -p "$IT_PROJECT"` matches none of them;
+      # The suites' stacks are <IT_PROJECT>-<suite> compose projects;
       # clean-test-containers removes them. clean-gomodauth removes the
       # bare-key secret make staged for the suites' image builds.
       - name: Tear down the integration stacks
@@ -923,7 +921,6 @@ jobs:
             echo "soak iteration $i"
             rc=0
             make "$SOAK_TARGET" MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env" IT_PROJECT="$p" IT_IMAGE="$IT_IMAGE" GO_BUILD_TAGS="$GO_BUILD_TAGS" || rc=$?
-            GO_QUICRAFT_IT_IMAGE="$IT_IMAGE" docker compose -f build/docker/devcontainer/compose.yaml -p "$p" down --volumes || true
             if [ "$rc" -ne 0 ]; then
               echo "::error::soak iteration $i failed (exit $rc)"
               exit "$rc"
@@ -931,8 +928,8 @@ jobs:
           done
           echo "soak: $i iterations in $SOAK_MINUTES min, all green"
       # >>> CUSTOMIZE (go-objstore)
-      # Every iteration's <project>-<suite> stacks, which `down -p "$p"` does
-      # not match (see the integration job), and the staged secret. Runs
+      # Every iteration's <project>-<suite> stacks (see the integration job),
+      # and the staged secret. Runs
       # before Tear down, which removes soak-project.
       - name: Tear down the soak stacks
         if: always()
@@ -949,9 +946,6 @@ jobs:
         if: always()
         run: |
           rm -f "$RUNNER_TEMP/gomodauth.env"
-          if [ -s "$RUNNER_TEMP/soak-project" ]; then
-            GO_QUICRAFT_IT_IMAGE="$IT_IMAGE" docker compose -f build/docker/devcontainer/compose.yaml -p "$(cat "$RUNNER_TEMP/soak-project")" down --volumes || true
-          fi
           rm -f "$RUNNER_TEMP/soak-project"
           [ -z "${IT_LEASE:-}" ] || docker rm "$IT_LEASE" >/dev/null || true
 

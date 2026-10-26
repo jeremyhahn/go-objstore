@@ -21,8 +21,8 @@
 #                suites under test/integration build their own images through
 #                their compose files.
 #
-# Build with `make docker-build`, which passes GO_IMAGE, GO_BUILD_PROXY and the
-# gomodauth secret.
+# Build with `make docker-build`, which passes GO_IMAGE, GO_GLIBC_IMAGE,
+# GO_BUILD_PROXY and the gomodauth secret.
 #
 # THE GO TOOLCHAIN is the one every go.mod declares (`go 1.27.3`), from the
 # official Alpine image. Raise the tag in the same change that moves go.mod; to
@@ -49,10 +49,13 @@
 # Every file a COPY in the tools, base or toolchain stage reads is in the
 # Makefile's TOOLCHAIN_INPUTS, so a change to one is a new toolchain tag.
 
-ARG GO_IMAGE=golang:1.27.3-alpine3.24
+#
+# The Go base images are pinned by tag and multi-arch index digest; the
+# Makefile reads both from the two ARG lines below.
+ARG GO_IMAGE=golang:1.27.3-alpine3.24@sha256:b8c9b82affbbb82a020bbcf998dad2ba9516944ac7e883524642a481a9505e9c
 # The capi stage's base: the same Go release as GO_IMAGE, on glibc. Raise the
-# two tags together.
-ARG GO_GLIBC_IMAGE=golang:1.27.3-trixie
+# two tags, and their digests, together.
+ARG GO_GLIBC_IMAGE=golang:1.27.3-trixie@sha256:fbb7ae40b62ff8afe31662df570d39b4f5052ac32b90dae8e60d7657a20a74f4
 ARG GO_BUILD_PROXY=https://proxy.golang.org,direct
 
 # ---------------------------------------------------------------------------

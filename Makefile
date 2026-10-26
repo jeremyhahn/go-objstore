@@ -150,7 +150,7 @@ TOOLCHAIN_INPUTS := $(DEVCONTAINER_DIR)/Dockerfile $(DEVCONTAINER_DIR)/Dockerfil
 	scripts/tool-pins.sh scripts/install-tools.sh \
 	go.mod go.sum backup/go.mod backup/go.sum api/sdks/go/go.mod api/sdks/go/go.sum \
 	examples/encryption/go.mod examples/encryption/go.sum
-TOOLCHAIN_TAG = $(shell { cat $(TOOLCHAIN_INPUTS); printf '%s' "$(GO_IMAGE)"; } | sha256sum | cut -c1-16)
+TOOLCHAIN_TAG = $(shell { cat $(TOOLCHAIN_INPUTS); printf '%s' "$(GO_IMAGE) $(GO_GLIBC_IMAGE)"; } | sha256sum | cut -c1-16)
 TOOLCHAIN_IMAGE = $(PROJECT_NAME)-toolchain:$(TOOLCHAIN_TAG)
 # The glibc image `make lib-test` runs in (the Dockerfile's capi stage): a Go
 # c-shared library cannot load on the toolchain image's musl.
@@ -160,13 +160,16 @@ IT_IMAGE ?= $(PROJECT_NAME)-it:local
 RELEASE_IMAGE ?= $(PROJECT_NAME)
 IT_CI_IMAGE = $(PROJECT_NAME)-ci-it:$(shell { git rev-parse 'HEAD^{tree}'; git diff HEAD; \
 	git ls-files -oz --exclude-standard | xargs -0r sha256sum; } 2>/dev/null | sha256sum | cut -c1-16)
-# GO_IMAGE overrides the Dockerfile's Go base image; unset, its default
-# applies. GO_BUILD_PROXY_ARG hands the caller's GOPROXY to the stages that
+# GO_IMAGE and GO_GLIBC_IMAGE are the Go base images, tag@digest; unset, they
+# are the Dockerfile's ARG defaults, read from it so the pins live in one
+# place. GO_BUILD_PROXY_ARG hands the caller's GOPROXY to the stages that
 # fetch; the shell expands $$GOPROXY, so make never echoes its value.
-GO_IMAGE ?=
+DEVCONTAINER_ARGS := $(file < $(DEVCONTAINER_DIR)/Dockerfile)
+GO_IMAGE ?= $(patsubst GO_IMAGE=%,%,$(filter GO_IMAGE=%,$(DEVCONTAINER_ARGS)))
+GO_GLIBC_IMAGE ?= $(patsubst GO_GLIBC_IMAGE=%,%,$(filter GO_GLIBC_IMAGE=%,$(DEVCONTAINER_ARGS)))
 GO_BUILD_PROXY_ARG = $(if $(GOPROXY),--build-arg GO_BUILD_PROXY="$$GOPROXY")
 DEVCONTAINER_BUILD = DOCKER_BUILDKIT=1 docker buildx build --load \
-	$(if $(GO_IMAGE),--build-arg GO_IMAGE=$(GO_IMAGE)) \
+	--build-arg GO_IMAGE=$(GO_IMAGE) --build-arg GO_GLIBC_IMAGE=$(GO_GLIBC_IMAGE) \
 	$(GO_BUILD_PROXY_ARG) \
 	--secret id=gomodauth,src=$(MODULE_ENV_FILE) \
 	-f $(DEVCONTAINER_DIR)/Dockerfile
