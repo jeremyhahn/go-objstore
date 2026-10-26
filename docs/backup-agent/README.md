@@ -1,7 +1,7 @@
 # backup-agent
 
-> **Status: APPROVED** · Scope: go-objstore backup-agent · Last verified: 2026-10-26
-> The owner ruled the direction (CA m953, rulings 112/113) and the SPEC row is approved. The agent is being built in its own module, `backup/`; restore and verify (`backup/pkg/restore`) and prune (`backup/pkg/prune`) exist there as libraries, and the `objstore-backup` command drives them (see Usage). `objstore-backup service` runs them on a schedule as a Linux, macOS or Windows service (see Service), and both can read the sources from a snapshot of each volume for crash consistency (see Source snapshots). The go-xkms key provider is still to come, and the row's status stays `planned` until it ships.
+> **Status: SHIPPED** · Scope: go-objstore backup-agent · Last verified: 2026-10-26
+> The owner ruled the direction (CA m953, rulings 112/113) and the SPEC row is `shipped`, with all six slices in. The agent is built in its own module, `backup/`; restore and verify (`backup/pkg/restore`) and prune (`backup/pkg/prune`) are libraries there, and the `objstore-backup` command drives them (see Usage). `objstore-backup service` runs them on a schedule as a Linux, macOS or Windows service (see Service), and both can read the sources from a snapshot of each volume for crash consistency (see Source snapshots). Keys come from the standalone passphrase provider or, through the key seam, from the go-xkms provider that go-xkms implements in its own repository.
 
 ## Requirement
 
@@ -14,7 +14,7 @@ Owner rulings (CA m953, items 112/113, 2026-10-23; ruling 175, 2026-10-25, which
 - The backup agent is a go-objstore deliverable: one binary, `objstore-backup`, built from its own Go module inside this repository, `backup/` (module `github.com/jeremyhahn/go-objstore/backup`, its own go.mod), on the xkey pattern: a product-surface module in a subdirectory that consumes the project's SDK. It is not a separate repository.
 - The `backup/` module consumes the Go client SDK module (`api/sdks/go`) and talks to an objstore server through it. Its only first-party dependencies are that SDK module and go-enclave; it never imports go-xkms.
 - Keys come from go-xkms and reach the agent through the key seam below, whose interface is defined in `backup/`. go-xkms implements it downward, in its own repository. go-objstore's root module keeps go-enclave as its only first-party dependency.
-- The server is unchanged. The agent is a client only: it adds no endpoint, no server option and no change to `common.Storage`.
+- The agent is a client only: it adds no endpoint and no change to `common.Storage`. The server gains only configurable gRPC message limits (`grpc.max_recv_msg_size`, `grpc.max_send_msg_size`).
 - No code until the SPEC row is approved.
 
 The agent stores a snapshot repository of immutable packs, an index and snapshot manifests as objects on the server it is pointed at. Because it uses only the SDK's object operations, it works on every backend the server fronts.
