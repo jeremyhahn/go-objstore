@@ -282,29 +282,16 @@ func TestFSNotifyWatcher_NewDirectoryWatch(t *testing.T) {
 	err = os.MkdirAll(newDir, 0755)
 	require.NoError(t, err)
 
-	// Give the watcher time to add the new directory
-	time.Sleep(200 * time.Millisecond)
+	// The watcher adds the new directory before it reports its creation
+	awaitEvent(t, watcher, newDir)
 
 	// Create file in new directory
 	testFile := filepath.Join(newDir, "test.txt")
 	err = os.WriteFile(testFile, []byte("test"), 0644)
 	require.NoError(t, err)
 
-	// Wait for event
-	foundFileEvent := false
-	timeout := time.After(2 * time.Second)
-
-	for !foundFileEvent {
-		select {
-		case event := <-watcher.Events():
-			if event.Path == testFile {
-				foundFileEvent = true
-				assert.Equal(t, "put", event.Operation)
-			}
-		case <-timeout:
-			t.Fatal("timeout waiting for event in new directory")
-		}
-	}
+	event := awaitEvent(t, watcher, testFile)
+	assert.Equal(t, "put", event.Operation)
 }
 
 func TestFSNotifyWatcher_Debouncing(t *testing.T) {
@@ -325,6 +312,7 @@ func TestFSNotifyWatcher_Debouncing(t *testing.T) {
 	require.NoError(t, err)
 
 	// Write to file multiple times rapidly
+	start := time.Now()
 	numWrites := 5
 	for i := 0; i < numWrites; i++ {
 		err = os.WriteFile(testFile, []byte("content"), 0644)
@@ -334,6 +322,7 @@ func TestFSNotifyWatcher_Debouncing(t *testing.T) {
 
 	// Count events received
 	eventsReceived := 0
+	var lastEvent time.Time
 	timeout := time.After(1 * time.Second)
 
 	for {
@@ -341,11 +330,16 @@ func TestFSNotifyWatcher_Debouncing(t *testing.T) {
 		case event := <-watcher.Events():
 			if event.Path == testFile {
 				eventsReceived++
+				lastEvent = time.Now()
 			}
 		case <-timeout:
-			// Due to debouncing, we should receive fewer events than writes
-			assert.Less(t, eventsReceived, numWrites,
-				"Expected debouncing to reduce events from %d to fewer", numWrites)
+			require.Positive(t, eventsReceived, "expected at least one event")
+			// The debounce admits at most one event per path per delay, so
+			// however the writes were scheduled the count is bounded by the
+			// delays elapsed before the last event arrived.
+			maxEvents := int(lastEvent.Sub(start)/debounceDelay) + 1
+			assert.LessOrEqual(t, eventsReceived, maxEvents,
+				"%d events in %v exceeds one per %v", eventsReceived, lastEvent.Sub(start), debounceDelay)
 			return
 		}
 	}
@@ -403,22 +397,9 @@ func TestFSNotifyWatcher_IgnoreHiddenFiles(t *testing.T) {
 	err = os.WriteFile(normalFile, []byte("normal"), 0644)
 	require.NoError(t, err)
 
-	// Should only receive event for normal file
-	select {
-	case event := <-watcher.Events():
-		assert.Equal(t, normalFile, event.Path)
-		assert.NotEqual(t, hiddenFile, event.Path)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for event")
-	}
-
-	// Ensure no event for hidden file
-	select {
-	case event := <-watcher.Events():
-		t.Fatalf("unexpected event for hidden file: %+v", event)
-	case <-time.After(200 * time.Millisecond):
-		// Expected - no event for hidden file
-	}
+	// The hidden file was written first, so its event would arrive first.
+	awaitEvent(t, watcher, normalFile, hiddenFile)
+	assertNoEventFor(t, watcher, hiddenFile)
 }
 
 func TestFSNotifyWatcher_IgnoreMetadataFiles(t *testing.T) {
@@ -444,21 +425,9 @@ func TestFSNotifyWatcher_IgnoreMetadataFiles(t *testing.T) {
 	err = os.WriteFile(normalFile, []byte("content"), 0644)
 	require.NoError(t, err)
 
-	// Should only receive event for normal file
-	select {
-	case event := <-watcher.Events():
-		assert.Equal(t, normalFile, event.Path)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for event")
-	}
-
-	// Ensure no event for metadata file
-	select {
-	case event := <-watcher.Events():
-		t.Fatalf("unexpected event for metadata file: %+v", event)
-	case <-time.After(200 * time.Millisecond):
-		// Expected - no event for metadata file
-	}
+	// The metadata file was written first, so its event would arrive first.
+	awaitEvent(t, watcher, normalFile, metadataFile)
+	assertNoEventFor(t, watcher, metadataFile)
 }
 
 func TestFSNotifyWatcher_IgnoreTempFiles(t *testing.T) {
@@ -490,21 +459,9 @@ func TestFSNotifyWatcher_IgnoreTempFiles(t *testing.T) {
 	err = os.WriteFile(normalFile, []byte("content"), 0644)
 	require.NoError(t, err)
 
-	// Should only receive event for normal file
-	select {
-	case event := <-watcher.Events():
-		assert.Equal(t, normalFile, event.Path)
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for event")
-	}
-
-	// Ensure no events for temp files
-	select {
-	case event := <-watcher.Events():
-		t.Fatalf("unexpected event for temp file: %+v", event)
-	case <-time.After(200 * time.Millisecond):
-		// Expected - no events for temp files
-	}
+	// The temp files were written first, so their events would arrive first.
+	awaitEvent(t, watcher, normalFile, tempFiles...)
+	assertNoEventFor(t, watcher, tempFiles...)
 }
 
 func TestFSNotifyWatcher_MultipleWatchers(t *testing.T) {
@@ -641,6 +598,51 @@ func TestWatcherError_Unwrap(t *testing.T) {
 	}
 
 	assert.Equal(t, baseErr, watcherErr.Unwrap())
+}
+
+// awaitEvent returns the first event naming want, failing the test if an
+// event names one of the ignored paths or none arrives in time. Other
+// events are skipped.
+func awaitEvent(t *testing.T, w *FSNotifyWatcher, want string, ignored ...string) FileSystemEvent {
+	t.Helper()
+	timeout := time.After(2 * time.Second)
+	for {
+		select {
+		case event := <-w.Events():
+			failIfIgnored(t, event, ignored)
+			if event.Path == want {
+				return event
+			}
+		case <-timeout:
+			t.Fatalf("timeout waiting for event for %s", want)
+		}
+	}
+}
+
+// assertNoEventFor drains events for a short window and fails on any that
+// names one of the ignored paths. Any other event is allowed: the debounce
+// is a rate limit, so a file whose create and write land on either side of
+// the delay is reported twice.
+func assertNoEventFor(t *testing.T, w *FSNotifyWatcher, ignored ...string) {
+	t.Helper()
+	window := time.After(200 * time.Millisecond)
+	for {
+		select {
+		case event := <-w.Events():
+			failIfIgnored(t, event, ignored)
+		case <-window:
+			return
+		}
+	}
+}
+
+func failIfIgnored(t *testing.T, event FileSystemEvent, ignored []string) {
+	t.Helper()
+	for _, path := range ignored {
+		if event.Path == path {
+			t.Fatalf("unexpected event for ignored file: %+v", event)
+		}
+	}
 }
 
 // Benchmark tests
