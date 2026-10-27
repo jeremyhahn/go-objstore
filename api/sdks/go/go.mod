@@ -3,7 +3,7 @@ module github.com/jeremyhahn/go-objstore/api/sdks/go
 go 1.27.3
 
 require (
-	github.com/jeremyhahn/go-objstore v0.8.0-alpha
+	github.com/jeremyhahn/go-objstore v0.9.0-alpha
 	github.com/quic-go/quic-go v0.64.1
 	github.com/stretchr/testify v1.12.1
 	google.golang.org/grpc v1.84.0
@@ -21,7 +21,3 @@ require (
 	golang.org/x/text v0.43.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261026165753-2ffab32bce7e // indirect
 )
-
-// This SDK lives in the go-objstore monorepo and is built/tested against the
-// in-tree parent module. The published v0.1.2-alpha tag is a placeholder.
-replace github.com/jeremyhahn/go-objstore => ../../../

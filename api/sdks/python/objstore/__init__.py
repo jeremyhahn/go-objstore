@@ -43,7 +43,7 @@ from objstore.exceptions import (
     ValidationError,
 )
 
-__version__ = "0.8.0-alpha"
+__version__ = "0.9.0-alpha"
 __all__ = [
     "ObjectStoreClient",
     "Protocol",
