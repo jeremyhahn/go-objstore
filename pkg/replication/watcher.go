@@ -255,6 +255,14 @@ func (w *FSNotifyWatcher) handleEvent(event fsnotify.Event) {
 		return
 	}
 
+	// Convert before debouncing: an event that is never emitted (a chmod on
+	// its own) must neither open nor consume the path's debounce window, or
+	// a write that follows it inside the window would be dropped.
+	fsEvent := w.convertEvent(event)
+	if fsEvent == nil {
+		return
+	}
+
 	// Removals are never debounced: dropping a delete that follows a put
 	// would leave the replica holding an object that no longer exists.
 	// Clearing the path's debounce entry also lets an immediate re-create
@@ -265,12 +273,6 @@ func (w *FSNotifyWatcher) handleEvent(event fsnotify.Event) {
 		w.mu.Unlock()
 	} else if !w.shouldProcess(event.Name) {
 		// Debounce events for the same path
-		return
-	}
-
-	// Convert fsnotify event to FileSystemEvent
-	fsEvent := w.convertEvent(event)
-	if fsEvent == nil {
 		return
 	}
 

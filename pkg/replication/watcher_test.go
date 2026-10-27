@@ -345,6 +345,32 @@ func TestFSNotifyWatcher_Debouncing(t *testing.T) {
 	}
 }
 
+// A chmod is never emitted, so it must not open a debounce window: a write
+// that follows it inside the window would otherwise be dropped and the
+// replica would keep the old content.
+func TestFSNotifyWatcher_ChmodThenWriteWithinDebounce(t *testing.T) {
+	// A delay far longer than the test keeps the write inside the window
+	// however slowly the machine schedules it.
+	watcher, err := NewFSNotifyWatcher(FSNotifyWatcherConfig{
+		Logger:        adapters.NewNoOpLogger(),
+		DebounceDelay: time.Minute,
+	})
+	require.NoError(t, err)
+	defer watcher.Stop()
+
+	dir := t.TempDir()
+	testFile := filepath.Join(dir, "test.txt")
+	require.NoError(t, os.WriteFile(testFile, []byte("old"), 0644))
+
+	require.NoError(t, watcher.Watch(dir))
+
+	require.NoError(t, os.Chmod(testFile, 0600))
+	require.NoError(t, os.WriteFile(testFile, []byte("new"), 0600))
+
+	event := awaitEvent(t, watcher, testFile)
+	assert.Equal(t, "put", event.Operation)
+}
+
 func TestFSNotifyWatcher_Stop(t *testing.T) {
 	logger := adapters.NewNoOpLogger()
 	watcher, err := NewFSNotifyWatcher(FSNotifyWatcherConfig{
