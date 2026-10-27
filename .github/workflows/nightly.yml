@@ -18,9 +18,13 @@
 #
 #   * trivy ALSO runs here, and this is the one job where a scheduled copy
 #     earns its slot: the code has not changed, but the advisory data has.
-#   * fips does NOT run here. It is a pure function of the code, so it cannot
-#     drift between pushes — a nightly copy would re-verify, at 60 runner-
-#     minutes a night, a result the gate already established on the same tree.
+#   * fips runs here too, on schedule and workflow_dispatch (Software on #122,
+#     the template's placement). It stays a gate: ci.yml runs it on every push
+#     to main, on workflow_dispatch and on a PR labelled ci:full, and CI Gate
+#     fails when it should have run and did not pass. It is off the plain PR
+#     tier, which keeps the fast guard (make build compiles every package with
+#     GOFIPS140=latest), so this is the run that covers the tree on the
+#     nights between merges; ci.yml's own schedule run skips it.
 #
 # Adding a job here is a claim that it can go red WITHOUT a push. If it cannot,
 # it belongs in ci.yml or nowhere.
@@ -43,6 +47,61 @@ env:
   GO_VERSION: '1.27.3'
 
 jobs:
+  # Identical in scope to ci.yml's `fips` job — keep the two in step: the root
+  # module's unit suite and the backup suite in FIPS 140-3 only mode
+  # (GOFIPS140=latest GODEBUG=fips140=only, set by make test-fips), the
+  # coverage threshold included, in the toolchain image built at this commit
+  # (ci-standard.md §2). A red night means a non-approved algorithm is on a
+  # tested path; fix the call site, never the mode.
+  fips:
+    name: FIPS 140-3 Tests
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
+    # needs: none — nightly runs standalone; build health is ci.yml's job.
+    timeout-minutes: 60
+    env:
+      # Kept in lockstep with ci.yml's workflow env.
+      COVERAGE_THRESHOLD: 89
+      GO_BUILD_TAGS: "local awss3 gcpstorage azureblob glacier azurearchive"
+      CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      CI_CACHE_CLASS: ${{ github.event_name == 'schedule' && 'main' || 'pr' }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Mask the forge credentials
+        run: |
+          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            val=${!v:-}
+            [ -n "$val" ] || continue
+            echo "::add-mask::$val"
+            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          done
+
+      - name: Reap stale CI stacks
+        run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
+
+      - name: Write the module credential file
+        run: |
+          umask 077
+          : > "$RUNNER_TEMP/gomodauth.env"
+          for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            if [ -n "${!v:-}" ]; then printf 'export %s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
+          done
+
+      - name: Build the toolchain image
+        run: |
+          make docker-build-toolchain MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
+          echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
+
+      - name: make test-fips (toolchain image)
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
+        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make test-fips GO_BUILD_TAGS='$GO_BUILD_TAGS' COVERAGE_THRESHOLD=$COVERAGE_THRESHOLD"
+
+      - name: Tear down
+        if: always()
+        run: rm -f "$RUNNER_TEMP/gomodauth.env"
+
   # Identical in scope to ci.yml's `trivy` job — keep the two in step. The only
   # difference is what makes it fail: there, a finding a push introduced; here,
   # a finding the advisory feed introduced.
