@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [0.9.0-alpha] - 2026-10-27
+
+### Changed
+
+- `make release-alpha` now cuts `vX.Y.Z`, `backup/vX.Y.Z` and `api/sdks/go/vX.Y.Z`
+  in one signed, atomic push. The tagged commit requires the root and Go SDK
+  modules at the new version with no in-repo `replace`; a follow-up commit
+  restores the replaces on `main` so development keeps building. After the push,
+  the recipe resolves, builds and installs each of the three modules at the new
+  tag from a scratch module.
+- The release workflow ships every `cmd/` binary and `objstore-backup` in each
+  platform archive, each with its SHA-256 checksum.
+
+- Every third-party module the root, `backup`, `api/sdks/go` and
+  `examples/encryption` go.mod files require, direct and indirect, is at its
+  latest release, so `make deps-check` passes on push again. Among them:
+  `golang.org/x/crypto` v0.58.0, `golang.org/x/net` v0.61.0,
+  `google.golang.org/grpc` v1.84.0 and `google.golang.org/api` v0.309.0.
+  The in-repo `go-objstore` requires of the three nested modules name
+  v0.8.0-alpha and keep their local `replace`.
+- `github.com/jeremyhahn/go-enclave` moves to v0.10.0-alpha in the root,
+  `backup` and `examples/encryption` modules. That release changes no Go API.
+  `backup`'s require of the in-repo `api/sdks/go` module is held at its zero
+  pseudo-version, which the local `replace` overrides.
+
+- `mk/template/` is the handbook's release templates byte for byte, at
+  `release-common.mk` 1.2.0. The lockstep tags, the replace-free release commit,
+  the restore commit and the post-push consumer check are set through the
+  template's `RELEASE_REPLACES`, `RELEASE_SYNC_TARGETS` and
+  `RELEASE_CONSUMER_MODULES` in `mk/release.mk`; the repo-local
+  `consumer-check` and `release-consumer-check` targets are removed.
+
 ## [0.8.0-alpha] - 2026-10-26
 
 ### Added
