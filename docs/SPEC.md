@@ -1,12 +1,12 @@
 # go-objstore specification
 
-> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-24
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-27
 > Conflicts with this document are defects. Fix them here first.
 
 ## Purpose
 
 go-objstore is the multi-backend object storage library of the portfolio: one `Storage` interface over local disk, AWS S3, Google Cloud Storage, Azure Blob and the Glacier and Azure Archive tiers.
-It is a foundational library. go-xkms, go-trusted-ca and go-quicbaas consume it for persistent object storage.
+It is a foundational library. go-xkms, go-trusted-ca, go-quicbaas and go-qrdb consume it for persistent object storage.
 It also ships servers (gRPC, REST, QUIC, Unix socket, MCP), a CLI, a C library and client SDKs over the same interface.
 Its one first-party dependency is go-enclave, the locked-memory primitive.
 
@@ -42,6 +42,7 @@ Its one first-party dependency is go-enclave, the locked-memory primitive.
 | provider-multipart | shipped | Providers initiate a multipart upload, upload a part, complete it and abort it. The consumer is go-quicbaas. | [docs/buckets](buckets/README.md) |
 | configure-credential-handle | shipped | `Storage.Configure` accepts the protected-memory credential handle (go-enclave `enclave.ByteAccess`, the type `pkg/cli` already holds for the backend key and secret) in place of the `map[string]string` credential values. A backend copies the credential out of the handle for the length of the call and never retains the handle. The handle is the credential path for the server archive `DestinationSettings`, the C library and replication policies as well: the servers and the C library move a supplied credential into a handle at the API boundary and destroy it when the call ends, and replication targets take the handle from a credential provider the embedding application supplies when it constructs the replication manager, never persisted, one handle per target (a persisted replication policy refuses a credential in its settings). This replaces the former `Configure(map[string]string)` signature of the `Storage` interface and of every provider and wrapper that implements it. The consumer is the go-qrdb object-storage backend. | [docs/architecture](architecture/protected-memory.md) |
 | backup-agent | shipped | One backup agent binary, `objstore-backup`, in its own Go module `backup/` inside go-objstore on the xkey pattern (its own go.mod, released with this repository), consuming the Go client SDK (`api/sdks/go`) and the key seam go-xkms implements downward; it is not a separate repository. It talks to the objstore server through that SDK; the server gains only configurable gRPC message limits (`grpc.max_recv_msg_size`, `grpc.max_send_msg_size`). Keys come from go-xkms through the agent's key seam, or from a passphrase through the standalone PBKDF2 provider, so the root module keeps go-enclave as its only first-party dependency. Standards: FastCDC chunking, HMAC-SHA-256 chunk IDs (FIPS 198-1), a compression identifier in the sealed format with only `none` implemented (zstd or gzip is an open owner decision), AES-256-GCM (SP 800-38D) with HKDF (RFC 5869) subkeys, immutable packs plus index plus snapshot manifests as the snapshot format, restore with end-to-end verify, prune from a separate privileged identity, and a scheduled service with source snapshots. | [docs/backup-agent](backup-agent/README.md) |
+| qrdb-storage-provider | planned | When object storage is configured as a go-qrdb backend storage provider, go-qrdb's storage API uses the go-objstore `Storage` interface and its backends: `local`, `s3`, `gcs` and `azure`, with `glacier` and `azure-archive` as archive destinations only. go-qrdb is the provider seam and consumes go-objstore; go-objstore takes no go-qrdb dependency and keeps go-enclave its only first-party dependency. go-quicbaas owns which go-objstore backend each configuration uses. go-objstore keeps the interface and the backend configuration it already documents ([docs/backends](backends/README.md), [docs/configuration](configuration/storage-backends.md)). | [docs/architecture](architecture/storage-layer.md) |
 
 ## Interfaces
 

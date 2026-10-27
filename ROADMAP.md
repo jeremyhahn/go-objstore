@@ -44,7 +44,7 @@ None.
 
 ## Later
 
-None.
+- **qrdb-storage-provider** — go-objstore backends serve as a go-qrdb backend storage provider, configured per backend by go-quicbaas; waits on a Software-seated lane (P2) — [docs/architecture](docs/architecture/storage-layer.md) — open
 
 ## Future
 
