@@ -5,7 +5,7 @@ go 1.27.3
 require github.com/jeremyhahn/go-objstore v0.9.0-alpha // held: replaced by the in-repo module ../..; the release does not tag this example
 
 require (
-	github.com/jeremyhahn/go-enclave v0.10.0-alpha // indirect
+	github.com/jeremyhahn/go-enclave v0.11.0-alpha // indirect
 	golang.org/x/sys v0.49.0 // indirect
 )
 
