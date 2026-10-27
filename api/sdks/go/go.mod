@@ -21,3 +21,7 @@ require (
 	golang.org/x/text v0.43.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20261026165753-2ffab32bce7e // indirect
 )
+
+// This SDK lives in the go-objstore monorepo and is built/tested against the
+// in-tree parent module. The published v0.1.2-alpha tag is a placeholder.
+replace github.com/jeremyhahn/go-objstore => ../../../
