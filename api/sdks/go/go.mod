@@ -4,7 +4,7 @@ go 1.27.3
 
 require (
 	github.com/jeremyhahn/go-objstore v0.9.0-alpha
-	github.com/quic-go/quic-go v0.64.1
+	github.com/quic-go/quic-go v0.65.0
 	github.com/stretchr/testify v1.12.1
 	google.golang.org/grpc v1.85.0
 	google.golang.org/protobuf v1.36.12
