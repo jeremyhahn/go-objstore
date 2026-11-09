@@ -216,7 +216,7 @@ github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 h1:JeSE6pjso5T
 github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674/go.mod h1:r4w70xmWCQKmi1ONH4KIaBptdivuRPyosB9RmPlGEwA=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
-github.com/jeremyhahn/go-enclave v0.11.0-alpha h1:sfPn1zdaVdwA7XDPYi7G0pnGprt65L92nuw/CX31lxQ=
+github.com/jeremyhahn/go-enclave v0.11.0-alpha h1:+GKdyD+J+HBMLHta8Eef/s/ZZOKh+UYZmTL+Qg5wapA=
 github.com/jeremyhahn/go-enclave v0.11.0-alpha/go.mod h1:VtR8yhyPZPlHwYLx/ge2w07WwmlrLe8AUDDv3XemlKI=
 github.com/jmespath/go-jmespath v0.4.0 h1:BEgLn5cpjn8UN1mAw4NjwDrS35OdebyEtFe+9YPoQUg=
 github.com/jmespath/go-jmespath v0.4.0/go.mod h1:T8mJZnbsbmF+m6zOOFylbeCJqk5+pHWvzYPziyZiYoo=
