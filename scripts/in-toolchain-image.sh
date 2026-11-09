@@ -140,6 +140,23 @@ if [ "$network" = bridge ]; then
     if [ -n "${!v:-}" ]; then args+=(--env "$v"); fi
   done
 fi
+# #212: LABSTRINGS_PATTERNS names the labstrings gate's rules file (ci.yml
+# stages the RELEASABILITY_PATTERNS secret there). A bind mount would resolve
+# on the daemon's host, so the file is copied in like the checkout, mode 0400
+# and owned by the run's user, and the variable names the copy. A stage with a
+# network never gets it; unset, nothing is passed.
+patterns=${LABSTRINGS_PATTERNS:-}
+if [ -n "$patterns" ]; then
+  if [ ! -f "$patterns" ] || [ -L "$patterns" ]; then
+    echo "LABSTRINGS_PATTERNS must name a regular file" >&2
+    exit 2
+  fi
+  if [ "$network" = none ]; then
+    args+=(--env LABSTRINGS_PATTERNS=/labstrings-patterns)
+  else
+    patterns=
+  fi
+fi
 
 cleanup() { docker rm -f -v "$name" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
@@ -147,4 +164,9 @@ trap cleanup EXIT
 docker create "${args[@]}" "$image" sh -c "$*" >/dev/null
 tar -C "$PWD" --owner="$uid" --group="$uid" --numeric-owner -cf - . |
   docker cp -a - "$name:/src"
+if [ -n "$patterns" ]; then
+  tar -C "$(dirname "$patterns")" --owner="$uid" --group="$uid" --numeric-owner --mode=0400 \
+    --transform 's|.*|labstrings-patterns|' -cf - "$(basename "$patterns")" |
+    docker cp -a - "$name:/"
+fi
 docker start -a "$name"

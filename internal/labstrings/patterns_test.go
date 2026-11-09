@@ -19,8 +19,17 @@ const patternsEnv = "LABSTRINGS_PATTERNS"
 // maxPatternsFileSize bounds the rules file.
 const maxPatternsFileSize = 1 << 20
 
-// classes are the classes a rules file may name.
+// classes are the classes with specific guidance. The rules file states its
+// own class set (ruling 411): a line may name any well-formed class, and one
+// outside these four gets defaultGuidance.
 var classes = []class{labAddress, labHost, ownerPath, ownerAccount}
+
+// classField is a well-formed class field in the rules file.
+var classField = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
+
+// defaultGuidance is what a finding of a class without specific guidance
+// tells the author to write instead.
+const defaultGuidance = "remove the value, or replace it with a documentation value: an RFC 5737 address, a name under .example.com, or a repository-relative path"
 
 // classGuidance is what a finding of each class tells the author to write
 // instead. It names no fleet value.
@@ -78,10 +87,6 @@ func loadPatterns(path string) ([]pattern, error) {
 // parsePatterns parses one rule per line, class<TAB>regexp. Blank lines and
 // lines starting with # are skipped.
 func parsePatterns(path string, data []byte) ([]pattern, error) {
-	known := make(map[class]bool, len(classes))
-	for _, c := range classes {
-		known[c] = true
-	}
 	var ps []pattern
 	for i, raw := range strings.Split(string(data), "\n") {
 		line := strings.TrimSuffix(raw, "\r")
@@ -92,8 +97,8 @@ func parsePatterns(path string, data []byte) ([]pattern, error) {
 		if !ok {
 			return nil, &patternsFileError{Path: path, Line: i + 1, Problem: "want class<TAB>regexp"}
 		}
-		if !known[class(c)] {
-			return nil, &patternsFileError{Path: path, Line: i + 1, Problem: "unknown class"}
+		if !classField.MatchString(c) {
+			return nil, &patternsFileError{Path: path, Line: i + 1, Problem: "malformed class field"}
 		}
 		if expr == "" {
 			return nil, &patternsFileError{Path: path, Line: i + 1, Problem: "empty regexp"}
@@ -108,7 +113,11 @@ func parsePatterns(path string, data []byte) ([]pattern, error) {
 }
 
 func newPattern(c class, re *regexp.Regexp) pattern {
-	return pattern{Class: c, Expr: re, Needle: needleOf(re), Guidance: classGuidance[c]}
+	guidance, ok := classGuidance[c]
+	if !ok {
+		guidance = defaultGuidance
+	}
+	return pattern{Class: c, Expr: re, Needle: needleOf(re), Guidance: guidance}
 }
 
 // needleOf returns the longest literal that every match of re must contain,
@@ -205,7 +214,7 @@ func TestLoadPatterns_BadLines(t *testing.T) {
 		problem string
 	}{
 		"no tab":           {"lab-address " + secret + "\n", "want class<TAB>regexp"},
-		"unknown class":    {"lab-printer\t" + secret + "\n", "unknown class"},
+		"malformed class":  {"Lab_Printer\t" + secret + "\n", "malformed class field"},
 		"empty regexp":     {"lab-address\t\n", "empty regexp"},
 		"does not compile": {"lab-address\t(" + secret + "\n", "regexp does not compile"},
 	} {
@@ -219,10 +228,38 @@ func TestLoadPatterns_BadLines(t *testing.T) {
 			if fe.Line != 3 || fe.Problem != c.problem || fe.Path != p {
 				t.Errorf("got line %d, problem %q; want line 3, %q", fe.Line, fe.Problem, c.problem)
 			}
-			if msg := err.Error(); strings.Contains(msg, secret) || strings.Contains(msg, "lab-printer") {
+			msg := err.Error()
+			if strings.Contains(msg, secret) || strings.Contains(msg, "Lab_Printer") || strings.Contains(msg, "("+secret) {
 				t.Error("the error carries the line's text")
 			}
+			if !strings.Contains(msg, p) || !strings.Contains(msg, "line 3") {
+				t.Errorf("the error does not name the file and line: %s", msg)
+			}
 		})
+	}
+}
+
+func TestLoadPatterns_FileStatesItsClasses(t *testing.T) {
+	p := writePatternsFile(t, "lab-printer\t\\bprinter-\\d{2}\\.lab\\.example\\b\n")
+	ps, err := loadPatterns(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ps) != 1 || ps[0].Class != "lab-printer" || ps[0].Guidance != defaultGuidance {
+		t.Fatalf("got %d rules; want one lab-printer rule with the default guidance", len(ps))
+	}
+	defer setPatterns(ps)()
+	got := scan("docs/x.md", []byte("see printer-07.lab.example\n"))
+	if len(got) != 1 || got[0].Class != "lab-printer" || got[0].Line != 1 {
+		t.Fatalf("got %v; want one lab-printer finding on line 1", got)
+	}
+}
+
+func TestClassGuidance_EveryDeclaredClass(t *testing.T) {
+	for _, c := range classes {
+		if g := classGuidance[c]; g == "" || g == defaultGuidance {
+			t.Errorf("class %s has no specific guidance", c)
+		}
 	}
 }
 

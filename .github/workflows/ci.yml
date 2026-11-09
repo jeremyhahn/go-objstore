@@ -600,6 +600,30 @@ jobs:
         run: scripts/in-toolchain-image.sh "$(make -s capi-image)" "make lib-test GO_BUILD_TAGS='$GO_BUILD_TAGS'"
       # <<< CUSTOMIZE
 
+      # #212 (CUSTOMIZE, go-objstore): the labstrings gate reads its rules from
+      # the file LABSTRINGS_PATTERNS names; unset means no rules. The rules are
+      # the RELEASABILITY_PATTERNS secret, staged as a 0600 runner temp file
+      # that scripts/in-toolchain-image.sh copies into each no-network stage.
+      # A push to main without it fails; a fork PR (no secrets) runs without.
+      # The secret is never echoed. The last step removes the file.
+      - name: Stage the labstrings patterns file
+        if: ${{ !cancelled() }}
+        env:
+          RELEASABILITY_PATTERNS: ${{ secrets.RELEASABILITY_PATTERNS }}
+          IS_MAIN_PUSH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        run: |
+          if [ -z "$RELEASABILITY_PATTERNS" ]; then
+            if [ "$IS_MAIN_PUSH" = true ]; then
+              echo "::error::RELEASABILITY_PATTERNS is empty on a push to main"
+              exit 1
+            fi
+            echo "::notice::RELEASABILITY_PATTERNS is not available; the labstrings gate runs without a patterns file"
+            exit 0
+          fi
+          f="$RUNNER_TEMP/labstrings-patterns"
+          (umask 077 && printf '%s' "$RELEASABILITY_PATTERNS" > "$f")
+          echo "LABSTRINGS_PATTERNS=$f" >> "$GITHUB_ENV"
+
       # v1.26.1 (Company Agent m1128 (9)): a docs-only PR skips make coverage, so
       # it runs the releasability test alone; any other run gets it from make
       # coverage.
@@ -701,6 +725,10 @@ jobs:
         run: |
           rm -f "$RUNNER_TEMP/gomodauth.env" it-image.tar
           [ -z "${IT_LEASE:-}" ] || docker rm "$IT_LEASE" >/dev/null || true
+
+      - name: Remove the labstrings patterns file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/labstrings-patterns"
 
   # v1.27 (Company Agent m1192 (6), item 27): a repository's `make lint-gates`
   # (its own gates beside `make lint`: script, workflow, generated-code and

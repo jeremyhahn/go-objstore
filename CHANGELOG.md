@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Changed
 
+- ci: the labstrings gate reads the RELEASABILITY_PATTERNS secret as a 0600 runner temp file and fails on a push to main without it; the loader takes the file's class set (#212)
 - ci: the SDK Tests (go) and Integration jobs grant buildx bake the fs read of the out-of-tree module-auth secret (BUILDX_BAKE_ENTITLEMENTS_FS=0 in the job env); deps: cel.dev/expr v0.26.0
 - labstrings: the releasability rules load from the LABSTRINGS_PATTERNS file at test time; no rule or match is printed (IS-31)
 - deps: `golang.org/x/mod` v0.43.0 and `golang.org/x/text` v0.44.0 in the root module; `golang.org/x/text` v0.44.0 and the in-repo `go-objstore` require at v0.9.1-alpha (still replaced locally) in `backup` and `api/sdks/go`, so `make deps-check` passes

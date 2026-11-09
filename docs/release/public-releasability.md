@@ -25,6 +25,14 @@ that file is the `RELEASABILITY_PATTERNS` secret. With the variable unset there
 are no rules and the gate finds nothing. Nothing the gate prints, a finding, a
 subtest name or a loader error, carries a rule or a matched value.
 
+CI's image job writes the `RELEASABILITY_PATTERNS` secret to a 0600 file in the
+runner's temp directory, copies it read-only into each no-network toolchain
+stage, and removes it at the end of the job; a push to main without the secret
+fails, and a fork pull request runs without rules. The file states its own
+class set: a line may name any well-formed class (`[a-z][a-z0-9-]{0,31}`), and
+one outside the four above carries general guidance (remove the value or use a
+documentation value) (#212).
+
 Not a violation: RFC 1918 literals that are not the fleet subnet (tests use
 `192.168.1.x` as an opaque address that is never dialed), and the module path
 `github.com/jeremyhahn/...`: the module and GitHub owner is public.
