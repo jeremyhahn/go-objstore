@@ -34,3 +34,7 @@ endif
 COMPOSE_PROJECT_NAME := objstore-sdk-$(lastword $(subst /, ,$(CURDIR)))-$(compose_project_hash)
 endif
 export COMPOSE_PROJECT_NAME
+
+# The compose secrets: read the gomodauth file from outside the checkout, and
+# buildx bake's fs entitlement check refuses that build unless it is granted.
+export BUILDX_BAKE_ENTITLEMENTS_FS := 0
