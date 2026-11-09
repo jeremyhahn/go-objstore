@@ -2,8 +2,13 @@
 // package that fails when a published file names the private development fleet
 // or its owner. See docs/release/public-releasability.md.
 //
-// The package has no non-test code and no exported API; the pattern table, the
-// waiver, the allow-list and the published-file manifest all live here.
+// The package has no non-test code and no exported API. The rules are not in
+// the tree (IS-31): they load at test time from the file the
+// LABSTRINGS_PATTERNS environment variable names (patterns_test.go); in CI
+// that file is the RELEASABILITY_PATTERNS secret. With the variable unset there
+// are no rules and the tree test finds nothing. Nothing prints a rule or a
+// match: a finding names its file, line, class and guidance only. The waiver,
+// the allow-list and the published-file manifest live here.
 package labstrings
 
 import (
@@ -31,8 +36,9 @@ const (
 )
 
 // pattern is one fleet value the gate looks for. Needle is a lowercase literal
-// every match of Expr must contain: the scan sieves on needles first and only
-// runs the regexps on lines that survive.
+// every match of Expr must contain, derived from Expr by needleOf: the scan
+// sieves on needles first and only runs the regexps on lines that survive. An
+// empty needle never skips a line.
 type pattern struct {
 	Class    class
 	Expr     *regexp.Regexp
@@ -40,29 +46,17 @@ type pattern struct {
 	Guidance string
 }
 
-// patterns is the one place the fleet's values are written down. Every line
-// that carries a value carries a waiver: the value is the line's purpose.
-var patterns = []pattern{
-	{labAddress, regexp.MustCompile(`\b192\.168\.101\.\d{1,3}\b`), "192.168.101.", "use an RFC 5737 documentation address: 192.0.2.0/24, 198.51.100.0/24 or 203.0.113.0/24"},             // lab-string-ok: the pattern this gate matches on
-	{labHost, regexp.MustCompile(`\bgodlike\b`), "gpu-host", "name the role, not the machine: agent-01, gpu-host.internal, npu-host.internal, server.example.com"},                        // lab-string-ok: the pattern this gate matches on
-	{labHost, regexp.MustCompile(`\bmini-\d{2}\b`), "mini-", "name the role, not the machine: agent-01, gpu-host.internal, npu-host.internal, server.example.com"},                       // lab-string-ok: the pattern this gate matches on
-	{labHost, regexp.MustCompile(`\btgw-\d{2}\b`), "tgw-", "name the role, not the machine: agent-01, gpu-host.internal, npu-host.internal, server.example.com"},                         // lab-string-ok: the pattern this gate matches on
-	{labHost, regexp.MustCompile(`\bdellemc-\d+\b`), "dellemc-", "name the role, not the machine: agent-01, gpu-host.internal, npu-host.internal, server.example.com"},                   // lab-string-ok: the pattern this gate matches on
-	{ownerPath, regexp.MustCompile(`/home/jhahn\b`), "/home/jhahn", "use a repository-relative path, or /var/lib, /srv, /home/agent"},                                                    // lab-string-ok: the pattern this gate matches on
-	{ownerAccount, regexp.MustCompile(`\bjhahn\b`), "jhahn", "use a role (operator, agent) or the module path; the module owner github.com/jeremyhahn is public and is not a violation"}, // lab-string-ok: the pattern this gate matches on
-}
-
-// finding is one offending line.
+// finding is one offending line. It carries no match text, so no finding can
+// print a fleet value.
 type finding struct {
 	Path     string
 	Line     int
 	Class    class
-	Match    string
 	Guidance string
 }
 
 func (f finding) String() string {
-	return fmt.Sprintf("%s:%d: %s %q: %s", f.Path, f.Line, f.Class, f.Match, f.Guidance)
+	return fmt.Sprintf("%s:%d: %s: %s", f.Path, f.Line, f.Class, f.Guidance)
 }
 
 // waiverRe is the inline waiver: "lab-string-ok:" followed by a reason. A
@@ -94,8 +88,8 @@ func scan(rel string, content []byte) []finding {
 			if !strings.Contains(lowLine, p.Needle) {
 				continue
 			}
-			if m := p.Expr.FindString(line); m != "" {
-				out = append(out, finding{rel, i + 1, p.Class, m, p.Guidance})
+			if p.Expr.MatchString(line) {
+				out = append(out, finding{rel, i + 1, p.Class, p.Guidance})
 			}
 		}
 	}
@@ -213,6 +207,9 @@ func publishedFiles(t testing.TB, root string) []string {
 }
 
 func TestTheTrackedTreeIsPubliclyReleasable(t *testing.T) {
+	if patternsErr != nil {
+		t.Fatal(patternsErr) // names the file and line only
+	}
 	root := repoRoot(t)
 	for _, e := range defaultAllowList {
 		if err := e.valid(); err != nil {
@@ -243,22 +240,41 @@ func TestTheTrackedTreeIsPubliclyReleasable(t *testing.T) {
 	}
 }
 
-// Fixtures are assembled at run time so this file carries no fleet value
-// outside the pattern table.
-var (
-	fxAddr    = "192.168." + "101.5"
-	fxHost    = "dell" + "emc-02"
-	fxPath    = "/home/" + "jh" + "ahn" + "/sources/x"
-	fxAccount = "j" + "hahn"
+// testPatterns are neutral rules, one or two per class, for the scan tests: an
+// RFC 5737 address block, host names under .example and an example account.
+// They stand in for the real rules, which are not in the tree.
+func testPatterns() []pattern {
+	return []pattern{
+		newPattern(labAddress, regexp.MustCompile(`\b198\.51\.100\.\d{1,3}\b`)),
+		newPattern(labHost, regexp.MustCompile(`\bbuild-\d{2}\.lab\.example\b`)),
+		newPattern(labHost, regexp.MustCompile(`\bci-\d{2}\b`)),
+		newPattern(ownerPath, regexp.MustCompile(`/home/example-user\b`)),
+		newPattern(ownerAccount, regexp.MustCompile(`\bexample-user\b`)),
+	}
+}
+
+// useTestPatterns installs testPatterns for the rest of t.
+func useTestPatterns(t *testing.T) {
+	t.Helper()
+	t.Cleanup(setPatterns(testPatterns()))
+}
+
+const (
+	fxAddr    = "198.51.100.5"
+	fxHost    = "build-07.lab.example"
+	fxPath    = "/home/example-user/src"
+	fxAccount = "example-user"
 )
 
 func TestPatterns_Match(t *testing.T) {
+	useTestPatterns(t)
 	cases := []struct {
 		line  string
 		class class
 	}{
 		{"dial " + fxAddr + ":443", labAddress},
 		{"ssh " + fxHost, labHost},
+		{"ssh ci-03", labHost},
 		{"cd " + fxPath, ownerPath},
 		{"owner " + fxAccount + " ran it", ownerAccount},
 	}
@@ -275,13 +291,14 @@ func TestPatterns_Match(t *testing.T) {
 }
 
 func TestPatterns_NotViolations(t *testing.T) {
+	useTestPatterns(t)
 	for _, line := range []string{
-		"addr 192.168.1.10 is opaque",
-		"addr 192.168.10.1",
-		"import github.com/jeremyhahn/go-objstore",
-		"https://github.com/jeremyhahn/go-enclave",
-		"192.0.2.7 and 198.51.100.4",
-		"a mini-batch, mini-123 and omega",
+		"addr 198.51.10.1 is opaque",
+		"addr 198.51.1000.1",
+		"import github.com/anexample-user/go-objstore",
+		"https://github.com/example-users/go-enclave",
+		"192.0.2.7 and 203.0.113.4",
+		"a ci-pipeline, ci-123 and build-7.lab.example",
 	} {
 		if got := scan("x.md", []byte(line)); len(got) != 0 {
 			t.Errorf("%q: unexpected %v", line, got)
@@ -290,28 +307,57 @@ func TestPatterns_NotViolations(t *testing.T) {
 }
 
 func TestPatterns_EveryNeedleIsImpliedByItsExpr(t *testing.T) {
-	samples := map[string]string{
-		"192.168.101.": fxAddr, "dellemc-": fxHost, "/home/jhahn": fxPath, "jhahn": fxAccount, // lab-string-ok: samples keyed by the pattern needles
-		"gpu-host": "god" + "like", "mini-": "mi" + "ni-07", "tgw-": "tg" + "w-03", // lab-string-ok: samples keyed by the pattern needles
+	ps := testPatterns()
+	samples := []string{fxAddr, fxHost, "ci-03", fxPath, fxAccount}
+	if len(samples) != len(ps) {
+		t.Fatalf("%d samples for %d rules", len(samples), len(ps))
 	}
-	for _, p := range patterns {
-		s, ok := samples[p.Needle]
-		if !ok {
-			t.Fatalf("no sample for needle %q", p.Needle)
-		}
-		if p.Needle != strings.ToLower(p.Needle) {
-			t.Errorf("%s: needle %q is not lowercase", p.Class, p.Needle)
-		}
-		if m := p.Expr.FindString(s); m == "" || !strings.Contains(strings.ToLower(m), p.Needle) {
-			t.Errorf("%s: needle %q is not implied by a match of %v", p.Class, p.Needle, p.Expr)
-		}
-		if strings.TrimSpace(p.Guidance) == "" {
-			t.Errorf("%s: no guidance", p.Class)
-		}
+	for i, p := range ps {
+		t.Run(fmt.Sprintf("rule %d (%s)", i, p.Class), func(t *testing.T) {
+			if p.Needle == "" {
+				t.Error("no needle derived")
+			}
+			if p.Needle != strings.ToLower(p.Needle) {
+				t.Error("needle is not lowercase")
+			}
+			if m := p.Expr.FindString(samples[i]); m == "" || !strings.Contains(strings.ToLower(m), p.Needle) {
+				t.Error("needle is not implied by a match of the rule")
+			}
+			if strings.TrimSpace(p.Guidance) == "" {
+				t.Error("no guidance")
+			}
+		})
+	}
+}
+
+func TestPatterns_EmptyNeedleNeverSkips(t *testing.T) {
+	p := newPattern(labAddress, regexp.MustCompile(`\b198\.51\.100\.\d+|\b203\.0\.113\.\d+`))
+	if p.Needle != "" {
+		t.Fatalf("an alternation has no mandatory literal, got a needle of %d bytes", len(p.Needle))
+	}
+	t.Cleanup(setPatterns([]pattern{p}))
+	if got := scan("x", []byte("x 203.0.113.9")); len(got) != 1 {
+		t.Errorf("%d findings, want 1", len(got))
+	}
+}
+
+func TestFinding_StringOmitsTheMatch(t *testing.T) {
+	useTestPatterns(t)
+	got := scan("docs/x.md", []byte("ssh "+fxHost))
+	if len(got) != 1 {
+		t.Fatalf("%d findings, want 1", len(got))
+	}
+	s := got[0].String()
+	if strings.Contains(s, fxHost) || strings.Contains(s, "build-07") {
+		t.Errorf("finding prints the matched text: %s", s)
+	}
+	if want := "docs/x.md:1: lab-host: "; !strings.HasPrefix(s, want) {
+		t.Errorf("finding %q does not start with %q", s, want)
 	}
 }
 
 func TestWaiver(t *testing.T) {
+	useTestPatterns(t)
 	cases := []struct {
 		name    string
 		content string
