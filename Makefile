@@ -94,9 +94,6 @@ GOLANGCI_LINT_VERSION ?= 2.14.0
 
 # Docker Compose (use v2 syntax for GitHub Actions compatibility)
 DOCKER_COMPOSE := docker compose
-# The compose secrets: read the gomodauth file from outside the checkout, and
-# buildx bake's fs entitlement check refuses that build unless it is granted.
-export BUILDX_BAKE_ENTITLEMENTS_FS := 0
 
 # Compose project prefix for the integration targets. Concurrent CI jobs share
 # one Docker host, and compose's default project name (the directory) made one
