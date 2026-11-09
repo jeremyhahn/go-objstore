@@ -7,7 +7,7 @@
 #
 # What this file is NOT for: parking a gate to buy queue position. A first pass
 # at ci-template v1.9 moved `fips` and `trivy` here for exactly that reason and
-# it was reverted the same night (agent-company ruling 2026-08-21, decided
+# it was reverted the same night (the Company Agent's ruling 2026-08-21, decided
 # identically for go-signal an hour earlier). The template's nightly carve-out
 # is for jobs that are KNOWN-RED and cannot clear from inside the repo — a job
 # burning 90 runner-minutes to re-report a finding already written on an issue.

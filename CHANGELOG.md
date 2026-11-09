@@ -450,7 +450,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   verbatim at `mk/release-alpha.mk`, replacing the v1 recipe (issue #32). The
   version is now an explicit argument (`make release-alpha VERSION=vX.Y.Z-alpha`)
   rather than a patch-only auto-increment; every git write signs through
-  `agent-git.sh` as `agent-go-objstore`; the tag is annotated; only the release
+  `agent-git.sh` as this project's agent; the tag is annotated; only the release
   commit and that one tag are pushed, to `origin`; and the recipe fails closed
   on a wrong branch, a dirty tree, an existing tag, an unreachable remote or a
   missing CHANGELOG section. The Makefile's build version variable is renamed
