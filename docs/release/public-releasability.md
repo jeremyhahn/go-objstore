@@ -15,12 +15,15 @@ classes:
 | Class | What it covers | Use instead |
 |---|---|---|
 | `lab-address` | An address on the fleet subnet | RFC 5737 documentation addresses: `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24` |
-| `lab-host` | A fleet hostname | The role, not the machine: `server.example.com`, `agent-01`, `gpu-host.internal` |
+| `lab-host` | A fleet hostname | The role, not the machine: `server.example.com`, `agent-01`, `build-01.example` |
 | `owner-path` | A path under the owner's home directory | A repository-relative path, or `/var/lib`, `/srv`, `/home/agent` |
 | `owner-account` | The owner's account name on its own | A role (`operator`, `agent`) or the module path |
 
-The fleet's values are written down in exactly one place: the `patterns` list in
-`internal/labstrings/labstrings_test.go`. Read them there rather than here.
+The fleet's values are not in the tree (IS-31). The rules load at test time
+from the file named by the `LABSTRINGS_PATTERNS` environment variable; in CI
+that file is the `RELEASABILITY_PATTERNS` secret. With the variable unset there
+are no rules and the gate finds nothing. Nothing the gate prints, a finding, a
+subtest name or a loader error, carries a rule or a matched value.
 
 Not a violation: RFC 1918 literals that are not the fleet subnet (tests use
 `192.168.1.x` as an opaque address that is never dialed), and the module path
@@ -41,12 +44,12 @@ honour `export-ignore`. The public tree must be produced as an export
 
 `internal/labstrings` is test-only. It scans every published file (`git
 ls-files` minus the export-ignored paths) and reports each offending line with
-its file, line, class, matched text and what to use instead. It runs as
+its file, line, class and what to use instead (never the matched text). It runs as
 `TestTheTrackedTreeIsPubliclyReleasable` inside `make test` and CI's unit job;
 there is no separate target.
 
 ```
-go test ./internal/labstrings/
+LABSTRINGS_PATTERNS=/abs/path/to/patterns.tsv go test ./internal/labstrings/
 ```
 
 Other tests cover the patterns, the waiver, the allow-list, the manifest, the
@@ -56,7 +59,7 @@ Other tests cover the patterns, the waiver, the allow-list, the manifest, the
 ### Accepting a line
 
 Prefer rewriting the line. A waiver is for a line whose purpose is the value
-itself, such as the gate's own patterns: an inline comment on the line, or the
+itself: an inline comment on the line, or the
 line above, in the file's own comment syntax:
 
 ```
@@ -70,6 +73,10 @@ a comment. Every entry needs a reason and may only name the gate's own files
 
 ### Adding a fleet value
 
-Add one entry to `patterns`: class, regexp, a lowercase `needle` that every
-match contains (the scan sieves on needles first), and the guidance. Add a
-sample to `TestPatterns_EveryNeedleIsImpliedByItsExpr`.
+Add one line to the patterns file (and the `RELEASABILITY_PATTERNS` secret),
+never to the tree. One rule per line, `class<TAB>regexp`; blank lines and `#`
+lines are skipped. The class is one of the four above. The path must be
+absolute and name a regular file (not a symlink) of at most 1 MiB. An unknown
+class, an empty regexp or one that does not compile fails the gate with the
+file and line number only. The scan's needle and the guidance are derived from
+the rule, not written by hand.
