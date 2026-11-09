@@ -801,6 +801,9 @@ jobs:
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       IT_PROJECT: ${{ github.event.repository.name }}-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      # The compose secrets: read the module-auth file from RUNNER_TEMP, outside the checkout, and bake refuses
+      # that read without the fs entitlement; the grant is scoped to these jobs, not the Makefiles.
+      BUILDX_BAKE_ENTITLEMENTS_FS: "0"
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
@@ -1181,6 +1184,9 @@ jobs:
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       COMPOSE_PROJECT_NAME: ${{ github.event.repository.name }}-ci-${{ github.run_id }}-${{ github.run_attempt }}-sdk-${{ matrix.sdk }}
+      # The compose secrets: read the module-auth file from RUNNER_TEMP, outside the checkout, and bake refuses
+      # that read without the fs entitlement; the grant is scoped to these jobs, not the Makefiles.
+      BUILDX_BAKE_ENTITLEMENTS_FS: "0"
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
