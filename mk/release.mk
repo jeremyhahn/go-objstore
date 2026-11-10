@@ -34,7 +34,7 @@
 # re-copying from the handbook; repo-specific behaviour lives in this file.
 #
 # The version is explicit (release-versioning.md decides patch/minor/major),
-# every git write signs through agent-git.sh as agent-go-objstore, the tags are
+# every git write signs through agent-git.sh as this project's agent, the tags are
 # annotated, and only the release commits and those tags are pushed.
 # AGENT_GIT is resolved from PATH — no baked path (template v2.3.6 (a)); an
 # unresolvable wrapper leaves it empty and the recipe fails before anything is
