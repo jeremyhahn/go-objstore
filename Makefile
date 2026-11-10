@@ -95,6 +95,14 @@ GOLANGCI_LINT_VERSION ?= 2.14.0
 # Docker Compose (use v2 syntax for GitHub Actions compatibility)
 DOCKER_COMPOSE := docker compose
 
+# Compose builds take the classic BuildKit path, not bake. The integration and
+# SDK compose files read the gomodauth secret from GOMODAUTH_SECRET, a file
+# outside the build context, and bake refuses that without an fs.read
+# entitlement ("additional privileges requested: pass --allow=fs.read=...").
+# The classic path reads the secret file without one, so no job has to turn
+# bake's entitlement checks off (BUILDX_BAKE_ENTITLEMENTS_FS=0).
+export COMPOSE_BAKE := false
+
 # Compose project prefix for the integration targets. Concurrent CI jobs share
 # one Docker host, and compose's default project name (the directory) made one
 # job's `down -v --remove-orphans` remove another job's running containers.
