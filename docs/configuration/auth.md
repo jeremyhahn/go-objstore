@@ -89,7 +89,13 @@ need the same actions:
 gRPC maps each method by name: `Get`, `GetMetadata` and `Exists` need
 `read`; `Put`, `PutStream` and `UpdateMetadata` `write`; `Delete` `delete`;
 `List` `list`; `Archive` and every lifecycle and replication policy method
-`admin`. A method not in that list needs `admin`.
+`admin`. `Health` needs no action: any authenticated identity may call it,
+whatever its roles. A method not in that list needs `admin`. The standard
+`grpc.health.v1.Health` service and server reflection skip authorization.
+
+| gRPC method | Action |
+|-------------|--------|
+| `Health` | none (authentication only) |
 
 ## Fail-closed rules
 
