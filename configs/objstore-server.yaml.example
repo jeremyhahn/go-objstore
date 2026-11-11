@@ -62,3 +62,9 @@
 
 # audit:
 #   enabled: true
+
+# archive:
+#   allow_client_local_destinations: false
+# When false, every transport refuses an archive call or lifecycle policy
+# that names a local (filesystem path) archiver: the client would choose a
+# directory the server's user writes into.

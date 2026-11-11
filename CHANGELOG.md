@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Security
+
+- server: gRPC, REST, QUIC, MCP and the Unix socket refuse a client-supplied `local` archiver destination (archive calls and lifecycle policies) by default; `archive.allow_client_local_destinations` (`OBJSTORE_ARCHIVE_ALLOW_CLIENT_LOCAL_DESTINATIONS`, `-allow-client-local-archive`) turns it back on (#236)
+
 ### Changed
 
 - build: the Go toolchain moves to 1.27.4 (go.mod files, devcontainer and integration images, docs) for GO-2026-6859 in `net/http` (#233)
