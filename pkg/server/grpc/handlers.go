@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"time"
 
 	objstorepb "github.com/jeremyhahn/go-objstore/api/proto"
@@ -466,22 +467,38 @@ func (s *Server) ApplyPolicies(ctx context.Context, req *objstorepb.ApplyPolicie
 		}, nil
 	}
 
-	processed := result.ObjectsProcessed
-	if processed > 2147483647 {
-		processed = 2147483647
-	}
-	objectsProcessed := int32(processed)
-	policiesCount := result.PoliciesCount
-	if policiesCount > 2147483647 {
-		return nil, ErrPoliciesCountExceedsRange
+	objectsProcessed := clampToInt32(result.ObjectsProcessed)
+	policiesCount, err := policiesCountToInt32(result.PoliciesCount)
+	if err != nil {
+		return nil, err
 	}
 
 	return &objstorepb.ApplyPoliciesResponse{
 		Success:          true,
-		PoliciesCount:    int32(policiesCount),
+		PoliciesCount:    policiesCount,
 		ObjectsProcessed: objectsProcessed,
 		Message:          "lifecycle policies applied successfully",
 	}, nil
+}
+
+// policiesCountToInt32 converts a policy count to the int32 the proto carries,
+// returning ErrPoliciesCountExceedsRange when it is negative or above MaxInt32.
+func policiesCountToInt32(n int) (int32, error) {
+	if n < 0 || n > math.MaxInt32 {
+		return 0, ErrPoliciesCountExceedsRange
+	}
+	return int32(n), nil
+}
+
+// clampToInt32 converts a count to int32, clamping it to [0, MaxInt32].
+func clampToInt32(n int) int32 {
+	if n < 0 {
+		return 0
+	}
+	if n > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	return int32(n)
 }
 
 // Helper functions
