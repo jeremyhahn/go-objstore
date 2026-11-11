@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
+	grpcserver "github.com/jeremyhahn/go-objstore/pkg/server/grpc"
 	mcpserver "github.com/jeremyhahn/go-objstore/pkg/server/mcp"
 )
 
@@ -260,5 +261,43 @@ func TestListenerTLS_MutualWhenAuthSet(t *testing.T) {
 	c.Auth = AuthConfig{}
 	if got := c.listenerTLS("s.crt", "s.key"); got.Mode != adapters.TLSModeServer || got.ClientCAFile != "" {
 		t.Errorf("listenerTLS without auth = %+v", got)
+	}
+}
+
+func TestGRPCAndQUICOptions_WireAuth(t *testing.T) {
+	c := authConfig()
+	opts, err := c.GRPCOptions(c.Middleware())
+	if err != nil {
+		t.Fatalf("GRPCOptions: %v", err)
+	}
+	g := grpcserver.DefaultServerOptions()
+	for _, o := range opts {
+		o(g)
+	}
+	if g.AdapterTLSConfig == nil || g.AdapterTLSConfig.Mode != adapters.TLSModeMutual {
+		t.Errorf("grpc TLS = %+v, want mutual", g.AdapterTLSConfig)
+	}
+	if _, ok := g.Authenticator.(*adapters.MTLSAuthenticator); !ok {
+		t.Errorf("grpc authenticator = %T", g.Authenticator)
+	}
+	if _, ok := g.Authorizer.(*adapters.RBACAuthorizer); !ok {
+		t.Errorf("grpc authorizer = %T", g.Authorizer)
+	}
+
+	q := c.QUICOptions(c.Middleware())
+	if q.AdapterTLSConfig == nil || q.AdapterTLSConfig.Mode != adapters.TLSModeMutual || q.AdapterTLSConfig.MinVersion != tls.VersionTLS13 {
+		t.Errorf("quic TLS = %+v, want mutual TLS 1.3", q.AdapterTLSConfig)
+	}
+	if _, ok := q.Authenticator.(*adapters.MTLSAuthenticator); !ok {
+		t.Errorf("quic authenticator = %T", q.Authenticator)
+	}
+	if _, ok := q.Authorizer.(*adapters.RBACAuthorizer); !ok {
+		t.Errorf("quic authorizer = %T", q.Authorizer)
+	}
+
+	// Without auth the defaults stay NoOp and no adapter TLS is forced.
+	d := Defaults()
+	if q := d.QUICOptions(d.Middleware()); q.AdapterTLSConfig != nil {
+		t.Errorf("quic without auth: adapter TLS = %+v", q.AdapterTLSConfig)
 	}
 }

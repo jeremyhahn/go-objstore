@@ -14,7 +14,9 @@
 package serverconfig
 
 import (
+	"crypto/tls"
 	"io"
+	"log/slog"
 	"os"
 
 	"github.com/jeremyhahn/go-objstore/pkg/audit"
@@ -94,6 +96,14 @@ func (c *Config) GRPCOptions(mw Middleware) ([]grpcserver.ServerOption, error) {
 	if mw.AuditLogger != nil {
 		opts = append(opts, grpcserver.WithAuditLogger(mw.AuditLogger))
 	}
+	if c.Auth.Enabled() {
+		return append(opts,
+			grpcserver.WithAdapterTLS(c.listenerTLS(c.GRPC.TLSCert, c.GRPC.TLSKey)),
+			grpcserver.WithAuthenticator(c.CertAuthenticator()),
+			grpcserver.WithAuthorizer(c.Authorizer()),
+		), nil
+	}
+	warnUnauthenticated("grpc")
 	if !c.GRPCTLSEnabled() {
 		return opts, nil
 	}
@@ -142,7 +152,25 @@ func (c *Config) QUICOptions(mw Middleware) *quicserver.Options {
 	if mw.Audit {
 		opts = opts.WithAudit(mw.AuditLogger)
 	}
-	return opts
+	if !c.Auth.Enabled() {
+		warnUnauthenticated("quic")
+		return opts
+	}
+	// The adapter TLS config takes precedence over a TLS config the caller
+	// sets later, so the listener always requires a client certificate.
+	t := c.listenerTLS(c.QUIC.TLSCert, c.QUIC.TLSKey)
+	t.MinVersion = tls.VersionTLS13 // QUIC requires TLS 1.3
+	return opts.
+		WithAdapterTLS(t).
+		WithAuthenticator(c.CertAuthenticator()).
+		WithAuthorizer(c.Authorizer())
+}
+
+// warnUnauthenticated logs, once per listener, that it serves without
+// authentication because the auth section is not set.
+func warnUnauthenticated(transport string) {
+	slog.Warn("auth is not configured: listener serves unauthenticated, every client may do everything",
+		"transport", transport)
 }
 
 // MCPServerConfig returns the MCP server configuration with the configured
