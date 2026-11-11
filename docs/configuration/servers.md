@@ -62,6 +62,8 @@ table notes one.
 | `rest.host` | `OBJSTORE_REST_HOST` | `127.0.0.1` (`localhost` for objstore-rest-server) | `-rest-host` | `-host` (rest) |
 | `rest.port` | `OBJSTORE_REST_PORT` | `8080` | `-rest-port` | `-port` (rest) |
 | `rest.metrics_public` | `OBJSTORE_REST_METRICS_PUBLIC` | `false` | `-metrics-public` | `-metrics-public` (rest) |
+| `rest.tls_cert` | `OBJSTORE_REST_TLS_CERT` | — | — | — |
+| `rest.tls_key` | `OBJSTORE_REST_TLS_KEY` | — | — | — |
 | `quic.enabled` | `OBJSTORE_QUIC_ENABLED` | `false` | `-quic` | — |
 | `quic.addr` | `OBJSTORE_QUIC_ADDR` | `127.0.0.1:4433` | `-quic-addr` | `-addr` (quic) |
 | `quic.tls_cert` | `OBJSTORE_QUIC_TLS_CERT` | — | `-quic-tls-cert` | `-tlscert` (quic) |
@@ -75,6 +77,8 @@ table notes one.
 | `mcp.enabled` | `OBJSTORE_MCP_ENABLED` | `false` | `-mcp` | — |
 | `mcp.mode` | `OBJSTORE_MCP_MODE` | `http` | `-mcp-mode` | `-mode` (mcp) |
 | `mcp.addr` | `OBJSTORE_MCP_ADDR` | `127.0.0.1:8081` | `-mcp-addr` | `-addr` (mcp) |
+| `mcp.tls_cert` | `OBJSTORE_MCP_TLS_CERT` | — | — | — |
+| `mcp.tls_key` | `OBJSTORE_MCP_TLS_KEY` | — | — | — |
 | `unix.enabled` | `OBJSTORE_UNIX_ENABLED` | `false` | `-unix` | — |
 | `unix.socket` | `OBJSTORE_UNIX_SOCKET` | `/var/run/objstore.sock` | `-unix-socket` | — |
 | `rate_limit.enabled` | `OBJSTORE_RATE_LIMIT_ENABLED` | `false` | `-rate-limit` | `-rate-limit` (all) |
@@ -82,6 +86,20 @@ table notes one.
 | `rate_limit.burst` | `OBJSTORE_RATE_LIMIT_BURST` | `200` | `-rate-limit-burst` | `-rate-limit-burst` (all) |
 | `rate_limit.per_client` | `OBJSTORE_RATE_LIMIT_PER_CLIENT` | `false` | `-rate-limit-per-client` | `-rate-limit-per-client` (all) |
 | `audit.enabled` | `OBJSTORE_AUDIT_ENABLED` | `true` | `-audit` | `-audit` (all) |
+| `auth.client_ca` | `OBJSTORE_AUTH_CLIENT_CA` | — | — | — |
+| `auth.roles` | file only | — | — | — |
+| `auth.identities` | file only | — | — | — |
+
+`tls_cert` and `tls_key` are set together or not at all, on every listener.
+On REST and MCP HTTP they serve TLS; without `auth` the listener asks for no
+client certificate.
+
+The `auth` section turns on mutual TLS and role-based access control on every
+transport; with `auth` set, every enabled gRPC, REST, QUIC and MCP HTTP
+listener needs `tls_cert` and `tls_key`. Without it, each listener logs a
+warning that it serves unauthenticated. See
+[Server Authentication](auth.md) for the roles, identities and fail-closed
+rules.
 
 Rate limiting and audit logging apply to every transport a binary serves,
 standalone or combined, with one audit logger per process. Audit records go to
