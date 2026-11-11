@@ -46,6 +46,14 @@ func (m *MockObjectStoreClient) Put(ctx context.Context, in *objstorepb.PutReque
 	return args.Get(0).(*objstorepb.PutResponse), args.Error(1)
 }
 
+func (m *MockObjectStoreClient) PutStream(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[objstorepb.PutStreamRequest, objstorepb.PutResponse], error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(grpc.ClientStreamingClient[objstorepb.PutStreamRequest, objstorepb.PutResponse]), args.Error(1)
+}
+
 func (m *MockObjectStoreClient) Get(ctx context.Context, in *objstorepb.GetRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[objstorepb.GetResponse], error) {
 	args := m.Called(ctx, in)
 	if args.Get(0) == nil {
