@@ -16,6 +16,7 @@ services:
       - "8080:8080"
     environment:
       - OBJSTORE_BACKEND=local
+      - OBJSTORE_REPLICATION_ALLOW_CLIENT_LOCAL_BACKENDS=true
       - OBJSTORE_LOCAL_PATH=/data
       - OBJSTORE_REST_ENABLED=true
       - OBJSTORE_REST_PORT=8080
@@ -44,6 +45,7 @@ services:
       - "50051:50051"
     environment:
       - OBJSTORE_BACKEND=local
+      - OBJSTORE_REPLICATION_ALLOW_CLIENT_LOCAL_BACKENDS=true
       - OBJSTORE_LOCAL_PATH=/data
       - OBJSTORE_GRPC_ENABLED=true
       - OBJSTORE_GRPC_PORT=50051
@@ -72,6 +74,7 @@ services:
       - "8443:8443/udp"
     environment:
       - OBJSTORE_BACKEND=local
+      - OBJSTORE_REPLICATION_ALLOW_CLIENT_LOCAL_BACKENDS=true
       - OBJSTORE_LOCAL_PATH=/data
       - OBJSTORE_QUIC_ENABLED=true
       - OBJSTORE_QUIC_PORT=8443

@@ -1,6 +1,6 @@
 module github.com/jeremyhahn/go-objstore/backup
 
-go 1.27.3
+go 1.27.4
 
 // The backup agent lives in the go-objstore repository and is built and tested
 // against the in-tree Go client SDK and, through it, the in-tree parent module.

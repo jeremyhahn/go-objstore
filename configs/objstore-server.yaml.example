@@ -67,6 +67,13 @@
 # audit:
 #   enabled: true
 
+# replication:
+#   allow_client_local_backends: false
+# Replication policies name their backends and settings, so a "local" backend
+# could open any directory the service user can read. Policies with a local
+# source or destination are refused (and a policy file holding one fails to
+# load) unless this is true.
+
 # auth is off by default: every listener then serves unauthenticated and logs
 # a warning. Setting it requires a client certificate signed by client_ca on
 # gRPC, REST, QUIC and MCP HTTP (each needs tls_cert and tls_key), maps the

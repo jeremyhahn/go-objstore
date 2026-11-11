@@ -743,18 +743,107 @@ func (c *GRPCClient) GetStream(ctx context.Context, key string) (io.ReadCloser, 
 	return pr, streamMeta, nil
 }
 
-// PutStream stores an object from an io.Reader using buffered reads, then
-// delegates to the standard unary Put call.  gRPC client-streaming upload is
-// not exposed by the generated proto, so we buffer and call Put.
+// grpcPutChunkSize is the size of the data chunks PutStream sends: 1 MiB less
+// 1 KiB of headroom for the message framing, so a chunk message fits the
+// smallest receive limit the server accepts (1 MiB).
+const grpcPutChunkSize = 1<<20 - 1<<10
+
+// PutStream stores an object from an io.Reader over the PutStream RPC: a
+// header message with key and metadata, then chunks of grpcPutChunkSize read
+// from r, so only one chunk is held in memory and the object may exceed the
+// server's message size limit. size is advisory and may be -1. A read error
+// or a cancelled ctx aborts the stream and the server stores nothing. The
+// call is not retried, since r cannot be replayed. Against a server without
+// PutStream (Unimplemented, detected before r is read) it reads r whole and
+// falls back to the unary Put.
 func (c *GRPCClient) PutStream(ctx context.Context, key string, r io.Reader, size int64, meta *Metadata) (*PutResult, error) {
 	if err := validateKey(key); err != nil {
 		return nil, err
 	}
-	data, err := io.ReadAll(r)
+
+	ctx, cancel := context.WithCancel(c.outgoingCtx(ctx))
+	defer cancel()
+
+	stream, err := c.client.PutStream(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("read stream: %w", err)
+		return nil, wrapGRPCError("put operation failed", err)
 	}
-	return c.Put(ctx, key, data, meta)
+	if err := stream.Send(&objstorepb.PutStreamRequest{
+		Payload: &objstorepb.PutStreamRequest_Header{Header: &objstorepb.PutStreamHeader{
+			Key:      key,
+			Metadata: metadataToProto(meta),
+		}},
+	}); err != nil && err != io.EOF {
+		return nil, wrapGRPCError("put operation failed", err)
+	}
+
+	// The server sends its response headers once it accepts the header
+	// message; without them the stream already ended.
+	if md, herr := stream.Header(); herr != nil || md == nil {
+		_, err := stream.CloseAndRecv()
+		if err == nil {
+			err = herr
+		}
+		if status.Code(err) == codes.Unimplemented {
+			data, rerr := io.ReadAll(r)
+			if rerr != nil {
+				return nil, fmt.Errorf("read stream: %w", rerr)
+			}
+			return c.Put(ctx, key, data, meta)
+		}
+		return nil, wrapGRPCError("put operation failed", err)
+	}
+
+	for {
+		buf := make([]byte, grpcPutChunkSize) // gRPC forbids reusing a sent message
+		n, rerr := fillChunk(r, buf)
+		if rerr != nil && rerr != io.EOF {
+			// Returning cancels the stream, so the server stores nothing.
+			return nil, fmt.Errorf("read stream: %w", rerr)
+		}
+		if n > 0 {
+			if err := stream.Send(&objstorepb.PutStreamRequest{
+				Payload: &objstorepb.PutStreamRequest_Chunk{Chunk: buf[:n]},
+			}); err != nil {
+				if err == io.EOF {
+					// The server ended the stream; CloseAndRecv has its status.
+					if _, cerr := stream.CloseAndRecv(); cerr != nil {
+						err = cerr
+					}
+				}
+				return nil, wrapGRPCError("put operation failed", err)
+			}
+		}
+		if rerr == io.EOF {
+			break
+		}
+	}
+
+	resp, err := stream.CloseAndRecv()
+	if err != nil {
+		return nil, wrapGRPCError("put operation failed", err)
+	}
+	return &PutResult{
+		Success: resp.Success,
+		Message: resp.Message,
+		ETag:    resp.Etag,
+	}, nil
+}
+
+// fillChunk reads from r until buf is full or r returns an error. Only
+// io.EOF ends the data: it is returned with the bytes read before it. Any
+// other error, io.ErrUnexpectedEOF from the source included, is returned
+// as is, so the caller aborts the put instead of storing a short object.
+func fillChunk(r io.Reader, buf []byte) (int, error) {
+	n := 0
+	for n < len(buf) {
+		m, err := r.Read(buf[n:])
+		n += m
+		if err != nil {
+			return n, err
+		}
+	}
+	return n, nil
 }
 
 // Close closes the gRPC connection.  Idempotent: subsequent calls return nil.

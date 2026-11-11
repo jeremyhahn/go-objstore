@@ -47,6 +47,8 @@ type Config struct {
 	// Auth, when set, makes every enabled listener authenticate and
 	// authorize its clients (see auth.go). Empty keeps NoOp auth.
 	Auth AuthConfig `mapstructure:"auth"`
+
+	Replication ReplicationConfig `mapstructure:"replication"`
 }
 
 // Bounds of grpc.max_recv_msg_size and grpc.max_send_msg_size. Below 1 MiB a

@@ -45,7 +45,7 @@ func putIntoLocalBackend(t *testing.T, path, key string, data []byte) {
 
 func TestSyncAll_ResultSyncedAccumulation(t *testing.T) {
 	mfs := newMockFileSystem()
-	mgr, err := NewPersistentReplicationManager(mfs, "p.json", time.Minute,
+	mgr, err := newLocalTestManager(mfs, "p.json", time.Minute,
 		adapters.NewNoOpLogger(), auditlog.NewNoOpAuditLogger())
 	require.NoError(t, err)
 
@@ -76,7 +76,7 @@ func TestSyncAll_ResultSyncedAccumulation(t *testing.T) {
 // SyncAll: mixed enabled/disabled policies – disabled skipped, enabled synced.
 func TestSyncAll_MixedEnabledDisabled_Gap(t *testing.T) {
 	mfs := newMockFileSystem()
-	mgr, err := NewPersistentReplicationManager(mfs, "p.json", time.Minute,
+	mgr, err := newLocalTestManager(mfs, "p.json", time.Minute,
 		adapters.NewNoOpLogger(), auditlog.NewNoOpAuditLogger())
 	require.NoError(t, err)
 
@@ -117,7 +117,7 @@ func TestSyncAll_MixedEnabledDisabled_Gap(t *testing.T) {
 
 func TestSyncAllParallel_SuccessPath_Gap(t *testing.T) {
 	mfs := newMockFileSystem()
-	mgr, err := NewPersistentReplicationManager(mfs, "p.json", time.Minute,
+	mgr, err := newLocalTestManager(mfs, "p.json", time.Minute,
 		adapters.NewNoOpLogger(), auditlog.NewNoOpAuditLogger())
 	require.NoError(t, err)
 
@@ -148,7 +148,7 @@ func TestSyncAllParallel_SuccessPath_Gap(t *testing.T) {
 // from the failed policy are accumulated into totalResult.
 func TestSyncAllParallel_MixedPolicies_Gap(t *testing.T) {
 	mfs := newMockFileSystem()
-	mgr, err := NewPersistentReplicationManager(mfs, "p.json", time.Minute,
+	mgr, err := newLocalTestManager(mfs, "p.json", time.Minute,
 		adapters.NewNoOpLogger(), auditlog.NewNoOpAuditLogger())
 	require.NoError(t, err)
 
@@ -187,7 +187,7 @@ func TestSyncAllParallel_MixedPolicies_Gap(t *testing.T) {
 // SyncAllParallel: disabled policy is skipped.
 func TestSyncAllParallel_DisabledSkipped_Gap(t *testing.T) {
 	mfs := newMockFileSystem()
-	mgr, err := NewPersistentReplicationManager(mfs, "p.json", time.Minute,
+	mgr, err := newLocalTestManager(mfs, "p.json", time.Minute,
 		adapters.NewNoOpLogger(), auditlog.NewNoOpAuditLogger())
 	require.NoError(t, err)
 
@@ -219,7 +219,7 @@ func TestSyncAllParallel_DisabledSkipped_Gap(t *testing.T) {
 
 func TestSyncAllParallel_SubResultErrorsPropagated(t *testing.T) {
 	mfs := newMockFileSystem()
-	mgr, err := NewPersistentReplicationManager(mfs, "p.json", time.Minute,
+	mgr, err := newLocalTestManager(mfs, "p.json", time.Minute,
 		adapters.NewNoOpLogger(), auditlog.NewNoOpAuditLogger())
 	require.NoError(t, err)
 
@@ -253,7 +253,7 @@ func TestSyncAllParallel_SubResultErrorsPropagated(t *testing.T) {
 
 func TestRun_TickerSyncCompleted(t *testing.T) {
 	mfs := newMockFileSystem()
-	mgr, err := NewPersistentReplicationManager(mfs, "p.json", 15*time.Millisecond,
+	mgr, err := newLocalTestManager(mfs, "p.json", 15*time.Millisecond,
 		adapters.NewNoOpLogger(), auditlog.NewNoOpAuditLogger())
 	require.NoError(t, err)
 

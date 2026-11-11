@@ -48,17 +48,22 @@ func (g *GCS) PutWithMetadata(ctx context.Context, key string, data io.Reader, m
 }
 
 // GetWithContext retrieves an object from the backend with context support.
+// A missing key returns an error that wraps common.ErrKeyNotFound.
 func (g *GCS) GetWithContext(ctx context.Context, key string) (io.ReadCloser, error) {
 	if err := common.ValidateKey(key); err != nil {
 		return nil, err
 	}
-	obj := g.client.Bucket(g.bucket).Object(key)
-	return obj.NewReader(ctx)
+	r, err := g.client.Bucket(g.bucket).Object(key).NewReader(ctx)
+	if err != nil {
+		return nil, objectError(err, key)
+	}
+	return r, nil
 }
 
 // GetMetadata retrieves only the metadata for an object.
 // It performs a best-effort Attrs call to populate Size and ContentType;
-// callers are guaranteed a non-nil *common.Metadata on success.
+// callers are guaranteed a non-nil *common.Metadata on success. A missing key
+// returns an error that wraps common.ErrKeyNotFound.
 func (g *GCS) GetMetadata(ctx context.Context, key string) (*common.Metadata, error) {
 	if err := common.ValidateKey(key); err != nil {
 		return nil, err
@@ -66,6 +71,9 @@ func (g *GCS) GetMetadata(ctx context.Context, key string) (*common.Metadata, er
 	meta := &common.Metadata{}
 	obj := g.client.Bucket(g.bucket).Object(key)
 	attrs, err := obj.Attrs(ctx)
+	if errors.Is(err, storage.ErrObjectNotExist) {
+		return nil, objectError(err, key)
+	}
 	if err != nil {
 		// Return the empty struct rather than nil so callers never dereference nil.
 		return meta, nil

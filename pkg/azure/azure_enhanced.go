@@ -51,12 +51,16 @@ func (a *Azure) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 }
 
 // GetWithContext retrieves an object from the backend with context support.
+// A missing key returns an error that wraps common.ErrKeyNotFound.
 func (a *Azure) GetWithContext(ctx context.Context, key string) (io.ReadCloser, error) {
 	if err := common.ValidateKey(key); err != nil {
 		return nil, err
 	}
-	blob := a.container.NewBlockBlob(key)
-	return blob.NewReader(ctx)
+	r, err := a.container.NewBlockBlob(key).NewReader(ctx)
+	if err != nil {
+		return nil, mapNotFound(err, key)
+	}
+	return r, nil
 }
 
 // GetMetadata retrieves only the metadata for an object.

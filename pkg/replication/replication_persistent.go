@@ -16,6 +16,7 @@ package replication
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"sync"
@@ -81,6 +82,10 @@ type PersistentReplicationManager struct {
 	// credentials supplies each target's protected credential handle at sync
 	// time. It is never persisted; nil selects the SDK default chain.
 	credentials CredentialProvider
+
+	// allowClientLocalBackends permits policies whose backend type takes a
+	// filesystem path. False (the default) refuses them.
+	allowClientLocalBackends bool
 
 	// Encryption factories per policy
 	backendFactories map[string]common.EncrypterFactory
@@ -177,6 +182,9 @@ func (prm *PersistentReplicationManager) AddPolicy(policy common.ReplicationPoli
 		return err
 	}
 	if err := common.RejectCredentialSettings(policy.DestinationSettings); err != nil {
+		return err
+	}
+	if err := prm.checkPolicyBackends(policy); err != nil {
 		return err
 	}
 
@@ -640,6 +648,17 @@ func (prm *PersistentReplicationManager) load() error {
 	var data persistedPolicies
 	if err := json.Unmarshal(jsonData, &data); err != nil {
 		return err
+	}
+
+	// Refuse the whole file if any policy names a filesystem backend the
+	// manager does not allow: the error names the policy ID.
+	for id, policy := range data.Policies {
+		if policy.ID == "" {
+			policy.ID = id
+		}
+		if err := prm.checkPolicyBackends(policy); err != nil {
+			return fmt.Errorf("load replication policy file %s: %w", prm.policyFile, err)
+		}
 	}
 
 	// Load policies into the map

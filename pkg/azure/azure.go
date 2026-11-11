@@ -322,7 +322,8 @@ func (a *Azure) Put(key string, data io.Reader) error {
 	return blob.UploadFromReader(context.Background(), data)
 }
 
-// Get retrieves an object from the backend.
+// Get retrieves an object from the backend. A missing key returns an error
+// that wraps common.ErrKeyNotFound.
 func (a *Azure) Get(key string) (io.ReadCloser, error) {
 	if a.container == nil {
 		return nil, common.ErrNotConfigured
@@ -330,8 +331,11 @@ func (a *Azure) Get(key string) (io.ReadCloser, error) {
 	if err := common.ValidateKey(key); err != nil {
 		return nil, err
 	}
-	blob := a.container.NewBlockBlob(key)
-	return blob.NewReader(context.Background())
+	r, err := a.container.NewBlockBlob(key).NewReader(context.Background())
+	if err != nil {
+		return nil, mapNotFound(err, key)
+	}
+	return r, nil
 }
 
 // Delete removes an object from the backend.

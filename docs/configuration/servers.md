@@ -89,6 +89,7 @@ table notes one.
 | `auth.client_ca` | `OBJSTORE_AUTH_CLIENT_CA` | — | — | — |
 | `auth.roles` | file only | — | — | — |
 | `auth.identities` | file only | — | — | — |
+| `replication.allow_client_local_backends` | `OBJSTORE_REPLICATION_ALLOW_CLIENT_LOCAL_BACKENDS` | `false` | `-replication-allow-client-local-backends` | `-replication-allow-client-local-backends` (all) |
 
 `tls_cert` and `tls_key` are set together or not at all, on every listener.
 On REST and MCP HTTP they serve TLS; without `auth` the listener asks for no
@@ -105,6 +106,16 @@ Rate limiting and audit logging apply to every transport a binary serves,
 standalone or combined, with one audit logger per process. Audit records go to
 standard output, or to standard error when `mcp.mode` is `stdio`, where standard
 output carries the JSON-RPC stream.
+
+A replication policy's source and destination backend type and settings come
+from the client, so a backend whose settings take a filesystem path (`local`)
+could read or write any directory the service user can reach. By default the
+server refuses such a policy: adding one answers invalid argument (HTTP 400 on
+REST and QUIC, `InvalidArgument` on gRPC, a tool error on MCP), and a
+replication policy file that already holds one fails to load, with an error
+naming the policy ID. Set `replication.allow_client_local_backends: true` only
+when every client that may add a policy is trusted with the service user's
+filesystem access.
 
 `objstore-server` applies the QUIC body-size, timeout and stream-limit keys too;
 they have no flag on that binary but are set through the file or environment.

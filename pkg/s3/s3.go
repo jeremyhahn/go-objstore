@@ -147,7 +147,8 @@ func (s *S3) Put(key string, data io.Reader) error {
 	return err
 }
 
-// Get retrieves an object from the backend.
+// Get retrieves an object from the backend. A missing key returns an error
+// that wraps common.ErrKeyNotFound.
 func (s *S3) Get(key string) (io.ReadCloser, error) {
 	if err := common.ValidateKey(key); err != nil {
 		return nil, err
@@ -157,7 +158,7 @@ func (s *S3) Get(key string) (io.ReadCloser, error) {
 		Key:    aws.String(key),
 	})
 	if err != nil {
-		return nil, err
+		return nil, objectError(err, key)
 	}
 	return result.Body, nil
 }
