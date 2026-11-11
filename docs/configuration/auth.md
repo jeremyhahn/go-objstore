@@ -45,7 +45,10 @@ and split at dots, which would change certificate names such as
 ## Identities
 
 - **gRPC, REST, QUIC, MCP HTTP**: the identity is the common name (CN) of the
-  verified client certificate.
+  verified client certificate, matched exactly (case and all) against
+  `subject`. Subject alternative names are not read, and no revocation check
+  (CRL or OCSP) is made: to withdraw a certificate, remove its identity or
+  replace `auth.client_ca`.
 - **Unix socket**: the identity is `uid:N`, where `N` is the peer's user id read
   from the socket (`SO_PEERCRED`, Linux). The peer's OS group grants no role.
 - **MCP stdio**: there is no credential on the stream; the identity is
@@ -53,6 +56,40 @@ and split at dots, which would change certificate names such as
 
 A certificate whose CN has the form `uid:N` gets no roles: a `uid:N` subject
 only matches a local user, never a certificate.
+
+## Actions
+
+A role grants actions only. It has no bucket, prefix or key scope: an
+identity with `write` may write any key, and one with `delete` may delete
+any key. `write` covers both creating an object and overwriting an existing
+one, and updating its metadata.
+
+On REST the action comes from the matched route and the HTTP method, never
+from the request path, so an object key such as `a/metadata/b` or
+`x/archive/y` needs the same action as any other key. A request that matches
+no route is refused. Both route sets, with and without the `/api/v1` prefix,
+need the same actions:
+
+| REST endpoint | Action |
+|---------------|--------|
+| `GET /objects` | `list` |
+| `GET`, `HEAD /objects/*key` | `read` |
+| `PUT /objects/*key` | `write` |
+| `DELETE /objects/*key` | `delete` |
+| `HEAD /exists/*key` | `read` |
+| `GET /metadata/*key` | `read` |
+| `PUT /metadata/*key` | `write` |
+| `POST /archive` | `admin` |
+| `GET`, `POST /policies`, `DELETE /policies/*id`, `POST /policies/apply` | `admin` |
+| every `/replication/...` route | `admin` |
+| `GET /metrics` | `read` (none when the metrics endpoint is public) |
+| `GET /health` | none (no authentication) |
+| `GET /swagger/*any` | none (authentication only) |
+
+gRPC maps each method by name: `Get`, `GetMetadata` and `Exists` need
+`read`; `Put`, `PutStream` and `UpdateMetadata` `write`; `Delete` `delete`;
+`List` `list`; `Archive` and every lifecycle and replication policy method
+`admin`. A method not in that list needs `admin`.
 
 ## Fail-closed rules
 
@@ -65,7 +102,12 @@ once, when:
 - `auth.roles` is empty, a role lists no action, or lists an unknown action;
 - an identity has an empty or duplicate `subject`, a `uid:N` subject whose `N`
   is not a non-negative integer, no roles, or a role not defined in
-  `auth.roles`.
+  `auth.roles`;
+- an identity's `subject` is `anonymous`, the principal a transport gives a
+  peer it cannot identify;
+- a listener's TLS settings fail to build (for example `auth.client_ca`
+  cannot be read): the listener returns the error instead of serving without
+  TLS.
 
 At run time:
 
