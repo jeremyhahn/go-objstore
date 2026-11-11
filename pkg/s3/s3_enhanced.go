@@ -18,6 +18,7 @@ package s3
 import (
 	"context"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
@@ -106,12 +107,15 @@ func (s *S3) GetMetadata(ctx context.Context, key string) (*common.Metadata, err
 		metadata.ContentEncoding = aws.StringValue(result.ContentEncoding)
 	}
 
-	// Convert S3 metadata to custom metadata
+	// Convert S3 metadata to custom metadata. The SDK returns user metadata
+	// keys in canonical header case (x-amz-meta-encryption_key_id comes back
+	// as Encryption_key_id), and S3 stores them lowercased, so lowercasing
+	// gives callers the names that were written.
 	if len(result.Metadata) > 0 {
 		metadata.Custom = make(map[string]string)
 		for k, v := range result.Metadata {
 			if v != nil {
-				metadata.Custom[k] = *v
+				metadata.Custom[strings.ToLower(k)] = *v
 			}
 		}
 	}

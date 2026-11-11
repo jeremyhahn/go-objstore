@@ -286,6 +286,43 @@ func TestS3_GetMetadata_Error(t *testing.T) {
 	}
 }
 
+// TestS3_GetMetadata_LowercasesCustomKeys covers #245: the SDK returns user
+// metadata keys in canonical header case (x-amz-meta-encryption_key_id comes
+// back as Encryption_key_id), so GetMetadata lowercases them to give callers
+// the names that were written.
+func TestS3_GetMetadata_LowercasesCustomKeys(t *testing.T) {
+	mockS3 := &mockS3Client{
+		headObjectOutput: &s3.HeadObjectOutput{
+			ContentLength: aws.Int64(1),
+			Metadata: map[string]*string{
+				"Encryption_key_id":    aws.String("key-2"),
+				"Encryption_algorithm": aws.String("AES-256-GCM"),
+				"Author":               aws.String("test"),
+			},
+		},
+	}
+
+	s := &S3{svc: mockS3, bucket: "test-bucket"}
+
+	metadata, err := s.GetMetadata(context.Background(), "key")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	want := map[string]string{
+		"encryption_key_id":    "key-2",
+		"encryption_algorithm": "AES-256-GCM",
+		"author":               "test",
+	}
+	if len(metadata.Custom) != len(want) {
+		t.Fatalf("expected %d custom entries, got %v", len(want), metadata.Custom)
+	}
+	for k, v := range want {
+		if got, ok := metadata.Custom[k]; !ok || got != v {
+			t.Errorf("Custom[%q] = %q (present %v), want %q", k, got, ok, v)
+		}
+	}
+}
+
 // TestS3_UpdateMetadata tests metadata update
 func TestS3_UpdateMetadata(t *testing.T) {
 	mockS3 := &mockS3Client{

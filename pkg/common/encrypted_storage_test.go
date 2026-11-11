@@ -803,6 +803,66 @@ func TestEncryptedStorage_UpdateMetadata_KeepsKeyIDAcrossKeyChange(t *testing.T)
 	}
 }
 
+// TestEncryptedStorage_UpdateMetadata_EncryptionFieldsAnyCase covers #245: the
+// encryption_ entries are matched whatever their case, so a caller cannot
+// slip in Encryption_key_id (which S3 stores as encryption_key_id), and a
+// backend that returns the stored entries in another case still has them
+// carried over.
+func TestEncryptedStorage_UpdateMetadata_EncryptionFieldsAnyCase(t *testing.T) {
+	ctx := context.Background()
+	underlying := newMockUnderlyingStorage()
+
+	writerA := NewEncryptedStorage(underlying, newKeyedFactory("keyA"))
+	if err := writerA.PutWithMetadata(ctx, "obj", bytes.NewReader([]byte("secret")), &Metadata{}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	update := &Metadata{Custom: map[string]string{
+		"owner":                "alice",
+		"Encryption_key_id":    "keyB",
+		"ENCRYPTION_ALGORITHM": "forged",
+	}}
+	if err := writerA.UpdateMetadata(ctx, "obj", update); err != nil {
+		t.Fatalf("UpdateMetadata: %v", err)
+	}
+	md, err := underlying.GetMetadata(ctx, "obj")
+	if err != nil {
+		t.Fatalf("GetMetadata: %v", err)
+	}
+	want := map[string]string{
+		"owner":                "alice",
+		"encryption_key_id":    "keyA",
+		"encryption_algorithm": "test-keyed",
+	}
+	if len(md.Custom) != len(want) {
+		t.Fatalf("custom metadata = %v, want %v", md.Custom, want)
+	}
+	for k, v := range want {
+		if md.Custom[k] != v {
+			t.Errorf("Custom[%q] = %q, want %q", k, md.Custom[k], v)
+		}
+	}
+
+	// The backend returns the stored entries capitalised: they are still
+	// recognised and carried over.
+	if err := underlying.UpdateMetadata(ctx, "obj", &Metadata{Custom: map[string]string{
+		"Encryption_key_id":    "keyA",
+		"Encryption_algorithm": "test-keyed",
+	}}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := writerA.UpdateMetadata(ctx, "obj", &Metadata{Custom: map[string]string{"owner": "bob"}}); err != nil {
+		t.Fatalf("UpdateMetadata: %v", err)
+	}
+	md, err = underlying.GetMetadata(ctx, "obj")
+	if err != nil {
+		t.Fatalf("GetMetadata: %v", err)
+	}
+	if md.Custom["Encryption_key_id"] != "keyA" || md.Custom["Encryption_algorithm"] != "test-keyed" || md.Custom["owner"] != "bob" {
+		t.Errorf("custom metadata after update = %v", md.Custom)
+	}
+}
+
 func TestEncryptedStorage_UpdateMetadata_MissingObject(t *testing.T) {
 	storage := NewEncryptedStorage(newMockUnderlyingStorage(), newKeyedFactory("keyA"))
 	err := storage.UpdateMetadata(context.Background(), "missing", &Metadata{ContentType: "text/plain"})
