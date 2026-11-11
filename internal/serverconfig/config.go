@@ -44,6 +44,7 @@ type Config struct {
 	Unix      UnixConfig      `mapstructure:"unix"`
 	RateLimit RateLimitConfig `mapstructure:"rate_limit"`
 	Audit     AuditConfig     `mapstructure:"audit"`
+	Archive   ArchiveConfig   `mapstructure:"archive"`
 }
 
 // Bounds of grpc.max_recv_msg_size and grpc.max_send_msg_size. Below 1 MiB a
@@ -110,6 +111,16 @@ type RateLimitConfig struct {
 // AuditConfig configures audit logging shared by every transport.
 type AuditConfig struct {
 	Enabled bool `mapstructure:"enabled"`
+}
+
+// ArchiveConfig holds the settings for archive calls and lifecycle policies
+// that name a destination archiver.
+type ArchiveConfig struct {
+	// AllowClientLocalDestinations lets a client name a local (filesystem
+	// path) archiver as an archive or lifecycle-policy destination. Off by
+	// default: the client would choose a directory the service user writes
+	// into.
+	AllowClientLocalDestinations bool `mapstructure:"allow_client_local_destinations"`
 }
 
 // Defaults is the defaults layer. Every listen address is taken from the

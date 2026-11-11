@@ -102,6 +102,11 @@ type ServerOptions struct {
 	// If empty, the default backend is used. This is only used when
 	// the server is created with NewServerWithFacade.
 	Backend string
+
+	// AllowClientLocalArchiveDestinations lets an archive call or a lifecycle
+	// policy name a local (filesystem path) archiver. Off by default: the
+	// client would choose a directory the service user writes into.
+	AllowClientLocalArchiveDestinations bool
 }
 
 const (
@@ -310,6 +315,14 @@ func WithAuditLogger(logger auditlog.AuditLogger) ServerOption {
 func WithAudit(enable bool) ServerOption {
 	return func(o *ServerOptions) {
 		o.EnableAudit = enable
+	}
+}
+
+// WithAllowClientLocalArchiveDestinations sets whether an archive call or a
+// lifecycle policy may name a local (filesystem path) archiver. Default false.
+func WithAllowClientLocalArchiveDestinations(allow bool) ServerOption {
+	return func(o *ServerOptions) {
+		o.AllowClientLocalArchiveDestinations = allow
 	}
 }
 

@@ -90,6 +90,7 @@ func (c *Config) GRPCOptions(mw Middleware) ([]grpcserver.ServerOption, error) {
 		grpcserver.WithMaxSendMessageSize(c.GRPC.MaxSendMsgSize),
 		grpcserver.WithRateLimit(mw.RateLimit, mw.RateLimitConfig),
 		grpcserver.WithAudit(mw.Audit),
+		grpcserver.WithAllowClientLocalArchiveDestinations(c.Archive.AllowClientLocalDestinations),
 	}
 	if mw.AuditLogger != nil {
 		opts = append(opts, grpcserver.WithAuditLogger(mw.AuditLogger))
@@ -117,6 +118,7 @@ func (c *Config) RESTServerConfig(mw Middleware) *restserver.ServerConfig {
 	sc.Host = c.REST.Host
 	sc.Port = c.REST.Port
 	sc.MetricsPublic = c.REST.MetricsPublic
+	sc.AllowClientLocalArchiveDestinations = c.Archive.AllowClientLocalDestinations
 	sc.EnableRateLimit = mw.RateLimit
 	sc.RateLimitConfig = mw.RateLimitConfig
 	sc.EnableAudit = mw.Audit

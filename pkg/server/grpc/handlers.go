@@ -336,7 +336,7 @@ func (s *Server) Archive(ctx context.Context, req *objstorepb.ArchiveRequest) (*
 	}
 
 	// Create archiver from factory
-	archiver, err := createArchiver(req.DestinationType, req.DestinationSettings)
+	archiver, err := createArchiver(req.DestinationType, req.DestinationSettings, s.wireOptions())
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -378,7 +378,7 @@ func (s *Server) AddPolicy(ctx context.Context, req *objstorepb.AddPolicyRequest
 	}
 
 	// Convert proto policy to common.LifecyclePolicy
-	policy, err := protoToLifecyclePolicy(req.Policy)
+	policy, err := protoToLifecyclePolicy(req.Policy, s.wireOptions())
 	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -619,7 +619,7 @@ func hasPrefix(s, prefix string) bool {
 }
 
 // protoToLifecyclePolicy converts proto LifecyclePolicy to common.LifecyclePolicy.
-func protoToLifecyclePolicy(p *objstorepb.LifecyclePolicy) (*common.LifecyclePolicy, error) {
+func protoToLifecyclePolicy(p *objstorepb.LifecyclePolicy, opts factory.WireOptions) (*common.LifecyclePolicy, error) {
 	if p == nil {
 		return nil, common.ErrPolicyNil
 	}
@@ -635,7 +635,7 @@ func protoToLifecyclePolicy(p *objstorepb.LifecyclePolicy) (*common.LifecyclePol
 		if p.DestinationType == "" {
 			return nil, common.ErrDestinationTypeRequired
 		}
-		archiver, err := createArchiver(p.DestinationType, p.DestinationSettings)
+		archiver, err := createArchiver(p.DestinationType, p.DestinationSettings, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -662,6 +662,14 @@ func lifecyclePolicyToProto(p *common.LifecyclePolicy) *objstorepb.LifecyclePoli
 }
 
 // createArchiver creates an archiver from factory based on destination type.
-func createArchiver(destinationType string, settings map[string]string) (common.Archiver, error) {
-	return factory.NewArchiverFromWire(destinationType, settings)
+func createArchiver(destinationType string, settings map[string]string, opts factory.WireOptions) (common.Archiver, error) {
+	return factory.NewArchiverFromWireOpts(destinationType, settings, opts)
+}
+
+// wireOptions returns how this server treats archiver settings a client sent.
+func (s *Server) wireOptions() factory.WireOptions {
+	if s == nil || s.opts == nil {
+		return factory.WireOptions{}
+	}
+	return factory.WireOptions{AllowLocalDestinations: s.opts.AllowClientLocalArchiveDestinations}
 }

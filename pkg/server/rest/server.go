@@ -27,6 +27,7 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/audit"
 	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
+	"github.com/jeremyhahn/go-objstore/pkg/factory"
 	"github.com/jeremyhahn/go-objstore/pkg/server/middleware"
 )
 
@@ -134,6 +135,11 @@ type ServerConfig struct {
 	// The default (false) requires Prometheus scrapers to present credentials
 	// accepted by the configured authorizer.
 	MetricsPublic bool
+
+	// AllowClientLocalArchiveDestinations lets an archive call or a lifecycle
+	// policy name a local (filesystem path) archiver. Off by default: the
+	// client would choose a directory the service user writes into.
+	AllowClientLocalArchiveDestinations bool
 }
 
 // DefaultServerConfig returns a ServerConfig with sensible defaults
@@ -266,6 +272,7 @@ func NewServer(storage common.Storage, config *ServerConfig) (*Server, error) {
 	if err != nil {
 		return nil, &HandlerInitError{Err: err}
 	}
+	handler.wireOpts = factory.WireOptions{AllowLocalDestinations: config.AllowClientLocalArchiveDestinations}
 
 	// Setup routes
 	SetupRoutes(router, handler)

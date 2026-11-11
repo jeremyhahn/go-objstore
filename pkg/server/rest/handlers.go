@@ -46,7 +46,8 @@ const keyField = "key"
 
 // Handler handles REST API requests using the ObjstoreFacade
 type Handler struct {
-	backend string // Backend name (empty = default)
+	backend  string              // Backend name (empty = default)
+	wireOpts factory.WireOptions // how archiver settings a client sent are treated
 }
 
 // NewHandler creates a new Handler instance.
@@ -480,7 +481,7 @@ func (h *Handler) Archive(c *gin.Context) {
 	}
 
 	// Create archiver from factory
-	archiver, err := createArchiver(req.DestinationType, req.DestinationSettings)
+	archiver, err := createArchiver(req.DestinationType, req.DestinationSettings, h.wireOpts)
 	if err != nil {
 		RespondWithError(c, http.StatusBadRequest, "failed to create archiver: "+common.SanitizeErrorMessage(err))
 		return
@@ -549,7 +550,7 @@ func (h *Handler) AddPolicy(c *gin.Context) {
 			RespondWithError(c, http.StatusBadRequest, "destination_type required for archive action")
 			return
 		}
-		archiver, err := createArchiver(req.DestinationType, req.DestinationSettings)
+		archiver, err := createArchiver(req.DestinationType, req.DestinationSettings, h.wireOpts)
 		if err != nil {
 			RespondWithError(c, http.StatusBadRequest, "failed to create archiver: "+common.SanitizeErrorMessage(err))
 			return
@@ -744,8 +745,8 @@ func extractPrincipal(c *gin.Context) (principal string, userID string) {
 }
 
 // createArchiver creates an archiver from factory based on destination type
-func createArchiver(destinationType string, settings map[string]string) (common.Archiver, error) {
-	return factory.NewArchiverFromWire(destinationType, settings)
+func createArchiver(destinationType string, settings map[string]string, opts factory.WireOptions) (common.Archiver, error) {
+	return factory.NewArchiverFromWireOpts(destinationType, settings, opts)
 }
 
 // hasPrefix checks if a string starts with the given prefix

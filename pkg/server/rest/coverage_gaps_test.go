@@ -303,6 +303,7 @@ func TestAddPolicyMissingIDAndAction(t *testing.T) {
 func TestAddPolicyArchiveDestination(t *testing.T) {
 	storage := newMockLifecycleStorage()
 	handler := newTestHandler(t, storage)
+	handler.wireOpts = allowLocalArchive
 
 	router := gin.New()
 	router.POST("/policies", handler.AddPolicy)
