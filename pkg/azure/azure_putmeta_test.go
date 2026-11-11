@@ -61,13 +61,40 @@ func TestAzure_PutWithMetadata_PersistsMetadata(t *testing.T) {
 	}
 }
 
-func TestAzure_PutWithMetadata_SetMetadataError(t *testing.T) {
-	errSet := errors.New("set metadata failed")
-	c := memContainer{blobs: map[string]*memBlob{"key": {setMetaErr: errSet}}}
-	a := &Azure{container: c}
+// Payload, custom metadata and headers go up in one request: there is no
+// window where the blob holds the new bytes without its metadata, and no
+// separate metadata request that could land on another writer's blob.
+func TestAzure_PutWithMetadata_OneUploadCarriesAll(t *testing.T) {
+	b := &memBlob{}
+	a := &Azure{container: memContainer{blobs: map[string]*memBlob{"key": b}}}
+	err := a.PutWithMetadata(context.Background(), "key", bytes.NewBufferString("data"), &common.Metadata{
+		ContentType:     "text/plain",
+		ContentEncoding: "gzip",
+		Custom:          map[string]string{"replication_source_etag": "e"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.calls) != 1 || b.calls[0] != "uploadWithMetadata" {
+		t.Fatalf("calls = %v, want one uploadWithMetadata", b.calls)
+	}
+	if string(b.data) != "data" || b.meta["replication_source_etag"] != "e" ||
+		b.headers.ContentType != "text/plain" || b.headers.ContentEncoding != "gzip" {
+		t.Fatalf("stored %q %v %+v", b.data, b.meta, b.headers)
+	}
+}
+
+// A rejected upload (bad headers included) stores nothing, so no
+// fingerprint names bytes that are not there.
+func TestAzure_PutWithMetadata_FailedUploadLeavesNoFingerprint(t *testing.T) {
+	errUp := errors.New("invalid header value")
+	a := &Azure{container: memContainer{blobs: map[string]*memBlob{"key": {upErr: errUp}}}}
 	err := a.PutWithMetadata(context.Background(), "key", bytes.NewBufferString("d"),
-		&common.Metadata{Custom: map[string]string{"k": "v"}})
-	if !errors.Is(err, errSet) {
-		t.Fatalf("got %v, want the SetMetadata error", err)
+		&common.Metadata{ContentType: "bad\n", Custom: map[string]string{"replication_source_etag": "e"}})
+	if !errors.Is(err, errUp) {
+		t.Fatalf("got %v, want the upload error", err)
+	}
+	if md, err := a.GetMetadata(context.Background(), "key"); err == nil && md.Custom["replication_source_etag"] != "" {
+		t.Fatalf("fingerprint stored after a failed upload: %v", md.Custom)
 	}
 }

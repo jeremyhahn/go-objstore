@@ -53,6 +53,9 @@ type BlobProperties struct {
 // Small internal interfaces for testability without network.
 type BlobAPI interface {
 	UploadFromReader(ctx context.Context, r io.Reader) error
+	// UploadWithMetadata stores the payload, custom metadata and headers
+	// in one upload.
+	UploadWithMetadata(ctx context.Context, r io.Reader, metadata map[string]string, headers azblob.BlobHTTPHeaders) error
 	NewReader(ctx context.Context) (io.ReadCloser, error)
 	Delete(ctx context.Context) error
 	GetProperties(ctx context.Context) (*BlobProperties, error)
@@ -83,6 +86,13 @@ var (
 var (
 	azureUploadFn = func(ctx context.Context, r io.Reader, b azblob.BlockBlobURL) error {
 		_, err := azblob.UploadStreamToBlockBlob(ctx, r, b, azblob.UploadStreamToBlockBlobOptions{})
+		return err
+	}
+	azureUploadWithMetadataFn = func(ctx context.Context, r io.Reader, b azblob.BlockBlobURL, metadata map[string]string, headers azblob.BlobHTTPHeaders) error {
+		_, err := azblob.UploadStreamToBlockBlob(ctx, r, b, azblob.UploadStreamToBlockBlobOptions{
+			Metadata:        azblob.Metadata(metadata),
+			BlobHTTPHeaders: headers,
+		})
 		return err
 	}
 	azureDownloadFn = func(ctx context.Context, b azblob.BlockBlobURL) (io.ReadCloser, error) {
@@ -152,6 +162,10 @@ func (c containerWrapper) ListBlobsFlat(ctx context.Context, prefix string) ([]s
 
 func (b blobWrapper) UploadFromReader(ctx context.Context, r io.Reader) error {
 	return azureUploadFn(ctx, r, b.BlockBlobURL)
+}
+
+func (b blobWrapper) UploadWithMetadata(ctx context.Context, r io.Reader, metadata map[string]string, headers azblob.BlobHTTPHeaders) error {
+	return azureUploadWithMetadataFn(ctx, r, b.BlockBlobURL, metadata, headers)
 }
 func (b blobWrapper) NewReader(ctx context.Context) (io.ReadCloser, error) {
 	return azureDownloadFn(ctx, b.BlockBlobURL)

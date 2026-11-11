@@ -40,15 +40,19 @@ func TestGCS_PutWithMetadata_PersistsMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	u := objs["key"].updated
-	if u == nil {
-		t.Fatal("metadata not stored")
+	o := objs["key"]
+	if o.updated != nil {
+		t.Fatal("a separate attribute update was made")
 	}
-	if u.Metadata["replication_source_etag"] != "e" || u.Metadata["owner"] != "alice" {
-		t.Errorf("custom metadata not stored: %v", u.Metadata)
+	a := o.attrs
+	if a == nil || string(o.data) != "data" {
+		t.Fatalf("not uploaded with its attributes: %v %q", a, o.data)
 	}
-	if u.ContentType != "text/plain" || u.ContentEncoding != "gzip" {
-		t.Errorf("attributes not stored: %v %v", u.ContentType, u.ContentEncoding)
+	if a.Metadata["replication_source_etag"] != "e" || a.Metadata["owner"] != "alice" {
+		t.Errorf("custom metadata not stored: %v", a.Metadata)
+	}
+	if a.ContentType != "text/plain" || a.ContentEncoding != "gzip" {
+		t.Errorf("attributes not stored: %v %v", a.ContentType, a.ContentEncoding)
 	}
 
 	// Nil metadata stores the data alone.
@@ -60,12 +64,15 @@ func TestGCS_PutWithMetadata_PersistsMetadata(t *testing.T) {
 	}
 }
 
-func TestGCS_PutWithMetadata_UpdateError(t *testing.T) {
-	objs := map[string]*fakeObj{"key": {updateErr: true}}
+func TestGCS_PutWithMetadata_FailedUploadLeavesNoFingerprint(t *testing.T) {
+	objs := map[string]*fakeObj{"key": {closeErr: true}}
 	g := &GCS{client: fakeClient{b: fakeBucket{objs: objs}}, bucket: "b"}
 	err := g.PutWithMetadata(context.Background(), "key", bytes.NewReader([]byte("d")),
-		&common.Metadata{Custom: map[string]string{"k": "v"}})
+		&common.Metadata{ContentType: "bad\n", Custom: map[string]string{"replication_source_etag": "e"}})
 	if err == nil {
-		t.Fatal("an attribute update error was not returned")
+		t.Fatal("a rejected upload was not reported")
+	}
+	if o := objs["key"]; o.attrs != nil || o.updated != nil {
+		t.Fatalf("attributes stored after a rejected upload: %v %v", o.attrs, o.updated)
 	}
 }

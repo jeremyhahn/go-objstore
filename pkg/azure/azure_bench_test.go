@@ -54,6 +54,10 @@ func (m *mockBlobAPI) GetProperties(ctx context.Context) (*BlobProperties, error
 	return &BlobProperties{Size: int64(len(m.data))}, nil
 }
 
+func (m *mockBlobAPI) UploadWithMetadata(ctx context.Context, r io.Reader, _ map[string]string, _ azblob.BlobHTTPHeaders) error {
+	return m.UploadFromReader(ctx, r)
+}
+
 func (m *mockBlobAPI) SetMetadata(ctx context.Context, metadata map[string]string) error {
 	return nil
 }

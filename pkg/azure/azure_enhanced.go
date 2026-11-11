@@ -47,16 +47,16 @@ func (a *Azure) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 		return err
 	}
 	blob := a.container.NewBlockBlob(key)
-	if err := blob.UploadFromReader(ctx, data); err != nil {
-		return err
-	}
 	if metadata == nil {
-		return nil
+		return blob.UploadFromReader(ctx, data)
 	}
-	// The upload replaced the blob and its metadata; store what was given,
-	// so a replication fingerprint survives and an unchanged object is not
-	// uploaded again on each sync.
-	return a.UpdateMetadata(ctx, key, metadata)
+	// Payload, metadata and headers go up together, so a replication
+	// fingerprint is stored with the bytes it describes or not at all.
+	headers := azblob.BlobHTTPHeaders{
+		ContentType:     metadata.ContentType,
+		ContentEncoding: metadata.ContentEncoding,
+	}
+	return blob.UploadWithMetadata(ctx, data, metadata.Custom, headers)
 }
 
 // GetWithContext retrieves an object from the backend with context support.

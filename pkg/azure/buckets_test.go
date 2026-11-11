@@ -293,6 +293,17 @@ func (b *svcBlob) GetProperties(_ context.Context) (*BlobProperties, error) {
 	return props, err
 }
 
+func (b *svcBlob) UploadWithMetadata(_ context.Context, r io.Reader, metadata map[string]string, headers azblob.BlobHTTPHeaders) error {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
+	return b.locked("upload", func(bk *svcBucket) error {
+		bk.objects[b.name] = &svcObject{data: data, modified: time.Now(), metadata: metadata, headers: headers}
+		return nil
+	})
+}
+
 func (b *svcBlob) SetMetadata(_ context.Context, metadata map[string]string) error {
 	return b.locked("metadata", func(bk *svcBucket) error {
 		o, ok := bk.objects[b.name]

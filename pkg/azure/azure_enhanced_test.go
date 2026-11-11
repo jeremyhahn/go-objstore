@@ -102,6 +102,10 @@ func (m *mockBlob) SetMetadata(ctx context.Context, metadata map[string]string) 
 	return nil
 }
 
+func (m *mockBlob) UploadWithMetadata(ctx context.Context, r io.Reader, _ map[string]string, _ azblob.BlobHTTPHeaders) error {
+	return m.UploadFromReader(ctx, r)
+}
+
 func (m *mockBlob) SetHTTPHeaders(ctx context.Context, headers azblob.BlobHTTPHeaders) error {
 	if m.setHTTPHeadersFn != nil {
 		return m.setHTTPHeadersFn(ctx, headers)

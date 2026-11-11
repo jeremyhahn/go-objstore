@@ -47,6 +47,17 @@ type memBlob struct {
 	setMetaErr                    error
 	meta                          map[string]string
 	headers                       azblob.BlobHTTPHeaders
+	calls                         []string
+}
+
+func (m *memBlob) UploadWithMetadata(_ context.Context, r io.Reader, md map[string]string, h azblob.BlobHTTPHeaders) error {
+	m.calls = append(m.calls, "uploadWithMetadata")
+	if m.upErr != nil {
+		return m.upErr
+	}
+	b, _ := io.ReadAll(r)
+	m.data, m.meta, m.headers = b, md, h
+	return nil
 }
 
 func (m *memBlob) UploadFromReader(_ context.Context, r io.Reader) error {
@@ -90,6 +101,7 @@ func (m *memBlob) SetMetadata(_ context.Context, md map[string]string) error {
 	if m.data == nil {
 		return errTestBlobNotFound
 	}
+	m.calls = append(m.calls, "setMetadata")
 	if m.setMetaErr != nil {
 		return m.setMetaErr
 	}
