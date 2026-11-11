@@ -47,7 +47,16 @@ func (a *Azure) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 		return err
 	}
 	blob := a.container.NewBlockBlob(key)
-	return blob.UploadFromReader(ctx, data)
+	if err := blob.UploadFromReader(ctx, data); err != nil {
+		return err
+	}
+	if metadata == nil {
+		return nil
+	}
+	// The upload replaced the blob and its metadata; store what was given,
+	// so a replication fingerprint survives and an unchanged object is not
+	// uploaded again on each sync.
+	return a.UpdateMetadata(ctx, key, metadata)
 }
 
 // GetWithContext retrieves an object from the backend with context support.

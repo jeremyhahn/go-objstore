@@ -44,7 +44,15 @@ func (g *GCS) PutWithMetadata(ctx context.Context, key string, data io.Reader, m
 		return err
 	}
 	// Close finalizes the GCS upload; capture its error.
-	return w.Close()
+	if err := w.Close(); err != nil {
+		return err
+	}
+	if metadata == nil {
+		return nil
+	}
+	// Store the metadata given, so a replication fingerprint survives and
+	// an unchanged object is not uploaded again on each sync.
+	return g.UpdateMetadata(ctx, key, metadata)
 }
 
 // GetWithContext retrieves an object from the backend with context support.
