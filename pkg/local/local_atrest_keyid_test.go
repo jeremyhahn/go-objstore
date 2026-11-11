@@ -192,3 +192,61 @@ func TestAtRestMultipartPartsSurviveRotation(t *testing.T) {
 		t.Fatalf("completed object key id = %q, want B", md.Custom["at_rest_encryption_key_id"])
 	}
 }
+
+type putOnlyArchiver struct{ puts int }
+
+func (p *putOnlyArchiver) Put(string, io.Reader) error { p.puts++; return nil }
+
+func putClientEncrypted(t *testing.T, l *Local) {
+	t.Helper()
+	md := &common.Metadata{Custom: map[string]string{
+		"encryption_algorithm": "AES-256-GCM",
+		"encryption_key_id":    "dek-1",
+	}}
+	if err := l.PutWithMetadata(context.Background(), "obj", strings.NewReader("ciphertext"), md); err != nil {
+		t.Fatalf("PutWithMetadata: %v", err)
+	}
+}
+
+// TestArchiveKeepsEncryptionMetadata: archiving a client-side encrypted
+// object from an at-rest encrypted store keeps encryption_* on the copy,
+// drops the source's at-rest keys, and writes the at-rest plaintext (#243).
+func TestArchiveKeepsEncryptionMetadata(t *testing.T) {
+	src := newAtRestLocal(t, newRotatingFactory("A", "A"))
+	putClientEncrypted(t, src)
+
+	dst := New().(*Local)
+	if err := dst.Configure(map[string]string{"path": t.TempDir()}, noCreds); err != nil {
+		t.Fatalf("configure: %v", err)
+	}
+	if err := src.Archive("obj", dst); err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+	md, err := dst.loadMetadata("obj")
+	if err != nil {
+		t.Fatalf("destination metadata: %v", err)
+	}
+	if md.Custom["encryption_key_id"] != "dek-1" || md.Custom["encryption_algorithm"] != "AES-256-GCM" {
+		t.Fatalf("archived metadata lost encryption_*: %v", md.Custom)
+	}
+	if _, ok := md.Custom["at_rest_encryption_key_id"]; ok {
+		t.Fatalf("source at-rest key id carried to destination: %v", md.Custom)
+	}
+	if got, err := readAll(t, dst, "obj"); err != nil || got != "ciphertext" {
+		t.Fatalf("archived data = %q, %v", got, err)
+	}
+}
+
+// TestArchiveEncryptedRefusesMetadataLessDestination: a destination that
+// cannot store metadata is refused with a clear error, nothing written.
+func TestArchiveEncryptedRefusesMetadataLessDestination(t *testing.T) {
+	src := newAtRestLocal(t, newRotatingFactory("A", "A"))
+	putClientEncrypted(t, src)
+	dst := &putOnlyArchiver{}
+	if err := src.Archive("obj", dst); !errors.Is(err, common.ErrArchiveMetadataUnsupported) {
+		t.Fatalf("Archive err = %v, want ErrArchiveMetadataUnsupported", err)
+	}
+	if dst.puts != 0 {
+		t.Fatalf("refused archive wrote %d objects", dst.puts)
+	}
+}

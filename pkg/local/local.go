@@ -873,12 +873,18 @@ func (l *Local) Archive(key string, destination common.Archiver) error {
 	if destination == nil {
 		return common.ErrArchiveDestinationNil
 	}
+	// The archived copy keeps the object's client-side encryption metadata
+	// (or the archive is refused when the destination cannot store it).
+	md, err := l.loadMetadata(key)
+	if err != nil && !errors.Is(err, common.ErrMetadataNotFound) {
+		return err
+	}
 	r, err := l.Get(key)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = r.Close() }()
-	return destination.Put(key, r)
+	return common.ArchiveCopy(context.TODO(), key, r, md, destination)
 }
 
 // AddPolicy adds a new lifecycle policy.
