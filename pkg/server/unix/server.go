@@ -28,6 +28,7 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"github.com/jeremyhahn/go-objstore/pkg/audit"
 	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
+	"github.com/jeremyhahn/go-objstore/pkg/factory"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	"github.com/jeremyhahn/go-objstore/pkg/server/jsonrpc"
 	"github.com/jeremyhahn/go-objstore/pkg/server/metrics"
@@ -146,6 +147,11 @@ type ServerConfig struct {
 
 	// AuditLogger is the audit logger used when EnableAudit is set.
 	AuditLogger auditlog.AuditLogger
+
+	// AllowClientLocalArchiveDestinations lets an archive call name a local
+	// (filesystem path) archiver. Off by default: the client would choose a
+	// directory the service user writes into.
+	AllowClientLocalArchiveDestinations bool
 }
 
 // DefaultConfig returns default server configuration
@@ -213,6 +219,7 @@ func NewServer(config *ServerConfig) (*Server, error) {
 	}
 
 	handler := NewHandler(config.Backend, config.Logger, config.Authenticator, config.Authorizer)
+	handler.wireOpts = factory.WireOptions{AllowLocalDestinations: config.AllowClientLocalArchiveDestinations}
 
 	// Peer-credential authentication defaults to enabled when left unset.
 	usePeerCred := true

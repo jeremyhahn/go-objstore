@@ -176,5 +176,6 @@ func (c *Config) UnixServerConfig(mw Middleware) *unixserver.ServerConfig {
 	sc.RateLimitConfig = mw.RateLimitConfig
 	sc.EnableAudit = mw.Audit
 	sc.AuditLogger = mw.AuditLogger
+	sc.AllowClientLocalArchiveDestinations = c.Archive.AllowClientLocalDestinations
 	return sc
 }
