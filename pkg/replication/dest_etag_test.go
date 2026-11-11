@@ -105,9 +105,11 @@ func (e *etagPerWriteStorage) GetMetadata(ctx context.Context, key string) (*com
 
 // Where a metadata write changes the ETag, the record binds none (it could
 // never match), and an unchanged object is not copied again.
-func TestSync_DestinationChangingETagOnMetadataWriteSettles(t *testing.T) {
+func TestSync_DestinationWithoutIdentityIsRecopied(t *testing.T) {
 	ctx := context.Background()
 	s, source := newLocalSyncer(t)
+	// The wrapper hides the local backend's PutWithMetadataResult: the
+	// upload reports no identity, so nothing can be bound.
 	s.dest = &etagPerWriteStorage{Storage: s.dest}
 	require.NoError(t, source.PutWithContext(ctx, "a", bytes.NewReader([]byte("one"))))
 	require.NoError(t, source.PutWithContext(ctx, "b", bytes.NewReader([]byte("two"))))
@@ -115,7 +117,6 @@ func TestSync_DestinationChangingETagOnMetadataWriteSettles(t *testing.T) {
 	r, err := s.SyncAll(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, r.Synced)
-	require.True(t, s.destETagUnstable.Load())
 	for _, k := range []string{"a", "b"} {
 		md, err := s.dest.GetMetadata(ctx, k)
 		require.NoError(t, err)
@@ -124,12 +125,64 @@ func TestSync_DestinationChangingETagOnMetadataWriteSettles(t *testing.T) {
 
 	r, err = s.SyncAll(ctx)
 	require.NoError(t, err)
-	require.Zero(t, r.Synced, "second sync with no change")
+	require.Equal(t, 2, r.Synced, "an unbound copy is never skipped")
+}
+
+// rewriteAfterPutStorage rewrites the object it has just stored, between the
+// upload and the syncer's record, as a concurrent writer could.
+type rewriteAfterPutStorage struct {
+	common.Storage
+	ip common.IdentityPutter
+}
+
+func (r *rewriteAfterPutStorage) PutWithMetadataResult(ctx context.Context, key string, data io.Reader, md *common.Metadata) (*common.Metadata, error) {
+	stored, err := r.ip.PutWithMetadataResult(ctx, key, data, md)
+	if err != nil {
+		return nil, err
+	}
+	time.Sleep(1100 * time.Millisecond) // a later second: a new local ETag
+	if err := r.Storage.PutWithMetadata(ctx, key, bytes.NewReader([]byte("XXX")), &common.Metadata{}); err != nil {
+		return nil, err
+	}
+	return stored, nil
+}
+
+func TestSync_DestinationRewrittenBeforeBindingIsRecopied(t *testing.T) {
+	ctx := context.Background()
+	s, source := newLocalSyncer(t)
+	ip, ok := s.dest.(common.IdentityPutter)
+	require.True(t, ok, "local reports the upload's identity")
+	wrapper := &rewriteAfterPutStorage{Storage: s.dest, ip: ip}
+	s.dest = wrapper
+	require.NoError(t, source.PutWithContext(ctx, "a", bytes.NewReader([]byte("one"))))
+
+	r, err := s.SyncAll(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, r.Synced)
+
+	// The record names the copy's ETag, not the rewrite's: the next scan
+	// sees the change and copies again.
+	s.dest = wrapper.Storage
+	r, err = s.SyncAll(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, r.Synced, "the rewrite is recopied")
+	got, err := s.dest.GetWithContext(ctx, "a")
+	require.NoError(t, err)
+	b, err := io.ReadAll(got)
+	require.NoError(t, err)
+	require.NoError(t, got.Close())
+	require.Equal(t, "one", string(b))
+
+	r, err = s.SyncAll(ctx)
+	require.NoError(t, err)
+	require.Zero(t, r.Synced, "then it settles")
 }
 
 // An ETag recorded for the copy decides only when present.
 func TestDestETagMatches(t *testing.T) {
-	require.True(t, destETagMatches(&common.Metadata{ETag: "x"}))
+	require.False(t, destETagMatches(&common.Metadata{ETag: "x"}), "no record decides changed")
+	require.False(t, destETagMatches(&common.Metadata{ETag: "",
+		Custom: map[string]string{MetaReplicationDestETag: ""}}))
 	require.True(t, destETagMatches(&common.Metadata{ETag: "x",
 		Custom: map[string]string{MetaReplicationDestETag: "x"}}))
 	require.False(t, destETagMatches(&common.Metadata{ETag: "y",

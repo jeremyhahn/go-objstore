@@ -181,7 +181,7 @@ func recordIs(dest *common.Metadata, key, want string) bool {
 // when no destination ETag is recorded, else whether it is dest's ETag.
 func destETagMatches(dest *common.Metadata) bool {
 	recorded, ok := dest.Custom[MetaReplicationDestETag]
-	return !ok || recorded == dest.ETag
+	return ok && recorded != "" && recorded == dest.ETag
 }
 
 // sourceFingerprint returns the metadata to write with the destination copy

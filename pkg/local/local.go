@@ -309,19 +309,26 @@ func (l *Local) validateKey(key string) error {
 
 // PutWithMetadata stores an object with associated metadata.
 func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader, metadata *common.Metadata) error {
+	_, err := l.PutWithMetadataResult(ctx, key, data, metadata)
+	return err
+}
+
+// PutWithMetadataResult stores data and metadata like PutWithMetadata and
+// returns the stored object's ETag and size (common.IdentityPutter).
+func (l *Local) PutWithMetadataResult(ctx context.Context, key string, data io.Reader, metadata *common.Metadata) (*common.Metadata, error) {
 	if err := l.validateKey(key); err != nil {
-		return err
+		return nil, err
 	}
 
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return nil, ctx.Err()
 	default:
 	}
 
 	root, err := l.fsRoot()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	name := rootName(key)
 	path := filepath.Join(l.path, name)
@@ -332,7 +339,7 @@ func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 		var err error
 		encrypter, err = l.atRestEncrypterFactory.GetEncrypter("")
 		if err != nil {
-			return fmt.Errorf("failed to get encrypter: %w", err)
+			return nil, fmt.Errorf("failed to get encrypter: %w", err)
 		}
 	}
 
@@ -341,7 +348,7 @@ func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 	if encrypter != nil {
 		encryptedData, err := encrypter.Encrypt(ctx, data)
 		if err != nil {
-			return fmt.Errorf("encryption failed: %w", err)
+			return nil, fmt.Errorf("encryption failed: %w", err)
 		}
 		defer func() { _ = encryptedData.Close() }()
 		dataToWrite = encryptedData
@@ -354,7 +361,7 @@ func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 		return werr
 	}); err != nil {
 		log.Printf("[LOCAL] ✗ Failed to write object '%s': %v", key, err)
-		return err
+		return nil, err
 	}
 
 	// Create or update metadata
@@ -382,8 +389,9 @@ func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 
 	if err := l.saveMetadata(key, metadata); err != nil {
 		log.Printf("[LOCAL] ✗ Failed to save metadata for '%s': %v", key, err)
-		return err
+		return nil, err
 	}
+	stored := &common.Metadata{ETag: metadata.ETag, Size: metadata.Size, LastModified: metadata.LastModified}
 
 	// Log successful operation with details
 	sizeStr := formatBytes(size)
@@ -409,7 +417,7 @@ func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 		})
 	}
 
-	return nil
+	return stored, nil
 }
 
 // Get retrieves an object from the backend.

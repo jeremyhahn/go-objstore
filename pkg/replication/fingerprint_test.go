@@ -27,8 +27,21 @@ func (f *foreignETagStorage) GetMetadata(ctx context.Context, key string) (*comm
 	if err != nil || md == nil {
 		return md, err
 	}
-	md.ETag = fmt.Sprintf("foreign-%d", f.n.Add(1))
+	f.n.Add(1)
+	md.ETag = "foreign-" + md.ETag
 	return md, nil
+}
+
+// PutWithMetadataResult reports the upload's identity in the same foreign
+// form GetMetadata does.
+func (f *foreignETagStorage) PutWithMetadataResult(ctx context.Context, key string, data io.Reader, md *common.Metadata) (*common.Metadata, error) {
+	stored, err := f.Storage.(common.IdentityPutter).PutWithMetadataResult(ctx, key, data, md)
+	if err != nil || stored == nil {
+		return stored, err
+	}
+	out := *stored
+	out.ETag = "foreign-" + stored.ETag
+	return &out, nil
 }
 
 func newFingerprintSyncer(t *testing.T) (*Syncer, common.Storage) {
@@ -312,6 +325,17 @@ func (g growingSizeStorage) GetMetadata(ctx context.Context, key string) (*commo
 		return md, err
 	}
 	out := *md
+	out.Size += 16
+	return &out, nil
+}
+
+// PutWithMetadataResult reports the grown size the store keeps.
+func (g growingSizeStorage) PutWithMetadataResult(ctx context.Context, key string, data io.Reader, md *common.Metadata) (*common.Metadata, error) {
+	stored, err := g.Storage.(common.IdentityPutter).PutWithMetadataResult(ctx, key, data, md)
+	if err != nil || stored == nil {
+		return stored, err
+	}
+	out := *stored
 	out.Size += 16
 	return &out, nil
 }

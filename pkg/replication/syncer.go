@@ -17,9 +17,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
@@ -56,9 +56,6 @@ type Syncer struct {
 	logger   adapters.Logger
 	auditLog auditlog.AuditLogger
 	metrics  *ReplicationMetrics
-	// destETagUnstable is set once the destination is seen to change an
-	// object's ETag on a metadata write; the record then binds no ETag.
-	destETagUnstable atomic.Bool
 }
 
 // NewSyncer creates a new Syncer with proper encryption wrapping based on the policy.
@@ -352,13 +349,13 @@ func (s *Syncer) SyncObject(ctx context.Context, key string) (int64, error) {
 	// Put to destination (automatically encrypted if enabled), recording the
 	// source fingerprint the next change detection compares against.
 	fingerprint := sourceFingerprint(srcMetadata)
-	err = s.dest.PutWithMetadata(ctx, key, reader, fingerprint)
+	stored, err := s.putDestination(ctx, key, reader, fingerprint)
 	if err != nil {
 		_ = s.auditLog.LogObjectMutation(ctx, "replication_failed",
 			"", "", "", key, "", "", 0, "failure", err)
 		return 0, fmt.Errorf("failed to write destination: %w", err)
 	}
-	s.bindDestination(ctx, key, fingerprint)
+	s.bindDestination(ctx, key, fingerprint, stored)
 
 	// Audit log success
 	_ = s.auditLog.LogObjectMutation(ctx, "replication_success",
@@ -371,57 +368,40 @@ func (s *Syncer) SyncObject(ctx context.Context, key string) (int64, error) {
 	return srcMetadata.Size, nil
 }
 
-// bindDestination makes the record name the size the destination reports
-// for the copy just written, and its ETag where the destination keeps an
-// ETag across a metadata write (checked by reading it back), so a same-size
-// rewrite is seen. The size is the source size unless the destination
-// stores something else (client-side encryption adds bytes). A failure here leaves a record that
-// does not match the copy, so the next sync copies again: never a skip.
-func (s *Syncer) bindDestination(ctx context.Context, key string, fingerprint *common.Metadata) {
-	expected, ok := fingerprint.Custom[MetaReplicationDestSize]
-	if !ok {
+// putDestination uploads the copy. When the destination reports the stored
+// object's identity from the upload itself (common.IdentityPutter) it is
+// returned; otherwise the result is nil.
+func (s *Syncer) putDestination(ctx context.Context, key string, data io.Reader, md *common.Metadata) (*common.Metadata, error) {
+	if ip, ok := s.dest.(common.IdentityPutter); ok {
+		return ip.PutWithMetadataResult(ctx, key, data, md)
+	}
+	return nil, s.dest.PutWithMetadata(ctx, key, data, md)
+}
+
+// bindDestination records, on the copy just written, the identity its upload
+// returned: its ETag (or generation) and the size it is stored at (client-side
+// encryption adds bytes). It never reads the destination back, so a rewrite
+// between the upload and this record leaves a record that names the copy, not
+// the rewrite, and the next sync copies again. With no identity from the
+// upload nothing is bound, and the next sync copies again: never a skip.
+func (s *Syncer) bindDestination(ctx context.Context, key string, fingerprint, stored *common.Metadata) {
+	if _, ok := fingerprint.Custom[MetaReplicationDestSize]; !ok {
 		return
 	}
-	md, err := s.dest.GetMetadata(ctx, key)
-	if err != nil || md == nil {
-		s.logger.Warn(ctx, "Failed to read the copy's size",
-			adapters.Field{Key: fieldKey, Value: key})
+	if stored == nil || stored.ETag == "" {
 		return
 	}
-	actual := strconv.FormatInt(md.Size, 10)
-	bindETag := md.ETag != "" && !s.destETagUnstable.Load()
-	if actual == expected && !bindETag {
-		return
-	}
-	updated := *md
-	updated.Custom = make(map[string]string, len(md.Custom)+2)
-	for k, v := range md.Custom {
+	updated := *fingerprint
+	updated.Custom = make(map[string]string, len(fingerprint.Custom)+2)
+	for k, v := range fingerprint.Custom {
 		updated.Custom[k] = v
 	}
-	updated.Custom[MetaReplicationDestSize] = actual
-	if bindETag {
-		updated.Custom[MetaReplicationDestETag] = md.ETag
+	if stored.Size > 0 {
+		updated.Custom[MetaReplicationDestSize] = strconv.FormatInt(stored.Size, 10)
 	}
+	updated.Custom[MetaReplicationDestETag] = stored.ETag
 	if err := s.dest.UpdateMetadata(ctx, key, &updated); err != nil {
-		s.logger.Warn(ctx, "Failed to record the copy's size",
-			adapters.Field{Key: fieldKey, Value: key})
-		return
-	}
-	if !bindETag {
-		return
-	}
-	after, err := s.dest.GetMetadata(ctx, key)
-	if err != nil || after == nil || after.ETag == md.ETag {
-		// Unread, the record may not match the copy: the next sync copies
-		// again, never a skip.
-		return
-	}
-	// The metadata write changed the ETag (Azure, GCS), so no record can
-	// name the copy's ETag here: drop it, for this and later copies.
-	s.destETagUnstable.Store(true)
-	delete(updated.Custom, MetaReplicationDestETag)
-	if err := s.dest.UpdateMetadata(ctx, key, &updated); err != nil {
-		s.logger.Warn(ctx, "Failed to record the copy's size",
+		s.logger.Warn(ctx, "Failed to record the copy's identity",
 			adapters.Field{Key: fieldKey, Value: key})
 	}
 }
