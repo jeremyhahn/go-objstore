@@ -222,16 +222,27 @@ func (c *Config) validateLifecycle() []error {
 // lifecycle policy file path relative to the storage path, the spelling the
 // store reserves as a key. A path that is empty once cleaned, absolute, or
 // that climbs out of the storage path with ".." is refused.
+// Errors CanonicalPolicyFile returns for a lifecycle policy file path it
+// refuses (#224).
+var (
+	// ErrPolicyPathNotRelative reports an absolute policy file path.
+	ErrPolicyPathNotRelative = errors.New("must be relative to the storage path")
+	// ErrPolicyPathNoFile reports a policy file path that names no file.
+	ErrPolicyPathNoFile = errors.New("must name a file")
+	// ErrPolicyPathEscapes reports a policy file path that leaves the storage path.
+	ErrPolicyPathEscapes = errors.New("must not leave the storage path")
+)
+
 func CanonicalPolicyFile(p string) (string, error) {
 	if filepath.IsAbs(p) || filepath.VolumeName(p) != "" || strings.HasPrefix(filepath.ToSlash(p), "/") {
-		return "", errors.New("must be relative to the storage path")
+		return "", ErrPolicyPathNotRelative
 	}
 	clean := filepath.ToSlash(filepath.Clean(p))
 	switch {
 	case clean == "." || clean == "":
-		return "", errors.New("must name a file")
+		return "", ErrPolicyPathNoFile
 	case clean == ".." || strings.HasPrefix(clean, "../"):
-		return "", errors.New("must not leave the storage path")
+		return "", ErrPolicyPathEscapes
 	}
 	return clean, nil
 }

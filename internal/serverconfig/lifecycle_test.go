@@ -145,7 +145,15 @@ func TestConfig_PolicyFileCanonical(t *testing.T) {
 		}
 	}
 
-	for _, bad := range []string{"..", "../life.json", "a/../../life.json", "/etc/life.json", ".", "./", "a/.."} {
+	for bad, want := range map[string]error{
+		"..":                ErrPolicyPathEscapes,
+		"../life.json":      ErrPolicyPathEscapes,
+		"a/../../life.json": ErrPolicyPathEscapes,
+		"/etc/life.json":    ErrPolicyPathNotRelative,
+		".":                 ErrPolicyPathNoFile,
+		"./":                ErrPolicyPathNoFile,
+		"a/..":              ErrPolicyPathNoFile,
+	} {
 		cfg := Defaults()
 		cfg.Path = testPath
 		cfg.Lifecycle.PolicyFile = bad
@@ -153,8 +161,8 @@ func TestConfig_PolicyFileCanonical(t *testing.T) {
 		if err := cfg.Validate(); !errors.As(err, &ise) || ise.Key != "lifecycle.policy_file" {
 			t.Fatalf("Validate() with %q = %v, want an InvalidSettingError for lifecycle.policy_file", bad, err)
 		}
-		if _, err := CanonicalPolicyFile(bad); err == nil {
-			t.Fatalf("CanonicalPolicyFile(%q) = nil error, want a refusal", bad)
+		if _, err := CanonicalPolicyFile(bad); !errors.Is(err, want) {
+			t.Fatalf("CanonicalPolicyFile(%q) = %v, want %v", bad, err, want)
 		}
 	}
 }
