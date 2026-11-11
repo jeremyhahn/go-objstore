@@ -34,7 +34,8 @@ var errPutStreamAborted = errors.New("put stream aborted")
 // carries the key and optional metadata; every later message carries a chunk
 // of object data. The chunks are fed to the storage backend through an
 // io.Pipe, so the handler holds at most one chunk in memory regardless of the
-// object size. A stream that fails or is cancelled before the client closes
+// object size. Once the header is valid the handler sends the response
+// headers, the client's signal to start sending data. A stream that fails or is cancelled before the client closes
 // it makes the backend's read fail, so the backend stores nothing.
 func (s *Server) PutStream(stream objstorepb.ObjectStore_PutStreamServer) error {
 	ctx := stream.Context()
@@ -58,6 +59,14 @@ func (s *Server) PutStream(stream objstorepb.ObjectStore_PutStreamServer) error 
 	var metadata *common.Metadata
 	if header.GetMetadata() != nil {
 		metadata = protoToMetadata(header.GetMetadata())
+	}
+
+	// Accept the stream: the response headers tell the client the header
+	// message was valid and it may start sending data. A client can thus tell
+	// a server without PutStream (Unimplemented) apart before it has read
+	// anything from its source.
+	if err := stream.SendHeader(nil); err != nil {
+		return err
 	}
 
 	pr, pw := io.Pipe()
