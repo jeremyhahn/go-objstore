@@ -37,14 +37,31 @@ func (g *GCS) PutWithMetadata(ctx context.Context, key string, data io.Reader, m
 	if err := common.ValidateKey(key); err != nil {
 		return err
 	}
-	w := g.client.Bucket(g.bucket).Object(key).NewWriter(ctx)
+	obj := g.client.Bucket(g.bucket).Object(key)
+	w := obj.NewWriter(ctx)
 	if _, err := io.Copy(w, data); err != nil {
 		// Close to release the GCS write stream; ignore close error.
 		_ = w.Close()
 		return err
 	}
 	// Close finalizes the GCS upload; capture its error.
-	return w.Close()
+	if err := w.Close(); err != nil {
+		return err
+	}
+	if !common.HasMetadataFields(metadata) {
+		return nil
+	}
+	// The writer interface cannot carry object attributes, so the metadata
+	// is applied right after the upload. An object that cannot get its
+	// metadata is removed: an archived copy without its encryption metadata
+	// cannot be decrypted (#243).
+	if err := g.UpdateMetadata(ctx, key, metadata); err != nil {
+		if delErr := obj.Delete(ctx); delErr != nil {
+			return errors.Join(err, fmt.Errorf("remove %s without its metadata: %w", key, delErr))
+		}
+		return err
+	}
+	return nil
 }
 
 // GetWithContext retrieves an object from the backend with context support.

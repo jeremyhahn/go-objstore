@@ -54,6 +54,15 @@ func HasClientEncryption(metadata *Metadata) bool {
 	return false
 }
 
+// HasMetadataFields reports whether metadata carries anything a backend must
+// store with the object: a content type or encoding, or a custom key.
+func HasMetadataFields(metadata *Metadata) bool {
+	if metadata == nil {
+		return false
+	}
+	return metadata.ContentType != "" || metadata.ContentEncoding != "" || len(metadata.Custom) > 0
+}
+
 // ArchiveCopy writes data, the content of key as read from the source
 // backend, to destination.
 //

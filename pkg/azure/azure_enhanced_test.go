@@ -16,6 +16,7 @@
 package azure
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -157,6 +158,48 @@ func TestAzure_PutWithMetadata(t *testing.T) {
 	err := a.PutWithMetadata(ctx, "key", nil, metadata)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
+// An archived copy keeps its encryption metadata (#243): PutWithMetadata
+// stores the custom keys and content headers it is given.
+func TestAzure_PutWithMetadata_StoresMetadata(t *testing.T) {
+	var stored map[string]string
+	var headers azblob.BlobHTTPHeaders
+	blob := &mockBlob{
+		setMetadataFn:    func(_ context.Context, md map[string]string) error { stored = md; return nil },
+		setHTTPHeadersFn: func(_ context.Context, h azblob.BlobHTTPHeaders) error { headers = h; return nil },
+	}
+	a := &Azure{container: &mockContainerEnhanced{newBlockBlobFn: func(string) BlobAPI { return blob }}}
+	md := &common.Metadata{
+		ContentType: "application/octet-stream",
+		Custom:      map[string]string{"encryption_key_id": "k1", "encryption_algorithm": "AES-256-GCM"},
+	}
+	if err := a.PutWithMetadata(context.Background(), "key", bytes.NewReader([]byte("ct")), md); err != nil {
+		t.Fatalf("PutWithMetadata: %v", err)
+	}
+	if stored["encryption_key_id"] != "k1" || stored["encryption_algorithm"] != "AES-256-GCM" {
+		t.Fatalf("stored metadata = %v", stored)
+	}
+	if headers.ContentType != "application/octet-stream" {
+		t.Fatalf("stored content type = %q", headers.ContentType)
+	}
+}
+
+// A blob whose metadata cannot be stored is removed and the error returned.
+func TestAzure_PutWithMetadata_SetMetadataErrorRemovesBlob(t *testing.T) {
+	deleted := false
+	blob := &mockBlob{
+		setMetadataFn: func(context.Context, map[string]string) error { return errors.New("metadata refused") },
+		deleteFn:      func(context.Context) error { deleted = true; return nil },
+	}
+	a := &Azure{container: &mockContainerEnhanced{newBlockBlobFn: func(string) BlobAPI { return blob }}}
+	md := &common.Metadata{Custom: map[string]string{"encryption_key_id": "k1"}}
+	if err := a.PutWithMetadata(context.Background(), "key", bytes.NewReader([]byte("ct")), md); err == nil {
+		t.Fatal("expected an error when the metadata cannot be stored")
+	}
+	if !deleted {
+		t.Fatal("blob without its metadata was left behind")
 	}
 }
 
