@@ -38,6 +38,12 @@ import (
 	"time"
 
 	"github.com/quic-go/quic-go/http3"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/status"
+
+	objstorepb "github.com/jeremyhahn/go-objstore/api/proto"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
@@ -531,6 +537,29 @@ func TestServers_RESTActionFromRouteNotKey(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestServers_GRPCHealthForAnyIdentity covers #239: over gRPC, an
+// authenticated client that holds no roles (stranger) may call the objstore
+// Health RPC but is still refused Put.
+func TestServers_GRPCHealthForAnyIdentity(t *testing.T) {
+	s := startAuthServers(t)
+	conn, err := grpc.NewClient(s.grpc, grpc.WithTransportCredentials(credentials.NewTLS(s.pki.clientTLS("stranger"))))
+	if err != nil {
+		t.Fatalf("grpc NewClient: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	client := objstorepb.NewObjectStoreClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if _, err := client.Health(ctx, &objstorepb.HealthRequest{}); err != nil {
+		t.Errorf("Health as stranger = %v, want nil", err)
+	}
+	_, err = client.Put(ctx, &objstorepb.PutRequest{Key: "stranger/data.txt", Data: []byte("payload")})
+	if status.Code(err) != codes.PermissionDenied {
+		t.Errorf("Put as stranger = %v, want PermissionDenied", err)
+	}
 }
 
 // startAuthUnix starts the Unix socket server built by UnixServerConfig with
