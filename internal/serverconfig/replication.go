@@ -65,6 +65,7 @@ func (c *Config) EnableReplicationContext(ctx context.Context, enable Replicatio
 		PolicyFilePath:           policyPath,
 		AllowClientLocalBackends: c.Replication.AllowClientLocalBackends,
 		RunInBackground:          false,
+		Logger:                   newSlogLogger(),
 	}
 	if c.Replication.Interval > 0 {
 		rc.RunInBackground = true

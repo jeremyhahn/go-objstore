@@ -4,10 +4,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
@@ -251,6 +256,121 @@ func TestEnableReplicationContext_ScheduleCopiesThenStops(t *testing.T) {
 	time.Sleep(15 * cfg.Replication.Interval)
 	if copied("after") {
 		t.Fatal("a copy happened after the context was cancelled")
+	}
+}
+
+// syncBuffer is a log sink safe for the replication goroutine to write
+// while the test reads it.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func TestEnableReplicationContext_ScheduledFailureIsLogged(t *testing.T) {
+	logs := &syncBuffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	srcDir := t.TempDir()
+	source, err := factory.NewStorage("local", map[string]string{"path": srcDir}, common.Credentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	objstore.Reset()
+	t.Cleanup(objstore.Reset)
+	if err := objstore.Initialize(&objstore.FacadeConfig{
+		Backends:       map[string]common.Storage{"default": source},
+		DefaultBackend: "default",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// A regular file where the destination directory should be: the
+	// destination backend cannot be opened, so every scheduled sync fails.
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Defaults()
+	cfg.Path = t.TempDir()
+	cfg.Replication.AllowClientLocalBackends = true
+	cfg.Replication.Interval = 20 * time.Millisecond
+	mgr, err := replication.NewPersistentReplicationManager(&replication.OSFileSystem{},
+		cfg.ReplicationPolicyPath(), 0, nil, nil, replication.WithClientLocalBackends(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.AddPolicy(common.ReplicationPolicy{
+		ID:                  "doomed",
+		SourceBackend:       "local",
+		SourceSettings:      map[string]string{"path": srcDir},
+		DestinationBackend:  "local",
+		DestinationSettings: map[string]string{"path": filepath.Join(blocker, "sub")},
+		ReplicationMode:     common.ReplicationModeTransparent,
+		Enabled:             true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if !cfg.EnableReplicationContext(runCtx, nil) {
+		t.Fatal("EnableReplicationContext reported not enabled")
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		out := logs.String()
+		if strings.Contains(out, "Policy sync failed") &&
+			strings.Contains(out, "policy_id=doomed") &&
+			strings.Contains(out, "not-a-dir") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no failed scheduled sync logged with its policy and cause; log:\n%s", out)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	time.Sleep(100 * time.Millisecond) // let the manager stop
+}
+
+func TestSlogLogger_FieldsAndLevel(t *testing.T) {
+	logs := &syncBuffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	ctx := context.Background()
+	l := newSlogLogger().WithFields(adapters.Field{Key: "component", Value: "replication"}).WithContext(ctx)
+	l.Debug(ctx, "d")
+	l.Info(ctx, "i", adapters.Field{Key: "k", Value: 1})
+	l.Warn(ctx, "w")
+	l.SetLevel(adapters.ErrorLevel)
+	if l.GetLevel() != adapters.ErrorLevel {
+		t.Fatalf("level = %v", l.GetLevel())
+	}
+	l.Warn(ctx, "suppressed")
+	l.Error(ctx, "e")
+	out := logs.String()
+	for _, want := range []string{"msg=d", "msg=i", "k=1", "msg=w", "msg=e", "component=replication"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "suppressed") {
+		t.Errorf("a warning below the set level was logged:\n%s", out)
 	}
 }
 
