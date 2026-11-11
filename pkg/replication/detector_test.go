@@ -407,7 +407,10 @@ func TestDetectChanges_ListingWithoutMetadata(t *testing.T) {
 	src.objects["new.txt"] = &common.Metadata{Size: 30, ETag: "e3", LastModified: now}
 	dest := newMockStorage()
 	dest.objects["plain.txt"] = &common.Metadata{Size: 10, ETag: "e1", LastModified: now}
-	dest.objects["recorded.txt"] = sourceFingerprint(src.objects["recorded.txt"])
+	recorded := sourceFingerprint(src.objects["recorded.txt"])
+	recorded.ETag = "dest-e2"
+	recorded.Custom[MetaReplicationDestETag] = "dest-e2"
+	dest.objects["recorded.txt"] = recorded
 	detector := NewChangeDetector(bareListingStorage{src}, dest)
 
 	// Two scheduled scans in a row: neither panics, and only the new key

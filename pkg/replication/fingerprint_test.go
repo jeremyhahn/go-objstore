@@ -107,6 +107,7 @@ func TestHasChanged_SourceFingerprint(t *testing.T) {
 	rec := func(etag, size string) *common.Metadata {
 		md := sourceFingerprint(src)
 		md.ETag, md.Custom[MetaReplicationSourceETag], md.Custom[MetaReplicationSourceSize] = "md5", etag, size
+		md.Custom[MetaReplicationDestETag] = "md5"
 		return md
 	}
 	require.False(t, hasChanged(src, rec("100-6", "6")), "matching record")
@@ -201,6 +202,8 @@ func TestHasChanged_PreciseFingerprint(t *testing.T) {
 	src := &common.Metadata{ETag: "100-6", Size: 6, LastModified: t0, ContentType: "a",
 		Custom: map[string]string{"k": "v"}}
 	dest := sourceFingerprint(src)
+	dest.ETag = "dest-etag"
+	dest.Custom[MetaReplicationDestETag] = "dest-etag"
 	require.False(t, hasChanged(src, dest))
 
 	later := *src

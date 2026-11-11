@@ -60,12 +60,20 @@ func TestSync_SameSizeRewrittenDestinationReplicated(t *testing.T) {
 	require.NotEmpty(t, md.ETag)
 	require.Equal(t, md.ETag, md.Custom[MetaReplicationDestETag], "record names the copy's ETag")
 
-	// Local ETags are Unix seconds and size: rewrite in a later second.
-	start := time.Now().Unix()
-	for time.Now().Unix() == start {
-		time.Sleep(10 * time.Millisecond)
+	// Local ETags are the file's mtime in Unix seconds and its size:
+	// rewrite until the mtime reaches a later second. The filesystem clock
+	// is coarser than time.Now, so check the stored ETag, not the wall clock.
+	copied := md.ETag
+	for attempt := 0; ; attempt++ {
+		require.Less(t, attempt, 50, "the rewrite never got a new ETag")
+		time.Sleep(100 * time.Millisecond)
+		require.NoError(t, s.dest.PutWithMetadata(ctx, "k", bytes.NewReader([]byte("ORIGINAL")), md))
+		got, err := s.dest.GetMetadata(ctx, "k")
+		require.NoError(t, err)
+		if got.ETag != copied {
+			break
+		}
 	}
-	require.NoError(t, s.dest.PutWithMetadata(ctx, "k", bytes.NewReader([]byte("ORIGINAL")), md))
 
 	r, err = s.SyncAll(ctx)
 	require.NoError(t, err)
