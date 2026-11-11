@@ -89,7 +89,18 @@ need the same actions:
 gRPC maps each method by name: `Get`, `GetMetadata` and `Exists` need
 `read`; `Put`, `PutStream` and `UpdateMetadata` `write`; `Delete` `delete`;
 `List` `list`; `Archive` and every lifecycle and replication policy method
-`admin`. A method not in that list needs `admin`.
+`admin`. `Health` needs no action: any authenticated identity may call it,
+whatever its roles. A method not in that list needs `admin`. The standard
+`grpc.health.v1.Health` service and the server reflection services
+(`grpc.reflection.v1.ServerReflection` and
+`grpc.reflection.v1alpha.ServerReflection`, matched by full name) skip the
+role check, but a client still needs a certificate signed by
+`auth.client_ca` to reach them. Reflection is off by default; it is served
+only when the server is built with reflection enabled.
+
+| gRPC method | Action |
+|-------------|--------|
+| `Health` | none (authentication only) |
 
 ## Fail-closed rules
 
@@ -113,9 +124,11 @@ At run time:
 
 - a connection without a client certificate, or with one not signed by
   `auth.client_ca`, is refused in the TLS handshake;
-- a client that matches no identity authenticates with no roles, so every
-  request it makes is refused (HTTP 403, gRPC `PermissionDenied`, JSON-RPC
-  `-32001` forbidden);
+- a client that matches no identity authenticates with no roles: over gRPC
+  it can call `Health` (the objstore `Health` method and the standard
+  `grpc.health.v1.Health` service) and nothing else; on every transport,
+  a request that needs an action is refused (HTTP 403, gRPC
+  `PermissionDenied`, JSON-RPC `-32001` forbidden);
 - a request whose action none of the identity's roles permits is refused the
   same way; a Unix peer whose credentials cannot be read has no roles.
 

@@ -22,6 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Fixed
 
 - encryption: `Put` and `PutWithContext` on the encrypted storage now record `encryption_key_id` (and `encryption_algorithm`) like `PutWithMetadata`, so an object still decrypts after the default key changes; `PutWithMetadata` accepts nil metadata. Objects stored earlier without `encryption_key_id` still decrypt with the default key only (#226)
+- server: with `auth` set, any authenticated identity may call the objstore gRPC `Health` RPC whatever its roles; it needed `admin` before. A call with no principal is still refused, and any other unknown gRPC method still needs `admin`. The standard health and reflection services skip authorization by exact service prefix instead of a substring match (#239)
 
 ### Security
 
