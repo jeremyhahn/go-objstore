@@ -21,6 +21,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Fixed
 
+- local: an at-rest encrypted object is decrypted with the key id recorded when it was written (`at_rest_encryption_key_id`), so objects written before an at-rest key rotation still read; an object with no recorded id uses the default key, and an id the key store does not know fails the read. Multipart parts staged before a rotation decrypt with their own key when the upload completes (#243)
+- archive: `Archive` on local, memory, S3, GCS and Azure keeps a client-side encrypted object's `encryption_*` metadata on the archived copy (the source's `at_rest_encryption_*` keys are dropped); a destination that cannot store metadata (`glacier`, `azurearchive`) is refused with `ErrArchiveMetadataUnsupported` before anything is written (#243)
 - server: with `auth` set, any authenticated identity may call the objstore gRPC `Health` RPC whatever its roles; it needed `admin` before. A call with no principal is still refused, and any other unknown gRPC method still needs `admin`. The standard health and reflection services skip authorization by exact service prefix instead of a substring match (#239)
 
 ### Security
