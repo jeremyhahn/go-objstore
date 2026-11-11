@@ -64,6 +64,53 @@ func TestGCS_PutWithMetadata_PersistsMetadata(t *testing.T) {
 	}
 }
 
+// The upload result is the object the writer created, read from its
+// attributes after Close, so each rewrite reports its own generation.
+func TestGCS_PutWithMetadataResult_ReportsUploadedObject(t *testing.T) {
+	var _ common.IdentityPutter = (*GCS)(nil)
+	ctx := context.Background()
+	g := &GCS{client: newSvcStore("b").client(), bucket: "b"}
+
+	first, err := g.PutWithMetadataResult(ctx, "k", bytes.NewReader([]byte("data")), &common.Metadata{
+		Custom: map[string]string{"owner": "alice"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == nil || first.ETag == "" || first.Size != 4 || first.LastModified.IsZero() {
+		t.Fatalf("result = %+v, want the uploaded object's generation, size and time", first)
+	}
+	md, err := g.GetMetadata(ctx, "k")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if md.ETag != first.ETag {
+		t.Fatalf("result ETag %q, stored object %q", first.ETag, md.ETag)
+	}
+
+	second, err := g.PutWithMetadataResult(ctx, "k", bytes.NewReader([]byte("DATA")), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second == nil || second.ETag == first.ETag {
+		t.Fatalf("same-size rewrite: result = %+v, first = %+v", second, first)
+	}
+
+	// A writer that reports no attributes gives no identity; a failed
+	// upload or an invalid key gives no result.
+	objs := map[string]*fakeObj{}
+	plain := &GCS{client: fakeClient{b: fakeBucket{objs: objs}}, bucket: "b"}
+	if got, err := plain.PutWithMetadataResult(ctx, "k", bytes.NewReader([]byte("d")), nil); err != nil || got != nil {
+		t.Fatalf("no attributes: result = %+v, err = %v", got, err)
+	}
+	objs["bad"] = &fakeObj{closeErr: true}
+	if got, err := plain.PutWithMetadataResult(ctx, "bad", bytes.NewReader([]byte("d")), nil); err == nil || got != nil {
+		t.Fatalf("failed close: result = %+v, err = %v", got, err)
+	}
+	if _, err := plain.PutWithMetadataResult(ctx, "", bytes.NewReader(nil), nil); err == nil {
+		t.Fatal("expected an invalid key error")
+	}
+}
+
 func TestGCS_PutWithMetadata_FailedUploadLeavesNoFingerprint(t *testing.T) {
 	objs := map[string]*fakeObj{"key": {closeErr: true}}
 	g := &GCS{client: fakeClient{b: fakeBucket{objs: objs}}, bucket: "b"}

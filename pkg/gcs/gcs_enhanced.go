@@ -36,8 +36,24 @@ func (g *GCS) PutWithContext(ctx context.Context, key string, data io.Reader) er
 
 // PutWithMetadata stores an object with associated metadata.
 func (g *GCS) PutWithMetadata(ctx context.Context, key string, data io.Reader, metadata *common.Metadata) error {
+	_, err := g.PutWithMetadataResult(ctx, key, data, metadata)
+	return err
+}
+
+// uploadAttrsWriter is a GCS writer that reports, after Close, the attributes of
+// the object its upload created (*storage.Writer does).
+type uploadAttrsWriter interface {
+	Attrs() *storage.ObjectAttrs
+}
+
+// PutWithMetadataResult stores data and metadata like PutWithMetadata and
+// returns the identity of the object the upload created, read from the
+// writer's attributes after Close: its generation (see objectETag), size
+// and update time (common.IdentityPutter). The result is nil when the
+// writer reports no attributes.
+func (g *GCS) PutWithMetadataResult(ctx context.Context, key string, data io.Reader, metadata *common.Metadata) (*common.Metadata, error) {
 	if err := common.ValidateKey(key); err != nil {
-		return err
+		return nil, err
 	}
 	obj := g.client.Bucket(g.bucket).Object(key)
 	var w io.WriteCloser
@@ -55,10 +71,25 @@ func (g *GCS) PutWithMetadata(ctx context.Context, key string, data io.Reader, m
 	if _, err := io.Copy(w, data); err != nil {
 		// Close to release the GCS write stream; ignore close error.
 		_ = w.Close()
-		return err
+		return nil, err
 	}
 	// Close finalizes the GCS upload; capture its error.
-	return w.Close()
+	if err := w.Close(); err != nil {
+		return nil, err
+	}
+	aw, ok := w.(uploadAttrsWriter)
+	if !ok {
+		return nil, nil
+	}
+	attrs := aw.Attrs()
+	if attrs == nil {
+		return nil, nil
+	}
+	etag := objectETag(attrs)
+	if etag == "" {
+		return nil, nil
+	}
+	return &common.Metadata{ETag: etag, Size: attrs.Size, LastModified: attrs.Updated}, nil
 }
 
 // GetWithContext retrieves an object from the backend with context support.
