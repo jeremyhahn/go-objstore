@@ -229,8 +229,38 @@ func (c *Config) CertAuthenticator() adapters.Authenticator {
 		if cn == "" {
 			return nil, adapters.ErrInvalidCredentials
 		}
-		return &adapters.Principal{ID: cn, Name: cn, Type: "certificate", Roles: auth.identityRoles(cn)}, nil
+		var roles []string
+		// A "uid:N" subject names a local user: a certificate cannot claim it.
+		if !strings.HasPrefix(cn, UIDSubjectPrefix) {
+			roles = auth.identityRoles(cn)
+		}
+		return &adapters.Principal{ID: cn, Name: cn, Type: "certificate", Roles: roles}, nil
 	}, nil)
+}
+
+// identityAuthorizer authorizes by the roles auth.identities binds to the
+// principal's ID ("uid:N" on the Unix socket), ignoring any roles the
+// principal already carries (the Unix peer principal carries its OS group
+// name, which must not grant a role of the same name). When subject is set
+// it is used in place of the principal (MCP stdio: the process owner).
+func (c *Config) identityAuthorizer(subject string) adapters.Authorizer {
+	return &identityAuthorizer{inner: c.Authorizer(), auth: c.Auth, subject: subject}
+}
+
+type identityAuthorizer struct {
+	inner   adapters.Authorizer
+	auth    AuthConfig
+	subject string
+}
+
+// Authorize implements adapters.Authorizer.
+func (a *identityAuthorizer) Authorize(ctx context.Context, principal *adapters.Principal, action, resource string) error {
+	id := a.subject
+	if id == "" && principal != nil {
+		id = principal.ID
+	}
+	mapped := &adapters.Principal{ID: id, Name: id, Type: "identity", Roles: a.auth.identityRoles(id)}
+	return a.inner.Authorize(ctx, mapped, action, resource)
 }
 
 // listenerTLS returns the TLS configuration of a listener with the given

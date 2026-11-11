@@ -18,7 +18,9 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"os"
 	"slices"
+	"strconv"
 	"testing"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
@@ -242,6 +244,7 @@ func TestCertAuthenticator_RolesFromIdentities(t *testing.T) {
 	check("prune-agent", adapters.ActionDelete, true)
 	check("stranger", adapters.ActionDelete, false)
 	check("backup-agent", adapters.ActionAdmin, false)
+	check("uid:1000", adapters.ActionRead, false) // a certificate cannot claim a local uid
 
 	if _, err := authn.AuthenticateMTLS(ctx, &tls.ConnectionState{}); err == nil {
 		t.Error("no certificate must be refused")
@@ -299,5 +302,93 @@ func TestGRPCAndQUICOptions_WireAuth(t *testing.T) {
 	d := Defaults()
 	if q := d.QUICOptions(d.Middleware()); q.AdapterTLSConfig != nil {
 		t.Errorf("quic without auth: adapter TLS = %+v", q.AdapterTLSConfig)
+	}
+}
+
+func TestRESTAndMCPHTTP_WireAuth(t *testing.T) {
+	c := authConfig()
+	r := c.RESTServerConfig(c.Middleware())
+	if r.TLSConfig == nil || r.TLSConfig.Mode != adapters.TLSModeMutual || r.TLSConfig.ServerCertFile != "rest.crt" {
+		t.Errorf("rest TLS = %+v, want mutual", r.TLSConfig)
+	}
+	if _, ok := r.Authenticator.(*adapters.MTLSAuthenticator); !ok {
+		t.Errorf("rest authenticator = %T", r.Authenticator)
+	}
+	if _, ok := r.Authorizer.(*adapters.RBACAuthorizer); !ok {
+		t.Errorf("rest authorizer = %T", r.Authorizer)
+	}
+
+	m, err := c.MCPServerConfig(c.Middleware())
+	if err != nil {
+		t.Fatalf("MCPServerConfig: %v", err)
+	}
+	if m.TLSConfig == nil || m.TLSConfig.Mode != adapters.TLSModeMutual || m.TLSConfig.ServerCertFile != "mcp.crt" {
+		t.Errorf("mcp TLS = %+v, want mutual", m.TLSConfig)
+	}
+	if _, ok := m.Authenticator.(*adapters.MTLSAuthenticator); !ok {
+		t.Errorf("mcp authenticator = %T", m.Authenticator)
+	}
+	if _, ok := m.Authorizer.(*adapters.RBACAuthorizer); !ok {
+		t.Errorf("mcp authorizer = %T", m.Authorizer)
+	}
+
+	// REST TLS without auth is server TLS with the NoOp defaults.
+	d := Defaults()
+	d.REST.TLSCert, d.REST.TLSKey = "rest.crt", "rest.key"
+	r = d.RESTServerConfig(d.Middleware())
+	if r.TLSConfig == nil || r.TLSConfig.Mode != adapters.TLSModeServer {
+		t.Errorf("rest TLS without auth = %+v", r.TLSConfig)
+	}
+	if _, ok := r.Authorizer.(*adapters.RBACAuthorizer); ok {
+		t.Error("rest without auth must keep the NoOp authorizer")
+	}
+}
+
+func TestUnixAndMCPStdio_AuthorizeByUID(t *testing.T) {
+	c := authConfig()
+	c.Auth.Identities[2].Subject = "uid:" + strconv.Itoa(os.Getuid())
+	c.Auth.Identities[2].Roles = []string{"backup"}
+	ctx := context.Background()
+
+	u := c.UnixServerConfig(c.Middleware())
+	if u.UsePeerCredentials == nil || !*u.UsePeerCredentials {
+		t.Error("unix must use peer credentials when auth is set")
+	}
+	peer := func(id string, roles ...string) *adapters.Principal {
+		return &adapters.Principal{ID: id, Type: "unix-peer", Roles: roles}
+	}
+	if err := u.Authorizer.Authorize(ctx, peer("uid:"+strconv.Itoa(os.Getuid())), adapters.ActionWrite, "object"); err != nil {
+		t.Errorf("mapped uid write: %v", err)
+	}
+	if err := u.Authorizer.Authorize(ctx, peer("uid:"+strconv.Itoa(os.Getuid())), adapters.ActionDelete, "object"); err == nil {
+		t.Error("mapped backup uid must not delete")
+	}
+	// An unmapped uid is refused even when its OS group is named like a role.
+	if err := u.Authorizer.Authorize(ctx, peer("uid:4242", "backup"), adapters.ActionRead, "object"); err == nil {
+		t.Error("unmapped uid must be refused")
+	}
+	if err := u.Authorizer.Authorize(ctx, nil, adapters.ActionRead, "object"); err == nil {
+		t.Error("no principal must be refused")
+	}
+
+	c.MCP.Mode = string(mcpserver.ModeStdio)
+	m, err := c.MCPServerConfig(c.Middleware())
+	if err != nil {
+		t.Fatalf("MCPServerConfig: %v", err)
+	}
+	if !m.EnforceStdioAuthz || m.TLSConfig != nil {
+		t.Errorf("mcp stdio: EnforceStdioAuthz=%v TLS=%+v", m.EnforceStdioAuthz, m.TLSConfig)
+	}
+	// stdio authorizes the process owner whatever principal it is handed.
+	if err := m.Authorizer.Authorize(ctx, &adapters.Principal{ID: "anonymous"}, adapters.ActionList, "object"); err != nil {
+		t.Errorf("process owner list: %v", err)
+	}
+	if err := m.Authorizer.Authorize(ctx, &adapters.Principal{ID: "anonymous"}, adapters.ActionDelete, "object"); err == nil {
+		t.Error("process owner with backup must not delete")
+	}
+	c.Auth.Identities = c.Auth.Identities[:2]
+	m, _ = c.MCPServerConfig(c.Middleware())
+	if err := m.Authorizer.Authorize(ctx, &adapters.Principal{ID: "anonymous"}, adapters.ActionList, "object"); err == nil {
+		t.Error("an unmapped process owner must be refused on stdio")
 	}
 }

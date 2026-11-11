@@ -18,6 +18,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strconv"
 
 	"github.com/jeremyhahn/go-objstore/pkg/audit"
 	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
@@ -133,6 +134,13 @@ func (c *Config) RESTServerConfig(mw Middleware) *restserver.ServerConfig {
 	if mw.AuditLogger != nil {
 		sc.AuditLogger = mw.AuditLogger
 	}
+	sc.TLSConfig = c.listenerTLS(c.REST.TLSCert, c.REST.TLSKey)
+	if !c.Auth.Enabled() {
+		warnUnauthenticated("rest")
+		return sc
+	}
+	sc.Authenticator = c.CertAuthenticator()
+	sc.Authorizer = c.Authorizer()
 	return sc
 }
 
@@ -187,6 +195,21 @@ func (c *Config) MCPServerConfig(mw Middleware) (*mcpserver.ServerConfig, error)
 	sc.RateLimitConfig = mw.RateLimitConfig
 	sc.EnableAudit = mw.Audit
 	sc.AuditLogger = mw.AuditLogger
+	if mode == mcpserver.ModeHTTP {
+		sc.TLSConfig = c.listenerTLS(c.MCP.TLSCert, c.MCP.TLSKey)
+	}
+	if !c.Auth.Enabled() {
+		warnUnauthenticated("mcp")
+		return sc, nil
+	}
+	if mode == mcpserver.ModeHTTP {
+		sc.Authenticator = c.CertAuthenticator()
+		sc.Authorizer = c.Authorizer()
+		return sc, nil
+	}
+	// stdio carries no credential: the client is whoever owns this process.
+	sc.EnforceStdioAuthz = true
+	sc.Authorizer = c.identityAuthorizer(UIDSubjectPrefix + strconv.Itoa(os.Getuid()))
 	return sc, nil
 }
 
@@ -200,5 +223,14 @@ func (c *Config) UnixServerConfig(mw Middleware) *unixserver.ServerConfig {
 	sc.RateLimitConfig = mw.RateLimitConfig
 	sc.EnableAudit = mw.Audit
 	sc.AuditLogger = mw.AuditLogger
+	if !c.Auth.Enabled() {
+		warnUnauthenticated("unix")
+		return sc
+	}
+	// The peer's SO_PEERCRED uid is the identity ("uid:N"); a peer without
+	// credentials is the anonymous principal, which maps to no roles.
+	usePeer := true
+	sc.UsePeerCredentials = &usePeer
+	sc.Authorizer = c.identityAuthorizer("")
 	return sc
 }
