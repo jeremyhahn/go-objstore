@@ -23,12 +23,14 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -376,6 +378,95 @@ func TestServers_RefuseHandshakeWithoutClientCertificate(t *testing.T) {
 		}
 		if err := quicProbe(s.quic, s.pki.clientTLS("", "h3")); err == nil {
 			t.Fatal("QUIC listener accepted a connection without a client certificate")
+		}
+	})
+}
+
+// restCall makes one REST request as the named client certificate and
+// returns the status code.
+func restCall(t *testing.T, s *authServers, who, method, path, body string) int {
+	t.Helper()
+	client := &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: s.pki.clientTLS(who)},
+	}
+	defer client.CloseIdleConnections()
+	var rd io.Reader
+	if body != "" {
+		rd = strings.NewReader(body)
+	}
+	req, err := http.NewRequest(method, "https://"+s.rest+path, rd)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	if body != "" {
+		req.Header.Set("Content-Type", "application/octet-stream")
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s as %s: %v", method, path, who, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode
+}
+
+func isRefused(code int) bool {
+	return code == http.StatusUnauthorized || code == http.StatusForbidden
+}
+
+func TestServers_RESTEnforcesRBACPerClientCertificate(t *testing.T) {
+	s := startAuthServers(t)
+
+	for _, who := range []string{"backup-agent", "prune-agent"} {
+		t.Run(who+"_put_get_list", func(t *testing.T) {
+			key := "/objects/" + who + "/data.txt"
+			if code := restCall(t, s, who, http.MethodPut, key, "payload of "+who); code/100 != 2 {
+				t.Fatalf("PUT = %d, want 2xx", code)
+			}
+			if code := restCall(t, s, who, http.MethodGet, key, ""); code != http.StatusOK {
+				t.Fatalf("GET = %d, want 200", code)
+			}
+			if code := restCall(t, s, who, http.MethodGet, "/objects", ""); code != http.StatusOK {
+				t.Fatalf("list = %d, want 200", code)
+			}
+		})
+	}
+
+	t.Run("backup-agent_delete_refused", func(t *testing.T) {
+		key := "/objects/backup-agent/data.txt"
+		if code := restCall(t, s, "backup-agent", http.MethodDelete, key, ""); code != http.StatusForbidden {
+			t.Fatalf("DELETE = %d, want 403", code)
+		}
+		if code := restCall(t, s, "backup-agent", http.MethodGet, key, ""); code != http.StatusOK {
+			t.Fatalf("GET after refused DELETE = %d, want 200: the object must remain", code)
+		}
+	})
+
+	t.Run("prune-agent_delete_allowed", func(t *testing.T) {
+		key := "/objects/backup-agent/data.txt"
+		if code := restCall(t, s, "prune-agent", http.MethodDelete, key, ""); code/100 != 2 {
+			t.Fatalf("DELETE = %d, want 2xx", code)
+		}
+		if code := restCall(t, s, "prune-agent", http.MethodGet, key, ""); code != http.StatusNotFound {
+			t.Fatalf("GET after DELETE = %d, want 404", code)
+		}
+	})
+
+	t.Run("stranger_refused", func(t *testing.T) {
+		calls := []struct{ method, path, body string }{
+			{http.MethodPut, "/objects/stranger/data.txt", "payload"},
+			{http.MethodGet, "/objects/prune-agent/data.txt", ""},
+			{http.MethodGet, "/objects", ""},
+			{http.MethodDelete, "/objects/prune-agent/data.txt", ""},
+		}
+		for _, c := range calls {
+			if code := restCall(t, s, "stranger", c.method, c.path, c.body); !isRefused(code) {
+				t.Errorf("%s %s as stranger = %d, want 401 or 403", c.method, c.path, code)
+			}
+		}
+		if code := restCall(t, s, "prune-agent", http.MethodGet, "/objects/prune-agent/data.txt", ""); code != http.StatusOK {
+			t.Fatalf("GET after stranger DELETE = %d, want 200: the object must remain", code)
 		}
 	})
 }
