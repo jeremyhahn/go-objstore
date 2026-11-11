@@ -15,12 +15,14 @@ package objstore
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
+	"github.com/jeremyhahn/go-objstore/pkg/replication"
 )
 
 // mockReplicationSetter implements both ReplicationCapable (GetReplicationManager)
@@ -327,6 +329,49 @@ func TestEnableReplication_WithConfig(t *testing.T) {
 	// Give the background goroutine a moment so it starts and the test can
 	// exit cleanly; the goroutine is non-blocking so this is safe.
 	time.Sleep(20 * time.Millisecond)
+}
+
+// TestEnableReplication_AllowClientLocalBackends checks the config field
+// reaches the manager: a local policy is refused by default and accepted
+// when AllowClientLocalBackends is true.
+func TestEnableReplication_AllowClientLocalBackends(t *testing.T) {
+	for _, allow := range []bool{false, true} {
+		tmpDir := t.TempDir()
+		local, err := factory.NewStorage("local", map[string]string{"path": tmpDir}, noCreds)
+		if err != nil {
+			t.Fatalf("failed to create local storage: %v", err)
+		}
+		Reset()
+		if err := Initialize(&FacadeConfig{
+			Backends:       map[string]common.Storage{"local": local},
+			DefaultBackend: "local",
+		}); err != nil {
+			t.Fatalf("Initialize() error = %v", err)
+		}
+		if err := EnableReplication("local", &ReplicationConfig{
+			PolicyFilePath:           tmpDir + "/repl-policies.json",
+			AllowClientLocalBackends: allow,
+		}); err != nil {
+			t.Fatalf("EnableReplication() error = %v", err)
+		}
+		rm, err := GetReplicationManager("local")
+		if err != nil {
+			t.Fatalf("GetReplicationManager() error = %v", err)
+		}
+		err = rm.AddPolicy(common.ReplicationPolicy{
+			ID:                 "p1",
+			SourceBackend:      "local",
+			SourceSettings:     map[string]string{"path": tmpDir},
+			DestinationBackend: "memory",
+		})
+		switch {
+		case !allow && !errors.Is(err, replication.ErrClientLocalBackend):
+			t.Errorf("AddPolicy(local) by default = %v, want ErrClientLocalBackend", err)
+		case allow && err != nil:
+			t.Errorf("AddPolicy(local) with AllowClientLocalBackends = %v, want nil", err)
+		}
+		Reset()
+	}
 }
 
 // TestEnableReplication_DefaultBackend exercises the backendName == "" branch in
