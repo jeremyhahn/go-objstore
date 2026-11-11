@@ -340,8 +340,9 @@ func (s *Syncer) SyncObject(ctx context.Context, key string) (int64, error) {
 		srcMetadata = &common.Metadata{}
 	}
 
-	// Put to destination (automatically encrypted if enabled)
-	err = s.dest.PutWithMetadata(ctx, key, reader, srcMetadata)
+	// Put to destination (automatically encrypted if enabled), recording the
+	// source fingerprint the next change detection compares against.
+	err = s.dest.PutWithMetadata(ctx, key, reader, sourceFingerprint(srcMetadata))
 	if err != nil {
 		_ = s.auditLog.LogObjectMutation(ctx, "replication_failed",
 			"", "", "", key, "", "", 0, "failure", err)

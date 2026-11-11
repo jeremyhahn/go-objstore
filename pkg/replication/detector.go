@@ -15,8 +15,17 @@ package replication
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
+)
+
+// Custom metadata keys SyncObject writes on each destination copy: the ETag
+// and size of the source object it was copied from. Lowercase, as S3 returns
+// user metadata keys lowercased.
+const (
+	MetaReplicationSourceETag = "replication_source_etag"
+	MetaReplicationSourceSize = "replication_source_size"
 )
 
 // ChangeDetector detects changes between source and destination storage backends.
@@ -73,6 +82,14 @@ func hasChanged(src, dest *common.Metadata) bool {
 		return true // Object doesn't exist at destination
 	}
 
+	// A copy made by SyncObject records the source fingerprint it was made
+	// from. ETags are not comparable across backends (local is mtime-size,
+	// S3 is an MD5), so when the record is there it decides alone.
+	if recorded, ok := dest.Custom[MetaReplicationSourceETag]; ok && src.ETag != "" {
+		recordedSize, ok := dest.Custom[MetaReplicationSourceSize]
+		return !ok || recorded != src.ETag || recordedSize != strconv.FormatInt(src.Size, 10)
+	}
+
 	// Compare ETags (most reliable)
 	if src.ETag != "" && dest.ETag != "" && src.ETag != dest.ETag {
 		return true
@@ -89,4 +106,26 @@ func hasChanged(src, dest *common.Metadata) bool {
 	}
 
 	return false
+}
+
+// sourceFingerprint returns the metadata to write with the destination copy
+// of an object: src with the source's ETag and size recorded under
+// MetaReplicationSourceETag and MetaReplicationSourceSize. src is not
+// modified.
+func sourceFingerprint(src *common.Metadata) *common.Metadata {
+	out := *src
+	out.Custom = make(map[string]string, len(src.Custom)+2)
+	for k, v := range src.Custom {
+		out.Custom[k] = v
+	}
+	if src.ETag != "" {
+		out.Custom[MetaReplicationSourceETag] = src.ETag
+		out.Custom[MetaReplicationSourceSize] = strconv.FormatInt(src.Size, 10)
+	} else {
+		// No source ETag to record: drop any record copied from upstream
+		// so the fallback comparison applies.
+		delete(out.Custom, MetaReplicationSourceETag)
+		delete(out.Custom, MetaReplicationSourceSize)
+	}
+	return &out
 }
