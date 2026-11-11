@@ -39,6 +39,7 @@ import (
 
 	"github.com/quic-go/quic-go/http3"
 
+	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
@@ -59,9 +60,9 @@ type testPKI struct {
 }
 
 // clientIdentities are the client certificate subjects: backup-agent and
-// prune-agent are configured identities, stranger is signed by the CA but
-// has no identity.
-var clientIdentities = []string{"backup-agent", "prune-agent", "stranger"}
+// prune-agent are configured identities, reader holds read only, stranger is
+// signed by the CA but has no identity.
+var clientIdentities = []string{"backup-agent", "prune-agent", "reader", "stranger"}
 
 func writePEM(t *testing.T, path, typ string, der []byte) {
 	t.Helper()
@@ -217,10 +218,13 @@ func startAuthServers(t *testing.T) *authServers {
 
 	c := authConfig()
 	c.Auth.ClientCA = p.caFile
-	// backup-agent may read, write and list; prune-agent may also delete.
+	// backup-agent may read, write and list; prune-agent may also delete;
+	// reader may only read.
+	c.Auth.Roles["readonly"] = []string{adapters.ActionRead}
 	c.Auth.Identities = []IdentityConfig{
 		{Subject: "backup-agent", Roles: []string{"backup"}},
 		{Subject: "prune-agent", Roles: []string{"backup", "prune"}},
+		{Subject: "reader", Roles: []string{"readonly"}},
 	}
 	s := &authServers{pki: p, grpc: freeTCPAddr(t), rest: freeTCPAddr(t), mcp: freeTCPAddr(t), quic: freeUDPAddr(t)}
 	c.GRPC.Addr, c.MCP.Addr, c.QUIC.Addr = s.grpc, s.mcp, s.quic
@@ -472,6 +476,59 @@ func TestServers_RESTEnforcesRBACPerClientCertificate(t *testing.T) {
 		}
 		if code := restCall(t, s, "prune-agent", http.MethodGet, "/objects/prune-agent/data.txt", ""); code != http.StatusOK {
 			t.Fatalf("GET after stranger DELETE = %d, want 200: the object must remain", code)
+		}
+	})
+}
+
+// TestServers_RESTActionFromRouteNotKey checks that an object key containing
+// a route word ("/exists", "/metadata", "/archive", ...) does not change the
+// action the request needs: the action comes from the matched route.
+func TestServers_RESTActionFromRouteNotKey(t *testing.T) {
+	s := startAuthServers(t)
+	trick := []string{"/objects/a/exists/b", "/objects/a/metadata/b", "/objects/snap/metadata.json"}
+	for _, key := range trick {
+		if code := restCall(t, s, "backup-agent", http.MethodPut, key, "seed"); code/100 != 2 {
+			t.Fatalf("seed PUT %s = %d, want 2xx", key, code)
+		}
+	}
+
+	t.Run("reader_refused_write_and_delete", func(t *testing.T) {
+		for _, key := range trick {
+			if code := restCall(t, s, "reader", http.MethodPut, key+".new", "payload"); code != http.StatusForbidden {
+				t.Errorf("PUT %s.new as reader = %d, want 403", key, code)
+			}
+			if code := restCall(t, s, "reader", http.MethodGet, key+".new", ""); code != http.StatusNotFound {
+				t.Errorf("GET %s.new after refused PUT = %d, want 404: nothing may be stored", key, code)
+			}
+			if code := restCall(t, s, "reader", http.MethodDelete, key, ""); code != http.StatusForbidden {
+				t.Errorf("DELETE %s as reader = %d, want 403", key, code)
+			}
+			if code := restCall(t, s, "reader", http.MethodGet, key, ""); code != http.StatusOK {
+				t.Errorf("GET %s after refused DELETE = %d, want 200: the object must remain", key, code)
+			}
+		}
+	})
+
+	t.Run("backup-agent_refused_delete", func(t *testing.T) {
+		for _, key := range trick {
+			if code := restCall(t, s, "backup-agent", http.MethodDelete, key, ""); code != http.StatusForbidden {
+				t.Errorf("DELETE %s as backup-agent = %d, want 403", key, code)
+			}
+			if code := restCall(t, s, "backup-agent", http.MethodGet, key, ""); code != http.StatusOK {
+				t.Errorf("GET %s after refused DELETE = %d, want 200: the object must remain", key, code)
+			}
+		}
+	})
+
+	t.Run("backup-agent_admin_words_in_key", func(t *testing.T) {
+		for _, key := range []string{"/objects/a/archive/b", "/objects/a/policies/b", "/objects/a/replication/b",
+			"/api/v1/objects/a/archive/b", "/api/v1/objects/a/policies/b", "/api/v1/objects/a/replication/b"} {
+			if code := restCall(t, s, "backup-agent", http.MethodPut, key, "payload"); code/100 != 2 {
+				t.Errorf("PUT %s as backup-agent = %d, want 2xx", key, code)
+			}
+			if code := restCall(t, s, "backup-agent", http.MethodGet, key, ""); code != http.StatusOK {
+				t.Errorf("GET %s as backup-agent = %d, want 200", key, code)
+			}
 		}
 	})
 }
