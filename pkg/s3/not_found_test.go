@@ -53,8 +53,8 @@ func TestS3_NotFound_MapsToErrKeyNotFound(t *testing.T) {
 		"NoSuchKey plain": awsErr(s3.ErrCodeNoSuchKey),
 	}
 	missingHead := map[string]error{
-		"NotFound":     sdkFailure(codeNotFound, http.StatusNotFound),
-		"NotFound 404": sdkFailure("SomeOtherCode", http.StatusNotFound),
+		"NotFound":    sdkFailure(codeNotFound, http.StatusNotFound),
+		"no code 404": sdkFailure("", http.StatusNotFound),
 	}
 
 	for name, sdkErr := range missingGet {
@@ -119,5 +119,49 @@ func TestS3_AccessDenied_IsNotKeyNotFound(t *testing.T) {
 	exists, err := s.Exists(ctx, "k")
 	if exists || !errors.Is(err, denied) {
 		t.Fatalf("Exists: expected false and the AccessDenied error, got %v, %v", exists, err)
+	}
+}
+
+func TestS3_NoSuchBucket_IsBucketNotFound(t *testing.T) {
+	ctx := context.Background()
+	noBucket := sdkFailure(s3.ErrCodeNoSuchBucket, http.StatusNotFound)
+	s := &S3{svc: &mockS3Client{getObjectError: noBucket, copyObjectError: noBucket}, bucket: "b"}
+
+	_, getErr := s.Get("k")
+	_, getCtxErr := s.GetWithContext(ctx, "k")
+	updErr := s.UpdateMetadata(ctx, "k", nil)
+	for name, err := range map[string]error{
+		"Get": getErr, "GetWithContext": getCtxErr, "UpdateMetadata": updErr,
+	} {
+		if !errors.Is(err, common.ErrBucketNotFound) {
+			t.Errorf("%s: expected ErrBucketNotFound, got %v", name, err)
+		}
+		if errors.Is(err, common.ErrKeyNotFound) {
+			t.Errorf("%s: a missing bucket must not read as ErrKeyNotFound: %v", name, err)
+		}
+		if !errors.Is(err, noBucket) {
+			t.Errorf("%s: expected the SDK error in the chain, got %v", name, err)
+		}
+	}
+}
+
+func TestS3_OtherCoded404_IsNotKeyNotFound(t *testing.T) {
+	ctx := context.Background()
+	other := sdkFailure("SomeOtherCode", http.StatusNotFound)
+	s := &S3{svc: &mockS3Client{getObjectError: other, headObjectError: other, copyObjectError: other}, bucket: "b"}
+
+	_, getErr := s.Get("k")
+	_, metaErr := s.GetMetadata(ctx, "k")
+	updErr := s.UpdateMetadata(ctx, "k", nil)
+	for name, err := range map[string]error{"Get": getErr, "GetMetadata": metaErr, "UpdateMetadata": updErr} {
+		if errors.Is(err, common.ErrKeyNotFound) || errors.Is(err, common.ErrBucketNotFound) {
+			t.Errorf("%s: expected the raw SDK error, got %v", name, err)
+		}
+		if !errors.Is(err, other) {
+			t.Errorf("%s: expected the SDK error unchanged, got %v", name, err)
+		}
+	}
+	if exists, err := s.Exists(ctx, "k"); exists || !errors.Is(err, other) {
+		t.Fatalf("Exists: expected false and the SDK error, got %v, %v", exists, err)
 	}
 }

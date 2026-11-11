@@ -79,7 +79,8 @@ func (s *S3) GetWithContext(ctx context.Context, key string) (io.ReadCloser, err
 }
 
 // GetMetadata retrieves only the metadata for an object. A missing key
-// returns an error that wraps common.ErrKeyNotFound.
+// returns an error that wraps common.ErrKeyNotFound. A HEAD request cannot
+// tell a missing bucket from a missing key, so a missing bucket reads as one.
 func (s *S3) GetMetadata(ctx context.Context, key string) (*common.Metadata, error) {
 	if err := common.ValidateKey(key); err != nil {
 		return nil, err
@@ -160,7 +161,8 @@ func (s *S3) DeleteWithContext(ctx context.Context, key string) error {
 }
 
 // Exists checks if an object exists in the backend. A missing key gives
-// false and a nil error; any other failure is returned.
+// false and a nil error; any other failure is returned. A HEAD request cannot
+// tell a missing bucket from a missing key, so a missing bucket also gives false.
 func (s *S3) Exists(ctx context.Context, key string) (bool, error) {
 	if err := common.ValidateKey(key); err != nil {
 		return false, err
