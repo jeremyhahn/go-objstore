@@ -240,7 +240,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ### Archive Operations (gRPC only)
 
-Archive objects to cold storage backends like Glacier or Azure Archive:
+Archive objects to cold storage backends like Glacier or Azure Archive.
+The server refuses a `local` destination unless `archive.allow_client_local_destinations` is true.
 
 ```rust
 use go_objstore::ObjectStoreClient;
