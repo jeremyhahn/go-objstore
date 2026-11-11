@@ -16,6 +16,7 @@ package grpc
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"net"
 	"sync"
 
@@ -77,14 +78,21 @@ func NewServer(options ...ServerOption) (*Server, error) {
 
 // Start starts the gRPC server.
 func (s *Server) Start() error {
+	// Build server options first: a TLS config that fails to build must
+	// stop the start before anything listens.
+	serverOpts, err := s.buildServerOptions()
+	if err != nil {
+		s.opts.Logger.Error(context.Background(), "Failed to build TLS config",
+			adapters.Field{Key: fieldError, Value: err.Error()},
+		)
+		return err
+	}
+
 	// Create listener
 	listener, err := net.Listen("tcp", s.opts.Address)
 	if err != nil {
 		return err
 	}
-
-	// Build server options
-	serverOpts := s.buildServerOptions()
 
 	// Create gRPC server
 	grpcServer := grpc.NewServer(serverOpts...)
@@ -174,23 +182,22 @@ func (s *Server) GetAddress() string {
 }
 
 // buildServerOptions constructs the gRPC server options based on configuration.
-func (s *Server) buildServerOptions() []grpc.ServerOption {
+func (s *Server) buildServerOptions() ([]grpc.ServerOption, error) {
 	var opts []grpc.ServerOption
 
-	// Add TLS credentials if configured (prefer AdapterTLSConfig)
+	// Add TLS credentials if configured (prefer AdapterTLSConfig). A TLS
+	// config that fails to build stops the start: serving without TLS (and
+	// without the client certificate check) would fail open.
 	if s.opts.AdapterTLSConfig != nil {
 		tlsConfig, err := s.opts.AdapterTLSConfig.Build()
 		if err != nil {
-			s.opts.Logger.Error(context.Background(), "Failed to build TLS config",
-				adapters.Field{Key: fieldError, Value: err.Error()},
-			)
-		} else {
-			creds := credentials.NewTLS(tlsConfig)
-			opts = append(opts, grpc.Creds(creds))
-			s.opts.Logger.Info(context.Background(), "gRPC TLS enabled",
-				adapters.Field{Key: "tls_mode", Value: s.opts.AdapterTLSConfig.Mode},
-			)
+			return nil, fmt.Errorf("grpc: build TLS config: %w", err)
 		}
+		creds := credentials.NewTLS(tlsConfig)
+		opts = append(opts, grpc.Creds(creds))
+		s.opts.Logger.Info(context.Background(), "gRPC TLS enabled",
+			adapters.Field{Key: "tls_mode", Value: s.opts.AdapterTLSConfig.Mode},
+		)
 	} else if s.opts.TLSConfig != nil {
 		creds := credentials.NewTLS(s.opts.TLSConfig)
 		opts = append(opts, grpc.Creds(creds))
@@ -284,7 +291,7 @@ func (s *Server) buildServerOptions() []grpc.ServerOption {
 		opts = append(opts, grpc.ChainStreamInterceptor(streamInterceptors...))
 	}
 
-	return opts
+	return opts, nil
 }
 
 // WithTLSFromFiles is a helper to create a TLS config from certificate files.
