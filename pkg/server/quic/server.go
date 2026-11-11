@@ -22,6 +22,7 @@ import (
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"github.com/jeremyhahn/go-objstore/pkg/audit"
+	"github.com/jeremyhahn/go-objstore/pkg/factory"
 	"github.com/jeremyhahn/go-objstore/pkg/server/middleware"
 	"github.com/quic-go/quic-go/http3"
 )
@@ -57,6 +58,7 @@ func New(opts *Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
+	handler.wireOpts = factory.WireOptions{AllowLocalDestinations: opts.AllowClientLocalArchiveDestinations}
 
 	// Wrap the handler with the shared middleware stack. Order (outermost
 	// first): request ID → rate limit → audit → handler, matching the REST

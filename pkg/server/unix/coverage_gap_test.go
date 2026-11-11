@@ -33,6 +33,7 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
+	"github.com/jeremyhahn/go-objstore/pkg/factory"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	"github.com/jeremyhahn/go-objstore/pkg/server/middleware"
 )
@@ -1271,6 +1272,7 @@ func TestHandleArchiveSuccessPath(t *testing.T) {
 	storage.metadata["arch-key"] = &common.Metadata{Size: 4}
 	initTestFacade(t, storage)
 	handler := NewHandler("", &mockLogger{}, nil, nil)
+	handler.wireOpts = factory.WireOptions{AllowLocalDestinations: true}
 
 	// Use the "local" archiver type with a valid temp path so factory.NewArchiver
 	// succeeds and reaches the objstore.Archive call.
@@ -1298,6 +1300,7 @@ func TestHandleArchiveBackendError(t *testing.T) {
 		t.Fatalf("init: %v", err)
 	}
 	handler := NewHandler("", &mockLogger{}, nil, nil)
+	handler.wireOpts = factory.WireOptions{AllowLocalDestinations: true}
 
 	// Use "local" archiver with a temp dir so factory.NewArchiver succeeds.
 	archDir := t.TempDir()

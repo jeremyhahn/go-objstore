@@ -21,6 +21,7 @@ services:
     environment:
       - STORAGE_BACKEND=local
       - OBJSTORE_REPLICATION_ALLOW_CLIENT_LOCAL_BACKENDS=true
+      - OBJSTORE_ARCHIVE_ALLOW_CLIENT_LOCAL_DESTINATIONS=true
       - STORAGE_PATH=/data
       - LOG_LEVEL=info
       - REST_ENABLED=true

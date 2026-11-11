@@ -93,6 +93,7 @@ func (c *Config) GRPCOptions(mw Middleware) ([]grpcserver.ServerOption, error) {
 		grpcserver.WithMaxSendMessageSize(c.GRPC.MaxSendMsgSize),
 		grpcserver.WithRateLimit(mw.RateLimit, mw.RateLimitConfig),
 		grpcserver.WithAudit(mw.Audit),
+		grpcserver.WithAllowClientLocalArchiveDestinations(c.Archive.AllowClientLocalDestinations),
 	}
 	if mw.AuditLogger != nil {
 		opts = append(opts, grpcserver.WithAuditLogger(mw.AuditLogger))
@@ -128,6 +129,7 @@ func (c *Config) RESTServerConfig(mw Middleware) *restserver.ServerConfig {
 	sc.Host = c.REST.Host
 	sc.Port = c.REST.Port
 	sc.MetricsPublic = c.REST.MetricsPublic
+	sc.AllowClientLocalArchiveDestinations = c.Archive.AllowClientLocalDestinations
 	sc.EnableRateLimit = mw.RateLimit
 	sc.RateLimitConfig = mw.RateLimitConfig
 	sc.EnableAudit = mw.Audit
@@ -153,7 +155,8 @@ func (c *Config) QUICOptions(mw Middleware) *quicserver.Options {
 		WithAddr(c.QUIC.Addr).
 		WithMaxRequestBodySize(c.QUIC.MaxBodySize).
 		WithTimeouts(c.QUIC.ReadTimeout, c.QUIC.WriteTimeout, c.QUIC.IdleTimeout).
-		WithStreamLimits(c.QUIC.MaxStreams, c.QUIC.MaxStreams)
+		WithStreamLimits(c.QUIC.MaxStreams, c.QUIC.MaxStreams).
+		WithAllowClientLocalArchiveDestinations(c.Archive.AllowClientLocalDestinations)
 	if mw.RateLimit {
 		opts = opts.WithRateLimit(mw.RateLimitConfig)
 	}
@@ -191,6 +194,7 @@ func (c *Config) MCPServerConfig(mw Middleware) (*mcpserver.ServerConfig, error)
 	sc := mcpserver.DefaultServerConfig()
 	sc.Mode = mode
 	sc.HTTPAddress = c.MCP.Addr
+	sc.AllowClientLocalArchiveDestinations = c.Archive.AllowClientLocalDestinations
 	sc.EnableRateLimit = mw.RateLimit
 	sc.RateLimitConfig = mw.RateLimitConfig
 	sc.EnableAudit = mw.Audit
@@ -223,6 +227,7 @@ func (c *Config) UnixServerConfig(mw Middleware) *unixserver.ServerConfig {
 	sc.RateLimitConfig = mw.RateLimitConfig
 	sc.EnableAudit = mw.Audit
 	sc.AuditLogger = mw.AuditLogger
+	sc.AllowClientLocalArchiveDestinations = c.Archive.AllowClientLocalDestinations
 	if !c.Auth.Enabled() {
 		warnUnauthenticated("unix")
 		return sc

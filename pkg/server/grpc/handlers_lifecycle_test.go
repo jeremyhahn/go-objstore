@@ -172,7 +172,7 @@ func TestArchive(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := tt.setupStorage()
-			server, err := newTestServer(t, storage)
+			server, err := newTestServer(t, storage, WithAllowClientLocalArchiveDestinations(true))
 			if err != nil {
 				t.Fatalf("Failed to create server: %v", err)
 			}
@@ -328,7 +328,7 @@ func TestAddPolicy(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := tt.setupStorage()
-			server, err := newTestServer(t, storage)
+			server, err := newTestServer(t, storage, WithAllowClientLocalArchiveDestinations(true))
 			if err != nil {
 				t.Fatalf("Failed to create server: %v", err)
 			}
@@ -617,7 +617,7 @@ func TestProtoToLifecyclePolicy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			policy, err := protoToLifecyclePolicy(tt.proto)
+			policy, err := protoToLifecyclePolicy(tt.proto, allowLocalArchive)
 
 			if tt.wantError {
 				if err == nil {

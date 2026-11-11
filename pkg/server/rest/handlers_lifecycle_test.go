@@ -168,6 +168,7 @@ func TestArchiveObject(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := tt.setupStorage()
 			handler := newTestHandler(t, storage)
+			handler.wireOpts = allowLocalArchive
 			router := gin.New()
 			router.POST("/archive", handler.Archive)
 

@@ -86,6 +86,7 @@ table notes one.
 | `rate_limit.burst` | `OBJSTORE_RATE_LIMIT_BURST` | `200` | `-rate-limit-burst` | `-rate-limit-burst` (all) |
 | `rate_limit.per_client` | `OBJSTORE_RATE_LIMIT_PER_CLIENT` | `false` | `-rate-limit-per-client` | `-rate-limit-per-client` (all) |
 | `audit.enabled` | `OBJSTORE_AUDIT_ENABLED` | `true` | `-audit` | `-audit` (all) |
+| `archive.allow_client_local_destinations` | `OBJSTORE_ARCHIVE_ALLOW_CLIENT_LOCAL_DESTINATIONS` | `false` | `-allow-client-local-archive` | `-allow-client-local-archive` (all) |
 | `auth.client_ca` | `OBJSTORE_AUTH_CLIENT_CA` | — | — | — |
 | `auth.roles` | file only | — | — | — |
 | `auth.identities` | file only | — | — | — |
@@ -106,6 +107,12 @@ Rate limiting and audit logging apply to every transport a binary serves,
 standalone or combined, with one audit logger per process. Audit records go to
 standard output, or to standard error when `mcp.mode` is `stdio`, where standard
 output carries the JSON-RPC stream.
+
+`archive.allow_client_local_destinations` is off by default: gRPC, REST, QUIC,
+MCP and the Unix socket refuse an archive call or lifecycle policy that names a
+`local` (filesystem path) destination, because the client would choose a
+directory the server's user writes into. Turn it on only where every client is
+trusted with the server's filesystem.
 
 A replication policy's source and destination backend type and settings come
 from the client, so a backend whose settings take a filesystem path (`local`)

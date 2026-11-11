@@ -23,6 +23,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 - server: with `auth` set, any authenticated identity may call the objstore gRPC `Health` RPC whatever its roles; it needed `admin` before. A call with no principal is still refused, and any other unknown gRPC method still needs `admin`. The standard health and reflection services skip authorization by exact service prefix instead of a substring match (#239)
 
+### Security
+
+- server: gRPC, REST, QUIC, MCP and the Unix socket refuse a client-supplied `local` archiver destination (archive calls and lifecycle policies) by default; `archive.allow_client_local_destinations` (`OBJSTORE_ARCHIVE_ALLOW_CLIENT_LOCAL_DESTINATIONS`, `-allow-client-local-archive`) turns it back on (#236)
+- **Upgrade:** archive: clients and lifecycle policies that archive to a `local` destination now get an invalid-argument error until the server sets `archive.allow_client_local_destinations: true` (or `OBJSTORE_ARCHIVE_ALLOW_CLIENT_LOCAL_DESTINATIONS=true`, or `-allow-client-local-archive`) (#236)
+
 ## [0.9.0-alpha] - 2026-10-27
 
 ### Changed
