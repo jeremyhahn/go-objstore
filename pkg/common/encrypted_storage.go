@@ -208,7 +208,8 @@ func (e *encryptedStorage) UpdateMetadata(ctx context.Context, key string, metad
 // isEncryptionField reports whether a custom metadata key is owned by the
 // encrypted storage wrapper.
 func isEncryptionField(k string) bool {
-	return strings.HasPrefix(k, "encryption_")
+	const prefix = "encryption_"
+	return len(k) >= len(prefix) && strings.EqualFold(k[:len(prefix)], prefix)
 }
 
 // Delete removes an object from the underlying storage
