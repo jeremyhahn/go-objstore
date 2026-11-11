@@ -47,7 +47,7 @@ func TestAddPolicyRefusesCredentialInSettings(t *testing.T) {
 	for name, policy := range cases {
 		t.Run(name, func(t *testing.T) {
 			fs := newMockFileSystem()
-			mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, adapters.NewNoOpLogger(), auditlog.NewNoOpAuditLogger())
+			mgr, err := newLocalTestManager(fs, "test-policies.json", 5*time.Minute, adapters.NewNoOpLogger(), auditlog.NewNoOpAuditLogger())
 			if err != nil {
 				t.Fatalf("create manager: %v", err)
 			}

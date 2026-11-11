@@ -83,6 +83,7 @@ table notes one.
 | `rate_limit.per_client` | `OBJSTORE_RATE_LIMIT_PER_CLIENT` | `false` | `-rate-limit-per-client` | `-rate-limit-per-client` (all) |
 | `audit.enabled` | `OBJSTORE_AUDIT_ENABLED` | `true` | `-audit` | `-audit` (all) |
 | `archive.allow_client_local_destinations` | `OBJSTORE_ARCHIVE_ALLOW_CLIENT_LOCAL_DESTINATIONS` | `false` | `-allow-client-local-archive` | `-allow-client-local-archive` (all) |
+| `replication.allow_client_local_backends` | `OBJSTORE_REPLICATION_ALLOW_CLIENT_LOCAL_BACKENDS` | `false` | `-replication-allow-client-local-backends` | `-replication-allow-client-local-backends` (all) |
 
 Rate limiting and audit logging apply to every transport a binary serves,
 standalone or combined, with one audit logger per process. Audit records go to
@@ -94,6 +95,16 @@ MCP and the Unix socket refuse an archive call or lifecycle policy that names a
 `local` (filesystem path) destination, because the client would choose a
 directory the server's user writes into. Turn it on only where every client is
 trusted with the server's filesystem.
+
+A replication policy's source and destination backend type and settings come
+from the client, so a backend whose settings take a filesystem path (`local`)
+could read or write any directory the service user can reach. By default the
+server refuses such a policy: adding one answers invalid argument (HTTP 400 on
+REST and QUIC, `InvalidArgument` on gRPC, a tool error on MCP), and a
+replication policy file that already holds one fails to load, with an error
+naming the policy ID. Set `replication.allow_client_local_backends: true` only
+when every client that may add a policy is trusted with the service user's
+filesystem access.
 
 `objstore-server` applies the QUIC body-size, timeout and stream-limit keys too;
 they have no flag on that binary but are set through the file or environment.

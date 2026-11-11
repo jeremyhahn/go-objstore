@@ -68,3 +68,10 @@
 # When false, every transport refuses an archive call or lifecycle policy
 # that names a local (filesystem path) archiver: the client would choose a
 # directory the server's user writes into.
+
+# replication:
+#   allow_client_local_backends: false
+# Replication policies name their backends and settings, so a "local" backend
+# could open any directory the service user can read. Policies with a local
+# source or destination are refused (and a policy file holding one fails to
+# load) unless this is true.

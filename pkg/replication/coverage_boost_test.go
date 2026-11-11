@@ -36,7 +36,7 @@ func TestSyncAllWithErrors(t *testing.T) {
 	logger := adapters.NewNoOpLogger()
 	auditLog := auditlog.NewNoOpAuditLogger()
 
-	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
+	mgr, err := newLocalTestManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestSyncPolicyWithMetricsUpdate(t *testing.T) {
 	logger := adapters.NewNoOpLogger()
 	auditLog := auditlog.NewNoOpAuditLogger()
 
-	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
+	mgr, err := newLocalTestManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestSaveErrorHandling(t *testing.T) {
 	logger := adapters.NewNoOpLogger()
 	auditLog := auditlog.NewNoOpAuditLogger()
 
-	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
+	mgr, err := newLocalTestManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestGetReplicationStatusWithoutMetrics(t *testing.T) {
 	logger := adapters.NewNoOpLogger()
 	auditLog := auditlog.NewNoOpAuditLogger()
 
-	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
+	mgr, err := newLocalTestManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
@@ -310,7 +310,7 @@ func TestSyncPolicyParallelWithErrors(t *testing.T) {
 	logger := adapters.NewNoOpLogger()
 	auditLog := auditlog.NewNoOpAuditLogger()
 
-	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
+	mgr, err := newLocalTestManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}

@@ -260,13 +260,11 @@ func TestConformance(t *testing.T) {
 	t.Run("replication_policy_parity", func(t *testing.T) {
 		// Add a policy via one transport, observe it via the others, remove it
 		// via yet another — the policy_id-vs-id class of drift guard.
-		destDir := t.TempDir()
 		policy := &ReplicationPolicy{
 			ID:                   "conf-policy-1",
-			SourceBackend:        "local",
+			SourceBackend:        "memory",
 			SourcePrefix:         "conformance/",
-			DestinationBackend:   "local",
-			DestinationSettings:  map[string]string{"path": destDir},
+			DestinationBackend:   "memory",
 			CheckIntervalSeconds: 60,
 			Enabled:              true,
 		}

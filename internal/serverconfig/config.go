@@ -45,6 +45,8 @@ type Config struct {
 	RateLimit RateLimitConfig `mapstructure:"rate_limit"`
 	Audit     AuditConfig     `mapstructure:"audit"`
 	Archive   ArchiveConfig   `mapstructure:"archive"`
+
+	Replication ReplicationConfig `mapstructure:"replication"`
 }
 
 // Bounds of grpc.max_recv_msg_size and grpc.max_send_msg_size. Below 1 MiB a

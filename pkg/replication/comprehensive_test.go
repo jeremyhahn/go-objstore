@@ -32,7 +32,7 @@ func TestMultipleSyncRounds(t *testing.T) {
 	logger := adapters.NewNoOpLogger()
 	auditLog := auditlog.NewNoOpAuditLogger()
 
-	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
+	mgr, err := newLocalTestManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestSyncAllMultiplePolicies(t *testing.T) {
 	logger := adapters.NewNoOpLogger()
 	auditLog := auditlog.NewNoOpAuditLogger()
 
-	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
+	mgr, err := newLocalTestManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestPolicyReload(t *testing.T) {
 	auditLog := auditlog.NewNoOpAuditLogger()
 
 	// Create first manager and add policies
-	mgr1, err := NewPersistentReplicationManager(fs, "reload-test.json", 5*time.Minute, logger, auditLog)
+	mgr1, err := newLocalTestManager(fs, "reload-test.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
 		t.Fatalf("Failed to create first manager: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestPolicyReload(t *testing.T) {
 	}
 
 	// Create second manager - should load the policy
-	mgr2, err := NewPersistentReplicationManager(fs, "reload-test.json", 5*time.Minute, logger, auditLog)
+	mgr2, err := newLocalTestManager(fs, "reload-test.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
 		t.Fatalf("Failed to create second manager: %v", err)
 	}
@@ -325,7 +325,7 @@ func TestReplicationStatusWithMetrics(t *testing.T) {
 	logger := adapters.NewNoOpLogger()
 	auditLog := auditlog.NewNoOpAuditLogger()
 
-	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
+	mgr, err := newLocalTestManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}

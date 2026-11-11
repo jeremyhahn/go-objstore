@@ -377,7 +377,7 @@ func TestSave_OpenTmpFails(t *testing.T) {
 	logger := adapters.NewNoOpLogger()
 	auditLog := auditlog.NewNoOpAuditLogger()
 
-	mgr, err := NewPersistentReplicationManager(mfs, "policies.json", time.Minute, logger, auditLog)
+	mgr, err := newLocalTestManager(mfs, "policies.json", time.Minute, logger, auditLog)
 	require.NoError(t, err)
 
 	// Switch to a filesystem whose OpenFile always fails.
@@ -395,7 +395,7 @@ func TestSave_WriteFails(t *testing.T) {
 	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mfs := newMockFileSystem()
-	mgr, err := NewPersistentReplicationManager(mfs, "policies.json", time.Minute, logger, auditLog)
+	mgr, err := newLocalTestManager(mfs, "policies.json", time.Minute, logger, auditLog)
 	require.NoError(t, err)
 
 	mgr.fs = &writeFailFS{}
@@ -412,7 +412,7 @@ func TestSave_RenameFails(t *testing.T) {
 	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mfs := newMockFileSystem()
-	mgr, err := NewPersistentReplicationManager(mfs, "policies.json", time.Minute, logger, auditLog)
+	mgr, err := newLocalTestManager(mfs, "policies.json", time.Minute, logger, auditLog)
 	require.NoError(t, err)
 
 	mgr.fs = &renameFailFS{}
@@ -433,7 +433,7 @@ func TestLoad_ReadAllFails(t *testing.T) {
 
 	mfs := &readFailFS{}
 	// Provide a policy file so OpenFile "succeeds" but returns a read-error reader.
-	_, err := NewPersistentReplicationManager(mfs, "policies.json", time.Minute, logger, auditLog)
+	_, err := newLocalTestManager(mfs, "policies.json", time.Minute, logger, auditLog)
 	assert.Error(t, err)
 }
 
@@ -446,7 +446,7 @@ func TestSyncAllParallel_NoPolicies(t *testing.T) {
 	logger := adapters.NewNoOpLogger()
 	auditLog := auditlog.NewNoOpAuditLogger()
 
-	mgr, err := NewPersistentReplicationManager(mfs, "policies.json", time.Minute, logger, auditLog)
+	mgr, err := newLocalTestManager(mfs, "policies.json", time.Minute, logger, auditLog)
 	require.NoError(t, err)
 
 	result, err := mgr.SyncAllParallel(context.Background(), 2)
@@ -460,7 +460,7 @@ func TestSyncAllParallel_DisabledPoliciesSkipped(t *testing.T) {
 	logger := adapters.NewNoOpLogger()
 	auditLog := auditlog.NewNoOpAuditLogger()
 
-	mgr, err := NewPersistentReplicationManager(mfs, "policies.json", time.Minute, logger, auditLog)
+	mgr, err := newLocalTestManager(mfs, "policies.json", time.Minute, logger, auditLog)
 	require.NoError(t, err)
 
 	policy := common.ReplicationPolicy{
@@ -486,7 +486,7 @@ func TestSyncAllParallel_WithError(t *testing.T) {
 	logger := adapters.NewNoOpLogger()
 	auditLog := auditlog.NewNoOpAuditLogger()
 
-	mgr, err := NewPersistentReplicationManager(mfs, "policies.json", time.Minute, logger, auditLog)
+	mgr, err := newLocalTestManager(mfs, "policies.json", time.Minute, logger, auditLog)
 	require.NoError(t, err)
 
 	// A policy with an invalid backend causes SyncPolicyParallel to fail.
@@ -518,7 +518,7 @@ func TestRun_TickerFiresSync(t *testing.T) {
 	auditLog := auditlog.NewNoOpAuditLogger()
 
 	// Very short interval so the ticker fires quickly.
-	mgr, err := NewPersistentReplicationManager(mfs, "policies.json", 20*time.Millisecond, logger, auditLog)
+	mgr, err := newLocalTestManager(mfs, "policies.json", 20*time.Millisecond, logger, auditLog)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)

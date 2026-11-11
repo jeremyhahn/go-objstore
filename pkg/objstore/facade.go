@@ -675,6 +675,13 @@ type ReplicationConfig struct {
 	// replication uses the SDK default credential chain.
 	CredentialProvider replication.CredentialProvider
 
+	// AllowClientLocalBackends permits replication policies whose source or
+	// destination backend type takes a filesystem path (such as "local").
+	// Policies come from the client, so such a backend could open any
+	// directory the service user can read. False (the default) refuses them
+	// with replication.ErrClientLocalBackend.
+	AllowClientLocalBackends bool
+
 	// RunInBackground starts a background goroutine to run periodic syncs.
 	// If false, syncs must be triggered manually.
 	RunInBackground bool
@@ -754,6 +761,7 @@ func EnableReplication(backendName string, config *ReplicationConfig) error {
 		logger,
 		auditLog,
 		replication.WithCredentialProvider(config.CredentialProvider),
+		replication.WithClientLocalBackends(config.AllowClientLocalBackends),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create replication manager: %w", err)
