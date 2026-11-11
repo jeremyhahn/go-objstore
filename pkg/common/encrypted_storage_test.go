@@ -811,6 +811,39 @@ func TestEncryptedStorage_UpdateMetadata_MissingObject(t *testing.T) {
 	}
 }
 
+// A caller-supplied encryption_key_id (or algorithm) in PutWithMetadata is
+// overwritten with the key the object is really encrypted under (#226).
+func TestEncryptedStorage_PutWithMetadata_OverwritesCallerKeyID(t *testing.T) {
+	ctx := context.Background()
+	underlying := newMockUnderlyingStorage()
+	const plaintext = "secret written with key A"
+
+	writerA := NewEncryptedStorage(underlying, newKeyedFactory("keyA"))
+	meta := &Metadata{Custom: map[string]string{
+		"encryption_key_id":    "keyB",
+		"encryption_algorithm": "forged",
+	}}
+	if err := writerA.PutWithMetadata(ctx, "obj", bytes.NewReader([]byte(plaintext)), meta); err != nil {
+		t.Fatalf("PutWithMetadata: %v", err)
+	}
+
+	md, err := underlying.GetMetadata(ctx, "obj")
+	if err != nil {
+		t.Fatalf("GetMetadata: %v", err)
+	}
+	if got := md.Custom["encryption_key_id"]; got != "keyA" {
+		t.Errorf("encryption_key_id = %q, want keyA", got)
+	}
+	if got := md.Custom["encryption_algorithm"]; got != "test-keyed" {
+		t.Errorf("encryption_algorithm = %q, want test-keyed", got)
+	}
+
+	readerB := NewEncryptedStorage(underlying, newKeyedFactory("keyB"))
+	if got := readAllString(t, readerB, "obj"); got != plaintext {
+		t.Errorf("read after key change = %q, want %q", got, plaintext)
+	}
+}
+
 // TestEncryptedStorage_MissingKeyID_UsesDefault: an object stored without
 // encryption_key_id keeps today's behaviour and decrypts with the default key.
 func TestEncryptedStorage_MissingKeyID_UsesDefault(t *testing.T) {
