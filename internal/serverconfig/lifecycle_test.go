@@ -146,13 +146,15 @@ func TestConfig_PolicyFileCanonical(t *testing.T) {
 	}
 
 	for bad, want := range map[string]error{
-		"..":                ErrPolicyPathEscapes,
-		"../life.json":      ErrPolicyPathEscapes,
-		"a/../../life.json": ErrPolicyPathEscapes,
-		"/etc/life.json":    ErrPolicyPathNotRelative,
-		".":                 ErrPolicyPathNoFile,
-		"./":                ErrPolicyPathNoFile,
-		"a/..":              ErrPolicyPathNoFile,
+		"..":                   ErrPolicyPathEscapes,
+		"../life.json":         ErrPolicyPathEscapes,
+		"a/../../life.json":    ErrPolicyPathEscapes,
+		"/etc/life.json":       ErrPolicyPathNotRelative,
+		".":                    ErrPolicyPathNoFile,
+		"./":                   ErrPolicyPathNoFile,
+		"a/..":                 ErrPolicyPathNoFile,
+		"logs.metadata.json":   ErrPolicyPathSidecar,
+		"a/LOGS.Metadata.JSON": ErrPolicyPathSidecar,
 	} {
 		cfg := Defaults()
 		cfg.Path = testPath

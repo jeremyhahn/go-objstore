@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jeremyhahn/go-objstore/pkg/common"
 	grpcserver "github.com/jeremyhahn/go-objstore/pkg/server/grpc"
 	mcpserver "github.com/jeremyhahn/go-objstore/pkg/server/mcp"
 	quicserver "github.com/jeremyhahn/go-objstore/pkg/server/quic"
@@ -231,6 +232,9 @@ var (
 	ErrPolicyPathNoFile = errors.New("must name a file")
 	// ErrPolicyPathEscapes reports a policy file path that leaves the storage path.
 	ErrPolicyPathEscapes = errors.New("must not leave the storage path")
+	// ErrPolicyPathSidecar reports a policy file path that names an object's
+	// metadata sidecar: a PUT of that object would overwrite the policies.
+	ErrPolicyPathSidecar = errors.New("must not name an object metadata sidecar (" + common.MetadataSuffix + ")")
 )
 
 func CanonicalPolicyFile(p string) (string, error) {
@@ -243,6 +247,8 @@ func CanonicalPolicyFile(p string) (string, error) {
 		return "", ErrPolicyPathNoFile
 	case clean == ".." || strings.HasPrefix(clean, "../"):
 		return "", ErrPolicyPathEscapes
+	case strings.HasSuffix(strings.ToLower(clean), strings.ToLower(common.MetadataSuffix)):
+		return "", ErrPolicyPathSidecar
 	}
 	return clean, nil
 }

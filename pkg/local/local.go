@@ -340,8 +340,19 @@ func (l *Local) validateKey(key string) error {
 			Message: fmt.Sprintf("key %q is the store's lifecycle policy file", key),
 		}
 	}
+	if l.policyFile != "" && common.SameKey(key+metadataSuffix, l.policyFile) {
+		return fmt.Errorf("%w: %w", ErrKeyAliasesPolicyFile, &common.ValidationError{
+			Field:   "key",
+			Message: fmt.Sprintf("the metadata of key %q would overwrite the store's lifecycle policy file", key),
+		})
+	}
 	return nil
 }
+
+// ErrKeyAliasesPolicyFile reports an object key whose metadata sidecar
+// would be the store's lifecycle policy file: storing the object would
+// overwrite the policies with its metadata.
+var ErrKeyAliasesPolicyFile = errors.New("key's metadata sidecar is the lifecycle policy file")
 
 // PutWithMetadata stores an object with associated metadata.
 func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader, metadata *common.Metadata) error {
