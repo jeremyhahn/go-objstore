@@ -14,6 +14,7 @@
 package serverconfig
 
 import (
+	"bufio"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -21,6 +22,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"io"
@@ -29,6 +31,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -40,9 +43,11 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	grpcserver "github.com/jeremyhahn/go-objstore/pkg/server/grpc"
+	"github.com/jeremyhahn/go-objstore/pkg/server/jsonrpc"
 	mcpserver "github.com/jeremyhahn/go-objstore/pkg/server/mcp"
 	quicserver "github.com/jeremyhahn/go-objstore/pkg/server/quic"
 	restserver "github.com/jeremyhahn/go-objstore/pkg/server/rest"
+	unixserver "github.com/jeremyhahn/go-objstore/pkg/server/unix"
 )
 
 // testPKI holds the files and parsed material of a generated CA, a server
@@ -467,6 +472,135 @@ func TestServers_RESTEnforcesRBACPerClientCertificate(t *testing.T) {
 		}
 		if code := restCall(t, s, "prune-agent", http.MethodGet, "/objects/prune-agent/data.txt", ""); code != http.StatusOK {
 			t.Fatalf("GET after stranger DELETE = %d, want 200: the object must remain", code)
+		}
+	})
+}
+
+// startAuthUnix starts the Unix socket server built by UnixServerConfig with
+// auth set and the given identities, and returns a connection to it.
+func startAuthUnix(t *testing.T, identities []IdentityConfig) net.Conn {
+	t.Helper()
+	storage, err := factory.NewStorage("local", map[string]string{"path": t.TempDir()}, common.Credentials{})
+	if err != nil {
+		t.Fatalf("NewStorage: %v", err)
+	}
+	objstore.Reset()
+	if err := objstore.Initialize(&objstore.FacadeConfig{
+		Backends:       map[string]common.Storage{"default": storage},
+		DefaultBackend: "default",
+	}); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	t.Cleanup(objstore.Reset)
+
+	c := authConfig()
+	c.Auth.Identities = identities
+	c.Unix.Socket = filepath.Join(t.TempDir(), "objstore.sock")
+	srv, err := unixserver.NewServer(c.UnixServerConfig(c.Middleware()))
+	if err != nil {
+		t.Fatalf("unix NewServer: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { _ = srv.Start(ctx); close(done) }()
+	t.Cleanup(func() { cancel(); <-done })
+	select {
+	case <-srv.Ready():
+	case <-time.After(5 * time.Second):
+		t.Fatal("unix server not ready")
+	}
+	conn, err := net.Dial("unix", c.Unix.Socket)
+	if err != nil {
+		t.Fatalf("dial unix: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	return conn
+}
+
+// unixCall sends one JSON-RPC request on conn and returns the response.
+func unixCall(t *testing.T, conn net.Conn, r *bufio.Reader, id int, method string, params any) *jsonrpc.Response {
+	t.Helper()
+	req := jsonrpc.Request{JSONRPC: jsonrpc.Version, Method: method, ID: id}
+	if params != nil {
+		raw, err := json.Marshal(params)
+		if err != nil {
+			t.Fatalf("marshal params: %v", err)
+		}
+		req.Params = raw
+	}
+	line, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatalf("set deadline: %v", err)
+	}
+	if _, err := conn.Write(append(line, '\n')); err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+	reply, err := r.ReadBytes('\n')
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+	var resp jsonrpc.Response
+	if err := json.Unmarshal(reply, &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	return &resp
+}
+
+func TestServers_UnixEnforcesRBACPerPeerUID(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("SO_PEERCRED peer credentials are Linux only")
+	}
+	self := UIDSubjectPrefix + strconv.Itoa(os.Getuid())
+	put := unixserver.PutParams{Key: "unix/data.txt", Data: "cGF5bG9hZA=="} // "payload"
+	get := unixserver.GetParams{Key: "unix/data.txt"}
+	del := unixserver.DeleteParams{Key: "unix/data.txt"}
+
+	t.Run("unmapped_uid_refused", func(t *testing.T) {
+		// Only another uid is mapped: this process's uid has no roles.
+		conn := startAuthUnix(t, []IdentityConfig{
+			{Subject: UIDSubjectPrefix + strconv.Itoa(os.Getuid()+1), Roles: []string{"backup", "prune"}},
+		})
+		r := bufio.NewReader(conn)
+		calls := []struct {
+			method string
+			params any
+		}{
+			{unixserver.MethodPut, put},
+			{unixserver.MethodGet, get},
+			{unixserver.MethodList, unixserver.ListParams{}},
+			{unixserver.MethodDelete, del},
+		}
+		for i, c := range calls {
+			resp := unixCall(t, conn, r, i+1, c.method, c.params)
+			if resp.Error == nil || resp.Error.Code != jsonrpc.CodeForbidden {
+				t.Errorf("%s as unmapped %s = %+v, want error code %d", c.method, self, resp.Error, jsonrpc.CodeForbidden)
+			}
+		}
+	})
+
+	t.Run("mapped_uid_allowed_by_role", func(t *testing.T) {
+		// This process's uid holds backup only: put, get and list are
+		// allowed, delete is refused.
+		conn := startAuthUnix(t, []IdentityConfig{{Subject: self, Roles: []string{"backup"}}})
+		r := bufio.NewReader(conn)
+		for i, c := range []struct {
+			method string
+			params any
+		}{
+			{unixserver.MethodPut, put},
+			{unixserver.MethodGet, get},
+			{unixserver.MethodList, unixserver.ListParams{}},
+		} {
+			if resp := unixCall(t, conn, r, i+1, c.method, c.params); resp.Error != nil {
+				t.Fatalf("%s as %s = %+v, want success", c.method, self, resp.Error)
+			}
+		}
+		resp := unixCall(t, conn, r, 4, unixserver.MethodDelete, del)
+		if resp.Error == nil || resp.Error.Code != jsonrpc.CodeForbidden {
+			t.Fatalf("delete as %s with backup only = %+v, want error code %d", self, resp.Error, jsonrpc.CodeForbidden)
 		}
 	})
 }
