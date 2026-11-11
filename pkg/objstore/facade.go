@@ -624,6 +624,109 @@ func GetPolicies(backendName string) ([]common.LifecyclePolicy, error) {
 	return storage.GetPolicies()
 }
 
+// applyPoliciesPageSize is the page size ApplyPolicies lists with. Tests
+// lower it to cover more than one page.
+var applyPoliciesPageSize = 1000
+
+// ApplyPoliciesResult reports what ApplyPolicies did.
+type ApplyPoliciesResult struct {
+	// PoliciesCount is the number of policies the backend holds.
+	PoliciesCount int
+	// ObjectsProcessed counts the objects deleted or archived.
+	ObjectsProcessed int
+}
+
+// PolicyActionError reports an object a policy could not act on. ApplyPolicies
+// passes each one to its onError callback and carries on.
+type PolicyActionError func(key, action string, err error)
+
+// ApplyPolicies applies every lifecycle policy of the backend once. It pages
+// through the whole listing (following the continuation token until the
+// result says there is no more), records each object older than a matching
+// policy's retention, and then deletes or archives it. Actions run after the
+// listing so a delete never moves the continuation point of a backend that
+// pages by key. A failed action is passed to onError (when non-nil) and
+// skipped; listing and policy errors are returned.
+func ApplyPolicies(ctx context.Context, backendName string, onError PolicyActionError) (*ApplyPoliciesResult, error) {
+	policies, err := GetPolicies(backendName)
+	if err != nil {
+		return nil, err
+	}
+	result := &ApplyPoliciesResult{PoliciesCount: len(policies)}
+	if len(policies) == 0 {
+		return result, nil
+	}
+
+	type action struct {
+		key    string
+		policy *common.LifecyclePolicy
+	}
+	var actions []action
+	now := time.Now()
+	opts := &common.ListOptions{MaxResults: applyPoliciesPageSize}
+	seen := make(map[string]bool)
+	for {
+		page, err := ListWithOptions(ctx, backendName, opts)
+		if err != nil {
+			return nil, err
+		}
+		for _, obj := range page.Objects {
+			if obj == nil || obj.Metadata == nil {
+				continue
+			}
+			for i := range policies {
+				p := &policies[i]
+				if !strings.HasPrefix(obj.Key, p.Prefix) {
+					continue
+				}
+				if now.Sub(obj.Metadata.LastModified) <= p.Retention {
+					continue
+				}
+				actions = append(actions, action{key: obj.Key, policy: p})
+			}
+		}
+		// Stop when the backend reports no more, or repeats a token (a
+		// backend that does not advance would otherwise loop forever).
+		if !page.Truncated || page.NextToken == "" || seen[page.NextToken] {
+			break
+		}
+		seen[page.NextToken] = true
+		opts = &common.ListOptions{MaxResults: applyPoliciesPageSize, ContinueFrom: page.NextToken}
+	}
+
+	keyRef := func(key string) string {
+		if backendName == "" {
+			return key
+		}
+		return backendName + ":" + key
+	}
+	for _, a := range actions {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		var actErr error
+		switch a.policy.Action {
+		case "delete":
+			actErr = DeleteWithContext(ctx, keyRef(a.key))
+		case "archive":
+			if a.policy.Destination == nil {
+				continue
+			}
+			actErr = Archive(keyRef(a.key), a.policy.Destination)
+		default:
+			continue
+		}
+		if actErr != nil {
+			if onError != nil {
+				onError(a.key, a.policy.Action, actErr)
+			}
+			continue
+		}
+		result.ObjectsProcessed++
+	}
+	return result, nil
+}
+
 // GetReplicationManager returns the replication manager for a backend if supported
 func GetReplicationManager(backendName string) (common.ReplicationManager, error) {
 	// Validate backend name if provided

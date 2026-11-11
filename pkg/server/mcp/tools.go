@@ -19,7 +19,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
@@ -871,13 +870,13 @@ func (e *ToolExecutor) executeGetPolicies(ctx context.Context, args map[string]a
 }
 
 func (e *ToolExecutor) executeApplyPolicies(ctx context.Context, args map[string]any) (string, error) {
-	// Get policies using facade
-	policies, err := objstore.GetPolicies(e.backend)
+	// The facade pages through the whole listing.
+	applied, err := objstore.ApplyPolicies(ctx, e.backend, nil)
 	if err != nil {
 		return "", err
 	}
 
-	if len(policies) == 0 {
+	if applied.PoliciesCount == 0 {
 		result := map[string]any{
 			fieldSuccess:        true,
 			fieldMessage:        "no lifecycle policies to apply",
@@ -888,60 +887,11 @@ func (e *ToolExecutor) executeApplyPolicies(ctx context.Context, args map[string
 		return string(jsonResult), nil
 	}
 
-	// Apply policies by listing objects and checking retention
-	objectsProcessed := 0
-	opts := &common.ListOptions{
-		Prefix: "",
-	}
-	// List objects using facade
-	listResult, err := objstore.ListWithOptions(ctx, e.backend, opts)
-	if err != nil {
-		return "", err
-	}
-
-	for _, policy := range policies {
-		for _, obj := range listResult.Objects {
-			// Check if object matches policy prefix
-			if policy.Prefix != "" && !strings.HasPrefix(obj.Key, policy.Prefix) {
-				continue
-			}
-
-			// Get metadata to check last modified time
-			if obj.Metadata == nil {
-				continue
-			}
-
-			// Check if object is older than retention period
-			age := time.Since(obj.Metadata.LastModified)
-			if age <= policy.Retention {
-				continue
-			}
-
-			// Apply action using facade
-			switch policy.Action {
-			case "delete":
-				if err := objstore.DeleteWithContext(ctx, e.keyRef(obj.Key)); err != nil {
-					// Log error but continue
-					continue
-				}
-				objectsProcessed++
-			case "archive":
-				if policy.Destination != nil {
-					if err := objstore.Archive(e.keyRef(obj.Key), policy.Destination); err != nil {
-						// Log error but continue
-						continue
-					}
-					objectsProcessed++
-				}
-			}
-		}
-	}
-
 	result := map[string]any{
 		fieldSuccess:        true,
 		fieldMessage:        "lifecycle policies applied successfully",
-		"policies_count":    len(policies),
-		"objects_processed": objectsProcessed,
+		"policies_count":    applied.PoliciesCount,
+		"objects_processed": applied.ObjectsProcessed,
 	}
 
 	jsonResult, _ := json.MarshalIndent(result, "", "  ")
