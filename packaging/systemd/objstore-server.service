@@ -45,6 +45,8 @@ TimeoutStopSec=30s
 
 # The storage root. Set it to the path key of the configuration file.
 ReadWritePaths=/var/lib/objstore
+# When the storage root is its own mount, put this line in [Unit] so the service starts after it:
+# RequiresMountsFor=/var/lib/objstore
 
 # /run/objstore, owned by the service user and removed when it stops. The
 # Unix socket listener, when unix.enabled is set, is created there.
