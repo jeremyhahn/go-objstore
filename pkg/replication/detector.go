@@ -29,7 +29,9 @@ import (
 // content type, content encoding and user metadata of the source object it
 // was copied from. Lowercase, as S3 returns user metadata keys lowercased.
 // ETags alone are not enough: local and memory ETags are Unix seconds plus
-// size, so a same-size rewrite in the same second keeps its ETag.
+// size, so a same-size rewrite in the same second keeps its ETag. They are
+// common.ReplicationFingerprintKeys, which do not count toward the
+// user-metadata entry limit.
 const (
 	MetaReplicationSourceETag     = "replication_source_etag"
 	MetaReplicationSourceSize     = "replication_source_size"
@@ -168,12 +170,7 @@ func sourceFingerprint(src *common.Metadata) *common.Metadata {
 // isFingerprintKey reports whether k is one of the keys sourceFingerprint
 // records.
 func isFingerprintKey(k string) bool {
-	switch k {
-	case MetaReplicationSourceETag, MetaReplicationSourceSize,
-		MetaReplicationSourceModified, MetaReplicationSourceMeta:
-		return true
-	}
-	return false
+	return common.IsReplicationFingerprintKey(k)
 }
 
 // modifiedStamp is src's modification time in Unix nanoseconds, or "" when

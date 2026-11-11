@@ -245,3 +245,31 @@ func TestSyncObject_FingerprintDescribesCopiedBytes(t *testing.T) {
 	require.Equal(t, 1, r.Synced, "the newer source is seen as a change")
 	require.Equal(t, "newer-and-longer", readDest(t, s, "k"))
 }
+
+// TestSync_FullUserMetadataReplicates: the fingerprint entries do not push
+// a source with the maximum number of user entries over the limit (#222).
+func TestSync_FullUserMetadataReplicates(t *testing.T) {
+	ctx := context.Background()
+	s, source := newFingerprintSyncer(t)
+	custom := make(map[string]string, common.MaxMetadataEntries)
+	for i := 0; i < common.MaxMetadataEntries; i++ {
+		custom[fmt.Sprintf("k%03d", i)] = "v"
+	}
+	require.NoError(t, source.PutWithMetadata(ctx, "k", bytes.NewReader([]byte("data")),
+		&common.Metadata{Custom: custom}))
+
+	r, err := s.SyncAll(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, r.Synced)
+	require.Zero(t, r.Failed)
+	md, err := s.dest.GetMetadata(ctx, "k")
+	require.NoError(t, err)
+	for k := range custom {
+		require.Contains(t, md.Custom, k, "user entry kept")
+	}
+	require.NotEmpty(t, md.Custom[MetaReplicationSourceETag])
+
+	r, err = s.SyncAll(ctx)
+	require.NoError(t, err)
+	require.Zero(t, r.Synced, "unchanged")
+}

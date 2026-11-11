@@ -233,13 +233,48 @@ func ValidateKey(key string) error {
 // - Has keys or values that are too long
 // - Contains null bytes
 // - Contains invalid UTF-8
+// ReplicationFingerprintKeys are the custom metadata keys replication records
+// on each destination copy: the source ETag, size, modification time and
+// metadata digest. They are not user entries, so ValidateMetadata does not
+// count them toward MaxMetadataEntries; an object with the maximum number of
+// user entries can still be replicated.
+var ReplicationFingerprintKeys = []string{
+	"replication_source_etag",
+	"replication_source_size",
+	"replication_source_modified",
+	"replication_source_meta",
+}
+
+// IsReplicationFingerprintKey reports whether key is one of
+// ReplicationFingerprintKeys.
+func IsReplicationFingerprintKey(key string) bool {
+	for _, k := range ReplicationFingerprintKeys {
+		if key == k {
+			return true
+		}
+	}
+	return false
+}
+
+// userMetadataEntries is the number of entries in metadata that count
+// toward MaxMetadataEntries.
+func userMetadataEntries(metadata map[string]string) int {
+	n := len(metadata)
+	for _, k := range ReplicationFingerprintKeys {
+		if _, ok := metadata[k]; ok {
+			n--
+		}
+	}
+	return n
+}
+
 func ValidateMetadata(metadata map[string]string) error {
 	if metadata == nil {
 		return nil
 	}
 
-	// Check number of entries
-	if len(metadata) > MaxMetadataEntries {
+	// Check number of user entries (replication fingerprint keys excluded)
+	if userMetadataEntries(metadata) > MaxMetadataEntries {
 		return &ValidationError{
 			Field:   "metadata",
 			Message: fmt.Sprintf("metadata cannot have more than %d entries", MaxMetadataEntries),
