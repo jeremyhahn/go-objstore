@@ -206,6 +206,9 @@ func TestIsPublicAuthzMethod_ExactServicePrefix(t *testing.T) {
 		"/x/grpc.health.v1.Health/Check":                                 false,
 		"/evil.grpc.reflection.v1.ServerReflection/ServerReflectionInfo": false,
 		"/grpc.health.v1.HealthX/Check":                                  false,
+		"/grpc.reflection.v1.Other/Method":                               false,
+		"/grpc.reflection.foo/Bar":                                       false,
+		"/grpc.reflection.v1.ServerReflectionX/ServerReflectionInfo":     false,
 	}
 	for m, want := range cases {
 		if got := isPublicAuthzMethod(m); got != want {

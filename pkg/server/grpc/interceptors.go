@@ -428,10 +428,13 @@ var methodActions = map[string]struct {
 }
 
 // isPublicAuthzMethod reports whether the gRPC method is exempt from
-// authorization (health checks and server reflection).
+// authorization: the standard grpc.health.v1.Health service and the two
+// server reflection services, each matched by its full service name so no
+// other method in their packages is exempt.
 func isPublicAuthzMethod(fullMethod string) bool {
 	return strings.HasPrefix(fullMethod, "/grpc.health.v1.Health/") ||
-		strings.HasPrefix(fullMethod, "/grpc.reflection.")
+		strings.HasPrefix(fullMethod, "/grpc.reflection.v1.ServerReflection/") ||
+		strings.HasPrefix(fullMethod, "/grpc.reflection.v1alpha.ServerReflection/")
 }
 
 // isAnyPrincipalMethod reports whether fullMethod is open to every
