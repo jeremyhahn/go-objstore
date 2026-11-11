@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
@@ -90,9 +92,9 @@ func TestSync_SecondSyncWithNoChangeCopiesNothing(t *testing.T) {
 func TestHasChanged_SourceFingerprint(t *testing.T) {
 	src := &common.Metadata{ETag: "100-6", Size: 6}
 	rec := func(etag, size string) *common.Metadata {
-		return &common.Metadata{ETag: "md5", Size: 6, Custom: map[string]string{
-			MetaReplicationSourceETag: etag, MetaReplicationSourceSize: size,
-		}}
+		md := sourceFingerprint(src)
+		md.ETag, md.Custom[MetaReplicationSourceETag], md.Custom[MetaReplicationSourceSize] = "md5", etag, size
+		return md
 	}
 	require.False(t, hasChanged(src, rec("100-6", "6")), "matching record")
 	require.True(t, hasChanged(src, rec("101-6", "6")), "source ETag changed")
@@ -109,4 +111,98 @@ func TestHasChanged_SourceFingerprint(t *testing.T) {
 	fp = sourceFingerprint(&common.Metadata{ETag: "e", Size: 1, Custom: orig})
 	require.Equal(t, "e", fp.Custom[MetaReplicationSourceETag])
 	require.Len(t, orig, 1, "source metadata not modified")
+}
+
+// readDest returns the destination copy of key.
+func readDest(t *testing.T, s *Syncer, key string) string {
+	t.Helper()
+	r, err := s.dest.GetWithContext(context.Background(), key)
+	require.NoError(t, err)
+	defer func() { _ = r.Close() }()
+	b, err := io.ReadAll(r)
+	require.NoError(t, err)
+	return string(b)
+}
+
+// TestSync_SameSecondSameSizeRewriteReplicated: local ETags are Unix seconds
+// plus size, so two same-size writes in one second share an ETag. The
+// rewrite must still be replicated (#222).
+func TestSync_SameSecondSameSizeRewriteReplicated(t *testing.T) {
+	ctx := context.Background()
+	for attempt := 0; ; attempt++ {
+		s, source := newFingerprintSyncer(t)
+		require.NoError(t, source.PutWithContext(ctx, "k", bytes.NewReader([]byte("aaaa"))))
+		before, err := source.GetMetadata(ctx, "k")
+		require.NoError(t, err)
+		r, err := s.SyncAll(ctx)
+		require.NoError(t, err)
+		require.Equal(t, 1, r.Synced)
+
+		require.NoError(t, source.PutWithContext(ctx, "k", bytes.NewReader([]byte("bbbb"))))
+		after, err := source.GetMetadata(ctx, "k")
+		require.NoError(t, err)
+		if before.ETag != after.ETag {
+			// Crossed a second boundary; the case needs one second.
+			require.Less(t, attempt, 5, "could not write twice within one second")
+			continue
+		}
+
+		r, err = s.SyncAll(ctx)
+		require.NoError(t, err)
+		require.Equal(t, 1, r.Synced, "same-size rewrite in the same second")
+		require.Equal(t, "bbbb", readDest(t, s, "k"))
+		return
+	}
+}
+
+// TestSync_MetadataOnlyUpdateReplicated: a source update that changes only
+// metadata is a change (#222).
+func TestSync_MetadataOnlyUpdateReplicated(t *testing.T) {
+	ctx := context.Background()
+	s, source := newFingerprintSyncer(t)
+	require.NoError(t, source.PutWithMetadata(ctx, "k", bytes.NewReader([]byte("data")),
+		&common.Metadata{ContentType: "text/plain", Custom: map[string]string{"owner": "alice"}}))
+	r, err := s.SyncAll(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, r.Synced)
+
+	md, err := source.GetMetadata(ctx, "k")
+	require.NoError(t, err)
+	md.Custom = map[string]string{"owner": "bob"}
+	require.NoError(t, source.UpdateMetadata(ctx, "k", md))
+
+	r, err = s.SyncAll(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, r.Synced, "metadata-only update")
+	got, err := s.dest.GetMetadata(ctx, "k")
+	require.NoError(t, err)
+	require.Equal(t, "bob", got.Custom["owner"])
+
+	r, err = s.SyncAll(ctx)
+	require.NoError(t, err)
+	require.Zero(t, r.Synced, "no change after the update was copied")
+}
+
+func TestHasChanged_PreciseFingerprint(t *testing.T) {
+	t0 := time.Unix(100, 5)
+	src := &common.Metadata{ETag: "100-6", Size: 6, LastModified: t0, ContentType: "a",
+		Custom: map[string]string{"k": "v"}}
+	dest := sourceFingerprint(src)
+	require.False(t, hasChanged(src, dest))
+
+	later := *src
+	later.LastModified = time.Unix(100, 6)
+	require.True(t, hasChanged(&later, dest), "same ETag, later nanosecond")
+
+	meta := *src
+	meta.Custom = map[string]string{"k": "w"}
+	require.True(t, hasChanged(&meta, dest), "metadata-only change")
+
+	ct := *src
+	ct.ContentType = "b"
+	require.True(t, hasChanged(&ct, dest), "content type change")
+
+	old := &common.Metadata{Custom: map[string]string{
+		MetaReplicationSourceETag: "100-6", MetaReplicationSourceSize: "6"}}
+	require.True(t, hasChanged(src, old), "record without the precise fields")
 }
