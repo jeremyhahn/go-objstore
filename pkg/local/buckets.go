@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/internal/multipart"
@@ -40,6 +41,8 @@ const settingBucketRoot = "bucketRoot"
 // unrelated directories that would then be listed as buckets.
 type Buckets struct {
 	root     string
+	dirMu    sync.Mutex
+	dir      *os.Root          // root opened as an os.Root; bucket directories are reached only through it (see openDir)
 	settings map[string]string // settings handed to each bucket's Local
 	now      func() time.Time  // handed to each bucket; nil means time.Now
 
@@ -67,6 +70,10 @@ func NewBuckets(settings map[string]string) (*Buckets, error) {
 	if err := os.MkdirAll(root, 0750); err != nil {
 		return nil, err
 	}
+	dir, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, err
+	}
 
 	child := make(map[string]string, len(settings))
 	for k, v := range settings {
@@ -77,7 +84,7 @@ func NewBuckets(settings map[string]string) (*Buckets, error) {
 	// Each Bucket call returns a new Local; none of them runs a background
 	// goroutine of its own.
 	delete(child, "runLifecycle")
-	return &Buckets{root: root, settings: child}, nil
+	return &Buckets{root: root, dir: dir, settings: child}, nil
 }
 
 func (b *Buckets) bucketPath(name string) string {
@@ -92,10 +99,11 @@ func (b *Buckets) CreateBucket(ctx context.Context, name string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(b.root, 0750); err != nil {
+	dir, err := b.openDir(true)
+	if err != nil {
 		return err
 	}
-	if err := os.Mkdir(b.bucketPath(name), 0750); err != nil {
+	if err := dir.Mkdir(name, 0750); err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			return fmt.Errorf("%w: %s", common.ErrBucketAlreadyExists, name)
 		}
@@ -113,17 +121,23 @@ func (b *Buckets) DeleteBucket(ctx context.Context, name string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	dir := b.bucketPath(name)
-	if err := b.requireDir(name); err != nil {
+	dir, err := b.openDir(false)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("%w: %s", common.ErrBucketNotFound, name)
+		}
+		return err
+	}
+	if err := requireDir(dir, name); err != nil {
 		return err
 	}
 
 	// Directories that held objects, and the staging directory once its
 	// uploads are gone, are left behind empty. Only those go: os.Remove
 	// refuses a directory that still holds an object, a sidecar or an upload.
-	removeEmptyDirs(dir)
-	if err := os.Remove(dir); err != nil {
-		if entries, rerr := os.ReadDir(dir); rerr == nil && len(entries) > 0 {
+	removeEmptyDirs(dir, name)
+	if err := dir.Remove(name); err != nil {
+		if entries, rerr := fs.ReadDir(dir.FS(), name); rerr == nil && len(entries) > 0 {
 			return fmt.Errorf("%w: %s", common.ErrBucketNotEmpty, name)
 		}
 		return err
@@ -133,8 +147,8 @@ func (b *Buckets) DeleteBucket(ctx context.Context, name string) error {
 
 // removeEmptyDirs removes the directories below dir that hold nothing, deepest
 // first. dir itself stays.
-func removeEmptyDirs(dir string) {
-	entries, err := os.ReadDir(dir)
+func removeEmptyDirs(root *os.Root, dir string) {
+	entries, err := fs.ReadDir(root.FS(), filepath.ToSlash(dir))
 	if err != nil {
 		return
 	}
@@ -143,8 +157,8 @@ func removeEmptyDirs(dir string) {
 			continue
 		}
 		sub := filepath.Join(dir, e.Name())
-		removeEmptyDirs(sub)
-		_ = os.Remove(sub) // fails, as wanted, while the directory holds anything
+		removeEmptyDirs(root, sub)
+		_ = root.Remove(sub) // fails, as wanted, while the directory holds anything
 	}
 }
 
@@ -155,7 +169,14 @@ func (b *Buckets) ListBuckets(ctx context.Context) ([]common.BucketInfo, error) 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	entries, err := os.ReadDir(b.root)
+	dir, err := b.openDir(false)
+	if errors.Is(err, fs.ErrNotExist) {
+		return []common.BucketInfo{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	entries, err := fs.ReadDir(dir.FS(), ".")
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return []common.BucketInfo{}, nil
@@ -185,7 +206,14 @@ func (b *Buckets) Bucket(ctx context.Context, name string) (common.Storage, erro
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if err := b.requireDir(name); err != nil {
+	root, err := b.openDir(false)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("%w: %s", common.ErrBucketNotFound, name)
+		}
+		return nil, err
+	}
+	if err := requireDir(root, name); err != nil {
 		return nil, err
 	}
 
@@ -194,8 +222,19 @@ func (b *Buckets) Bucket(ctx context.Context, name string) (common.Storage, erro
 		settings[k] = v
 	}
 	settings["path"] = b.bucketPath(name)
+	// The bucket's store is rooted in the bucket directory opened through
+	// the bucket root, so a bucket directory swapped for a symlink cannot
+	// lead the store outside the bucket root.
+	dir, err := root.OpenRoot(name)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("%w: %s", common.ErrBucketNotFound, name)
+		}
+		return nil, err
+	}
 	l := &Local{lifecycleManager: NewLifecycleManager()}
-	if err := l.Configure(settings, common.Credentials{}); err != nil {
+	if err := l.configure(settings, dir); err != nil {
+		_ = dir.Close()
 		return nil, err
 	}
 	l.now = b.now
@@ -204,8 +243,37 @@ func (b *Buckets) Bucket(ctx context.Context, name string) (common.Storage, erro
 }
 
 // requireDir reports ErrBucketNotFound unless the bucket is a directory.
-func (b *Buckets) requireDir(name string) error {
-	info, err := os.Lstat(b.bucketPath(name))
+// openDir returns the bucket root as an os.Root. The handle held in b.dir is
+// reused while it still names the directory at b.root. Once that directory
+// has been removed or replaced, the path is opened again, after creating it
+// when create is set, so the buckets follow the root rather than a directory
+// that is gone. A handle that is replaced stays open: a call still using it
+// must not see it closed under it.
+func (b *Buckets) openDir(create bool) (*os.Root, error) {
+	b.dirMu.Lock()
+	defer b.dirMu.Unlock()
+	if b.dir != nil {
+		held, herr := b.dir.Stat(".")
+		cur, cerr := os.Stat(b.root)
+		if herr == nil && cerr == nil && os.SameFile(held, cur) {
+			return b.dir, nil
+		}
+	}
+	if create {
+		if err := os.MkdirAll(b.root, 0750); err != nil {
+			return nil, err
+		}
+	}
+	dir, err := os.OpenRoot(b.root)
+	if err != nil {
+		return nil, err
+	}
+	b.dir = dir
+	return dir, nil
+}
+
+func requireDir(root *os.Root, name string) error {
+	info, err := root.Lstat(name)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("%w: %s", common.ErrBucketNotFound, name)

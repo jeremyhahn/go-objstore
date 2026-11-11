@@ -16,6 +16,7 @@ package serverconfig
 import (
 	"errors"
 	"flag"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -53,6 +54,26 @@ func mustLoad(t *testing.T, args []string, defaults Config, bind BindFunc) *Conf
 
 // TestDefaults_ComeFromTransportPackages verifies the defaults layer takes
 // every listen address from the owning transport package.
+// testPath is the storage path every Load in this package's tests starts
+// from. The local backend has no default path and Validate refuses it
+// empty, so TestMain supplies one through the environment layer; a test that
+// sets OBJSTORE_PATH itself overrides it.
+var testPath string
+
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "serverconfig-test-")
+	if err != nil {
+		panic(err)
+	}
+	testPath = dir
+	if err := os.Setenv("OBJSTORE_PATH", dir); err != nil {
+		panic(err)
+	}
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
+}
+
 func TestDefaults_ComeFromTransportPackages(t *testing.T) {
 	d := Defaults()
 	rest := restserver.DefaultServerConfig()
@@ -62,16 +83,16 @@ func TestDefaults_ComeFromTransportPackages(t *testing.T) {
 		name      string
 		got, want any
 	}{
-		{"grpc.addr", d.GRPC.Addr, grpcserver.DefaultServerOptions().Address},
+		{"grpc.addr", d.GRPC.Addr, onLoopback(grpcserver.DefaultServerOptions().Address)},
 		{"grpc.max_recv_msg_size", d.GRPC.MaxRecvMsgSize, grpcserver.DefaultServerOptions().MaxReceiveMessageSize},
 		{"grpc.max_send_msg_size", d.GRPC.MaxSendMsgSize, grpcserver.DefaultServerOptions().MaxSendMessageSize},
-		{"rest.host", d.REST.Host, rest.Host},
+		{"rest.host", d.REST.Host, LoopbackHost},
 		{"rest.port", d.REST.Port, rest.Port},
-		{"quic.addr", d.QUIC.Addr, quic.Addr},
+		{"quic.addr", d.QUIC.Addr, onLoopback(quic.Addr)},
 		{"quic.max_body_size", d.QUIC.MaxBodySize, quic.MaxRequestBodySize},
 		{"quic.read_timeout", d.QUIC.ReadTimeout, quic.ReadTimeout},
 		{"quic.max_streams", d.QUIC.MaxStreams, quic.MaxBiStreams},
-		{"mcp.addr", d.MCP.Addr, mcpserver.DefaultServerConfig().HTTPAddress},
+		{"mcp.addr", d.MCP.Addr, onLoopback(mcpserver.DefaultServerConfig().HTTPAddress)},
 		{"mcp.mode", d.MCP.Mode, string(mcpserver.DefaultServerConfig().Mode)},
 		{"unix.socket", d.Unix.Socket, unixserver.DefaultConfig().SocketPath},
 	}
@@ -80,8 +101,58 @@ func TestDefaults_ComeFromTransportPackages(t *testing.T) {
 			t.Errorf("%s default = %v, want %v", c.name, c.got, c.want)
 		}
 	}
+	d.Path = t.TempDir()
 	if err := d.Validate(); err != nil {
-		t.Errorf("defaults do not validate: %v", err)
+		t.Errorf("defaults with a path do not validate: %v", err)
+	}
+}
+
+func TestDefaults_AreSafe(t *testing.T) {
+	d := Defaults()
+	d.Path = t.TempDir()
+	if err := d.Validate(); err != nil {
+		t.Fatalf("defaults with a path do not validate: %v", err)
+	}
+	if d.QUIC.Enabled {
+		t.Error("quic is enabled by default")
+	}
+	if d.MCP.Enabled {
+		t.Error("mcp is enabled by default")
+	}
+
+	// Every default address is loopback, including the listeners that are off
+	// by default, so enabling one (quic.enabled: true alone) binds loopback.
+	listeners := []struct {
+		name string
+		addr string
+	}{
+		{"grpc", d.GRPC.Addr},
+		{"rest", d.RESTAddr()},
+		{"quic", d.QUIC.Addr},
+		{"mcp", d.MCP.Addr},
+	}
+	for _, l := range listeners {
+		host, _, err := net.SplitHostPort(l.addr)
+		if err != nil {
+			t.Errorf("%s addr %q: %v", l.name, l.addr, err)
+			continue
+		}
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsLoopback() {
+			t.Errorf("%s listens on %q, want a loopback address", l.name, l.addr)
+		}
+	}
+}
+
+func TestDefaults_LocalBackendNeedsPath(t *testing.T) {
+	d := Defaults()
+	err := d.Validate()
+	if err == nil {
+		t.Fatal("defaults without a path validated")
+	}
+	var ise *InvalidSettingError
+	if !errors.As(err, &ise) || ise.Key != "path" {
+		t.Errorf("Validate() = %v, want an InvalidSettingError for key path", err)
 	}
 }
 
@@ -101,7 +172,7 @@ func TestLoad_RESTHostPrecedence(t *testing.T) {
 
 	t.Run("defaults", func(t *testing.T) {
 		cfg := mustLoad(t, nil, Defaults(), BindServerFlags)
-		if want := restserver.DefaultServerConfig().Host; cfg.REST.Host != want {
+		if want := LoopbackHost; cfg.REST.Host != want {
 			t.Errorf("host = %q, want default %q", cfg.REST.Host, want)
 		}
 	})
@@ -413,12 +484,14 @@ func TestValidate_ReportsEveryProblem(t *testing.T) {
 func TestValidate_GRPCMessageLimitBounds(t *testing.T) {
 	for _, size := range []int{MinGRPCMessageSize, MaxGRPCMessageSize} {
 		cfg := Defaults()
+		cfg.Path = testPath
 		cfg.GRPC.MaxRecvMsgSize, cfg.GRPC.MaxSendMsgSize = size, size
 		if err := cfg.Validate(); err != nil {
 			t.Errorf("limit %d refused: %v", size, err)
 		}
 	}
 	cfg := Defaults()
+	cfg.Path = testPath
 	cfg.GRPC.MaxRecvMsgSize, cfg.GRPC.MaxSendMsgSize = MinGRPCMessageSize-1, 0
 	want := []string{"grpc.max_recv_msg_size", "grpc.max_send_msg_size"}
 	if got := invalidKeys(cfg.Validate()); strings.Join(got, ",") != strings.Join(want, ",") {
@@ -452,8 +525,12 @@ func TestExampleConfig_MatchesDefaults(t *testing.T) {
 	file := writeConfig(t, strings.Join(lines, "\n")+"\n")
 
 	var zero Config
+	// path has no default; the environment layer (see TestMain) supplies it
+	// over the example's empty value.
 	cfg := mustLoad(t, []string{"-config", file}, zero, BindServerFlags)
-	if !reflect.DeepEqual(*cfg, Defaults()) {
-		t.Errorf("example config differs from Defaults():\n got %+v\nwant %+v", *cfg, Defaults())
+	want := Defaults()
+	want.Path = testPath
+	if !reflect.DeepEqual(*cfg, want) {
+		t.Errorf("example config differs from Defaults():\n got %+v\nwant %+v", *cfg, want)
 	}
 }

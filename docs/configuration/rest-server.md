@@ -24,7 +24,7 @@ your own application (see `pkg/server/rest`).
 | `--host` | `localhost` | REST server host |
 | `--port` | `8080` | REST server port |
 | `--backend` | `local` | Storage backend (`local`, `s3`, `gcs`, `azure`) |
-| `--path` | `/tmp/objstore` | Storage path for the local backend |
+| `--path` | none (required) | Storage path for the local backend |
 | `--metrics-public` | `false` | Expose `/metrics` without authorization |
 
 ```bash
@@ -38,7 +38,7 @@ The combined server enables REST by default and uses these REST-related flags:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--rest` | `true` | Enable the REST server |
-| `--rest-host` | `0.0.0.0` | REST server host (interface to bind) |
+| `--rest-host` | `127.0.0.1` | REST server host (interface to bind; `0.0.0.0` serves other machines) |
 | `--rest-port` | `8080` | REST server port |
 | `--metrics-public` | `false` | Expose `/metrics` without authorization |
 | `--rate-limit` | `false` | Enable rate limiting on all transports |

@@ -18,12 +18,12 @@ environment variables behind every flag below. Two binaries serve MCP:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--mode` | `http` | Server mode: `stdio` or `http` |
-| `--addr` | `:8081` | HTTP server address (only for http mode) |
+| `--addr` | `127.0.0.1:8081` | HTTP server address (only for http mode) |
 | `--backend` | `local` | Storage backend (`local`, `s3`, `gcs`, `azure`) |
-| `--path` | `/tmp/objstore` | Storage path for the local backend |
+| `--path` | none (required) | Storage path for the local backend |
 
 ```bash
-# HTTP mode (default), listening on :8081
+# HTTP mode (default), listening on 127.0.0.1:8081
 objstore-mcp-server --backend local --path /var/lib/objstore
 
 # Stdio mode (for MCP clients that spawn the server as a subprocess)
@@ -34,9 +34,9 @@ objstore-mcp-server --mode stdio --backend local --path /var/lib/objstore
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--mcp` | `true` | Enable the MCP server |
+| `--mcp` | `false` | Enable the MCP server |
 | `--mcp-mode` | `http` | MCP mode: `stdio` or `http` |
-| `--mcp-addr` | `:8081` | MCP HTTP server address |
+| `--mcp-addr` | `127.0.0.1:8081` | MCP HTTP server address |
 
 ## Transport Modes
 

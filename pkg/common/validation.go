@@ -112,6 +112,15 @@ func ValidateKey(key string) error {
 		}
 	}
 
+	// Sidecars, temp files and policy files belong to the backend; a key
+	// naming one would read or overwrite the store's own state.
+	if msg := reservedName(key); msg != "" {
+		return &ValidationError{
+			Field:   fieldKey,
+			Message: msg,
+		}
+	}
+
 	// Check for Windows-style absolute paths (C:\, D:\, etc.)
 	if keyLen >= 2 && key[1] == ':' {
 		return &ValidationError{

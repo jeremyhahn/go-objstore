@@ -118,7 +118,7 @@ func NewPersistentReplicationManager(
 	}
 
 	if policyFile == "" {
-		policyFile = ".replication-policies.json"
+		policyFile = common.ReplicationPolicyFile
 	}
 
 	if logger == nil {

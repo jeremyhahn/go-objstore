@@ -17,7 +17,7 @@ services:
         - gomodauth
       args:
         BUILD_TAGS: local
-    command: ["/app/objstore-server", "--quic-self-signed"]
+    command: ["/app/objstore-server", "--path", "/tmp/objstore", "--grpc-addr", "0.0.0.0:50051", "--rest-host", "0.0.0.0", "--quic=true", "--quic-addr", "0.0.0.0:4433", "--quic-self-signed", "--mcp=true", "--mcp-addr", "0.0.0.0:8081"]
     environment:
       - STORAGE_BACKEND=local
       - STORAGE_PATH=/data

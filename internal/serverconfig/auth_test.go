@@ -47,6 +47,8 @@ func exampleAuth() AuthConfig {
 // authConfig is Defaults() with auth set and TLS on every network listener.
 func authConfig() Config {
 	c := Defaults()
+	c.Path = testPath
+	c.QUIC.Enabled, c.MCP.Enabled = true, true
 	c.Auth = exampleAuth()
 	c.GRPC.TLSCert, c.GRPC.TLSKey = "grpc.crt", "grpc.key"
 	c.REST.TLSCert, c.REST.TLSKey = "rest.crt", "rest.key"
@@ -65,6 +67,7 @@ func TestValidate_AuthValid(t *testing.T) {
 
 func TestValidate_NoAuthKeepsDefaults(t *testing.T) {
 	c := Defaults()
+	c.Path = testPath
 	if c.Auth.Enabled() {
 		t.Fatal("Defaults() enables auth")
 	}

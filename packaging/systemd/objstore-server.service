@@ -1,0 +1,94 @@
+# objstore-server as a hardened systemd service.
+#
+# The service runs as the unprivileged objstore user, sees the whole file
+# system read-only, and may write only below the storage root named in
+# ReadWritePaths=. Keep ReadWritePaths= and the path key of the
+# configuration file in step: a root outside ReadWritePaths= is read-only to
+# the service and every write fails.
+#
+# Install:
+#   useradd --system --no-create-home --shell /usr/sbin/nologin objstore
+#   install -m 0755 objstore-server /usr/local/bin/objstore-server
+#   install -d -m 0700 -o objstore -g objstore /var/lib/objstore
+#   install -d -m 0750 -o root -g objstore /etc/objstore
+#   install -m 0640 -o root -g objstore objstore-server.yaml /etc/objstore/objstore-server.yaml
+#     (start from configs/objstore-server.yaml.example and set
+#      path: /var/lib/objstore, or the directory named in ReadWritePaths=)
+#   install -m 0644 objstore-server.service /etc/systemd/system/objstore-server.service
+#   systemctl daemon-reload && systemctl enable --now objstore-server
+#   journalctl -u objstore-server -f
+#
+# The listeners bind loopback by default. To serve other machines, set the
+# addresses in the configuration file (for example grpc.addr: 0.0.0.0:50051,
+# rest.host: 0.0.0.0), and put authentication in front of them.
+#
+# Cloud backends: put the credential files in /etc/objstore/credentials/
+# (mode 0400, owned by root) and uncomment the matching LoadCredential= and
+# Environment= pair below. systemd copies each file into the service's
+# private credentials directory (%d), so the service never reads the
+# originals and nothing else on the machine can read the copies.
+
+[Unit]
+Description=go-objstore object storage server
+Documentation=https://github.com/jeremyhahn/go-objstore/tree/main/docs/configuration
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=objstore
+Group=objstore
+ExecStart=/usr/local/bin/objstore-server -config /etc/objstore/objstore-server.yaml
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+
+# The storage root. Set it to the path key of the configuration file.
+ReadWritePaths=/var/lib/objstore
+# When the storage root is its own mount, put this line in [Unit] so the service starts after it:
+# RequiresMountsFor=/var/lib/objstore
+
+# /run/objstore, owned by the service user and removed when it stops. The
+# Unix socket listener, when unix.enabled is set, is created there.
+RuntimeDirectory=objstore
+RuntimeDirectoryMode=0750
+Environment=OBJSTORE_UNIX_SOCKET=/run/objstore/objstore.sock
+
+# AWS S3 (and S3-compatible) shared credentials file.
+#LoadCredential=aws-credentials:/etc/objstore/credentials/aws-credentials
+#Environment=AWS_SHARED_CREDENTIALS_FILE=%d/aws-credentials
+# Google Cloud Storage service account key.
+#LoadCredential=gcp-service-account.json:/etc/objstore/credentials/gcp-service-account.json
+#Environment=GOOGLE_APPLICATION_CREDENTIALS=%d/gcp-service-account.json
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+# The whole file system is read-only to the service except ReadWritePaths=
+# and RuntimeDirectory=; it logs to the journal.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+UMask=0077
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

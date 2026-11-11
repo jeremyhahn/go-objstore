@@ -90,7 +90,7 @@ func NewPersistentLifecycleManager(fs FileSystem, policyFile string) (*Persisten
 	}
 
 	if policyFile == "" {
-		policyFile = ".lifecycle-policies.json"
+		policyFile = LifecyclePolicyFile
 	}
 
 	lm := &PersistentLifecycleManager{
