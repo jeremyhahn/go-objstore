@@ -29,6 +29,7 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"github.com/jeremyhahn/go-objstore/pkg/audit"
 	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
+	"github.com/jeremyhahn/go-objstore/pkg/factory"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	"github.com/jeremyhahn/go-objstore/pkg/server/middleware"
 	"github.com/sourcegraph/jsonrpc2"
@@ -99,6 +100,10 @@ type ServerConfig struct {
 	// Backend is the name of the backend to use when using the facade.
 	// If empty, the default backend is used.
 	Backend string
+
+	// AllowClientLocalArchiveDestinations lets archive and add-policy tool
+	// calls name a local (filesystem path) destination. Off by default.
+	AllowClientLocalArchiveDestinations bool
 
 	// EnableRateLimit enables rate limiting (default: false). In stdio mode a
 	// single shared bucket applies to the pipe.
@@ -184,6 +189,7 @@ func NewServer(config *ServerConfig) (*Server, error) {
 	toolRegistry.RegisterDefaultTools()
 
 	toolExecutor := NewToolExecutor(config.Backend)
+	toolExecutor.wireOpts = factory.WireOptions{AllowLocalDestinations: config.AllowClientLocalArchiveDestinations}
 	resourceManager := NewResourceManager(config.Backend, config.ResourcePrefix)
 
 	var rateLimiter *middleware.RateLimiter

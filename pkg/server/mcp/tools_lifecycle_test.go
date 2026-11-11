@@ -273,6 +273,7 @@ func TestExecuteArchiveTool(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := tt.setupStorage()
 			executor := createTestToolExecutor(t, storage)
+			executor.wireOpts = allowLocalArchive
 
 			result, err := executor.Execute(context.Background(), "objstore_archive", tt.args)
 
@@ -461,6 +462,7 @@ func TestExecuteAddPolicyTool(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := tt.setupStorage()
 			executor := createTestToolExecutor(t, storage)
+			executor.wireOpts = allowLocalArchive
 
 			result, err := executor.Execute(context.Background(), "objstore_add_policy", tt.args)
 

@@ -158,6 +158,7 @@ func (c *Config) MCPServerConfig(mw Middleware) (*mcpserver.ServerConfig, error)
 	sc := mcpserver.DefaultServerConfig()
 	sc.Mode = mode
 	sc.HTTPAddress = c.MCP.Addr
+	sc.AllowClientLocalArchiveDestinations = c.Archive.AllowClientLocalDestinations
 	sc.EnableRateLimit = mw.RateLimit
 	sc.RateLimitConfig = mw.RateLimitConfig
 	sc.EnableAudit = mw.Audit
