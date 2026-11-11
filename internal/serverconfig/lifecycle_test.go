@@ -129,3 +129,32 @@ func TestConfig_StorageSettings(t *testing.T) {
 		t.Fatalf("StorageSettings() for s3 = %v, want path only", got)
 	}
 }
+
+// Two spellings of one policy file reserve the same key, and a path that
+// leaves the storage path is refused (#224).
+func TestConfig_PolicyFileCanonical(t *testing.T) {
+	for _, spelling := range []string{"policies/life.json", "./policies/life.json", "a/../policies/life.json", "policies//life.json", "policies/./life.json"} {
+		cfg := Defaults()
+		cfg.Path = testPath
+		cfg.Lifecycle.PolicyFile = spelling
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("Validate() with %q = %v, want nil", spelling, err)
+		}
+		if got := cfg.StorageSettings()["lifecyclePolicyFile"]; got != "policies/life.json" {
+			t.Fatalf("lifecyclePolicyFile for %q = %q, want %q", spelling, got, "policies/life.json")
+		}
+	}
+
+	for _, bad := range []string{"..", "../life.json", "a/../../life.json", "/etc/life.json", ".", "./", "a/.."} {
+		cfg := Defaults()
+		cfg.Path = testPath
+		cfg.Lifecycle.PolicyFile = bad
+		var ise *InvalidSettingError
+		if err := cfg.Validate(); !errors.As(err, &ise) || ise.Key != "lifecycle.policy_file" {
+			t.Fatalf("Validate() with %q = %v, want an InvalidSettingError for lifecycle.policy_file", bad, err)
+		}
+		if _, err := CanonicalPolicyFile(bad); err == nil {
+			t.Fatalf("CanonicalPolicyFile(%q) = nil error, want a refusal", bad)
+		}
+	}
+}

@@ -17,7 +17,9 @@ import (
 	"errors"
 	"math"
 	"net"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	grpcserver "github.com/jeremyhahn/go-objstore/pkg/server/grpc"
@@ -171,7 +173,14 @@ func (c *Config) StorageSettings() map[string]string {
 		settings["lifecycleManagerType"] = c.Lifecycle.Manager
 	}
 	if c.Lifecycle.PolicyFile != "" {
-		settings["lifecyclePolicyFile"] = c.Lifecycle.PolicyFile
+		// The store reserves the policy file's name as a key, so it gets
+		// the canonical spelling: "./p" and "a/../p" reserve the key "p".
+		// Validate refuses a path that has none.
+		policyFile, err := CanonicalPolicyFile(c.Lifecycle.PolicyFile)
+		if err != nil {
+			policyFile = c.Lifecycle.PolicyFile
+		}
+		settings["lifecyclePolicyFile"] = policyFile
 	}
 	if c.Lifecycle.Interval > 0 {
 		settings["lifecycleInterval"] = c.Lifecycle.Interval.String()
@@ -194,12 +203,37 @@ func (c *Config) validateLifecycle() []error {
 			Key: "lifecycle.manager", Value: c.Lifecycle.Manager, Reason: "must be persistent or memory",
 		})
 	}
+	if c.Lifecycle.PolicyFile != "" {
+		if _, err := CanonicalPolicyFile(c.Lifecycle.PolicyFile); err != nil {
+			errs = append(errs, &InvalidSettingError{
+				Key: "lifecycle.policy_file", Value: c.Lifecycle.PolicyFile, Reason: err.Error(),
+			})
+		}
+	}
 	if c.Lifecycle.Run && c.Lifecycle.Interval <= 0 {
 		errs = append(errs, &InvalidSettingError{
 			Key: "lifecycle.interval", Value: c.Lifecycle.Interval.String(), Reason: "must be a positive duration",
 		})
 	}
 	return errs
+}
+
+// CanonicalPolicyFile returns the canonical, slash-separated spelling of a
+// lifecycle policy file path relative to the storage path, the spelling the
+// store reserves as a key. A path that is empty once cleaned, absolute, or
+// that climbs out of the storage path with ".." is refused.
+func CanonicalPolicyFile(p string) (string, error) {
+	if filepath.IsAbs(p) || filepath.VolumeName(p) != "" || strings.HasPrefix(filepath.ToSlash(p), "/") {
+		return "", errors.New("must be relative to the storage path")
+	}
+	clean := filepath.ToSlash(filepath.Clean(p))
+	switch {
+	case clean == "." || clean == "":
+		return "", errors.New("must name a file")
+	case clean == ".." || strings.HasPrefix(clean, "../"):
+		return "", errors.New("must not leave the storage path")
+	}
+	return clean, nil
 }
 
 // LoopbackHost is the host the server's listeners bind by default. Exposing
