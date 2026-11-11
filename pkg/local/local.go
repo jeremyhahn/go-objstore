@@ -568,6 +568,13 @@ func (l *Local) UpdateMetadata(ctx context.Context, key string, metadata *common
 	default:
 	}
 
+	// Hold the key's lock from the existence check through saving the
+	// sidecar, as the expiry pass does from its re-read through Delete: a
+	// refreshed LastModified is published either before expiry judges the
+	// object (which then keeps it) or after expiry has finished.
+	unlock := l.keyMu.lock(key)
+	defer unlock()
+
 	// Verify object exists
 	root, err := l.fsRoot()
 	if err != nil {
