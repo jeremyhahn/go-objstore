@@ -39,6 +39,7 @@ Configure backend type, credentials, and connection parameters.
 Configure protocol-specific servers including ports, TLS, and authentication.
 
 [Server Configuration (file, environment, flags)](servers.md)
+[Server Authentication (mutual TLS and roles)](auth.md)
 [gRPC Server Configuration](grpc-server.md)
 [REST Server Configuration](rest-server.md)
 [QUIC Server Configuration](quic-server.md)

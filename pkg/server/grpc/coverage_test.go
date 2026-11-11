@@ -19,6 +19,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -136,12 +137,23 @@ func TestServer_WithReflection(t *testing.T) {
 func TestBuildServerOptions_TLSError(t *testing.T) {
 	storage := newMockStorage()
 
-	// Create an invalid TLS config that will fail to build
+	// A valid server key pair with a client_ca that cannot be read: the TLS
+	// config fails to build, and Start must return the error rather than
+	// serve without TLS.
+	dir := t.TempDir()
+	cert, key := generateTestCert(t)
+	certFile, keyFile := filepath.Join(dir, "cert.pem"), filepath.Join(dir, "key.pem")
+	if err := os.WriteFile(certFile, cert, 0600); err != nil {
+		t.Fatalf("write cert: %v", err)
+	}
+	if err := os.WriteFile(keyFile, key, 0600); err != nil {
+		t.Fatalf("write key: %v", err)
+	}
 	invalidTLSConfig := &adapters.TLSConfig{
 		Mode:           adapters.TLSModeMutual,
-		ServerCertFile: "/nonexistent/cert.pem",
-		ServerKeyFile:  "/nonexistent/key.pem",
-		ClientCAFile:   "/nonexistent/ca.pem",
+		ServerCertFile: certFile,
+		ServerKeyFile:  keyFile,
+		ClientCAFile:   filepath.Join(dir, "missing-ca.pem"),
 	}
 
 	initTestFacade(t, storage)
@@ -153,21 +165,22 @@ func TestBuildServerOptions_TLSError(t *testing.T) {
 		t.Fatalf("Failed to create server: %v", err)
 	}
 
-	// buildServerOptions is called during Start
-	// This should log an error but not fail
 	errChan := make(chan error, 1)
 	go func() {
 		errChan <- server.Start()
 	}()
 
-	time.Sleep(100 * time.Millisecond)
-	server.Stop()
-
 	select {
-	case <-errChan:
-		// Expected to complete
-	case <-time.After(1 * time.Second):
-		// Server stopped gracefully
+	case err := <-errChan:
+		if err == nil {
+			t.Fatal("Start() = nil, want the TLS build error")
+		}
+	case <-time.After(5 * time.Second):
+		server.ForceStop()
+		t.Fatal("Start() is serving without TLS, want it to return the TLS build error")
+	}
+	if addr := server.GetAddress(); addr != "127.0.0.1:0" {
+		t.Fatalf("server listened on %s after the TLS build failed", addr)
 	}
 }
 

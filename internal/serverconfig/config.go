@@ -44,6 +44,9 @@ type Config struct {
 	Unix      UnixConfig      `mapstructure:"unix"`
 	RateLimit RateLimitConfig `mapstructure:"rate_limit"`
 	Audit     AuditConfig     `mapstructure:"audit"`
+	// Auth, when set, makes every enabled listener authenticate and
+	// authorize its clients (see auth.go). Empty keeps NoOp auth.
+	Auth AuthConfig `mapstructure:"auth"`
 
 	Replication ReplicationConfig `mapstructure:"replication"`
 }
@@ -72,6 +75,8 @@ type RESTConfig struct {
 	Host          string `mapstructure:"host"`
 	Port          int    `mapstructure:"port"`
 	MetricsPublic bool   `mapstructure:"metrics_public"`
+	TLSCert       string `mapstructure:"tls_cert"`
+	TLSKey        string `mapstructure:"tls_key"`
 }
 
 // QUICConfig configures the QUIC/HTTP3 transport.
@@ -93,6 +98,8 @@ type MCPConfig struct {
 	Enabled bool   `mapstructure:"enabled"`
 	Mode    string `mapstructure:"mode"`
 	Addr    string `mapstructure:"addr"`
+	TLSCert string `mapstructure:"tls_cert"`
+	TLSKey  string `mapstructure:"tls_key"`
 }
 
 // UnixConfig configures the Unix socket transport.
@@ -271,5 +278,6 @@ func (c *Config) Validate() error {
 	if _, err := c.MCPMode(); err != nil {
 		errs = append(errs, err)
 	}
+	errs = append(errs, c.validateAuth()...)
 	return errors.Join(errs...)
 }

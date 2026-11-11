@@ -250,7 +250,18 @@ func AuthorizationMiddleware(authorizer adapters.Authorizer, logger adapters.Log
 			return
 		}
 
-		action, resource := deriveActionResource(c)
+		action, resource, ok := deriveActionResource(c)
+		if !ok {
+			// No matched route, or a route with no action: refuse.
+			logger.Warn(c.Request.Context(), "Authorization denied: no action for route",
+				adapters.Field{Key: "path", Value: c.Request.URL.Path},
+				adapters.Field{Key: "method", Value: c.Request.Method},
+				adapters.Field{Key: "principal_id", Value: principal.ID},
+			)
+			RespondWithError(c, http.StatusForbidden, "Forbidden")
+			c.Abort()
+			return
+		}
 
 		if err := authorizer.Authorize(c.Request.Context(), principal, action, resource); err != nil {
 			logger.Warn(c.Request.Context(), "Authorization denied",
@@ -295,49 +306,68 @@ func isAuthzExemptPath(path string, metricsPublic bool) bool {
 	return isPublicPath(path, metricsPublic) || strings.HasPrefix(path, "/swagger")
 }
 
-// deriveActionResource maps an HTTP request to a (action, resource) pair using
-// the route taxonomy. Object and metadata operations use the object key as the
-// resource; management operations use the resource category constants.
-func deriveActionResource(c *gin.Context) (action, resource string) {
-	path := c.Request.URL.Path
-	method := c.Request.Method
-
-	switch {
-	case strings.Contains(path, "/replication"):
-		return adapters.ActionAdmin, adapters.ResourceReplication
-	case strings.Contains(path, "/policies"):
-		return adapters.ActionAdmin, adapters.ResourcePolicy
-	case strings.Contains(path, "/archive"):
-		// Archive acts on an object key; key is supplied in the request body so
-		// the route param is unavailable here. Use the policy resource category.
-		return adapters.ActionAdmin, adapters.ResourcePolicy
-	case method == http.MethodGet && c.Param("key") == "" && strings.HasSuffix(path, "/objects"):
-		// GET on the bare objects collection (/objects, /api/v1/objects) is a
-		// list operation with no specific resource.
-		return adapters.ActionList, ""
+// deriveActionResource maps an HTTP request to a (action, resource) pair from
+// the matched route template and the HTTP method (routeActions). Object and
+// metadata operations use the object key as the resource; management
+// operations use the resource category constants. ok is false when no route
+// matched or the route has no entry, and the request must then be refused.
+func deriveActionResource(c *gin.Context) (action, resource string, ok bool) {
+	// The matched route template (e.g. "/api/v1/objects/*key"), never the
+	// request path: an object key may itself contain "/metadata", "/exists",
+	// "/archive" and so on, and must not change the action.
+	route := c.FullPath()
+	if route == "" {
+		return "", "", false
 	}
-
-	// Object key is carried in the "key" route param for /objects, /exists,
-	// and /metadata routes.
-	key := strings.TrimPrefix(c.Param("key"), "/")
-
-	switch {
-	case strings.Contains(path, "/exists"):
-		return adapters.ActionRead, key
-	case strings.Contains(path, "/metadata"):
-		if method == http.MethodPut {
-			return adapters.ActionWrite, key
-		}
-		return adapters.ActionRead, key
+	rule, found := routeActions[c.Request.Method+" "+strings.TrimPrefix(route, apiV1Prefix)]
+	if !found {
+		return "", "", false
+	}
+	switch rule.resource {
+	case resourceFromKey:
+		return rule.action, strings.TrimPrefix(c.Param("key"), "/"), true
 	default:
-		// /objects/*key
-		switch method {
-		case http.MethodPut:
-			return adapters.ActionWrite, key
-		case http.MethodDelete:
-			return adapters.ActionDelete, key
-		default:
-			return adapters.ActionRead, key
-		}
+		return rule.action, rule.resource, true
 	}
+}
+
+// apiV1Prefix is the prefix of the versioned route set; the unprefixed twins
+// in SetupRoutes share the same action table.
+const apiV1Prefix = "/api/v1"
+
+// resourceFromKey marks a route whose resource is the "key" route parameter.
+const resourceFromKey = "\x00key"
+
+type routeAction struct {
+	action   string
+	resource string
+}
+
+// routeActions maps "METHOD route-template" (without the /api/v1 prefix) to
+// the action a principal needs. Every route registered in SetupRoutes has an
+// entry; a route without one is refused by AuthorizationMiddleware.
+var routeActions = map[string]routeAction{
+	"GET /metrics": {adapters.ActionRead, ""},
+
+	"GET /metadata/*key":   {adapters.ActionRead, resourceFromKey},
+	"PUT /metadata/*key":   {adapters.ActionWrite, resourceFromKey},
+	"HEAD /exists/*key":    {adapters.ActionRead, resourceFromKey},
+	"GET /objects":         {adapters.ActionList, ""},
+	"PUT /objects/*key":    {adapters.ActionWrite, resourceFromKey},
+	"GET /objects/*key":    {adapters.ActionRead, resourceFromKey},
+	"DELETE /objects/*key": {adapters.ActionDelete, resourceFromKey},
+	"HEAD /objects/*key":   {adapters.ActionRead, resourceFromKey},
+
+	"POST /archive":        {adapters.ActionAdmin, adapters.ResourcePolicy},
+	"GET /policies":        {adapters.ActionAdmin, adapters.ResourcePolicy},
+	"POST /policies":       {adapters.ActionAdmin, adapters.ResourcePolicy},
+	"DELETE /policies/*id": {adapters.ActionAdmin, adapters.ResourcePolicy},
+	"POST /policies/apply": {adapters.ActionAdmin, adapters.ResourcePolicy},
+
+	"POST /replication/policies":       {adapters.ActionAdmin, adapters.ResourceReplication},
+	"GET /replication/policies":        {adapters.ActionAdmin, adapters.ResourceReplication},
+	"GET /replication/policies/*id":    {adapters.ActionAdmin, adapters.ResourceReplication},
+	"DELETE /replication/policies/*id": {adapters.ActionAdmin, adapters.ResourceReplication},
+	"POST /replication/trigger":        {adapters.ActionAdmin, adapters.ResourceReplication},
+	"GET /replication/status/*id":      {adapters.ActionAdmin, adapters.ResourceReplication},
 }

@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Added
+
+- server: an `auth` section turns on mutual TLS (client certificates verified against `auth.client_ca`) and role-based access control on gRPC, REST, QUIC, MCP HTTP, MCP stdio and the Unix socket; identities are the certificate common name or `uid:N` of the local user; invalid or incomplete settings refuse to start; without `auth` behaviour is unchanged and each listener logs a warning; `rest.tls_cert`/`rest.tls_key` and `mcp.tls_cert`/`mcp.tls_key` serve TLS. See `docs/configuration/auth.md` (#216)
+
 ### Changed
 
 - **Upgrade:** replication: a replication policy file that holds a `local` source or destination now fails to load at start, so replication stays off until `replication.allow_client_local_backends: true` is set or the policy is removed (#230)
