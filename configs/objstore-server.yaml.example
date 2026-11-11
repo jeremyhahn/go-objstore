@@ -9,13 +9,19 @@
 # Every key is commented out and shows its built-in default; uncomment only
 # what you change. Each binary reads the sections for the transports it
 # serves. Unknown keys are rejected at startup.
+#
+# The defaults are safe to start as is: gRPC, REST and MCP listen on
+# loopback only, and QUIC and MCP are off. Set an address such as
+# "0.0.0.0:50051" (or rest.host: 0.0.0.0) to listen beyond the machine.
 
 # backend: local
-# path: /tmp/objstore
+# path: ""
+# path has no default: the local backend refuses to start until it is set
+# to the directory that holds the objects (for example /var/lib/objstore).
 
 # grpc:
 #   enabled: true
-#   addr: ":50051"
+#   addr: "127.0.0.1:50051"
 #   tls_cert: ""
 #   tls_key: ""
 #   max_recv_msg_size: 33554432
@@ -23,12 +29,12 @@
 
 # rest:
 #   enabled: true
-#   host: 0.0.0.0
+#   host: 127.0.0.1
 #   port: 8080
 #   metrics_public: false
 
 # quic:
-#   enabled: true
+#   enabled: false
 #   addr: ":4433"
 #   tls_cert: ""
 #   tls_key: ""
@@ -40,9 +46,9 @@
 #   max_streams: 100
 
 # mcp:
-#   enabled: true
+#   enabled: false
 #   mode: http
-#   addr: ":8081"
+#   addr: "127.0.0.1:8081"
 
 # unix:
 #   enabled: false

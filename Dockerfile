@@ -91,5 +91,13 @@ USER appuser
 # Expose common ports (REST: 8080, gRPC: 50051, QUIC: 4433, MCP: 8081)
 EXPOSE 8080 50051 4433 8081
 
-# Default command runs the server
-CMD ["/app/objstore-server"]
+# Default command runs the server. The server's own defaults are for a host
+# install (no storage path, loopback-only listeners, QUIC and MCP off), so a
+# container names its root and binds every interface explicitly; publish only
+# the ports you need.
+CMD ["/app/objstore-server", \
+     "-path", "/tmp/objstore", \
+     "-grpc-addr", "0.0.0.0:50051", \
+     "-rest-host", "0.0.0.0", \
+     "-quic=true", "-quic-addr", "0.0.0.0:4433", \
+     "-mcp=true", "-mcp-addr", "0.0.0.0:8081"]

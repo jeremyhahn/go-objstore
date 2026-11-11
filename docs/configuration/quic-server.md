@@ -42,7 +42,7 @@ objstore-quic-server \
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--quic` | `true` | Enable the QUIC/HTTP3 server |
+| `--quic` | `false` | Enable the QUIC/HTTP3 server (`--quic=true` turns it on) |
 | `--quic-addr` | `:4433` | QUIC server address |
 | `--quic-tls-cert` | (none) | QUIC TLS certificate file |
 | `--quic-tls-key` | (none) | QUIC TLS key file |
