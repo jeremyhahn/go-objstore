@@ -73,7 +73,15 @@ func NewArchiver(backendType string, settings map[string]string, creds common.Cr
 // backend sees them, and the handle is destroyed when the archiver is built.
 // wire is left without credential entries. A request that carries no credential
 // uses the SDK default chain.
+//
+// A filesystem-path archiver type (local) is refused with
+// ErrClientLocalArchiver; a server that allows client-supplied local
+// destinations calls NewArchiverFromWireOpts.
 func NewArchiverFromWire(backendType string, wire map[string]string) (common.Archiver, error) {
+	return NewArchiverFromWireOpts(backendType, wire, WireOptions{})
+}
+
+func newArchiverFromWire(backendType string, wire map[string]string) (common.Archiver, error) {
 	settings, creds, release, err := common.ExtractCredentialSettings(wire)
 	if err != nil {
 		return nil, err
