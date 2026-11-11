@@ -87,6 +87,10 @@ table notes one.
 | `rate_limit.per_client` | `OBJSTORE_RATE_LIMIT_PER_CLIENT` | `false` | `-rate-limit-per-client` | `-rate-limit-per-client` (all) |
 | `audit.enabled` | `OBJSTORE_AUDIT_ENABLED` | `true` | `-audit` | `-audit` (all) |
 | `archive.allow_client_local_destinations` | `OBJSTORE_ARCHIVE_ALLOW_CLIENT_LOCAL_DESTINATIONS` | `false` | `-allow-client-local-archive` | `-allow-client-local-archive` (all) |
+| `lifecycle.run` | `OBJSTORE_LIFECYCLE_RUN` | `true` | `-lifecycle-run` | — |
+| `lifecycle.manager` | `OBJSTORE_LIFECYCLE_MANAGER` | `persistent` | `-lifecycle-manager` | — |
+| `lifecycle.policy_file` | `OBJSTORE_LIFECYCLE_POLICY_FILE` | `""` (`.lifecycle-policies.json`) | `-lifecycle-policy-file` | — |
+| `lifecycle.interval` | `OBJSTORE_LIFECYCLE_INTERVAL` | `1h` | `-lifecycle-interval` | — |
 | `auth.client_ca` | `OBJSTORE_AUTH_CLIENT_CA` | — | — | — |
 | `auth.roles` | file only | — | — | — |
 | `auth.identities` | file only | — | — | — |
@@ -107,6 +111,15 @@ Rate limiting and audit logging apply to every transport a binary serves,
 standalone or combined, with one audit logger per process. Audit records go to
 standard output, or to standard error when `mcp.mode` is `stdio`, where standard
 output carries the JSON-RPC stream.
+
+The `lifecycle` section applies to `objstore-server` with the `local` backend;
+other backends ignore it (one info line at startup), and the single-transport
+binaries do not read it. With `lifecycle.run: true` the server applies every
+lifecycle policy once each `lifecycle.interval`; with `false` it starts no
+scheduled pass (`ApplyPolicies` still runs one on request). The `persistent`
+manager keeps policies across restarts in `lifecycle.policy_file`, relative to
+`path`; `memory` loses them on exit. `lifecycle.manager` must be `persistent` or
+`memory`, and `lifecycle.interval` a positive duration when `run` is true.
 
 `archive.allow_client_local_destinations` is off by default: gRPC, REST, QUIC,
 MCP and the Unix socket refuse an archive call or lifecycle policy that names a

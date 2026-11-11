@@ -55,6 +55,17 @@ func BindServerFlags(fs *flag.FlagSet, c *Config) {
 	stringVar(fs, &c.Unix.Socket, "unix-socket", "unix.socket", "Unix socket path")
 
 	bindMiddlewareFlags(fs, c)
+
+	// Lifecycle settings are objstore-server only: the single-transport
+	// binaries pass only path to their backend.
+	boolVar(fs, &c.Lifecycle.Run, "lifecycle-run", "lifecycle.run",
+		"Run lifecycle policies on a schedule (local backend)")
+	stringVar(fs, &c.Lifecycle.Manager, "lifecycle-manager", "lifecycle.manager",
+		"Lifecycle manager type: persistent or memory (local backend)")
+	stringVar(fs, &c.Lifecycle.PolicyFile, "lifecycle-policy-file", "lifecycle.policy_file",
+		"File, relative to path, that holds persistent lifecycle policies (local backend)")
+	durationVar(fs, &c.Lifecycle.Interval, "lifecycle-interval", "lifecycle.interval",
+		"Time between scheduled lifecycle passes (local backend)")
 }
 
 // BindGRPCServerFlags registers the flags of objstore-grpc-server.

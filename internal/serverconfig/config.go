@@ -45,6 +45,9 @@ type Config struct {
 	RateLimit RateLimitConfig `mapstructure:"rate_limit"`
 	Audit     AuditConfig     `mapstructure:"audit"`
 	Archive   ArchiveConfig   `mapstructure:"archive"`
+	// Lifecycle configures lifecycle policies on the local backend
+	// (objstore-server only).
+	Lifecycle LifecycleConfig `mapstructure:"lifecycle"`
 	// Auth, when set, makes every enabled listener authenticate and
 	// authorize its clients (see auth.go). Empty keeps NoOp auth.
 	Auth AuthConfig `mapstructure:"auth"`
@@ -132,6 +135,73 @@ type ArchiveConfig struct {
 	AllowClientLocalDestinations bool `mapstructure:"allow_client_local_destinations"`
 }
 
+// LifecycleConfig holds the lifecycle settings objstore-server passes to the
+// local backend. Other backends ignore them.
+type LifecycleConfig struct {
+	// Run starts a scheduled lifecycle pass that applies every policy.
+	Run bool `mapstructure:"run"`
+	// Manager is the lifecycle manager type: "persistent" keeps policies
+	// across restarts in PolicyFile; "memory" loses them on exit.
+	Manager string `mapstructure:"manager"`
+	// PolicyFile is the file, relative to path, that holds the persistent
+	// policies. Empty uses the backend's default (.lifecycle-policies.json).
+	PolicyFile string `mapstructure:"policy_file"`
+	// Interval is the time between scheduled lifecycle passes.
+	Interval time.Duration `mapstructure:"interval"`
+}
+
+// Lifecycle manager types accepted by lifecycle.manager.
+const (
+	LifecycleManagerPersistent = "persistent"
+	LifecycleManagerMemory     = "memory"
+)
+
+// DefaultLifecycleInterval is the default time between scheduled lifecycle
+// passes.
+const DefaultLifecycleInterval = time.Hour
+
+// StorageSettings returns the settings objstore-server passes to its storage
+// backend: path, and for the local backend the lifecycle settings.
+func (c *Config) StorageSettings() map[string]string {
+	settings := map[string]string{"path": c.Path}
+	if c.Backend != "local" {
+		return settings
+	}
+	if c.Lifecycle.Manager != "" {
+		settings["lifecycleManagerType"] = c.Lifecycle.Manager
+	}
+	if c.Lifecycle.PolicyFile != "" {
+		settings["lifecyclePolicyFile"] = c.Lifecycle.PolicyFile
+	}
+	if c.Lifecycle.Interval > 0 {
+		settings["lifecycleInterval"] = c.Lifecycle.Interval.String()
+	}
+	settings["runLifecycle"] = strconv.FormatBool(c.Lifecycle.Run)
+	return settings
+}
+
+// validateLifecycle checks the lifecycle section when the local backend
+// uses it.
+func (c *Config) validateLifecycle() []error {
+	if c.Backend != "local" {
+		return nil
+	}
+	var errs []error
+	switch c.Lifecycle.Manager {
+	case "", LifecycleManagerPersistent, LifecycleManagerMemory:
+	default:
+		errs = append(errs, &InvalidSettingError{
+			Key: "lifecycle.manager", Value: c.Lifecycle.Manager, Reason: "must be persistent or memory",
+		})
+	}
+	if c.Lifecycle.Run && c.Lifecycle.Interval <= 0 {
+		errs = append(errs, &InvalidSettingError{
+			Key: "lifecycle.interval", Value: c.Lifecycle.Interval.String(), Reason: "must be a positive duration",
+		})
+	}
+	return errs
+}
+
 // LoopbackHost is the host the server's listeners bind by default. Exposing
 // a listener beyond the machine takes an explicit address in the file, the
 // environment or a flag.
@@ -198,6 +268,11 @@ func Defaults() Config {
 			PerClient: false,
 		},
 		Audit: AuditConfig{Enabled: true},
+		Lifecycle: LifecycleConfig{
+			Run:      true,
+			Manager:  LifecycleManagerPersistent,
+			Interval: DefaultLifecycleInterval,
+		},
 	}
 }
 
@@ -289,6 +364,7 @@ func (c *Config) Validate() error {
 	if _, err := c.MCPMode(); err != nil {
 		errs = append(errs, err)
 	}
+	errs = append(errs, c.validateLifecycle()...)
 	errs = append(errs, c.validateAuth()...)
 	return errors.Join(errs...)
 }
