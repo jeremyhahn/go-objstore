@@ -137,7 +137,8 @@ func (c *Config) QUICOptions(mw Middleware) *quicserver.Options {
 		WithAddr(c.QUIC.Addr).
 		WithMaxRequestBodySize(c.QUIC.MaxBodySize).
 		WithTimeouts(c.QUIC.ReadTimeout, c.QUIC.WriteTimeout, c.QUIC.IdleTimeout).
-		WithStreamLimits(c.QUIC.MaxStreams, c.QUIC.MaxStreams)
+		WithStreamLimits(c.QUIC.MaxStreams, c.QUIC.MaxStreams).
+		WithAllowClientLocalArchiveDestinations(c.Archive.AllowClientLocalDestinations)
 	if mw.RateLimit {
 		opts = opts.WithRateLimit(mw.RateLimitConfig)
 	}
