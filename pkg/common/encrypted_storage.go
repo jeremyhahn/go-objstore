@@ -16,6 +16,7 @@ package common
 import (
 	"context"
 	"io"
+	"strings"
 )
 
 // readCloser combines an io.Reader with a list of Closers to be closed when Close is called.
@@ -73,47 +74,47 @@ func (e *encryptedStorage) Put(key string, data io.Reader) error {
 
 // PutWithContext encrypts data and stores it in the underlying storage with context support
 func (e *encryptedStorage) PutWithContext(ctx context.Context, key string, data io.Reader) error {
-	// Get encrypter using default key ID
-	encrypter, err := e.encrypterFactory.GetEncrypter(e.defaultKeyID)
-	if err != nil {
-		return err
-	}
-
-	// Encrypt the data
-	encryptedData, err := encrypter.Encrypt(ctx, data)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = encryptedData.Close() }()
-
-	// Store the encrypted data
-	return e.underlying.PutWithContext(ctx, key, encryptedData)
+	// Store through the metadata path so the key ID is recorded (#226):
+	// without it the object only decrypts while the default key is unchanged.
+	return e.putEncrypted(ctx, key, data, &Metadata{})
 }
 
 // PutWithMetadata encrypts data and stores it with metadata
 func (e *encryptedStorage) PutWithMetadata(ctx context.Context, key string, data io.Reader, metadata *Metadata) error {
-	// Get encrypter using default key ID
+	if metadata == nil {
+		metadata = &Metadata{}
+	}
+	return e.putEncrypted(ctx, key, data, metadata)
+}
+
+// putEncrypted is the single write path of the encrypted storage: it encrypts
+// data with the default key, records the algorithm and key ID in metadata and
+// stores both in the underlying storage.
+func (e *encryptedStorage) putEncrypted(ctx context.Context, key string, data io.Reader, metadata *Metadata) error {
 	encrypter, err := e.encrypterFactory.GetEncrypter(e.defaultKeyID)
 	if err != nil {
 		return err
 	}
 
-	// Encrypt the data
 	encryptedData, err := encrypter.Encrypt(ctx, data)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = encryptedData.Close() }()
 
-	// Add encryption metadata to custom fields
+	recordEncryption(metadata, encrypter)
+
+	return e.underlying.PutWithMetadata(ctx, key, encryptedData, metadata)
+}
+
+// recordEncryption stores the encrypter's algorithm and key ID in the custom
+// metadata; GetWithContext reads encryption_key_id to pick the decryption key.
+func recordEncryption(metadata *Metadata, encrypter Encrypter) {
 	if metadata.Custom == nil {
 		metadata.Custom = make(map[string]string)
 	}
 	metadata.Custom["encryption_algorithm"] = encrypter.Algorithm()
 	metadata.Custom["encryption_key_id"] = encrypter.KeyID()
-
-	// Store the encrypted data with metadata
-	return e.underlying.PutWithMetadata(ctx, key, encryptedData, metadata)
 }
 
 // Get retrieves and decrypts data from the underlying storage
@@ -169,8 +170,45 @@ func (e *encryptedStorage) GetMetadata(ctx context.Context, key string) (*Metada
 }
 
 // UpdateMetadata updates metadata for an object (metadata is not encrypted)
+// UpdateMetadata replaces the object's metadata but keeps every
+// "encryption_*" entry of the stored metadata: backends replace the whole
+// record, so without this an update would drop encryption_key_id and the
+// object would no longer decrypt after the default key changes. Caller
+// supplied "encryption_*" entries are ignored. The caller's metadata is not
+// modified.
 func (e *encryptedStorage) UpdateMetadata(ctx context.Context, key string, metadata *Metadata) error {
-	return e.underlying.UpdateMetadata(ctx, key, metadata)
+	if metadata == nil {
+		return e.underlying.UpdateMetadata(ctx, key, metadata)
+	}
+	existing, err := e.underlying.GetMetadata(ctx, key)
+	if err != nil {
+		return err
+	}
+
+	updated := *metadata
+	updated.Custom = make(map[string]string, len(metadata.Custom))
+	for k, v := range metadata.Custom {
+		if !isEncryptionField(k) {
+			updated.Custom[k] = v
+		}
+	}
+	if existing != nil {
+		for k, v := range existing.Custom {
+			if isEncryptionField(k) {
+				updated.Custom[k] = v
+			}
+		}
+	}
+	if len(updated.Custom) == 0 {
+		updated.Custom = nil
+	}
+	return e.underlying.UpdateMetadata(ctx, key, &updated)
+}
+
+// isEncryptionField reports whether a custom metadata key is owned by the
+// encrypted storage wrapper.
+func isEncryptionField(k string) bool {
+	return strings.HasPrefix(k, "encryption_")
 }
 
 // Delete removes an object from the underlying storage

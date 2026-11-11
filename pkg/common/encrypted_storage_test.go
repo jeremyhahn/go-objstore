@@ -645,3 +645,224 @@ func TestEncryptedStorage_LifecyclePolicies(t *testing.T) {
 		t.Errorf("RemovePolicy failed: %v", err)
 	}
 }
+
+// keyedEncrypter binds its ciphertext to its key ID, so data decrypts only
+// with the key that encrypted it.
+type keyedEncrypter struct {
+	keyID string
+}
+
+func (k *keyedEncrypter) prefix() []byte { return []byte("ENC[" + k.keyID + "]:") }
+
+func (k *keyedEncrypter) Encrypt(_ context.Context, data io.Reader) (io.ReadCloser, error) {
+	content, err := io.ReadAll(data)
+	if err != nil {
+		return nil, err
+	}
+	return io.NopCloser(bytes.NewReader(append(k.prefix(), content...))), nil
+}
+
+func (k *keyedEncrypter) Decrypt(_ context.Context, data io.Reader) (io.ReadCloser, error) {
+	content, err := io.ReadAll(data)
+	if err != nil {
+		return nil, err
+	}
+	if !bytes.HasPrefix(content, k.prefix()) {
+		return nil, errTestInvalidEncryptedData
+	}
+	return io.NopCloser(bytes.NewReader(bytes.TrimPrefix(content, k.prefix()))), nil
+}
+
+func (k *keyedEncrypter) Algorithm() string { return "test-keyed" }
+func (k *keyedEncrypter) KeyID() string     { return k.keyID }
+
+func newKeyedFactory(defaultKeyID string) *mockEncrypterFactory {
+	return &mockEncrypterFactory{
+		defaultKeyID: defaultKeyID,
+		encrypters: map[string]Encrypter{
+			"keyA": &keyedEncrypter{keyID: "keyA"},
+			"keyB": &keyedEncrypter{keyID: "keyB"},
+		},
+	}
+}
+
+func readAllString(t *testing.T, s Storage, key string) string {
+	t.Helper()
+	rc, err := s.GetWithContext(context.Background(), key)
+	if err != nil {
+		t.Fatalf("GetWithContext(%q): %v", key, err)
+	}
+	defer func() { _ = rc.Close() }()
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("read %q: %v", key, err)
+	}
+	return string(got)
+}
+
+// TestEncryptedStorage_KeyChange_AllWritePaths is the regression test for
+// #226: an object written with key A still decrypts after the default key
+// changes to B, whichever write path stored it.
+func TestEncryptedStorage_KeyChange_AllWritePaths(t *testing.T) {
+	ctx := context.Background()
+	writes := map[string]func(s Storage, key string, data io.Reader) error{
+		"Put": func(s Storage, key string, data io.Reader) error {
+			return s.Put(key, data)
+		},
+		"PutWithContext": func(s Storage, key string, data io.Reader) error {
+			return s.PutWithContext(ctx, key, data)
+		},
+		"PutWithMetadata": func(s Storage, key string, data io.Reader) error {
+			return s.PutWithMetadata(ctx, key, data, &Metadata{ContentType: "text/plain"})
+		},
+		"PutWithMetadata_nil": func(s Storage, key string, data io.Reader) error {
+			return s.PutWithMetadata(ctx, key, data, nil)
+		},
+	}
+	for name, write := range writes {
+		t.Run(name, func(t *testing.T) {
+			underlying := newMockUnderlyingStorage()
+			const plaintext = "secret written with key A"
+
+			writerA := NewEncryptedStorage(underlying, newKeyedFactory("keyA"))
+			if err := write(writerA, "obj", bytes.NewReader([]byte(plaintext))); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+
+			md, err := underlying.GetMetadata(ctx, "obj")
+			if err != nil {
+				t.Fatalf("GetMetadata: %v", err)
+			}
+			if got := md.Custom["encryption_key_id"]; got != "keyA" {
+				t.Errorf("encryption_key_id = %q, want keyA", got)
+			}
+			if got := md.Custom["encryption_algorithm"]; got != "test-keyed" {
+				t.Errorf("encryption_algorithm = %q, want test-keyed", got)
+			}
+
+			// The default key changes to B.
+			readerB := NewEncryptedStorage(underlying, newKeyedFactory("keyB"))
+			if got := readAllString(t, readerB, "obj"); got != plaintext {
+				t.Errorf("read after key change = %q, want %q", got, plaintext)
+			}
+		})
+	}
+}
+
+// An UpdateMetadata without encryption fields must not drop the key id the
+// object was written under: after the default key changes the object still
+// decrypts with the original key (#226).
+func TestEncryptedStorage_UpdateMetadata_KeepsKeyIDAcrossKeyChange(t *testing.T) {
+	ctx := context.Background()
+	underlying := newMockUnderlyingStorage()
+	const plaintext = "secret written with key A"
+
+	writerA := NewEncryptedStorage(underlying, newKeyedFactory("keyA"))
+	if err := writerA.PutWithMetadata(ctx, "obj", bytes.NewReader([]byte(plaintext)), &Metadata{ContentType: "text/plain"}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	update := &Metadata{
+		ContentType: "application/json",
+		Custom: map[string]string{
+			"owner":                "alice",
+			"encryption_key_id":    "keyB",
+			"encryption_algorithm": "forged",
+		},
+	}
+	if err := writerA.UpdateMetadata(ctx, "obj", update); err != nil {
+		t.Fatalf("UpdateMetadata: %v", err)
+	}
+	if got := update.Custom["encryption_key_id"]; got != "keyB" {
+		t.Errorf("caller's metadata modified: encryption_key_id = %q", got)
+	}
+
+	md, err := underlying.GetMetadata(ctx, "obj")
+	if err != nil {
+		t.Fatalf("GetMetadata: %v", err)
+	}
+	if md.ContentType != "application/json" || md.Custom["owner"] != "alice" {
+		t.Errorf("update not applied: %+v", md)
+	}
+	if got := md.Custom["encryption_key_id"]; got != "keyA" {
+		t.Errorf("encryption_key_id = %q, want keyA", got)
+	}
+	if got := md.Custom["encryption_algorithm"]; got != "test-keyed" {
+		t.Errorf("encryption_algorithm = %q, want test-keyed", got)
+	}
+
+	// An update with no custom metadata at all keeps the key id too.
+	if err := writerA.UpdateMetadata(ctx, "obj", &Metadata{ContentType: "text/csv"}); err != nil {
+		t.Fatalf("UpdateMetadata: %v", err)
+	}
+
+	// The default key changes to B.
+	readerB := NewEncryptedStorage(underlying, newKeyedFactory("keyB"))
+	if got := readAllString(t, readerB, "obj"); got != plaintext {
+		t.Errorf("read after update and key change = %q, want %q", got, plaintext)
+	}
+}
+
+func TestEncryptedStorage_UpdateMetadata_MissingObject(t *testing.T) {
+	storage := NewEncryptedStorage(newMockUnderlyingStorage(), newKeyedFactory("keyA"))
+	err := storage.UpdateMetadata(context.Background(), "missing", &Metadata{ContentType: "text/plain"})
+	if !errors.Is(err, errTestNotFound) {
+		t.Errorf("UpdateMetadata on missing object: err = %v, want %v", err, errTestNotFound)
+	}
+}
+
+// A caller-supplied encryption_key_id (or algorithm) in PutWithMetadata is
+// overwritten with the key the object is really encrypted under (#226).
+func TestEncryptedStorage_PutWithMetadata_OverwritesCallerKeyID(t *testing.T) {
+	ctx := context.Background()
+	underlying := newMockUnderlyingStorage()
+	const plaintext = "secret written with key A"
+
+	writerA := NewEncryptedStorage(underlying, newKeyedFactory("keyA"))
+	meta := &Metadata{Custom: map[string]string{
+		"encryption_key_id":    "keyB",
+		"encryption_algorithm": "forged",
+	}}
+	if err := writerA.PutWithMetadata(ctx, "obj", bytes.NewReader([]byte(plaintext)), meta); err != nil {
+		t.Fatalf("PutWithMetadata: %v", err)
+	}
+
+	md, err := underlying.GetMetadata(ctx, "obj")
+	if err != nil {
+		t.Fatalf("GetMetadata: %v", err)
+	}
+	if got := md.Custom["encryption_key_id"]; got != "keyA" {
+		t.Errorf("encryption_key_id = %q, want keyA", got)
+	}
+	if got := md.Custom["encryption_algorithm"]; got != "test-keyed" {
+		t.Errorf("encryption_algorithm = %q, want test-keyed", got)
+	}
+
+	readerB := NewEncryptedStorage(underlying, newKeyedFactory("keyB"))
+	if got := readAllString(t, readerB, "obj"); got != plaintext {
+		t.Errorf("read after key change = %q, want %q", got, plaintext)
+	}
+}
+
+// TestEncryptedStorage_MissingKeyID_UsesDefault: an object stored without
+// encryption_key_id keeps today's behaviour and decrypts with the default key.
+func TestEncryptedStorage_MissingKeyID_UsesDefault(t *testing.T) {
+	ctx := context.Background()
+	underlying := newMockUnderlyingStorage()
+	cipher, err := (&keyedEncrypter{keyID: "keyB"}).Encrypt(ctx, bytes.NewReader([]byte("legacy")))
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	if err := underlying.PutWithContext(ctx, "legacy", cipher); err != nil {
+		t.Fatalf("underlying put: %v", err)
+	}
+
+	if got := readAllString(t, NewEncryptedStorage(underlying, newKeyedFactory("keyB")), "legacy"); got != "legacy" {
+		t.Errorf("read with default keyB = %q, want legacy", got)
+	}
+
+	// With another default key the legacy object does not decrypt, as before.
+	if _, err := NewEncryptedStorage(underlying, newKeyedFactory("keyA")).GetWithContext(ctx, "legacy"); err == nil {
+		t.Error("read with default keyA: want error, got nil")
+	}
+}

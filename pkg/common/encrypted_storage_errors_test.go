@@ -329,6 +329,32 @@ func TestEncryptedStorage_GetWithContext_KeyFromMetadata(t *testing.T) {
 	}
 }
 
+// Metadata naming a key id the factory does not know fails the read; it
+// never falls back to the default key (#226).
+func TestEncryptedStorage_GetWithContext_UnknownKeyID_NoFallback(t *testing.T) {
+	ctx := context.Background()
+	underlying := newMockUnderlyingStorage()
+
+	writerA := NewEncryptedStorage(underlying, newKeyedFactory("keyA"))
+	if err := writerA.PutWithMetadata(ctx, "obj", strings.NewReader("secret"), nil); err != nil {
+		t.Fatalf("PutWithMetadata() failed: %v", err)
+	}
+
+	// keyA is gone; only the default key B is known.
+	onlyB := &mockEncrypterFactory{
+		defaultKeyID: "keyB",
+		encrypters:   map[string]Encrypter{"keyB": &keyedEncrypter{keyID: "keyB"}},
+	}
+	reader, err := NewEncryptedStorage(underlying, onlyB).GetWithContext(ctx, "obj")
+	if err == nil {
+		_ = reader.Close()
+		t.Fatal("GetWithContext() succeeded, want an error for the unknown key id")
+	}
+	if !errors.Is(err, errTestEncrypterNotFound) {
+		t.Errorf("GetWithContext() err = %v, want %v", err, errTestEncrypterNotFound)
+	}
+}
+
 // TestEncryptedStorage_GetWithContext_DecryptError verifies that
 // GetWithContext closes the encrypted reader and propagates a Decrypt error.
 func TestEncryptedStorage_GetWithContext_DecryptError(t *testing.T) {
