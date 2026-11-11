@@ -97,6 +97,11 @@ type Options struct {
 	// EnableAudit enables audit logging (default: false).
 	EnableAudit bool
 
+	// AllowClientLocalArchiveDestinations lets an archive call or a lifecycle
+	// policy name a local (filesystem path) archiver. Off by default: the
+	// client would choose a directory the service user writes into.
+	AllowClientLocalArchiveDestinations bool
+
 	// AuditLogger is the audit logger used when EnableAudit is set.
 	AuditLogger auditlog.AuditLogger
 }
@@ -281,6 +286,13 @@ func (o *Options) WithRateLimit(config *middleware.RateLimitConfig) *Options {
 	if config != nil {
 		o.RateLimitConfig = config
 	}
+	return o
+}
+
+// WithAllowClientLocalArchiveDestinations sets whether an archive call or a
+// lifecycle policy may name a local (filesystem path) archiver. Default false.
+func (o *Options) WithAllowClientLocalArchiveDestinations(allow bool) *Options {
+	o.AllowClientLocalArchiveDestinations = allow
 	return o
 }
 

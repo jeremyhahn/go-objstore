@@ -69,6 +69,7 @@ type Handler struct {
 	authenticator      adapters.Authenticator
 	authorizer         adapters.Authorizer
 	allowedOrigins     []string
+	wireOpts           factory.WireOptions // how archiver settings a client sent are treated
 }
 
 // NewHandler creates a new HTTP/3 handler using the ObjstoreFacade.
@@ -754,7 +755,7 @@ func (h *Handler) handleArchive(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create archiver from factory
-	archiver, err := createArchiver(req.DestinationType, req.DestinationSettings)
+	archiver, err := createArchiver(req.DestinationType, req.DestinationSettings, h.wireOpts)
 	if err != nil {
 		http.Error(w, common.SanitizeErrorMessage(err), http.StatusBadRequest)
 		return
@@ -890,7 +891,7 @@ func (h *Handler) handleAddPolicy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		archiver, err := createArchiver(req.DestinationType, req.DestinationSettings)
+		archiver, err := createArchiver(req.DestinationType, req.DestinationSettings, h.wireOpts)
 		if err != nil {
 			http.Error(w, common.SanitizeErrorMessage(err), http.StatusBadRequest)
 			return
@@ -1092,6 +1093,6 @@ func deriveActionResource(r *http.Request) (action, resource string) {
 }
 
 // createArchiver creates an archiver from factory based on destination type
-func createArchiver(destinationType string, settings map[string]string) (common.Archiver, error) {
-	return factory.NewArchiverFromWire(destinationType, settings)
+func createArchiver(destinationType string, settings map[string]string, opts factory.WireOptions) (common.Archiver, error) {
+	return factory.NewArchiverFromWireOpts(destinationType, settings, opts)
 }

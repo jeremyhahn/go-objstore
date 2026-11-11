@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -49,6 +50,7 @@ type Handler struct {
 	logger        adapters.Logger
 	authenticator adapters.Authenticator
 	authorizer    adapters.Authorizer
+	wireOpts      factory.WireOptions // how archiver settings a client sent are treated
 }
 
 // NewHandler creates a new handler.
@@ -420,7 +422,10 @@ func (h *Handler) handleArchive(ctx context.Context, req *Request) *Response {
 	}
 
 	// Create archiver from factory
-	archiver, err := factory.NewArchiverFromWire(params.DestinationType, params.DestinationSettings)
+	archiver, err := factory.NewArchiverFromWireOpts(params.DestinationType, params.DestinationSettings, h.wireOpts)
+	if errors.Is(err, factory.ErrClientLocalArchiver) {
+		return h.errorResponse(req.ID, ErrCodeInvalidParams, err.Error())
+	}
 	if err != nil {
 		return h.backendErrorResponse(req.ID, err)
 	}

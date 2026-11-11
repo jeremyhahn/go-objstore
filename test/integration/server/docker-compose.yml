@@ -19,6 +19,7 @@ services:
       - STORAGE_BACKEND=local
       - STORAGE_PATH=/tmp/objstore
       - ARCHIVE_PATH=/tmp/archive
+      - OBJSTORE_ARCHIVE_ALLOW_CLIENT_LOCAL_DESTINATIONS=true
     networks:
       - test-network
     healthcheck:
@@ -46,6 +47,7 @@ services:
       - STORAGE_PATH=/tmp/objstore
       - SERVER_PORT=8080
       - ARCHIVE_PATH=/tmp/archive
+      - OBJSTORE_ARCHIVE_ALLOW_CLIENT_LOCAL_DESTINATIONS=true
     networks:
       - test-network
     healthcheck:
@@ -76,6 +78,7 @@ services:
       - CERT_FILE=/certs/server.crt
       - KEY_FILE=/certs/server.key
       - ARCHIVE_PATH=/tmp/archive
+      - OBJSTORE_ARCHIVE_ALLOW_CLIENT_LOCAL_DESTINATIONS=true
     networks:
       - test-network
 
@@ -98,6 +101,7 @@ services:
       - MCP_MODE=http
       - MCP_PORT=8081
       - ARCHIVE_PATH=/tmp/archive
+      - OBJSTORE_ARCHIVE_ALLOW_CLIENT_LOCAL_DESTINATIONS=true
     networks:
       - test-network
     healthcheck:

@@ -396,7 +396,8 @@ docker-compose down -v
 
 ### Archive Operations
 
-Archive objects to cold storage backends like Glacier or Azure Archive:
+Archive objects to cold storage backends like Glacier or Azure Archive.
+The server refuses a `local` destination unless `archive.allow_client_local_destinations` is true.
 
 ```python
 from objstore import ObjectStoreClient, Protocol

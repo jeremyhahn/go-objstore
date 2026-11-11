@@ -108,6 +108,8 @@ func bindMiddlewareFlags(fs *flag.FlagSet, c *Config) {
 	intVar(fs, &c.RateLimit.Burst, "rate-limit-burst", "rate_limit.burst", "Rate limit burst size")
 	boolVar(fs, &c.RateLimit.PerClient, "rate-limit-per-client", "rate_limit.per_client", "Rate limit per client instead of globally")
 	boolVar(fs, &c.Audit.Enabled, "audit", "audit.enabled", "Enable audit logging on all transports")
+	boolVar(fs, &c.Archive.AllowClientLocalDestinations, "allow-client-local-archive", "archive.allow_client_local_destinations",
+		"Allow archive calls and lifecycle policies to name a local (filesystem path) destination")
 	boolVar(fs, &c.Replication.AllowClientLocalBackends, "replication-allow-client-local-backends",
 		"replication.allow_client_local_backends",
 		"Allow replication policies with filesystem-path backends such as local (default refuse)")

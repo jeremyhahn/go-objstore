@@ -44,6 +44,7 @@ type Config struct {
 	Unix      UnixConfig      `mapstructure:"unix"`
 	RateLimit RateLimitConfig `mapstructure:"rate_limit"`
 	Audit     AuditConfig     `mapstructure:"audit"`
+	Archive   ArchiveConfig   `mapstructure:"archive"`
 	// Auth, when set, makes every enabled listener authenticate and
 	// authorize its clients (see auth.go). Empty keeps NoOp auth.
 	Auth AuthConfig `mapstructure:"auth"`
@@ -119,6 +120,16 @@ type RateLimitConfig struct {
 // AuditConfig configures audit logging shared by every transport.
 type AuditConfig struct {
 	Enabled bool `mapstructure:"enabled"`
+}
+
+// ArchiveConfig holds the settings for archive calls and lifecycle policies
+// that name a destination archiver.
+type ArchiveConfig struct {
+	// AllowClientLocalDestinations lets a client name a local (filesystem
+	// path) archiver as an archive or lifecycle-policy destination. Off by
+	// default: the client would choose a directory the service user writes
+	// into.
+	AllowClientLocalDestinations bool `mapstructure:"allow_client_local_destinations"`
 }
 
 // LoopbackHost is the host the server's listeners bind by default. Exposing

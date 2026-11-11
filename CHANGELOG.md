@@ -19,6 +19,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - labstrings: the releasability rules load from the LABSTRINGS_PATTERNS file at test time; no rule or match is printed (IS-31)
 - deps: `golang.org/x/mod` v0.43.0 and `golang.org/x/text` v0.44.0 in the root module; `golang.org/x/text` v0.44.0 and the in-repo `go-objstore` require at v0.9.1-alpha (still replaced locally) in `backup` and `api/sdks/go`, so `make deps-check` passes
 
+### Security
+
+- server: gRPC, REST, QUIC, MCP and the Unix socket refuse a client-supplied `local` archiver destination (archive calls and lifecycle policies) by default; `archive.allow_client_local_destinations` (`OBJSTORE_ARCHIVE_ALLOW_CLIENT_LOCAL_DESTINATIONS`, `-allow-client-local-archive`) turns it back on (#236)
+- **Upgrade:** archive: clients and lifecycle policies that archive to a `local` destination now get an invalid-argument error until the server sets `archive.allow_client_local_destinations: true` (or `OBJSTORE_ARCHIVE_ALLOW_CLIENT_LOCAL_DESTINATIONS=true`, or `-allow-client-local-archive`) (#236)
+
 ## [0.9.0-alpha] - 2026-10-27
 
 ### Changed

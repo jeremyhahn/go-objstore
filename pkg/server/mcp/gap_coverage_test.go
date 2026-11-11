@@ -1621,6 +1621,7 @@ func TestToolExecutor_ExecuteAddPolicy_MissingDestinationType(t *testing.T) {
 func TestToolExecutor_ExecuteAddPolicy_LocalArchiver(t *testing.T) {
 	storage := newMockLifecycleStorage()
 	executor := createTestToolExecutor(t, storage)
+	executor.wireOpts = allowLocalArchive
 
 	dir := t.TempDir()
 
@@ -1712,7 +1713,7 @@ func TestToolExecutor_executeApplyPolicies_ArchiveSuccess(t *testing.T) {
 // newLocalArchiver creates a local archiver pointing at the given directory.
 func newLocalArchiver(t *testing.T, dir string) common.Archiver {
 	t.Helper()
-	archiver, err := createArchiver("local", map[string]string{"path": dir})
+	archiver, err := createArchiver("local", map[string]string{"path": dir}, allowLocalArchive)
 	if err != nil {
 		t.Fatalf("newLocalArchiver: %v", err)
 	}

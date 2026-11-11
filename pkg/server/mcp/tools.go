@@ -334,7 +334,8 @@ func (r *ToolRegistry) GetTool(name string) (Tool, bool) {
 
 // ToolExecutor executes tool calls
 type ToolExecutor struct {
-	backend string // Backend name (empty = default)
+	backend  string              // Backend name (empty = default)
+	wireOpts factory.WireOptions // How client-supplied archive destinations are treated
 }
 
 // NewToolExecutor creates a new tool executor
@@ -695,7 +696,7 @@ func (e *ToolExecutor) executeArchive(ctx context.Context, args map[string]any) 
 	}
 
 	// Create archiver from factory
-	archiver, err := createArchiver(destinationType, destinationSettings)
+	archiver, err := createArchiver(destinationType, destinationSettings, e.wireOpts)
 	if err != nil {
 		return "", err
 	}
@@ -784,7 +785,7 @@ func (e *ToolExecutor) executeAddPolicy(ctx context.Context, args map[string]any
 			}
 		}
 
-		archiver, err := createArchiver(destinationType, destinationSettings)
+		archiver, err := createArchiver(destinationType, destinationSettings, e.wireOpts)
 		if err != nil {
 			return "", err
 		}
@@ -948,6 +949,6 @@ func (e *ToolExecutor) executeApplyPolicies(ctx context.Context, args map[string
 }
 
 // createArchiver creates an archiver from factory based on destination type
-func createArchiver(destinationType string, settings map[string]string) (common.Archiver, error) {
-	return factory.NewArchiverFromWire(destinationType, settings)
+func createArchiver(destinationType string, settings map[string]string, opts factory.WireOptions) (common.Archiver, error) {
+	return factory.NewArchiverFromWireOpts(destinationType, settings, opts)
 }

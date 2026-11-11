@@ -327,7 +327,7 @@ func TestProtoToLifecyclePolicy_InvalidArchiverType(t *testing.T) {
 		DestinationType:  "unknown-backend-xyz",
 		RetentionSeconds: 60,
 	}
-	_, err := protoToLifecyclePolicy(proto)
+	_, err := protoToLifecyclePolicy(proto, allowLocalArchive)
 	if err == nil {
 		t.Error("expected error for unknown archiver type")
 	}

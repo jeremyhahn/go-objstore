@@ -471,6 +471,7 @@ func TestHandlerHealth(t *testing.T) {
 
 func TestHandlerArchive(t *testing.T) {
 	handler, storage := setupTestHandler(t)
+	handler.wireOpts = allowLocalArchive
 
 	// Store test data
 	testData := []byte("test data for archival")
@@ -533,6 +534,7 @@ func TestHandlerArchiveInvalidRequest(t *testing.T) {
 
 func TestHandlerArchiveNonexistentKey(t *testing.T) {
 	handler, _ := setupTestHandler(t)
+	handler.wireOpts = allowLocalArchive
 
 	archiveReq := map[string]any{
 		"key":                  "nonexistent-key",
@@ -686,6 +688,7 @@ func TestHandlerAddPolicyInvalidRetention(t *testing.T) {
 
 func TestHandlerAddPolicyArchiveType(t *testing.T) {
 	handler, storage := setupTestHandler(t)
+	handler.wireOpts = allowLocalArchive
 
 	// Ensure storage implements LifecycleManager
 	if _, ok := storage.(common.LifecycleManager); !ok {
@@ -1719,6 +1722,7 @@ func TestHandlerArchiveStorageError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create handler: %v", err)
 	}
+	handler.wireOpts = allowLocalArchive
 
 	archiveReq := map[string]any{
 		"key":                  "test-key",
@@ -2150,6 +2154,7 @@ func TestHandlerPutExpiredDeadlineReturns504(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create handler: %v", err)
 	}
+	handler.wireOpts = allowLocalArchive
 
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	defer cancel()

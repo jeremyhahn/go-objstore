@@ -361,7 +361,9 @@ func testCLIArchive(t *testing.T, cfg cliTestConfig) {
 
 		// Archive to the server's local archive mount. Every server in the
 		// compose environment mounts an archive volume at /tmp/archive
-		// (ARCHIVE_PATH), so archiving must succeed.
+		// (ARCHIVE_PATH) and sets OBJSTORE_ARCHIVE_ALLOW_CLIENT_LOCAL_DESTINATIONS
+		// (#236: client local destinations are refused by default), so
+		// archiving must succeed.
 		stdout, stderr, err := runCLI(
 			"--server", cfg.serverFlag,
 			"--server-protocol", cfg.protocolFlag,
