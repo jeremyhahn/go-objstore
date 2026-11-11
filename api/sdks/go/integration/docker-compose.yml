@@ -25,6 +25,8 @@ services:
       start_period: 5s
     networks:
       - objstore-test
+    environment:
+      - OBJSTORE_ARCHIVE_ALLOW_CLIENT_LOCAL_DESTINATIONS=true
 
   # REST server
   rest-server:
@@ -50,6 +52,8 @@ services:
       start_period: 5s
     networks:
       - objstore-test
+    environment:
+      - OBJSTORE_ARCHIVE_ALLOW_CLIENT_LOCAL_DESTINATIONS=true
 
   # QUIC server
   quic-server:
@@ -71,6 +75,7 @@ services:
       - objstore-test
     environment:
       - QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING=true
+      - OBJSTORE_ARCHIVE_ALLOW_CLIENT_LOCAL_DESTINATIONS=true
 
 networks:
   objstore-test:
