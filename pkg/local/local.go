@@ -310,6 +310,10 @@ func (lfs *localFileSystem) Remove(name string) error {
 	return lfs.root.Remove(rootName(name))
 }
 
+// ReservesStagingNames reports that the store refuses object keys under the
+// reserved temp prefix, so the policy file can be staged there.
+func (lfs *localFileSystem) ReservesStagingNames() bool { return true }
+
 func (lfs *localFileSystem) Rename(src, dst string) error {
 	return lfs.root.Rename(rootName(src), rootName(dst))
 }

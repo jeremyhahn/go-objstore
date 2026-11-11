@@ -280,8 +280,14 @@ func (lm *PersistentLifecycleManager) save() error {
 		return err
 	}
 
-	// Write atomically: temp file → fsync → rename. The temp file is named in
-	// the reserved temp namespace so no object key can reach it.
+	// A FileSystem that keeps the reserved temp namespace out of reach of
+	// object keys gets temp file → fsync → rename. Any other (a StorageFS
+	// over an object store, whose providers refuse ".tmp-" keys) gets the
+	// file written in place: there Sync is one Put, which replaces the
+	// object whole.
+	if sfs, ok := lm.fs.(StagingFileSystem); !ok || !sfs.ReservesStagingNames() {
+		return lm.writeInPlace(jsonData)
+	}
 	tmpName := PolicyStagingName(lm.policyFile)
 	tmp, err := lm.fs.OpenFile(tmpName, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
@@ -311,6 +317,33 @@ func (lm *PersistentLifecycleManager) save() error {
 	}
 	committed = true
 	return nil
+}
+
+// writeInPlace writes data over the policy file itself, for a FileSystem
+// with no protected staging names.
+func (lm *PersistentLifecycleManager) writeInPlace(data []byte) error {
+	f, err := lm.fs.OpenFile(lm.policyFile, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close() //nolint:errcheck // already failing
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close() //nolint:errcheck // already failing
+		return err
+	}
+	return f.Close()
+}
+
+// StagingFileSystem is a FileSystem whose names under PolicyStagingName are
+// unreachable by object keys (the local backend's own filesystem). Only
+// such a FileSystem has the policy file staged and renamed into place.
+type StagingFileSystem interface {
+	FileSystem
+	// ReservesStagingNames reports that staging names are protected.
+	ReservesStagingNames() bool
 }
 
 // load reads policies from storage.
