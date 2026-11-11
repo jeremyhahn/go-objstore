@@ -24,7 +24,7 @@
 # Build with `make docker-build`, which passes GO_IMAGE, GO_GLIBC_IMAGE,
 # GO_BUILD_PROXY and the gomodauth secret.
 #
-# THE GO TOOLCHAIN is the one every go.mod declares (`go 1.27.3`), from the
+# THE GO TOOLCHAIN is the one every go.mod declares (`go 1.27.4`), from the
 # official Alpine image. Raise the tag in the same change that moves go.mod; to
 # pin by digest, `docker buildx imagetools inspect golang:<ver>-alpine<branch>`
 # and append `@sha256:<index digest>` to the tag.
@@ -52,10 +52,10 @@
 #
 # The Go base images are pinned by tag and multi-arch index digest; the
 # Makefile reads both from the two ARG lines below.
-ARG GO_IMAGE=golang:1.27.3-alpine3.24@sha256:b8c9b82affbbb82a020bbcf998dad2ba9516944ac7e883524642a481a9505e9c
+ARG GO_IMAGE=golang:1.27.4-alpine3.24@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf
 # The capi stage's base: the same Go release as GO_IMAGE, on glibc. Raise the
 # two tags, and their digests, together.
-ARG GO_GLIBC_IMAGE=golang:1.27.3-trixie@sha256:fbb7ae40b62ff8afe31662df570d39b4f5052ac32b90dae8e60d7657a20a74f4
+ARG GO_GLIBC_IMAGE=golang:1.27.4-trixie@sha256:b54b2639de8c1bfe538ec5ffc45f29b1932235ac5f6d63c059853646677112d9
 ARG GO_BUILD_PROXY=https://proxy.golang.org,direct
 
 # ---------------------------------------------------------------------------
