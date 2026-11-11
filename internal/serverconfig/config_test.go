@@ -19,6 +19,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -529,7 +530,7 @@ func TestExampleConfig_MatchesDefaults(t *testing.T) {
 	cfg := mustLoad(t, []string{"-config", file}, zero, BindServerFlags)
 	want := Defaults()
 	want.Path = testPath
-	if *cfg != want {
+	if !reflect.DeepEqual(*cfg, want) {
 		t.Errorf("example config differs from Defaults():\n got %+v\nwant %+v", *cfg, want)
 	}
 }

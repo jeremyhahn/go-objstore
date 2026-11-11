@@ -6,9 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
-### Security
+### Added
 
-- server: gRPC, REST, QUIC, MCP and the Unix socket refuse a client-supplied `local` archiver destination (archive calls and lifecycle policies) by default; `archive.allow_client_local_destinations` (`OBJSTORE_ARCHIVE_ALLOW_CLIENT_LOCAL_DESTINATIONS`, `-allow-client-local-archive`) turns it back on (#236)
+- server: an `auth` section turns on mutual TLS (client certificates verified against `auth.client_ca`) and role-based access control on gRPC, REST, QUIC, MCP HTTP, MCP stdio and the Unix socket; identities are the certificate common name or `uid:N` of the local user; invalid or incomplete settings refuse to start; without `auth` behaviour is unchanged and each listener logs a warning; `rest.tls_cert`/`rest.tls_key` and `mcp.tls_cert`/`mcp.tls_key` serve TLS. See `docs/configuration/auth.md` (#216)
 
 ### Changed
 
@@ -18,6 +18,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - ci: the SDK Tests (go) and Integration jobs grant buildx bake the fs read of the out-of-tree module-auth secret (BUILDX_BAKE_ENTITLEMENTS_FS=0 in the job env); deps: cel.dev/expr v0.26.0
 - labstrings: the releasability rules load from the LABSTRINGS_PATTERNS file at test time; no rule or match is printed (IS-31)
 - deps: `golang.org/x/mod` v0.43.0 and `golang.org/x/text` v0.44.0 in the root module; `golang.org/x/text` v0.44.0 and the in-repo `go-objstore` require at v0.9.1-alpha (still replaced locally) in `backup` and `api/sdks/go`, so `make deps-check` passes
+
+### Security
+
+- server: gRPC, REST, QUIC, MCP and the Unix socket refuse a client-supplied `local` archiver destination (archive calls and lifecycle policies) by default; `archive.allow_client_local_destinations` (`OBJSTORE_ARCHIVE_ALLOW_CLIENT_LOCAL_DESTINATIONS`, `-allow-client-local-archive`) turns it back on (#236)
 
 ## [0.9.0-alpha] - 2026-10-27
 

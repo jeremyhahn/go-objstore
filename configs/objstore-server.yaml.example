@@ -32,6 +32,8 @@
 #   host: 127.0.0.1
 #   port: 8080
 #   metrics_public: false
+#   tls_cert: ""
+#   tls_key: ""
 
 # quic:
 #   enabled: false
@@ -49,6 +51,8 @@
 #   enabled: false
 #   mode: http
 #   addr: "127.0.0.1:8081"
+#   tls_cert: ""
+#   tls_key: ""
 
 # unix:
 #   enabled: false
@@ -75,3 +79,20 @@
 # could open any directory the service user can read. Policies with a local
 # source or destination are refused (and a policy file holding one fails to
 # load) unless this is true.
+
+# auth is off by default: every listener then serves unauthenticated and logs
+# a warning. Setting it requires a client certificate signed by client_ca on
+# gRPC, REST, QUIC and MCP HTTP (each needs tls_cert and tls_key), maps the
+# certificate common name, or uid:N on the Unix socket and MCP stdio, to
+# roles, and refuses any action no role permits. An example, to uncomment
+# with "## " removed (see docs/configuration/auth.md):
+## auth:
+##   client_ca: /etc/objstore/client-ca.pem
+##   roles:
+##     backup: [read, write, list]
+##     prune: [delete]
+##   identities:
+##     - subject: backup-agent
+##       roles: [backup]
+##     - subject: "uid:1000"
+##       roles: [backup, prune]

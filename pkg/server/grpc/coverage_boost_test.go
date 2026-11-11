@@ -1362,7 +1362,10 @@ func TestBuildServerOptions_NilAuthorizer(t *testing.T) {
 		metrics: NewMetricsCollector(),
 	}
 
-	serverOpts := server.buildServerOptions()
+	serverOpts, err := server.buildServerOptions()
+	if err != nil {
+		t.Fatalf("buildServerOptions: %v", err)
+	}
 	// If it didn't panic and returned options, the nil-authorizer branch fired.
 	if len(serverOpts) == 0 {
 		t.Error("expected non-empty server options")
