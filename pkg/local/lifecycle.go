@@ -15,11 +15,13 @@ package local
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
@@ -96,16 +98,79 @@ func (lm *LifecycleManager) Run(ctx context.Context, storage *Local) {
 
 // Process runs a single pass applying lifecycle policies to the storage.
 func (lm *LifecycleManager) Process(storage *Local) {
-	// Uploads past their expiry are dropped on the same schedule as the
-	// retention policies.
-	storage.expireUploads()
-
 	// GetPolicies acquires RLock internally and returns a copy; no outer lock needed.
 	policies, _ := lm.GetPolicies()
+	storage.applyLifecycle(policies)
+}
+
+// lifecycleIntervalSetting names the setting that sets the time between
+// scheduled lifecycle passes.
+const lifecycleIntervalSetting = "lifecycleInterval"
+
+// defaultLifecycleInterval is the time between scheduled lifecycle passes
+// when lifecycleInterval is not set.
+const defaultLifecycleInterval = time.Hour
+
+// parseLifecycleInterval reads lifecycleInterval from settings. An absent
+// or empty value gives the default; a value that does not parse as a Go
+// duration, or is zero or negative, is refused.
+func parseLifecycleInterval(settings map[string]string) (time.Duration, error) {
+	raw := settings[lifecycleIntervalSetting]
+	if raw == "" {
+		return defaultLifecycleInterval, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("%w: %s must be a positive duration, got %q", common.ErrInvalidArgument, lifecycleIntervalSetting, raw)
+	}
+	return d, nil
+}
+
+// runLifecycle runs a lifecycle pass every interval until ctx is done. Each
+// pass reads the policies of the store's lifecycle manager, whatever its
+// type, so persistent policies loaded at Configure fire on the schedule.
+func (l *Local) runLifecycle(ctx context.Context, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			l.processLifecycle()
+			if hook := l.lifecyclePassHook.Load(); hook != nil {
+				(*hook)()
+			}
+		}
+	}
+}
+
+// processLifecycle runs one lifecycle pass with the policies of the store's
+// lifecycle manager.
+func (l *Local) processLifecycle() {
+	if l.lifecycleManager == nil {
+		l.expireUploads()
+		return
+	}
+	policies, err := l.lifecycleManager.GetPolicies()
+	if err != nil {
+		l.logger.Warn(context.Background(), "lifecycle: reading policies failed",
+			adapters.Field{Key: "error", Value: err.Error()})
+		policies = nil
+	}
+	l.applyLifecycle(policies)
+}
+
+// applyLifecycle drops uploads past their expiry and applies every policy
+// to the objects in the store.
+func (l *Local) applyLifecycle(policies []common.LifecyclePolicy) {
+	// Uploads past their expiry are dropped on the same schedule as the
+	// retention policies.
+	l.expireUploads()
 
 	// The walk reads the tree through the store's root, so a symlinked
 	// directory below it is never followed.
-	root, err := storage.fsRoot()
+	root, err := l.fsRoot()
 	if err != nil {
 		return
 	}
@@ -130,10 +195,10 @@ func (lm *LifecycleManager) Process(storage *Local) {
 				if time.Since(info.ModTime()) > policy.Retention {
 					switch policy.Action {
 					case actionDelete:
-						_ = storage.Delete(relPath)
+						_ = l.Delete(relPath)
 					case actionArchive:
 						if policy.Destination != nil {
-							_ = storage.Archive(relPath, policy.Destination)
+							_ = l.Archive(relPath, policy.Destination)
 						}
 					}
 				}

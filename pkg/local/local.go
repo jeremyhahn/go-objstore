@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/internal/multipart"
@@ -47,9 +48,15 @@ type Local struct {
 	logger                 adapters.Logger
 	auditLog               auditlog.AuditLogger
 	lifecycleCancel        context.CancelFunc // stops the background lifecycle goroutine
-	multipartExpiry        time.Duration      // age after which an upload in progress is treated as aborted
-	now                    func() time.Time   // time source for upload expiry; nil means time.Now
-	buckets                *Buckets           // set when the bucketRoot setting is present
+	lifecycleInterval      time.Duration      // time between scheduled lifecycle passes
+
+	// lifecyclePassHook, when set, is called after each scheduled
+	// lifecycle pass completes. It lets tests observe a pass instead of
+	// sleeping for one.
+	lifecyclePassHook atomic.Pointer[func()]
+	multipartExpiry   time.Duration    // age after which an upload in progress is treated as aborted
+	now               func() time.Time // time source for upload expiry; nil means time.Now
+	buckets           *Buckets         // set when the bucketRoot setting is present
 
 	// pruneMu orders directory pruning against writers. A writer holds the
 	// read side from the moment it creates a parent directory until its
@@ -119,7 +126,10 @@ func New() common.Storage {
 // settings is an error.
 // Settings:
 //   - path: The directory path for local storage (required)
-//   - runLifecycle: "true" to run lifecycle processing in background (optional)
+//   - runLifecycle: "true" to run lifecycle processing in background with
+//     whichever manager is configured, memory or persistent (optional)
+//   - lifecycleInterval: Go duration between scheduled lifecycle passes
+//     (optional, default "1h"; zero, negative or unparsable is refused)
 //   - lifecycleManagerType: "memory" (default) or "persistent" (optional)
 //   - lifecyclePolicyFile: Path to policy file when using persistent manager (optional, default: ".lifecycle-policies.json")
 //
@@ -212,14 +222,25 @@ func (l *Local) configure(settings map[string]string, root *os.Root) error {
 		return common.ErrInvalidLifecycleManagerType
 	}
 
-	// Start background lifecycle processing if requested
+	interval, err := parseLifecycleInterval(settings)
+	if err != nil {
+		return err
+	}
+	l.lifecycleInterval = interval
+	if memManager, ok := l.lifecycleManager.(*LifecycleManager); ok {
+		memManager.interval = interval
+	}
+
+	// Start background lifecycle processing if requested. The scheduled
+	// pass reads the policies of whichever manager was built above.
+	if l.lifecycleCancel != nil {
+		l.lifecycleCancel()
+		l.lifecycleCancel = nil
+	}
 	if settings["runLifecycle"] == "true" {
-		// Only in-memory manager supports Run method
-		if memManager, ok := l.lifecycleManager.(*LifecycleManager); ok {
-			ctx, cancel := context.WithCancel(context.Background())
-			l.lifecycleCancel = cancel
-			go memManager.Run(ctx, l)
-		}
+		ctx, cancel := context.WithCancel(context.Background())
+		l.lifecycleCancel = cancel
+		go l.runLifecycle(ctx, interval)
 	}
 
 	return nil
