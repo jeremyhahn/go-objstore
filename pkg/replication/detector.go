@@ -38,6 +38,10 @@ const (
 	MetaReplicationSourceSize     = "replication_source_size"
 	MetaReplicationSourceModified = "replication_source_modified"
 	MetaReplicationSourceMeta     = "replication_source_meta"
+	// MetaReplicationDestSize binds the record to the copy: the size the
+	// destination reported for it after the write. A destination rewritten
+	// later keeps the custom metadata but not, in general, this size.
+	MetaReplicationDestSize = "replication_dest_size"
 )
 
 // ChangeDetector detects changes between source and destination storage backends.
@@ -139,7 +143,8 @@ func hasChanged(src, dest *common.Metadata) bool {
 		return recorded != src.ETag ||
 			!recordIs(dest, MetaReplicationSourceSize, strconv.FormatInt(src.Size, 10)) ||
 			!recordIs(dest, MetaReplicationSourceModified, modifiedStamp(src)) ||
-			!recordIs(dest, MetaReplicationSourceMeta, metadataDigest(src))
+			!recordIs(dest, MetaReplicationSourceMeta, metadataDigest(src)) ||
+			!recordIs(dest, MetaReplicationDestSize, strconv.FormatInt(dest.Size, 10))
 	}
 
 	// Compare ETags (most reliable)
@@ -185,6 +190,9 @@ func sourceFingerprint(src *common.Metadata) *common.Metadata {
 		out.Custom[MetaReplicationSourceSize] = strconv.FormatInt(src.Size, 10)
 		out.Custom[MetaReplicationSourceModified] = modifiedStamp(src)
 		out.Custom[MetaReplicationSourceMeta] = metadataDigest(src)
+		// The copy is expected to be stored at the source size; SyncObject
+		// corrects this after the write when the destination says otherwise.
+		out.Custom[MetaReplicationDestSize] = strconv.FormatInt(src.Size, 10)
 	}
 	return &out
 }

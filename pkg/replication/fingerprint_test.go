@@ -273,3 +273,60 @@ func TestSync_FullUserMetadataReplicates(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, r.Synced, "unchanged")
 }
+
+// A destination rewritten after the copy, keeping the custom metadata
+// (and with it the source fingerprint), is not the copy any more: the
+// next sync replaces it.
+func TestSync_RewrittenDestinationKeepingRecordReplicated(t *testing.T) {
+	ctx := context.Background()
+	s, source := newFingerprintSyncer(t)
+	require.NoError(t, source.PutWithMetadata(ctx, "k", bytes.NewReader([]byte("original")),
+		&common.Metadata{Custom: map[string]string{"owner": "alice"}}))
+	r, err := s.SyncAll(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, r.Synced)
+
+	md, err := s.dest.GetMetadata(ctx, "k")
+	require.NoError(t, err)
+	require.NoError(t, s.dest.PutWithMetadata(ctx, "k", bytes.NewReader([]byte("rewritten at the destination")), md))
+
+	r, err = s.SyncAll(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, r.Synced, "rewritten destination replaced")
+	require.Equal(t, "original", readDest(t, s, "k"))
+
+	r, err = s.SyncAll(ctx)
+	require.NoError(t, err)
+	require.Zero(t, r.Synced, "settled after the repair")
+}
+
+// growingSizeStorage stores more bytes than it is given, as a destination
+// with client-side encryption does.
+type growingSizeStorage struct {
+	common.Storage
+}
+
+func (g growingSizeStorage) GetMetadata(ctx context.Context, key string) (*common.Metadata, error) {
+	md, err := g.Storage.GetMetadata(ctx, key)
+	if err != nil || md == nil {
+		return md, err
+	}
+	out := *md
+	out.Size += 16
+	return &out, nil
+}
+
+// The record binds the size the destination reports after the write, not
+// the source size, so a destination that stores more bytes settles.
+func TestSync_DestinationStoringMoreBytesSettles(t *testing.T) {
+	ctx := context.Background()
+	s, source := newFingerprintSyncer(t)
+	s.dest = growingSizeStorage{Storage: s.dest}
+	require.NoError(t, source.PutWithContext(ctx, "k", bytes.NewReader([]byte("payload"))))
+	r, err := s.SyncAll(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, r.Synced)
+	r, err = s.SyncAll(ctx)
+	require.NoError(t, err)
+	require.Zero(t, r.Synced, "second sync with no change")
+}

@@ -243,6 +243,7 @@ var ReplicationFingerprintKeys = []string{
 	"replication_source_size",
 	"replication_source_modified",
 	"replication_source_meta",
+	"replication_dest_size",
 }
 
 // IsReplicationFingerprintKey reports whether key is one of

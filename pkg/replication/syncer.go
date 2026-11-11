@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -346,12 +347,14 @@ func (s *Syncer) SyncObject(ctx context.Context, key string) (int64, error) {
 
 	// Put to destination (automatically encrypted if enabled), recording the
 	// source fingerprint the next change detection compares against.
-	err = s.dest.PutWithMetadata(ctx, key, reader, sourceFingerprint(srcMetadata))
+	fingerprint := sourceFingerprint(srcMetadata)
+	err = s.dest.PutWithMetadata(ctx, key, reader, fingerprint)
 	if err != nil {
 		_ = s.auditLog.LogObjectMutation(ctx, "replication_failed",
 			"", "", "", key, "", "", 0, "failure", err)
 		return 0, fmt.Errorf("failed to write destination: %w", err)
 	}
+	s.bindDestinationSize(ctx, key, fingerprint)
 
 	// Audit log success
 	_ = s.auditLog.LogObjectMutation(ctx, "replication_success",
@@ -362,6 +365,38 @@ func (s *Syncer) SyncObject(ctx context.Context, key string) (int64, error) {
 		adapters.Field{Key: "size", Value: srcMetadata.Size})
 
 	return srcMetadata.Size, nil
+}
+
+// bindDestinationSize makes the record name the size the destination
+// reports for the copy just written. That is the source size unless the
+// destination stores something else (client-side encryption adds bytes);
+// only then is the record rewritten. A failure here leaves a record that
+// does not match the copy, so the next sync copies again: never a skip.
+func (s *Syncer) bindDestinationSize(ctx context.Context, key string, fingerprint *common.Metadata) {
+	expected, ok := fingerprint.Custom[MetaReplicationDestSize]
+	if !ok {
+		return
+	}
+	md, err := s.dest.GetMetadata(ctx, key)
+	if err != nil || md == nil {
+		s.logger.Warn(ctx, "Failed to read the copy's size",
+			adapters.Field{Key: fieldKey, Value: key})
+		return
+	}
+	actual := strconv.FormatInt(md.Size, 10)
+	if actual == expected {
+		return
+	}
+	updated := *md
+	updated.Custom = make(map[string]string, len(md.Custom)+1)
+	for k, v := range md.Custom {
+		updated.Custom[k] = v
+	}
+	updated.Custom[MetaReplicationDestSize] = actual
+	if err := s.dest.UpdateMetadata(ctx, key, &updated); err != nil {
+		s.logger.Warn(ctx, "Failed to record the copy's size",
+			adapters.Field{Key: fieldKey, Value: key})
+	}
 }
 
 // GetMetrics returns the current replication metrics.
