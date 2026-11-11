@@ -90,6 +90,10 @@ func (m *mockGCSObject) NewWriter(ctx context.Context) io.WriteCloser {
 	}
 }
 
+func (m *mockGCSObject) NewWriterWithAttrs(ctx context.Context, _ storage.ObjectAttrs) io.WriteCloser {
+	return m.NewWriter(ctx)
+}
+
 func (m *mockGCSObject) NewReader(ctx context.Context) (io.ReadCloser, error) {
 	data, ok := m.bucket.objects[m.name]
 	if !ok {

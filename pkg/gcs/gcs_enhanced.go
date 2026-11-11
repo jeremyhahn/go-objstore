@@ -37,22 +37,26 @@ func (g *GCS) PutWithMetadata(ctx context.Context, key string, data io.Reader, m
 	if err := common.ValidateKey(key); err != nil {
 		return err
 	}
-	w := g.client.Bucket(g.bucket).Object(key).NewWriter(ctx)
+	obj := g.client.Bucket(g.bucket).Object(key)
+	var w io.WriteCloser
+	if metadata == nil {
+		w = obj.NewWriter(ctx)
+	} else {
+		// One upload carries the data and the metadata, so a replication
+		// fingerprint is never stored apart from the bytes it describes.
+		w = obj.NewWriterWithAttrs(ctx, storage.ObjectAttrs{
+			ContentType:     metadata.ContentType,
+			ContentEncoding: metadata.ContentEncoding,
+			Metadata:        metadata.Custom,
+		})
+	}
 	if _, err := io.Copy(w, data); err != nil {
 		// Close to release the GCS write stream; ignore close error.
 		_ = w.Close()
 		return err
 	}
 	// Close finalizes the GCS upload; capture its error.
-	if err := w.Close(); err != nil {
-		return err
-	}
-	if metadata == nil {
-		return nil
-	}
-	// Store the metadata given, so a replication fingerprint survives and
-	// an unchanged object is not uploaded again on each sync.
-	return g.UpdateMetadata(ctx, key, metadata)
+	return w.Close()
 }
 
 // GetWithContext retrieves an object from the backend with context support.

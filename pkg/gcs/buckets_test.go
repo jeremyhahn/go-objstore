@@ -364,9 +364,10 @@ type svcObject struct {
 }
 
 type svcWriter struct {
-	ctx context.Context
-	o   *svcObject
-	buf bytes.Buffer
+	ctx   context.Context
+	o     *svcObject
+	buf   bytes.Buffer
+	attrs *storage.ObjectAttrs // set by NewWriterWithAttrs
 }
 
 func (w *svcWriter) Write(p []byte) (int, error) { return w.buf.Write(p) }
@@ -388,12 +389,21 @@ func (w *svcWriter) Close() error {
 	}
 	body := append([]byte(nil), w.buf.Bytes()...)
 	sum := fakeDigest(body)
-	data.objects[w.o.name] = &svcObj{data: body, md5: sum[:], created: time.Now()}
+	obj := &svcObj{data: body, md5: sum[:], created: time.Now()}
+	if w.attrs != nil {
+		obj.ctype, obj.cenc, obj.meta = w.attrs.ContentType, w.attrs.ContentEncoding, w.attrs.Metadata
+	}
+	data.objects[w.o.name] = obj
 	return nil
 }
 
 func (o *svcObject) NewWriter(ctx context.Context) io.WriteCloser {
 	return &svcWriter{ctx: ctx, o: o}
+}
+
+// NewWriterWithAttrs stores the attributes with the data on Close.
+func (o *svcObject) NewWriterWithAttrs(ctx context.Context, attrs storage.ObjectAttrs) io.WriteCloser {
+	return &svcWriter{ctx: ctx, o: o, attrs: &attrs}
 }
 
 func (o *svcObject) get(ctx context.Context, op string) (*svcObj, error) {
