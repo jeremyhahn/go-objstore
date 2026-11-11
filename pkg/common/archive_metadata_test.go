@@ -1,3 +1,16 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-objstore.
+//
+// go-objstore is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
 package common
 
 import (
@@ -82,6 +95,15 @@ func TestArchiveCopyPlainObjectUsesPut(t *testing.T) {
 		if err := ArchiveCopy(context.Background(), "k", strings.NewReader("x"), md, dst); err != nil || dst.puts != 1 {
 			t.Fatalf("%s: err=%v puts=%d, want plain Put", name, err, dst.puts)
 		}
+	}
+}
+
+func TestHasClientEncryptionCanonicalKeys(t *testing.T) {
+	if !HasClientEncryption(&Metadata{Custom: map[string]string{"Encryption_key_id": "dek-1"}}) {
+		t.Fatal("canonicalised S3 key Encryption_key_id not detected")
+	}
+	if HasClientEncryption(&Metadata{Custom: map[string]string{"At_rest_encryption_key_id": "r"}}) {
+		t.Fatal("at-rest key mistaken for client-side encryption")
 	}
 }
 

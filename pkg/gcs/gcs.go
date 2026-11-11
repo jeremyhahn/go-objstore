@@ -261,11 +261,21 @@ func (g *GCS) List(prefix string) ([]string, error) {
 }
 
 func (g *GCS) Archive(key string, destination common.Archiver) error {
+	if destination == nil {
+		return common.ErrArchiveDestinationNil
+	}
+	// The archived copy keeps the object's client-side encryption metadata
+	// (or the archive is refused when the destination cannot store it).
+	ctx := context.TODO()
 	rc, err := g.Get(key)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = rc.Close() }()
+	md, err := g.attrsMetadata(ctx, key)
+	if err != nil {
+		return err
+	}
 
 	// Buffer the data to ensure compatibility with destinations that require Content-Length
 	data, err := io.ReadAll(rc)
@@ -273,7 +283,7 @@ func (g *GCS) Archive(key string, destination common.Archiver) error {
 		return err
 	}
 
-	return destination.Put(key, bytes.NewReader(data))
+	return common.ArchiveCopy(ctx, key, bytes.NewReader(data), md, destination)
 }
 
 // AddPolicy adds a new lifecycle policy by configuring GCS bucket lifecycle rules.

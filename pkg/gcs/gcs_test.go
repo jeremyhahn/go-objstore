@@ -699,6 +699,21 @@ func TestGCS_Archive_GetError(t *testing.T) {
 	}
 }
 
+// TestGCS_Archive_MetadataError: Archive reads the object's metadata (to
+// keep client-side encryption metadata on the copy, #243) and fails when it
+// cannot, without writing to the destination.
+func TestGCS_Archive_MetadataError(t *testing.T) {
+	objs := map[string]*fakeObj{
+		"test-key": {data: []byte("x"), attrsErr: true},
+	}
+	fc := fakeClient{b: fakeBucket{objs: objs}}
+	g := &GCS{client: fc, bucket: "test-bucket"}
+
+	if err := g.Archive("test-key", &mockArch{}); err == nil {
+		t.Fatal("expected error from GetMetadata in Archive")
+	}
+}
+
 func TestGCS_Archive_PutError(t *testing.T) {
 	objs := map[string]*fakeObj{
 		"test-key": {data: []byte("data")},

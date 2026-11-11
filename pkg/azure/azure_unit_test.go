@@ -534,6 +534,21 @@ func TestAzure_Archive_Success(t *testing.T) {
 	}
 }
 
+// TestAzure_Archive_MetadataError: Archive reads the object's metadata (to
+// keep client-side encryption metadata on the copy, #243) and fails when it
+// cannot, without writing to the destination.
+func TestAzure_Archive_MetadataError(t *testing.T) {
+	c := memContainer{blobs: map[string]*memBlob{
+		"test.txt": {data: []byte("x"), propErr: errors.New("props failed")},
+	}}
+	a := &Azure{container: c}
+	wrote := false
+	archiver := archiverFunc(func(string, io.Reader) error { wrote = true; return nil })
+	if err := a.Archive("test.txt", archiver); err == nil || wrote {
+		t.Fatalf("Archive err = %v, wrote = %v; want error and no write", err, wrote)
+	}
+}
+
 func TestAzure_Archive_Errors(t *testing.T) {
 	tests := []struct {
 		name        string

@@ -1,3 +1,16 @@
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-objstore.
+//
+// go-objstore is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
 package common
 
 import (
@@ -31,8 +44,10 @@ func HasClientEncryption(metadata *Metadata) bool {
 	if metadata == nil {
 		return false
 	}
+	// Case-insensitive: S3 returns user metadata keys canonicalised
+	// ("Encryption_key_id").
 	for k := range metadata.Custom {
-		if strings.HasPrefix(k, clientEncryptionPrefix) {
+		if strings.HasPrefix(strings.ToLower(k), clientEncryptionPrefix) {
 			return true
 		}
 	}
@@ -73,7 +88,7 @@ func archivedMetadata(src *Metadata) *Metadata {
 		Custom:          make(map[string]string, len(src.Custom)),
 	}
 	for k, v := range src.Custom {
-		if strings.HasPrefix(k, atRestEncryptionPrefix) {
+		if strings.HasPrefix(strings.ToLower(k), atRestEncryptionPrefix) {
 			continue
 		}
 		out.Custom[k] = v

@@ -18,6 +18,7 @@
 package s3
 
 import (
+	"context"
 	"io"
 	"strings"
 	"sync"
@@ -214,13 +215,23 @@ func (s *S3) List(prefix string) ([]string, error) {
 
 // Archive copies an object to another backend for archival.
 func (s *S3) Archive(key string, destination common.Archiver) error {
+	if destination == nil {
+		return common.ErrArchiveDestinationNil
+	}
+	// The archived copy keeps the object's client-side encryption metadata
+	// (or the archive is refused when the destination cannot store it).
+	ctx := context.TODO()
 	rc, err := s.Get(key)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = rc.Close() }()
+	md, err := s.GetMetadata(ctx, key)
+	if err != nil {
+		return err
+	}
 
-	return destination.Put(key, rc)
+	return common.ArchiveCopy(ctx, key, rc, md, destination)
 }
 
 // AddPolicy adds a new lifecycle policy by configuring S3 bucket lifecycle rules.

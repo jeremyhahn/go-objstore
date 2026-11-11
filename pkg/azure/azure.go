@@ -359,13 +359,23 @@ func (a *Azure) List(prefix string) ([]string, error) {
 }
 
 func (a *Azure) Archive(key string, destination common.Archiver) error {
+	if destination == nil {
+		return common.ErrArchiveDestinationNil
+	}
+	// The archived copy keeps the object's client-side encryption metadata
+	// (or the archive is refused when the destination cannot store it).
+	ctx := context.TODO()
 	rc, err := a.Get(key)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = rc.Close() }()
+	md, err := a.GetMetadata(ctx, key)
+	if err != nil {
+		return err
+	}
 
-	return destination.Put(key, rc)
+	return common.ArchiveCopy(ctx, key, rc, md, destination)
 }
 
 // AddPolicy adds a new lifecycle policy by configuring Azure Blob lifecycle management.

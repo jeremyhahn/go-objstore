@@ -68,19 +68,37 @@ func (g *GCS) GetMetadata(ctx context.Context, key string) (*common.Metadata, er
 	if err := common.ValidateKey(key); err != nil {
 		return nil, err
 	}
-	meta := &common.Metadata{}
+	meta, err := g.attrsMetadata(ctx, key)
+	if errors.Is(err, storage.ErrObjectNotExist) {
+		return nil, err
+	}
+	if err != nil {
+		// Return the empty struct rather than nil so callers never dereference nil.
+		return &common.Metadata{}, nil
+	}
+	return meta, nil
+}
+
+// attrsMetadata is GetMetadata without the fallback to empty metadata when
+// the attributes cannot be read: Archive must know whether the object
+// carries client-side encryption metadata (#243).
+func (g *GCS) attrsMetadata(ctx context.Context, key string) (*common.Metadata, error) {
+	if err := common.ValidateKey(key); err != nil {
+		return nil, err
+	}
 	obj := g.client.Bucket(g.bucket).Object(key)
 	attrs, err := obj.Attrs(ctx)
 	if errors.Is(err, storage.ErrObjectNotExist) {
 		return nil, objectError(err, key)
 	}
 	if err != nil {
-		// Return the empty struct rather than nil so callers never dereference nil.
-		return meta, nil
+		return nil, fmt.Errorf("failed to read object attributes for %s: %w", key, err)
 	}
-	meta.Size = attrs.Size
-	meta.ContentType = attrs.ContentType
-	meta.ContentEncoding = attrs.ContentEncoding
+	meta := &common.Metadata{
+		Size:            attrs.Size,
+		ContentType:     attrs.ContentType,
+		ContentEncoding: attrs.ContentEncoding,
+	}
 	if len(attrs.Metadata) > 0 {
 		meta.Custom = make(map[string]string, len(attrs.Metadata))
 		for k, v := range attrs.Metadata {
