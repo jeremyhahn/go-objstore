@@ -73,47 +73,47 @@ func (e *encryptedStorage) Put(key string, data io.Reader) error {
 
 // PutWithContext encrypts data and stores it in the underlying storage with context support
 func (e *encryptedStorage) PutWithContext(ctx context.Context, key string, data io.Reader) error {
-	// Get encrypter using default key ID
-	encrypter, err := e.encrypterFactory.GetEncrypter(e.defaultKeyID)
-	if err != nil {
-		return err
-	}
-
-	// Encrypt the data
-	encryptedData, err := encrypter.Encrypt(ctx, data)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = encryptedData.Close() }()
-
-	// Store the encrypted data
-	return e.underlying.PutWithContext(ctx, key, encryptedData)
+	// Store through the metadata path so the key ID is recorded (#226):
+	// without it the object only decrypts while the default key is unchanged.
+	return e.putEncrypted(ctx, key, data, &Metadata{})
 }
 
 // PutWithMetadata encrypts data and stores it with metadata
 func (e *encryptedStorage) PutWithMetadata(ctx context.Context, key string, data io.Reader, metadata *Metadata) error {
-	// Get encrypter using default key ID
+	if metadata == nil {
+		metadata = &Metadata{}
+	}
+	return e.putEncrypted(ctx, key, data, metadata)
+}
+
+// putEncrypted is the single write path of the encrypted storage: it encrypts
+// data with the default key, records the algorithm and key ID in metadata and
+// stores both in the underlying storage.
+func (e *encryptedStorage) putEncrypted(ctx context.Context, key string, data io.Reader, metadata *Metadata) error {
 	encrypter, err := e.encrypterFactory.GetEncrypter(e.defaultKeyID)
 	if err != nil {
 		return err
 	}
 
-	// Encrypt the data
 	encryptedData, err := encrypter.Encrypt(ctx, data)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = encryptedData.Close() }()
 
-	// Add encryption metadata to custom fields
+	recordEncryption(metadata, encrypter)
+
+	return e.underlying.PutWithMetadata(ctx, key, encryptedData, metadata)
+}
+
+// recordEncryption stores the encrypter's algorithm and key ID in the custom
+// metadata; GetWithContext reads encryption_key_id to pick the decryption key.
+func recordEncryption(metadata *Metadata, encrypter Encrypter) {
 	if metadata.Custom == nil {
 		metadata.Custom = make(map[string]string)
 	}
 	metadata.Custom["encryption_algorithm"] = encrypter.Algorithm()
 	metadata.Custom["encryption_key_id"] = encrypter.KeyID()
-
-	// Store the encrypted data with metadata
-	return e.underlying.PutWithMetadata(ctx, key, encryptedData, metadata)
 }
 
 // Get retrieves and decrypts data from the underlying storage
