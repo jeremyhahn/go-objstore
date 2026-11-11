@@ -717,7 +717,7 @@ go-objstore/
 
 ### Prerequisites
 
-- Go 1.27.3 or higher
+- Go 1.27.4 or higher
 - Docker (for integration tests)
 - Make
 

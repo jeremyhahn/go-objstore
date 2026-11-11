@@ -1,6 +1,6 @@
 module github.com/jeremyhahn/go-objstore/examples/encryption
 
-go 1.27.3
+go 1.27.4
 
 require github.com/jeremyhahn/go-objstore v0.9.0-alpha // held: replaced by the in-repo module ../..; the release does not tag this example
 
