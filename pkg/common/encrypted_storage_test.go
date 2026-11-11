@@ -749,6 +749,68 @@ func TestEncryptedStorage_KeyChange_AllWritePaths(t *testing.T) {
 	}
 }
 
+// An UpdateMetadata without encryption fields must not drop the key id the
+// object was written under: after the default key changes the object still
+// decrypts with the original key (#226).
+func TestEncryptedStorage_UpdateMetadata_KeepsKeyIDAcrossKeyChange(t *testing.T) {
+	ctx := context.Background()
+	underlying := newMockUnderlyingStorage()
+	const plaintext = "secret written with key A"
+
+	writerA := NewEncryptedStorage(underlying, newKeyedFactory("keyA"))
+	if err := writerA.PutWithMetadata(ctx, "obj", bytes.NewReader([]byte(plaintext)), &Metadata{ContentType: "text/plain"}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	update := &Metadata{
+		ContentType: "application/json",
+		Custom: map[string]string{
+			"owner":                "alice",
+			"encryption_key_id":    "keyB",
+			"encryption_algorithm": "forged",
+		},
+	}
+	if err := writerA.UpdateMetadata(ctx, "obj", update); err != nil {
+		t.Fatalf("UpdateMetadata: %v", err)
+	}
+	if got := update.Custom["encryption_key_id"]; got != "keyB" {
+		t.Errorf("caller's metadata modified: encryption_key_id = %q", got)
+	}
+
+	md, err := underlying.GetMetadata(ctx, "obj")
+	if err != nil {
+		t.Fatalf("GetMetadata: %v", err)
+	}
+	if md.ContentType != "application/json" || md.Custom["owner"] != "alice" {
+		t.Errorf("update not applied: %+v", md)
+	}
+	if got := md.Custom["encryption_key_id"]; got != "keyA" {
+		t.Errorf("encryption_key_id = %q, want keyA", got)
+	}
+	if got := md.Custom["encryption_algorithm"]; got != "test-keyed" {
+		t.Errorf("encryption_algorithm = %q, want test-keyed", got)
+	}
+
+	// An update with no custom metadata at all keeps the key id too.
+	if err := writerA.UpdateMetadata(ctx, "obj", &Metadata{ContentType: "text/csv"}); err != nil {
+		t.Fatalf("UpdateMetadata: %v", err)
+	}
+
+	// The default key changes to B.
+	readerB := NewEncryptedStorage(underlying, newKeyedFactory("keyB"))
+	if got := readAllString(t, readerB, "obj"); got != plaintext {
+		t.Errorf("read after update and key change = %q, want %q", got, plaintext)
+	}
+}
+
+func TestEncryptedStorage_UpdateMetadata_MissingObject(t *testing.T) {
+	storage := NewEncryptedStorage(newMockUnderlyingStorage(), newKeyedFactory("keyA"))
+	err := storage.UpdateMetadata(context.Background(), "missing", &Metadata{ContentType: "text/plain"})
+	if !errors.Is(err, errTestNotFound) {
+		t.Errorf("UpdateMetadata on missing object: err = %v, want %v", err, errTestNotFound)
+	}
+}
+
 // TestEncryptedStorage_MissingKeyID_UsesDefault: an object stored without
 // encryption_key_id keeps today's behaviour and decrypts with the default key.
 func TestEncryptedStorage_MissingKeyID_UsesDefault(t *testing.T) {

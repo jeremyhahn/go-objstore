@@ -16,6 +16,7 @@ package common
 import (
 	"context"
 	"io"
+	"strings"
 )
 
 // readCloser combines an io.Reader with a list of Closers to be closed when Close is called.
@@ -169,8 +170,45 @@ func (e *encryptedStorage) GetMetadata(ctx context.Context, key string) (*Metada
 }
 
 // UpdateMetadata updates metadata for an object (metadata is not encrypted)
+// UpdateMetadata replaces the object's metadata but keeps every
+// "encryption_*" entry of the stored metadata: backends replace the whole
+// record, so without this an update would drop encryption_key_id and the
+// object would no longer decrypt after the default key changes. Caller
+// supplied "encryption_*" entries are ignored. The caller's metadata is not
+// modified.
 func (e *encryptedStorage) UpdateMetadata(ctx context.Context, key string, metadata *Metadata) error {
-	return e.underlying.UpdateMetadata(ctx, key, metadata)
+	if metadata == nil {
+		return e.underlying.UpdateMetadata(ctx, key, metadata)
+	}
+	existing, err := e.underlying.GetMetadata(ctx, key)
+	if err != nil {
+		return err
+	}
+
+	updated := *metadata
+	updated.Custom = make(map[string]string, len(metadata.Custom))
+	for k, v := range metadata.Custom {
+		if !isEncryptionField(k) {
+			updated.Custom[k] = v
+		}
+	}
+	if existing != nil {
+		for k, v := range existing.Custom {
+			if isEncryptionField(k) {
+				updated.Custom[k] = v
+			}
+		}
+	}
+	if len(updated.Custom) == 0 {
+		updated.Custom = nil
+	}
+	return e.underlying.UpdateMetadata(ctx, key, &updated)
+}
+
+// isEncryptionField reports whether a custom metadata key is owned by the
+// encrypted storage wrapper.
+func isEncryptionField(k string) bool {
+	return strings.HasPrefix(k, "encryption_")
 }
 
 // Delete removes an object from the underlying storage
