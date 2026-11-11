@@ -101,7 +101,11 @@ var (
 		w.Metadata = attrs.Metadata
 		return w
 	}
-	gcsNewReaderFn    = func(o *storage.ObjectHandle, ctx context.Context) (io.ReadCloser, error) { return o.NewReader(ctx) }
+	// ReadCompressed: an object stored with Content-Encoding gzip is read as
+	// its stored bytes, so a copy written with the same encoding stays valid.
+	gcsNewReaderFn = func(o *storage.ObjectHandle, ctx context.Context) (io.ReadCloser, error) {
+		return o.ReadCompressed(true).NewReader(ctx)
+	}
 	gcsDeleteFn       = func(o *storage.ObjectHandle, ctx context.Context) error { return o.Delete(ctx) }
 	gcsAttrsFn        = func(o *storage.ObjectHandle, ctx context.Context) (*storage.ObjectAttrs, error) { return o.Attrs(ctx) }
 	gcsUpdateObjectFn = func(o *storage.ObjectHandle, ctx context.Context, uattrs storage.ObjectAttrsToUpdate) (*storage.ObjectAttrs, error) {
