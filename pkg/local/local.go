@@ -63,6 +63,10 @@ type Local struct {
 	// root itself is safe for concurrent use.
 	rootMu sync.Mutex
 	root   *os.Root
+
+	// keyLocks keeps a key's data and its at-rest metadata from two writers
+	// apart (see keyLocks).
+	keyLocks keyLocks
 }
 
 // fsRoot returns the store's root, opening it on first use for a Local built
@@ -347,6 +351,11 @@ func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 		dataToWrite = encryptedData
 	}
 
+	// Hold the key from the data write until its metadata is saved, so a
+	// concurrent put or UpdateMetadata cannot pair these bytes with another
+	// write's at-rest key ID (#243).
+	defer l.keyLocks.lock(name)()
+
 	var size int64
 	if err := writeObjectAtomic(root, &l.pruneMu, name, 0644, func(w io.Writer) error {
 		n, werr := io.Copy(w, dataToWrite)
@@ -546,6 +555,9 @@ func (l *Local) UpdateMetadata(ctx context.Context, key string, metadata *common
 	if err != nil {
 		return err
 	}
+	// Hold the key from reading the stored at-rest fields until the save, so
+	// a put in between cannot have its key ID replaced by the old one (#243).
+	defer l.keyLocks.lock(rootName(key))()
 	info, err := root.Stat(rootName(key))
 	if err != nil {
 		if os.IsNotExist(err) {
