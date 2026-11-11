@@ -1,6 +1,7 @@
 package serverconfig
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
+	"github.com/jeremyhahn/go-objstore/pkg/factory"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	"github.com/jeremyhahn/go-objstore/pkg/replication"
 )
@@ -172,6 +174,83 @@ func TestEnableReplication_Interval(t *testing.T) {
 	}
 	if rc.Context == nil || rc.Context.Value(ctxKey{}) != "server" {
 		t.Error("interval set: the enabler did not get the caller's context")
+	}
+}
+
+// TestEnableReplicationContext_ScheduleCopiesThenStops drives the real
+// enabler, objstore.EnableReplication: with an interval set, a scheduled sync
+// copies a source object to the destination with no trigger, and once the
+// context is cancelled no further copy happens (#222).
+func TestEnableReplicationContext_ScheduleCopiesThenStops(t *testing.T) {
+	srcDir, destDir := t.TempDir(), t.TempDir()
+	source, err := factory.NewStorage("local", map[string]string{"path": srcDir}, common.Credentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest, err := factory.NewStorage("local", map[string]string{"path": destDir}, common.Credentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	objstore.Reset()
+	t.Cleanup(objstore.Reset)
+	if err := objstore.Initialize(&objstore.FacadeConfig{
+		Backends:       map[string]common.Storage{"default": source},
+		DefaultBackend: "default",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := Defaults()
+	cfg.Path = t.TempDir()
+	cfg.Replication.AllowClientLocalBackends = true
+	cfg.Replication.Interval = 20 * time.Millisecond
+	mgr, err := replication.NewPersistentReplicationManager(&replication.OSFileSystem{},
+		cfg.ReplicationPolicyPath(), 0, nil, nil, replication.WithClientLocalBackends(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.AddPolicy(common.ReplicationPolicy{
+		ID:                  "scheduled",
+		SourceBackend:       "local",
+		SourceSettings:      map[string]string{"path": srcDir},
+		DestinationBackend:  "local",
+		DestinationSettings: map[string]string{"path": destDir},
+		ReplicationMode:     common.ReplicationModeTransparent,
+		Enabled:             true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := source.PutWithContext(ctx, "before", bytes.NewReader([]byte("1"))); err != nil {
+		t.Fatal(err)
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if !cfg.EnableReplicationContext(runCtx, nil) {
+		t.Fatal("EnableReplicationContext reported not enabled")
+	}
+
+	copied := func(key string) bool {
+		ok, err := dest.Exists(ctx, key)
+		return err == nil && ok
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for !copied("before") {
+		if time.Now().After(deadline) {
+			t.Fatal("no scheduled copy within 10s")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	cancel()
+	time.Sleep(200 * time.Millisecond) // let an in-flight sync finish
+	if err := source.PutWithContext(ctx, "after", bytes.NewReader([]byte("2"))); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(15 * cfg.Replication.Interval)
+	if copied("after") {
+		t.Fatal("a copy happened after the context was cancelled")
 	}
 }
 
