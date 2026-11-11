@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
+	"github.com/jeremyhahn/go-objstore/pkg/local"
 )
 
 // allowLocalArchive is the wire option of a server that allows client-supplied
@@ -79,5 +80,34 @@ func TestOptionsAllowClientLocalArchiveDestinations(t *testing.T) {
 	}
 	if !DefaultOptions().WithAllowClientLocalArchiveDestinations(true).AllowClientLocalArchiveDestinations {
 		t.Fatal("the builder must set the option")
+	}
+}
+
+// TestNewPassesAllowClientLocalArchiveDestinations checks that New carries the
+// option into the archive handler's wire options, refusing by default (#236).
+func TestNewPassesAllowClientLocalArchiveDestinations(t *testing.T) {
+	storage := local.New()
+	if err := storage.Configure(map[string]string{"path": t.TempDir()}, noCreds); err != nil {
+		t.Fatalf("configure storage: %v", err)
+	}
+	initTestFacade(t, storage)
+	tlsConfig, err := GenerateSelfSignedCert()
+	if err != nil {
+		t.Fatalf("cert: %v", err)
+	}
+
+	for _, allow := range []bool{false, true} {
+		opts := DefaultOptions().
+			WithAddr(":0").
+			WithBackend("").
+			WithTLSConfig(tlsConfig).
+			WithAllowClientLocalArchiveDestinations(allow)
+		server, err := New(opts)
+		if err != nil {
+			t.Fatalf("New(allow=%v): %v", allow, err)
+		}
+		if got := server.Handler().wireOpts.AllowLocalDestinations; got != allow {
+			t.Fatalf("New(allow=%v): handler AllowLocalDestinations = %v", allow, got)
+		}
 	}
 }
