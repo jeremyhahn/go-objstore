@@ -323,14 +323,11 @@ func (s *Syncer) SyncAllParallel(ctx context.Context, workerCount int) (*common.
 // SyncObject synchronizes a single object from source to destination.
 // Returns the size of the object synced.
 func (s *Syncer) SyncObject(ctx context.Context, key string) (int64, error) {
-	// Get from source (automatically decrypted if encrypted)
-	reader, err := s.source.GetWithContext(ctx, key)
-	if err != nil {
-		return 0, fmt.Errorf("failed to read source: %w", err)
-	}
-	defer func() { _ = reader.Close() }()
-
-	// Get source metadata
+	// Get source metadata before opening the data. The fingerprint recorded
+	// on the copy then describes these bytes or an older version, never a
+	// newer one: a source replaced in between is copied again next sync,
+	// where reading the metadata after the open would stamp the newer
+	// fingerprint on the older bytes and hide the change for good.
 	srcMetadata, err := s.source.GetMetadata(ctx, key)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get metadata: %w", err)
@@ -339,6 +336,13 @@ func (s *Syncer) SyncObject(ctx context.Context, key string) (int64, error) {
 	if srcMetadata == nil {
 		srcMetadata = &common.Metadata{}
 	}
+
+	// Get from source (automatically decrypted if encrypted)
+	reader, err := s.source.GetWithContext(ctx, key)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read source: %w", err)
+	}
+	defer func() { _ = reader.Close() }()
 
 	// Put to destination (automatically encrypted if enabled), recording the
 	// source fingerprint the next change detection compares against.

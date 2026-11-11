@@ -206,3 +206,42 @@ func TestHasChanged_PreciseFingerprint(t *testing.T) {
 		MetaReplicationSourceETag: "100-6", MetaReplicationSourceSize: "6"}}
 	require.True(t, hasChanged(src, old), "record without the precise fields")
 }
+
+// replaceOnOpen replaces the object with newer bytes right after it opens
+// a reader on it, as a writer racing a sync would.
+type replaceOnOpen struct {
+	common.Storage
+	data []byte
+	done bool
+}
+
+func (r *replaceOnOpen) GetWithContext(ctx context.Context, key string) (io.ReadCloser, error) {
+	rc, err := r.Storage.GetWithContext(ctx, key)
+	if err == nil && !r.done {
+		r.done = true
+		if perr := r.Storage.PutWithContext(ctx, key, bytes.NewReader(r.data)); perr != nil {
+			_ = rc.Close()
+			return nil, perr
+		}
+	}
+	return rc, err
+}
+
+// TestSyncObject_FingerprintDescribesCopiedBytes: a source replaced between
+// the open and the metadata read must not stamp the newer fingerprint on the
+// older bytes, or the next sync never copies the newer version (#222).
+func TestSyncObject_FingerprintDescribesCopiedBytes(t *testing.T) {
+	ctx := context.Background()
+	s, source := newFingerprintSyncer(t)
+	require.NoError(t, source.PutWithContext(ctx, "k", bytes.NewReader([]byte("old"))))
+	s.source = &replaceOnOpen{Storage: source, data: []byte("newer-and-longer")}
+
+	_, err := s.SyncObject(ctx, "k")
+	require.NoError(t, err)
+	require.Equal(t, "old", readDest(t, s, "k"), "the copy read before the replace")
+
+	r, err := s.SyncAll(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, r.Synced, "the newer source is seen as a change")
+	require.Equal(t, "newer-and-longer", readDest(t, s, "k"))
+}
