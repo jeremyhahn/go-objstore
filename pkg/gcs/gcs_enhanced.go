@@ -17,9 +17,11 @@ package gcs
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 
@@ -93,6 +95,8 @@ func (g *GCS) GetMetadata(ctx context.Context, key string) (*common.Metadata, er
 	meta.Size = attrs.Size
 	meta.ContentType = attrs.ContentType
 	meta.ContentEncoding = attrs.ContentEncoding
+	meta.ETag = objectETag(attrs)
+	meta.LastModified = attrs.Updated
 	if len(attrs.Metadata) > 0 {
 		meta.Custom = make(map[string]string, len(attrs.Metadata))
 		for k, v := range attrs.Metadata {
@@ -100,6 +104,21 @@ func (g *GCS) GetMetadata(ctx context.Context, key string) (*common.Metadata, er
 		}
 	}
 	return meta, nil
+}
+
+// objectETag is the identity of the object's current content: its
+// generation, which the service changes on every write (a rewrite of the same
+// length included), else the service entity tag, else the MD5 of the data.
+func objectETag(attrs *storage.ObjectAttrs) string {
+	switch {
+	case attrs.Generation != 0:
+		return strconv.FormatInt(attrs.Generation, 10)
+	case attrs.Etag != "":
+		return attrs.Etag
+	case len(attrs.MD5) > 0:
+		return hex.EncodeToString(attrs.MD5)
+	}
+	return ""
 }
 
 // UpdateMetadata updates the metadata for an existing object.
