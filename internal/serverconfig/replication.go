@@ -10,6 +10,15 @@ import (
 
 // ReplicationEnabler has the signature of objstore.EnableReplication; tests
 // pass a fake so no file is opened.
+// ReplicationConfig holds the server's replication settings.
+type ReplicationConfig struct {
+	// AllowClientLocalBackends permits replication policies whose source or
+	// destination backend type takes a filesystem path (such as "local").
+	// A policy's backend settings come from the client, so such a backend
+	// could open any directory the service user can read. Default false.
+	AllowClientLocalBackends bool `mapstructure:"allow_client_local_backends"`
+}
+
 type ReplicationEnabler func(backendName string, cfg *objstore.ReplicationConfig) error
 
 // ReplicationPolicyPath returns the replication policy file of the default
@@ -38,8 +47,9 @@ func (c *Config) EnableReplication(enable ReplicationEnabler) bool {
 		enable = objstore.EnableReplication
 	}
 	if err := enable("", &objstore.ReplicationConfig{
-		PolicyFilePath:  policyPath,
-		RunInBackground: false,
+		PolicyFilePath:           policyPath,
+		AllowClientLocalBackends: c.Replication.AllowClientLocalBackends,
+		RunInBackground:          false,
 	}); err != nil {
 		slog.Warn("Failed to enable replication", "error", err)
 		return false

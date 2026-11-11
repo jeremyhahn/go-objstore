@@ -29,7 +29,7 @@ func TestGetReplicationStatus(t *testing.T) {
 	logger := adapters.NewNoOpLogger()
 	auditLog := auditlog.NewNoOpAuditLogger()
 
-	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
+	mgr, err := newLocalTestManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestGetReplicationStatus_NotFound(t *testing.T) {
 	logger := adapters.NewNoOpLogger()
 	auditLog := auditlog.NewNoOpAuditLogger()
 
-	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
+	mgr, err := newLocalTestManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestGetOrCreateMetrics(t *testing.T) {
 	logger := adapters.NewNoOpLogger()
 	auditLog := auditlog.NewNoOpAuditLogger()
 
-	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
+	mgr, err := newLocalTestManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestSave_Success(t *testing.T) {
 	logger := adapters.NewNoOpLogger()
 	auditLog := auditlog.NewNoOpAuditLogger()
 
-	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
+	mgr, err := newLocalTestManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestLoad_Success(t *testing.T) {
 	auditLog := auditlog.NewNoOpAuditLogger()
 
 	// Create first manager and add policy
-	mgr1, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
+	mgr1, err := newLocalTestManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
 		t.Fatalf("Failed to create first manager: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestLoad_Success(t *testing.T) {
 	}
 
 	// Create second manager - should load policy
-	mgr2, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
+	mgr2, err := newLocalTestManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
 		t.Fatalf("Failed to create second manager: %v", err)
 	}
@@ -259,7 +259,7 @@ func TestSyncAll_EmptyPolicies(t *testing.T) {
 	logger := adapters.NewNoOpLogger()
 	auditLog := auditlog.NewNoOpAuditLogger()
 
-	mgr, err := NewPersistentReplicationManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
+	mgr, err := newLocalTestManager(fs, "test-policies.json", 5*time.Minute, logger, auditLog)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
