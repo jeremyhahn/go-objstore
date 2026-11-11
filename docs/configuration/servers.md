@@ -40,22 +40,30 @@ Each binary reads the sections for the transports it serves.
 
 ## Keys
 
+The defaults are safe to start as is: there is no default storage path, so
+the `local` backend refuses to start until `path` is set; gRPC, REST and MCP
+listen on loopback only; QUIC and MCP are off. To serve other machines, set
+the address explicitly (for example `-grpc-addr 0.0.0.0:50051`,
+`-rest-host 0.0.0.0`) and enable QUIC or MCP with `-quic=true` or
+`-mcp=true`. The single-transport binaries keep their own defaults where the
+table notes one.
+
 | Key | Environment | Default | objstore-server flag | Single-transport flag |
 |-----|-------------|---------|----------------------|-----------------------|
 | `backend` | `OBJSTORE_BACKEND` | `local` | `-backend` | `-backend` |
-| `path` | `OBJSTORE_PATH` | `/tmp/objstore` (`./data` for objstore-quic-server) | `-path` | `-path` |
+| `path` | `OBJSTORE_PATH` | none, required for the `local` backend (`./data` for objstore-quic-server) | `-path` | `-path` |
 | `grpc.enabled` | `OBJSTORE_GRPC_ENABLED` | `true` | `-grpc` | — |
-| `grpc.addr` | `OBJSTORE_GRPC_ADDR` | `:50051` | `-grpc-addr` | `-addr` (grpc) |
+| `grpc.addr` | `OBJSTORE_GRPC_ADDR` | `127.0.0.1:50051` | `-grpc-addr` | `-addr` (grpc) |
 | `grpc.tls_cert` | `OBJSTORE_GRPC_TLS_CERT` | — | `-grpc-tls-cert` | `-tls-cert` (grpc) |
 | `grpc.tls_key` | `OBJSTORE_GRPC_TLS_KEY` | — | `-grpc-tls-key` | `-tls-key` (grpc) |
 | `grpc.max_recv_msg_size` | `OBJSTORE_GRPC_MAX_RECV_MSG_SIZE` | `33554432` | `-grpc-max-recv-msg-size` | `-max-recv-msg-size` (grpc) |
 | `grpc.max_send_msg_size` | `OBJSTORE_GRPC_MAX_SEND_MSG_SIZE` | `10485760` | `-grpc-max-send-msg-size` | `-max-send-msg-size` (grpc) |
 | `rest.enabled` | `OBJSTORE_REST_ENABLED` | `true` | `-rest` | — |
-| `rest.host` | `OBJSTORE_REST_HOST` | `0.0.0.0` (`localhost` for objstore-rest-server) | `-rest-host` | `-host` (rest) |
+| `rest.host` | `OBJSTORE_REST_HOST` | `127.0.0.1` (`localhost` for objstore-rest-server) | `-rest-host` | `-host` (rest) |
 | `rest.port` | `OBJSTORE_REST_PORT` | `8080` | `-rest-port` | `-port` (rest) |
 | `rest.metrics_public` | `OBJSTORE_REST_METRICS_PUBLIC` | `false` | `-metrics-public` | `-metrics-public` (rest) |
-| `quic.enabled` | `OBJSTORE_QUIC_ENABLED` | `true` | `-quic` | — |
-| `quic.addr` | `OBJSTORE_QUIC_ADDR` | `:4433` | `-quic-addr` | `-addr` (quic) |
+| `quic.enabled` | `OBJSTORE_QUIC_ENABLED` | `false` | `-quic` | — |
+| `quic.addr` | `OBJSTORE_QUIC_ADDR` | `127.0.0.1:4433` | `-quic-addr` | `-addr` (quic) |
 | `quic.tls_cert` | `OBJSTORE_QUIC_TLS_CERT` | — | `-quic-tls-cert` | `-tlscert` (quic) |
 | `quic.tls_key` | `OBJSTORE_QUIC_TLS_KEY` | — | `-quic-tls-key` | `-tlskey` (quic) |
 | `quic.self_signed` | `OBJSTORE_QUIC_SELF_SIGNED` | `false` | `-quic-self-signed` | `-selfsigned` (quic) |
@@ -64,9 +72,9 @@ Each binary reads the sections for the transports it serves.
 | `quic.write_timeout` | `OBJSTORE_QUIC_WRITE_TIMEOUT` | `30s` | — | `-writetimeout` (quic) |
 | `quic.idle_timeout` | `OBJSTORE_QUIC_IDLE_TIMEOUT` | `60s` | — | `-idletimeout` (quic) |
 | `quic.max_streams` | `OBJSTORE_QUIC_MAX_STREAMS` | `100` | — | `-maxstreams` (quic) |
-| `mcp.enabled` | `OBJSTORE_MCP_ENABLED` | `true` | `-mcp` | — |
+| `mcp.enabled` | `OBJSTORE_MCP_ENABLED` | `false` | `-mcp` | — |
 | `mcp.mode` | `OBJSTORE_MCP_MODE` | `http` | `-mcp-mode` | `-mode` (mcp) |
-| `mcp.addr` | `OBJSTORE_MCP_ADDR` | `:8081` | `-mcp-addr` | `-addr` (mcp) |
+| `mcp.addr` | `OBJSTORE_MCP_ADDR` | `127.0.0.1:8081` | `-mcp-addr` | `-addr` (mcp) |
 | `unix.enabled` | `OBJSTORE_UNIX_ENABLED` | `false` | `-unix` | — |
 | `unix.socket` | `OBJSTORE_UNIX_SOCKET` | `/var/run/objstore.sock` | `-unix-socket` | — |
 | `rate_limit.enabled` | `OBJSTORE_RATE_LIMIT_ENABLED` | `false` | `-rate-limit` | `-rate-limit` (all) |

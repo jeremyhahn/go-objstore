@@ -126,7 +126,7 @@ func TestLocal_Close_WithAndWithoutLifecycle(t *testing.T) {
 func TestLocalFileSystem_Remove(t *testing.T) {
 	dir := t.TempDir()
 
-	lfs := &localFileSystem{basePath: dir}
+	lfs := &localFileSystem{root: openTestRoot(t, dir)}
 
 	// Create a file so Remove can succeed.
 	name := "to-remove.txt"
@@ -153,7 +153,7 @@ func TestLocalFileSystem_OpenFile_MkdirAllFails(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	lfs := &localFileSystem{basePath: dir}
+	lfs := &localFileSystem{root: openTestRoot(t, dir)}
 
 	// Make the base directory read-only so MkdirAll for a sub-path fails.
 	if err := os.Chmod(dir, 0500); err != nil {
@@ -193,7 +193,8 @@ func TestWriteFileAtomic_ChmodFails(t *testing.T) {
 	missingDir := filepath.Join(dir, "does-not-exist")
 	target := filepath.Join(missingDir, "file.txt")
 
-	err := writeFileAtomic(target, 0644, func(w io.Writer) error {
+	rel, _ := filepath.Rel(dir, target)
+	err := writeFileAtomic(openTestRoot(t, dir), rel, 0644, func(w io.Writer) error {
 		_, werr := w.Write([]byte("data"))
 		return werr
 	})
@@ -209,7 +210,7 @@ func TestWriteFileAtomic_WriteCallbackFails(t *testing.T) {
 	target := filepath.Join(dir, "out.txt")
 
 	writeErr := errors.New("write callback error")
-	err := writeFileAtomic(target, 0644, func(w io.Writer) error {
+	err := writeFileAtomic(openTestRoot(t, dir), filepath.Base(target), 0644, func(w io.Writer) error {
 		return writeErr
 	})
 	if !errors.Is(err, writeErr) {
@@ -229,7 +230,7 @@ func TestWriteFileAtomic_SyncError(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "atomic.txt")
 
-	if err := writeFileAtomic(target, 0644, func(w io.Writer) error {
+	if err := writeFileAtomic(openTestRoot(t, dir), filepath.Base(target), 0644, func(w io.Writer) error {
 		_, werr := io.WriteString(w, "hello")
 		return werr
 	}); err != nil {
@@ -991,7 +992,7 @@ func TestLocal_LoadMetadata_ValidateKeyError(t *testing.T) {
 // to fail and the temp file is cleaned up.
 func TestWriteFileAtomic_CreateTempInMissingDir(t *testing.T) {
 	// Ensure CreateTemp itself fails when the directory doesn't exist.
-	err := writeFileAtomic("/tmp/nonexistent-dir-xyz/file.txt", 0644, func(w io.Writer) error {
+	err := writeFileAtomic(openTestRoot(t, t.TempDir()), "nonexistent-dir-xyz/file.txt", 0644, func(w io.Writer) error {
 		_, werr := io.WriteString(w, "x")
 		return werr
 	})

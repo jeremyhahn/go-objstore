@@ -26,6 +26,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
+	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
 // FileSystemEvent represents a filesystem change event.
@@ -384,7 +385,7 @@ func (w *FSNotifyWatcher) shouldIgnore(path string) bool {
 	}
 
 	// Ignore metadata files
-	if strings.HasSuffix(base, ".metadata.json") {
+	if strings.HasSuffix(base, common.MetadataSuffix) {
 		return true
 	}
 

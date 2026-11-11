@@ -728,7 +728,7 @@ func EnableReplication(backendName string, config *ReplicationConfig) error {
 	// Set defaults
 	policyFile := config.PolicyFilePath
 	if policyFile == "" {
-		policyFile = ".replication-policies.json"
+		policyFile = common.ReplicationPolicyFile
 	}
 
 	interval := config.Interval

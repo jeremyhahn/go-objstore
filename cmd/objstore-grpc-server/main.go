@@ -53,15 +53,7 @@ func main() {
 	slog.Info("Initialized storage backend", "backend", cfg.Backend)
 
 	// Enable replication on the default backend
-	policyPath := cfg.Path + "/.replication-policies.json"
-	if err := objstore.EnableReplication("", &objstore.ReplicationConfig{
-		PolicyFilePath:  policyPath,
-		RunInBackground: false,
-	}); err != nil {
-		slog.Warn("Failed to enable replication", "error", err)
-	} else {
-		slog.Info("Replication enabled", "policy_file", policyPath)
-	}
+	cfg.EnableReplication(objstore.EnableReplication)
 
 	// Create server options: address, and TLS when grpc.tls_cert/tls_key are set
 	opts, err := cfg.GRPCOptions(cfg.Middleware())
