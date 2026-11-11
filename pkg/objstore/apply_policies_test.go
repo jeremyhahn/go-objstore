@@ -16,6 +16,7 @@ package objstore
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -121,5 +122,51 @@ func TestApplyPolicies_UnknownBackend(t *testing.T) {
 	initBucketFacade(t)
 	if _, err := ApplyPolicies(context.Background(), "nope", nil); err == nil {
 		t.Fatal("expected an error for an unknown backend")
+	}
+}
+
+// stalledListStorage reports every listing page truncated, with the same
+// continuation token each time.
+type stalledListStorage struct {
+	*mockStorage
+	token string
+	calls int
+}
+
+func (s *stalledListStorage) GetPolicies() ([]common.LifecyclePolicy, error) {
+	return []common.LifecyclePolicy{{ID: "p", Prefix: "", Retention: time.Hour, Action: "delete"}}, nil
+}
+
+func (s *stalledListStorage) ListWithOptions(_ context.Context, _ *common.ListOptions) (*common.ListResult, error) {
+	s.calls++
+	if s.calls > 10 {
+		return nil, fmt.Errorf("listed %d pages: the pass did not stop", s.calls)
+	}
+	return &common.ListResult{
+		Objects:   []*common.ObjectInfo{{Key: "old", Metadata: &common.Metadata{LastModified: time.Now().Add(-48 * time.Hour)}}},
+		Truncated: true,
+		NextToken: s.token,
+	}, nil
+}
+
+// A truncated listing that gives no new continuation token makes
+// ApplyPolicies fail rather than loop or stop with the store half seen (#224).
+func TestApplyPolicies_StalledListing(t *testing.T) {
+	for _, token := range []string{"", "t1"} {
+		t.Run(fmt.Sprintf("token %q", token), func(t *testing.T) {
+			Reset()
+			t.Cleanup(Reset)
+			fake := &stalledListStorage{mockStorage: newMockStorage("stalled"), token: token}
+			if err := Initialize(&FacadeConfig{
+				Backends:       map[string]common.Storage{"stalled": fake},
+				DefaultBackend: "stalled",
+			}); err != nil {
+				t.Fatal(err)
+			}
+			res, err := ApplyPolicies(context.Background(), "stalled", nil)
+			if !errors.Is(err, ErrListingStalled) {
+				t.Fatalf("ApplyPolicies() = %+v, %v; want ErrListingStalled", res, err)
+			}
+		})
 	}
 }

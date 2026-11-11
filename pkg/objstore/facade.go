@@ -44,6 +44,10 @@ var (
 	// ErrInitializationFailed wraps the error from the first Initialize call
 	// when it failed; later calls return the same error.
 	ErrInitializationFailed = errors.New("objstore facade initialization failed")
+
+	// ErrListingStalled is returned by ApplyPolicies when a backend reports
+	// a truncated listing page but gives no new continuation token.
+	ErrListingStalled = errors.New("listing did not advance")
 )
 
 // Facade singleton instance
@@ -685,10 +689,14 @@ func ApplyPolicies(ctx context.Context, backendName string, onError PolicyAction
 				actions = append(actions, action{key: obj.Key, policy: p})
 			}
 		}
-		// Stop when the backend reports no more, or repeats a token (a
-		// backend that does not advance would otherwise loop forever).
-		if !page.Truncated || page.NextToken == "" || seen[page.NextToken] {
+		if !page.Truncated {
 			break
+		}
+		// A truncated page that does not advance would loop forever or,
+		// if the pass stopped there, leave the rest of the store unseen.
+		if page.NextToken == "" || seen[page.NextToken] || page.NextToken == opts.ContinueFrom {
+			return nil, fmt.Errorf("%w: listing backend %q reported a truncated page without a new continuation token",
+				ErrListingStalled, backendName)
 		}
 		seen[page.NextToken] = true
 		opts = &common.ListOptions{MaxResults: applyPoliciesPageSize, ContinueFrom: page.NextToken}
