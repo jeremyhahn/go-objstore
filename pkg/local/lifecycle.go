@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -193,16 +194,38 @@ func (l *Local) applyLifecycle(policies []common.LifecyclePolicy) {
 			if time.Since(metadata.LastModified) <= policy.Retention {
 				return nil
 			}
-			switch policy.Action {
-			case actionDelete:
-				_ = l.Delete(key)
-			case actionArchive:
-				if policy.Destination != nil {
-					_ = l.Archive(key, policy.Destination)
-				}
-			}
+			l.expireObject(root, key, metadata.LastModified, policy)
 			return nil
 		}
 		_ = l.walkObjects(context.Background(), root, walkFn)
+	}
+}
+
+// expireObject applies policy's action to key, judged expired at age
+// judged. It holds the key's write lock and re-reads the object's age
+// under it, and does nothing when the object changed since the judgement:
+// a replacement written after the decision is never deleted or archived.
+func (l *Local) expireObject(root *os.Root, key string, judged time.Time, policy common.LifecyclePolicy) {
+	if l.expiryHook != nil {
+		l.expiryHook(key)
+	}
+	unlock := l.keyMu.lock(key)
+	defer unlock()
+
+	info, err := root.Stat(rootName(key))
+	if err != nil || !info.Mode().IsRegular() {
+		return
+	}
+	current, err := l.objectMetadata(filepath.FromSlash(key), fs.FileInfoToDirEntry(info))
+	if err != nil || current == nil || !current.LastModified.Equal(judged) {
+		return
+	}
+	switch policy.Action {
+	case actionDelete:
+		_ = l.Delete(key)
+	case actionArchive:
+		if policy.Destination != nil {
+			_ = l.Archive(key, policy.Destination)
+		}
 	}
 }

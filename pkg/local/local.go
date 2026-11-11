@@ -69,6 +69,16 @@ type Local struct {
 	// it removes directories. Writers never block one another.
 	pruneMu sync.RWMutex
 
+	// keyMu holds a lock per object key. A write holds its key's lock
+	// from before the object is published until its metadata is saved;
+	// lifecycle expiry holds it while it re-reads an object's age and
+	// deletes it, so it never deletes a replacement it did not judge.
+	keyMu keyLocks
+
+	// expiryHook, when set (by tests), runs between lifecycle expiry's
+	// decision on a key and the delete.
+	expiryHook func(key string)
+
 	// root is the configured directory opened as an os.Root. Every open,
 	// create, rename and remove goes through it, so a symlink planted below
 	// the root cannot lead a call outside it. rootMu guards the field; the
@@ -372,6 +382,11 @@ func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 		defer func() { _ = encryptedData.Close() }()
 		dataToWrite = encryptedData
 	}
+
+	// The key stays locked until the metadata is saved, so lifecycle
+	// expiry never sees the new data with the old age.
+	unlock := l.keyMu.lock(key)
+	defer unlock()
 
 	var size int64
 	if err := writeObjectAtomic(root, &l.pruneMu, name, 0644, func(w io.Writer) error {

@@ -67,6 +67,55 @@ func TestLifecycle_Process_Delete(t *testing.T) {
 	}
 }
 
+// An object replaced between lifecycle expiry's decision and its delete
+// survives: the delete re-reads the age under the key's write lock (#224).
+func TestLifecycle_Process_ReplacedAfterDecisionSurvives(t *testing.T) {
+	dir := t.TempDir()
+	s := New()
+	if err := s.Configure(map[string]string{"path": dir}, noCreds); err != nil {
+		t.Fatal(err)
+	}
+	ll := s.(*Local)
+	memManager, ok := ll.lifecycleManager.(*LifecycleManager)
+	if !ok {
+		t.Fatal("expected in-memory lifecycle manager")
+	}
+
+	key := "logs/old.txt"
+	if err := s.Put(key, bytes.NewBufferString("old")); err != nil {
+		t.Fatal(err)
+	}
+	ageObject(t, ll, dir, key, time.Now().Add(-48*time.Hour))
+	if err := s.AddPolicy(common.LifecyclePolicy{ID: "p1", Prefix: "logs/", Retention: time.Hour, Action: "delete"}); err != nil {
+		t.Fatal(err)
+	}
+
+	replaced := false
+	ll.expiryHook = func(k string) {
+		if k != key || replaced {
+			return
+		}
+		replaced = true
+		if err := s.Put(key, bytes.NewBufferString("new")); err != nil {
+			t.Errorf("replacing %s: %v", key, err)
+		}
+	}
+	memManager.Process(ll)
+
+	if !replaced {
+		t.Fatal("lifecycle never decided to expire the old object")
+	}
+	rc, err := s.Get(key)
+	if err != nil {
+		t.Fatalf("replacement written after the expiry decision was deleted: %v", err)
+	}
+	defer func() { _ = rc.Close() }()
+	got, err := io.ReadAll(rc)
+	if err != nil || string(got) != "new" {
+		t.Fatalf("Get(%s) = %q, %v; want the replacement %q", key, got, err, "new")
+	}
+}
+
 func TestLifecycle_Process_Archive(t *testing.T) {
 	dir := t.TempDir()
 	s := New()

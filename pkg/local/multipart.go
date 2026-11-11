@@ -411,6 +411,10 @@ func (l *Local) CompleteMultipartUpload(ctx context.Context, key, uploadID strin
 	}
 
 	name := rootName(key)
+	// As in PutWithMetadata, the key stays locked until the metadata is
+	// saved, so lifecycle expiry never sees the new data with the old age.
+	unlock := l.keyMu.lock(key)
+	defer unlock()
 	var size int64
 	if err := writeObjectAtomic(root, &l.pruneMu, name, 0644, func(w io.Writer) error {
 		n, werr := io.Copy(w, in)
