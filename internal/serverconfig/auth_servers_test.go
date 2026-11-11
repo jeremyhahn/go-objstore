@@ -41,6 +41,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/status"
 
 	objstorepb "github.com/jeremyhahn/go-objstore/api/proto"
@@ -559,6 +560,37 @@ func TestServers_GRPCHealthForAnyIdentity(t *testing.T) {
 	_, err = client.Put(ctx, &objstorepb.PutRequest{Key: "stranger/data.txt", Data: []byte("payload")})
 	if status.Code(err) != codes.PermissionDenied {
 		t.Errorf("Put as stranger = %v, want PermissionDenied", err)
+	}
+}
+
+// TestServers_GRPCStandardHealthWithoutIdentity covers #239: with an auth
+// section, a client whose certificate maps to no identity (stranger) gets OK
+// from the standard grpc.health.v1.Health/Check and PermissionDenied from an
+// object call.
+func TestServers_GRPCStandardHealthWithoutIdentity(t *testing.T) {
+	s := startAuthServers(t)
+	conn, err := grpc.NewClient(s.grpc, grpc.WithTransportCredentials(credentials.NewTLS(s.pki.clientTLS("stranger"))))
+	if err != nil {
+		t.Fatalf("grpc NewClient: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	resp, err := grpc_health_v1.NewHealthClient(conn).Check(ctx, &grpc_health_v1.HealthCheckRequest{})
+	if err != nil {
+		t.Fatalf("grpc.health.v1.Health/Check as stranger = %v, want OK", err)
+	}
+	if resp.GetStatus() != grpc_health_v1.HealthCheckResponse_SERVING {
+		t.Errorf("Health/Check status = %v, want SERVING", resp.GetStatus())
+	}
+	// Get is server-streaming: the status arrives on the first Recv.
+	stream, err := objstorepb.NewObjectStoreClient(conn).Get(ctx, &objstorepb.GetRequest{Key: "stranger/data.txt"})
+	if err == nil {
+		_, err = stream.Recv()
+	}
+	if status.Code(err) != codes.PermissionDenied {
+		t.Errorf("Get as stranger = %v, want PermissionDenied", err)
 	}
 }
 
