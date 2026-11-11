@@ -9,7 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Changed
 
 - **Upgrade:** replication: a replication policy file that holds a `local` source or destination now fails to load at start, so replication stays off until `replication.allow_client_local_backends: true` is set or the policy is removed (#230)
-
+- build: the Go toolchain moves to 1.27.4 (go.mod files, devcontainer and integration images, docs) for GO-2026-6859 in `net/http` (#233)
 - ci: the labstrings gate reads the RELEASABILITY_PATTERNS secret as a 0600 runner temp file and fails on a push to main without it; the loader takes the file's class set (#212)
 - ci: the SDK Tests (go) and Integration jobs grant buildx bake the fs read of the out-of-tree module-auth secret (BUILDX_BAKE_ENTITLEMENTS_FS=0 in the job env); deps: cel.dev/expr v0.26.0
 - labstrings: the releasability rules load from the LABSTRINGS_PATTERNS file at test time; no rule or match is printed (IS-31)
