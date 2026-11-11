@@ -212,9 +212,19 @@ func (lm *PersistentLifecycleManager) AddPolicy(policy LifecyclePolicy) error {
 	lm.mutex.Lock()
 	defer lm.mutex.Unlock()
 
+	// The live map only keeps the policy once it is on disk: a policy that
+	// failed to persist must never run.
+	prev, had := lm.policies[policy.ID]
 	lm.policies[policy.ID] = policy
-
-	return lm.save()
+	if err := lm.save(); err != nil {
+		if had {
+			lm.policies[policy.ID] = prev
+		} else {
+			delete(lm.policies, policy.ID)
+		}
+		return err
+	}
+	return nil
 }
 
 // RemovePolicy removes a lifecycle policy and persists the change to storage.
@@ -222,9 +232,17 @@ func (lm *PersistentLifecycleManager) RemovePolicy(id string) error {
 	lm.mutex.Lock()
 	defer lm.mutex.Unlock()
 
+	prev, had := lm.policies[id]
 	delete(lm.policies, id)
-
-	return lm.save()
+	if err := lm.save(); err != nil {
+		// A removal that failed to persist leaves the policy in force, as
+		// it will be after a restart.
+		if had {
+			lm.policies[id] = prev
+		}
+		return err
+	}
+	return nil
 }
 
 // GetPolicies returns all the lifecycle policies.
