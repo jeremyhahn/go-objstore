@@ -554,15 +554,62 @@ func (l *Local) UpdateMetadata(ctx context.Context, key string, metadata *common
 		return err
 	}
 
-	// Update size and last modified from file
-	if metadata == nil {
-		metadata = &common.Metadata{}
+	metadata, err = l.keepAtRestFields(key, metadata)
+	if err != nil {
+		return err
 	}
+
+	// Update size and last modified from file
 	metadata.Size = info.Size()
 	metadata.LastModified = time.Now()
 	metadata.ETag = fmt.Sprintf("%d-%d", info.ModTime().Unix(), info.Size())
 
 	return l.saveMetadata(key, metadata)
+}
+
+// keepAtRestFields returns a copy of metadata (an empty one when it is nil)
+// whose "at_rest_encryption_*" entries are those of the stored sidecar:
+// UpdateMetadata replaces the whole sidecar, so without this an update would
+// drop at_rest_encryption_key_id, and the object would no longer decrypt once
+// the default key changes. Caller supplied "at_rest_encryption_*" entries are
+// ignored, matched case-insensitively, so a caller cannot redirect decryption
+// to another key. An object without a sidecar keeps none. The caller's
+// metadata is not modified.
+func (l *Local) keepAtRestFields(key string, metadata *common.Metadata) (*common.Metadata, error) {
+	updated := &common.Metadata{}
+	if metadata != nil {
+		*updated = *metadata
+	}
+	custom := make(map[string]string, len(updated.Custom))
+	for k, v := range updated.Custom {
+		if !isAtRestField(k) {
+			custom[k] = v
+		}
+	}
+
+	stored, err := l.loadMetadata(key)
+	if err != nil && !errors.Is(err, common.ErrMetadataNotFound) {
+		return nil, fmt.Errorf("failed to load metadata for at-rest fields: %w", err)
+	}
+	if stored != nil {
+		for k, v := range stored.Custom {
+			if isAtRestField(k) {
+				custom[k] = v
+			}
+		}
+	}
+
+	updated.Custom = nil
+	if len(custom) > 0 {
+		updated.Custom = custom
+	}
+	return updated, nil
+}
+
+// isAtRestField reports whether a custom metadata key is owned by the at-rest
+// encryption of the local backend.
+func isAtRestField(k string) bool {
+	return strings.HasPrefix(strings.ToLower(k), "at_rest_encryption_")
 }
 
 // Delete removes an object from the backend.

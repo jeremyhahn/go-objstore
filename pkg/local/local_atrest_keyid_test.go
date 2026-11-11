@@ -148,6 +148,88 @@ func TestAtRestReadUnknownKeyIDFails(t *testing.T) {
 	}
 }
 
+// TestAtRestUpdateMetadataKeepsKeyID checks that UpdateMetadata keeps the
+// recorded at-rest key id, ignores a caller supplied one (in any case), and
+// does so for nil metadata too, so the object still decrypts after the
+// default key changes (#243).
+func TestAtRestUpdateMetadataKeepsKeyID(t *testing.T) {
+	for name, md := range map[string]*common.Metadata{
+		"forged id":       {Custom: map[string]string{"at_rest_encryption_key_id": "B", "owner": "x"}},
+		"forged id upper": {Custom: map[string]string{"AT_REST_ENCRYPTION_KEY_ID": "B"}},
+		"forged unknown":  {Custom: map[string]string{"at_rest_encryption_key_id": "gone"}},
+		"no custom":       {ContentType: "text/plain"},
+		"nil":             nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newRotatingFactory("A", "A", "B")
+			l := newAtRestLocal(t, f)
+			if err := l.Put("obj.txt", strings.NewReader("under A")); err != nil {
+				t.Fatalf("put: %v", err)
+			}
+			if err := l.UpdateMetadata(context.Background(), "obj.txt", md); err != nil {
+				t.Fatalf("update metadata: %v", err)
+			}
+
+			stored, err := l.loadMetadata("obj.txt")
+			if err != nil {
+				t.Fatalf("load metadata: %v", err)
+			}
+			if got := stored.Custom["at_rest_encryption_key_id"]; got != "A" {
+				t.Fatalf("stored at_rest_encryption_key_id = %q, want %q", got, "A")
+			}
+			if _, ok := stored.Custom["AT_REST_ENCRYPTION_KEY_ID"]; ok {
+				t.Fatalf("caller supplied AT_REST_ENCRYPTION_KEY_ID was stored")
+			}
+			if md != nil && md.Custom["owner"] != "" && stored.Custom["owner"] != "x" {
+				t.Fatalf("stored owner = %q, want %q", stored.Custom["owner"], "x")
+			}
+
+			f.def = "B"
+			got, err := readAll(t, l, "obj.txt")
+			if err != nil {
+				t.Fatalf("get after update and rotation: %v", err)
+			}
+			if got != "under A" {
+				t.Fatalf("get = %q, want %q", got, "under A")
+			}
+		})
+	}
+}
+
+// TestAtRestUpdateMetadataNoSidecar checks that an object without a sidecar
+// still takes the caller's metadata, minus any at-rest entries.
+func TestAtRestUpdateMetadataNoSidecar(t *testing.T) {
+	l := newAtRestLocal(t, newRotatingFactory("A", "A"))
+	if err := l.Put("obj.txt", strings.NewReader("data")); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	root, err := l.fsRoot()
+	if err != nil {
+		t.Fatalf("root: %v", err)
+	}
+	if err := root.Remove(rootName("obj.txt") + metadataSuffix); err != nil {
+		t.Fatalf("remove sidecar: %v", err)
+	}
+
+	md := &common.Metadata{Custom: map[string]string{"owner": "x", "at_rest_encryption_key_id": "gone"}}
+	if err := l.UpdateMetadata(context.Background(), "obj.txt", md); err != nil {
+		t.Fatalf("update metadata: %v", err)
+	}
+	stored, err := l.loadMetadata("obj.txt")
+	if err != nil {
+		t.Fatalf("load metadata: %v", err)
+	}
+	if stored.Custom["owner"] != "x" {
+		t.Fatalf("stored owner = %q, want %q", stored.Custom["owner"], "x")
+	}
+	if id, ok := stored.Custom["at_rest_encryption_key_id"]; ok {
+		t.Fatalf("caller supplied at_rest_encryption_key_id %q was stored", id)
+	}
+	if md.Custom["at_rest_encryption_key_id"] != "gone" {
+		t.Fatalf("caller's metadata was modified")
+	}
+}
+
 // TestAtRestReadNoKeyIDUsesDefault: an object whose metadata records no key
 // id (written before ids were recorded) decrypts with the default key.
 func TestAtRestReadNoKeyIDUsesDefault(t *testing.T) {
