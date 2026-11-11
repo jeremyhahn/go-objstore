@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -176,35 +177,32 @@ func (l *Local) applyLifecycle(policies []common.LifecyclePolicy) {
 	}
 
 	for _, policy := range policies {
-		walkFn := func(relPath string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() {
-				if relPath == stagingDir {
-					return fs.SkipDir
-				}
+		// walkObjects visits only objects (no sidecars, temp files, staged
+		// uploads or reserved names), and an object's age is its metadata
+		// LastModified, the same age ApplyPolicies uses, so the schedule and
+		// a manual pass expire the same objects.
+		walkFn := func(relPath string, d fs.DirEntry) error {
+			key := filepath.ToSlash(relPath)
+			if !strings.HasPrefix(key, policy.Prefix) {
 				return nil
 			}
-			info, err := d.Info()
-			if err != nil {
+			metadata, err := l.objectMetadata(relPath, d)
+			if err != nil || metadata == nil {
 				return nil
 			}
-
-			if strings.HasPrefix(relPath, policy.Prefix) {
-				if time.Since(info.ModTime()) > policy.Retention {
-					switch policy.Action {
-					case actionDelete:
-						_ = l.Delete(relPath)
-					case actionArchive:
-						if policy.Destination != nil {
-							_ = l.Archive(relPath, policy.Destination)
-						}
-					}
+			if time.Since(metadata.LastModified) <= policy.Retention {
+				return nil
+			}
+			switch policy.Action {
+			case actionDelete:
+				_ = l.Delete(key)
+			case actionArchive:
+				if policy.Destination != nil {
+					_ = l.Archive(key, policy.Destination)
 				}
 			}
 			return nil
 		}
-		_ = fs.WalkDir(root.FS(), ".", walkFn)
+		_ = l.walkObjects(context.Background(), root, walkFn)
 	}
 }

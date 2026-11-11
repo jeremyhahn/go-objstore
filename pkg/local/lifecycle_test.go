@@ -53,10 +53,7 @@ func TestLifecycle_Process_Delete(t *testing.T) {
 	}
 	// set modtime to past
 	path := filepath.Join(dir, key)
-	past := time.Now().Add(-48 * time.Hour)
-	if err := os.Chtimes(path, past, past); err != nil {
-		t.Fatal(err)
-	}
+	ageObject(t, ll, dir, key, time.Now().Add(-48*time.Hour))
 
 	// add policy to delete anything under logs/ older than 1h
 	if err := s.AddPolicy(common.LifecyclePolicy{ID: "p1", Prefix: "logs/", Retention: time.Hour, Action: "delete"}); err != nil {
@@ -88,11 +85,7 @@ func TestLifecycle_Process_Archive(t *testing.T) {
 	if err := s.Put(key, bytes.NewBufferString("data")); err != nil {
 		t.Fatal(err)
 	}
-	pth := filepath.Join(dir, key)
-	past := time.Now().Add(-72 * time.Hour)
-	if err := os.Chtimes(pth, past, past); err != nil {
-		t.Fatal(err)
-	}
+	ageObject(t, ll, dir, key, time.Now().Add(-72*time.Hour))
 
 	ma := &mockArchiver{}
 	if err := s.AddPolicy(common.LifecyclePolicy{ID: "p2", Prefix: "docs/", Retention: time.Hour, Action: "archive", Destination: ma}); err != nil {

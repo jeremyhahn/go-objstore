@@ -46,10 +46,7 @@ func TestLifecycle_Run_DeletesOldFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := filepath.Join(dir, key)
-	old := time.Now().Add(-48 * time.Hour)
-	if err := os.Chtimes(p, old, old); err != nil {
-		t.Fatal(err)
-	}
+	ageObject(t, ll, dir, key, time.Now().Add(-48*time.Hour))
 
 	// policy to delete under logs older than 1h
 	if err := s.AddPolicy(common.LifecyclePolicy{ID: "run", Prefix: "logs/", Retention: time.Hour, Action: "delete"}); err != nil {
@@ -104,9 +101,7 @@ func TestLocal_RunLifecycle_PersistentPolicySurvivesRestart(t *testing.T) {
 	}
 	old := time.Now().Add(-48 * time.Hour)
 	for _, k := range []string{key, keep} {
-		if err := os.Chtimes(filepath.Join(dir, k), old, old); err != nil {
-			t.Fatal(err)
-		}
+		ageObject(t, first, dir, k, old)
 	}
 	first.Close()
 

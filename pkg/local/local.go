@@ -788,23 +788,12 @@ func (l *Local) ListWithOptions(ctx context.Context, opts *common.ListOptions) (
 			}
 		}
 
-		// Load metadata
-		metadata, err := l.loadMetadata(normalizedRel)
+		metadata, err := l.objectMetadata(normalizedRel, d)
 		if err != nil {
-			// Create basic metadata if not found. The entry may have been
-			// removed since the directory was read; treat that as absent.
-			info, ierr := d.Info()
-			if ierr != nil {
-				if errors.Is(ierr, fs.ErrNotExist) {
-					return nil
-				}
-				return ierr
-			}
-			metadata = &common.Metadata{
-				Size:         info.Size(),
-				LastModified: info.ModTime(),
-				ETag:         fmt.Sprintf("%d-%d", info.ModTime().Unix(), info.Size()),
-			}
+			return err
+		}
+		if metadata == nil {
+			return nil
 		}
 
 		objInfo := &common.ObjectInfo{
@@ -967,6 +956,30 @@ const tmpFilePrefix = common.TempFilePrefix
 // follows a symlink. Entries that vanish while the walk is in progress (a
 // concurrent Put renaming its temp file, a concurrent Delete) are treated as
 // absent rather than failing the whole walk; any other error aborts it.
+// objectMetadata returns the metadata of the object the walk found at name:
+// its sidecar, or, when it has none, one built from the data file. A nil
+// result with no error means the object was removed since its directory was
+// read. Listing and the scheduled lifecycle pass both age an object by the
+// LastModified this returns, so they agree on which objects are expired.
+func (l *Local) objectMetadata(name string, d fs.DirEntry) (*common.Metadata, error) {
+	metadata, err := l.loadMetadata(name)
+	if err == nil {
+		return metadata, nil
+	}
+	info, ierr := d.Info()
+	if ierr != nil {
+		if errors.Is(ierr, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, ierr
+	}
+	return &common.Metadata{
+		Size:         info.Size(),
+		LastModified: info.ModTime(),
+		ETag:         fmt.Sprintf("%d-%d", info.ModTime().Unix(), info.Size()),
+	}, nil
+}
+
 func (l *Local) walkObjects(ctx context.Context, root *os.Root, fn func(name string, d fs.DirEntry) error) error {
 	return fs.WalkDir(root.FS(), ".", func(name string, d fs.DirEntry, err error) error {
 		select {
