@@ -15,7 +15,7 @@ package local
 
 import "sync"
 
-// keyLocks serialises the writers of one key. A put holds the key's lock
+// keyLocks serializes the writers of one key. A put holds the key's lock
 // from the data write until its metadata is saved, and UpdateMetadata holds
 // it from reading the stored at-rest fields until it saves; so the stored
 // at-rest key ID always belongs to the bytes on disk (#243). The zero value
