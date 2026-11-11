@@ -147,7 +147,8 @@ func TestGCS_GetWithContext_Error(t *testing.T) {
 
 // TestGCS_GetMetadata tests that GetMetadata never returns nil metadata.
 func TestGCS_GetMetadata(t *testing.T) {
-	fc := fakeClient{b: fakeBucket{objs: map[string]*fakeObj{}}}
+	// A missing key is ErrKeyNotFound (not_found_test.go); this covers a present one.
+	fc := fakeClient{b: fakeBucket{objs: map[string]*fakeObj{"key": {data: []byte("x")}}}}
 	g := &GCS{client: fc, bucket: "test-bucket"}
 	ctx := context.Background()
 
