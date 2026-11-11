@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -73,7 +74,15 @@ func (cd *ChangeDetector) DetectChanges(ctx context.Context, prefix string) ([]s
 		for _, obj := range result.Objects {
 			destMeta, err := cd.dest.GetMetadata(ctx, obj.Key)
 			// If error occurs getting dest metadata, assume object doesn't exist or needs sync
-			if err != nil || hasChanged(cd.sourceMetadata(ctx, obj, destMeta), destMeta) {
+			if err != nil {
+				changedKeys = append(changedKeys, obj.Key)
+				continue
+			}
+			srcMeta, err := cd.sourceMetadata(ctx, obj, destMeta)
+			if err != nil {
+				return nil, err
+			}
+			if hasChanged(srcMeta, destMeta) {
 				changedKeys = append(changedKeys, obj.Key)
 			}
 		}
@@ -92,15 +101,28 @@ func (cd *ChangeDetector) DetectChanges(ctx context.Context, prefix string) ([]s
 // SyncObject records it from: a listing may carry no user metadata and
 // a different modification time. When that call fails the listing's
 // metadata is used.
-func (cd *ChangeDetector) sourceMetadata(ctx context.Context, obj *common.ObjectInfo, dest *common.Metadata) *common.Metadata {
+func (cd *ChangeDetector) sourceMetadata(ctx context.Context, obj *common.ObjectInfo, dest *common.Metadata) (*common.Metadata, error) {
+	// GCS and Azure listings carry no metadata: the source has to be
+	// looked up whatever the destination holds, and a failed lookup is
+	// reported rather than compared as nothing.
+	if obj.Metadata == nil {
+		md, err := cd.source.GetMetadata(ctx, obj.Key)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get source metadata for %s: %w", obj.Key, err)
+		}
+		if md == nil {
+			md = &common.Metadata{}
+		}
+		return md, nil
+	}
 	if dest == nil || dest.Custom[MetaReplicationSourceETag] == "" {
-		return obj.Metadata
+		return obj.Metadata, nil
 	}
 	md, err := cd.source.GetMetadata(ctx, obj.Key)
 	if err != nil || md == nil {
-		return obj.Metadata
+		return obj.Metadata, nil
 	}
-	return md
+	return md, nil
 }
 
 // hasChanged compares source and destination metadata to determine if sync is needed.
