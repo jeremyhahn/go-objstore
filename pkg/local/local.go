@@ -450,10 +450,17 @@ func (l *Local) GetWithContext(ctx context.Context, key string) (io.ReadCloser, 
 	// Get at-rest encrypter if factory is set
 	var encrypter common.Encrypter
 	if l.atRestEncrypterFactory != nil {
-		var err error
-		encrypter, err = l.atRestEncrypterFactory.GetEncrypter("")
+		keyID, err := l.atRestKeyID(key)
 		if err != nil {
 			_ = file.Close()
+			return nil, err
+		}
+		encrypter, err = l.atRestEncrypterFactory.GetEncrypter(keyID)
+		if err != nil {
+			_ = file.Close()
+			if keyID != "" {
+				return nil, fmt.Errorf("failed to get at-rest encrypter for key id %q: %w", keyID, err)
+			}
 			return nil, fmt.Errorf("failed to get encrypter: %w", err)
 		}
 	}
@@ -487,6 +494,24 @@ func (l *Local) GetWithContext(ctx context.Context, key string) (io.ReadCloser, 
 	}
 
 	return file, nil
+}
+
+// atRestKeyID returns the at-rest encryption key id recorded for key when it
+// was written, or "" (the factory's default key) when the object has no
+// metadata or the metadata records no key id. Any other metadata error is
+// returned, so a read never silently decrypts with the wrong key.
+func (l *Local) atRestKeyID(key string) (string, error) {
+	md, err := l.loadMetadata(key)
+	if err != nil {
+		if errors.Is(err, common.ErrMetadataNotFound) {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to load metadata for at-rest key id: %w", err)
+	}
+	if md.Custom == nil {
+		return "", nil
+	}
+	return md.Custom["at_rest_encryption_key_id"], nil
 }
 
 // GetMetadata retrieves only the metadata for an object.

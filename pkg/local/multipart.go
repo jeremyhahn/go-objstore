@@ -58,7 +58,10 @@ type partRecord struct {
 	ETag      string `json:"etag"`
 	Size      int64  `json:"size"`
 	Encrypted bool   `json:"encrypted"`
-	File      string `json:"file"`
+	// KeyID is the at-rest key id the part was encrypted with; empty for
+	// parts staged before it was recorded (decrypted with the default key).
+	KeyID string `json:"key_id,omitempty"`
+	File  string `json:"file"`
 }
 
 func (l *Local) clock() time.Time {
@@ -258,6 +261,9 @@ func (l *Local) UploadPart(ctx context.Context, key, uploadID string, partNumber
 
 	previous, hadPrevious := loadPart(root, dir, partNumber)
 	rec := partRecord{ETag: etag, Size: size, Encrypted: enc != nil, File: file}
+	if enc != nil {
+		rec.KeyID = enc.KeyID()
+	}
 	if err := ctx.Err(); err != nil {
 		_ = root.Remove(filepath.Join(dir, file))
 		return common.PartInfo{}, err
@@ -300,6 +306,7 @@ type partStream struct {
 	dir     string
 	parts   []partRecord
 	enc     common.Encrypter
+	decs    map[string]common.Encrypter // non-default part keys, by id
 	next    int
 	cur     io.Reader
 	closers []io.Closer
@@ -313,7 +320,11 @@ func (s *partStream) open(pr partRecord) error {
 	s.closers = append(s.closers, f)
 	s.cur = f
 	if pr.Encrypted {
-		rc, err := s.enc.Decrypt(s.ctx, f)
+		dec := s.enc
+		if d, ok := s.decs[pr.KeyID]; ok {
+			dec = d
+		}
+		rc, err := dec.Decrypt(s.ctx, f)
 		if err != nil {
 			return fmt.Errorf("decryption failed: %w", err)
 		}
@@ -391,14 +402,28 @@ func (l *Local) CompleteMultipartUpload(ctx context.Context, key, uploadID strin
 		return err
 	}
 	ordered := make([]partRecord, 0, len(numbers))
+	// Parts staged before an at-rest key rotation decrypt with the key they
+	// were written under; resolve those up front so an unknown id fails
+	// before anything is written.
+	decs := make(map[string]common.Encrypter)
 	for _, n := range numbers {
-		if records[n].Encrypted && enc == nil {
+		pr := records[n]
+		if pr.Encrypted && enc == nil {
 			return errNoEncrypter
 		}
-		ordered = append(ordered, records[n])
+		if pr.Encrypted && pr.KeyID != "" && pr.KeyID != enc.KeyID() {
+			if _, ok := decs[pr.KeyID]; !ok {
+				dec, err := l.atRestEncrypterFactory.GetEncrypter(pr.KeyID)
+				if err != nil {
+					return fmt.Errorf("failed to get at-rest encrypter for part %d key id %q: %w", n, pr.KeyID, err)
+				}
+				decs[pr.KeyID] = dec
+			}
+		}
+		ordered = append(ordered, pr)
 	}
 
-	stream := &partStream{ctx: ctx, root: root, dir: dir, parts: ordered, enc: enc}
+	stream := &partStream{ctx: ctx, root: root, dir: dir, parts: ordered, enc: enc, decs: decs}
 	defer stream.closeCurrent()
 	var in io.Reader = stream
 	if enc != nil {
