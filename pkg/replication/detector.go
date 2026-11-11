@@ -42,6 +42,11 @@ const (
 	// destination reported for it after the write. A destination rewritten
 	// later keeps the custom metadata but not, in general, this size.
 	MetaReplicationDestSize = "replication_dest_size"
+	// MetaReplicationDestETag binds the record to the copy's ETag, so a
+	// same-size rewrite of the destination is seen too. It is recorded only
+	// where the destination keeps an object's ETag across a metadata write
+	// (local, memory, S3 single-part); elsewhere it is absent.
+	MetaReplicationDestETag = "replication_dest_etag"
 )
 
 // ChangeDetector detects changes between source and destination storage backends.
@@ -144,7 +149,8 @@ func hasChanged(src, dest *common.Metadata) bool {
 			!recordIs(dest, MetaReplicationSourceSize, strconv.FormatInt(src.Size, 10)) ||
 			!recordIs(dest, MetaReplicationSourceModified, modifiedStamp(src)) ||
 			!recordIs(dest, MetaReplicationSourceMeta, metadataDigest(src)) ||
-			!recordIs(dest, MetaReplicationDestSize, strconv.FormatInt(dest.Size, 10))
+			!recordIs(dest, MetaReplicationDestSize, strconv.FormatInt(dest.Size, 10)) ||
+			!destETagMatches(dest)
 	}
 
 	// Compare ETags (most reliable)
@@ -169,6 +175,13 @@ func hasChanged(src, dest *common.Metadata) bool {
 func recordIs(dest *common.Metadata, key, want string) bool {
 	got, ok := dest.Custom[key]
 	return ok && got == want
+}
+
+// destETagMatches reports whether dest is the copy its record names: true
+// when no destination ETag is recorded, else whether it is dest's ETag.
+func destETagMatches(dest *common.Metadata) bool {
+	recorded, ok := dest.Custom[MetaReplicationDestETag]
+	return !ok || recorded == dest.ETag
 }
 
 // sourceFingerprint returns the metadata to write with the destination copy
