@@ -125,7 +125,7 @@ func (p *recordingProvider) Credentials(_ context.Context, target CredentialTarg
 
 func newProviderManager(t *testing.T, fs FileSystem, opts ...ManagerOption) *PersistentReplicationManager {
 	t.Helper()
-	mgr, err := NewPersistentReplicationManager(fs, "provider-policies.json", 5*time.Minute,
+	mgr, err := newLocalTestManager(fs, "provider-policies.json", 5*time.Minute,
 		adapters.NewNoOpLogger(), auditlog.NewNoOpAuditLogger(), opts...)
 	if err != nil {
 		t.Fatalf("create manager: %v", err)

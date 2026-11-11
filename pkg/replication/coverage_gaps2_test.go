@@ -169,7 +169,7 @@ func TestSave_SyncFails(t *testing.T) {
 	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mfs := newMockFileSystem()
-	mgr, err := NewPersistentReplicationManager(mfs, "policies.json", time.Minute, logger, auditLog)
+	mgr, err := newLocalTestManager(mfs, "policies.json", time.Minute, logger, auditLog)
 	require.NoError(t, err)
 
 	mgr.fs = &syncFailFS{}
@@ -210,7 +210,7 @@ func TestSave_CloseFails(t *testing.T) {
 	auditLog := auditlog.NewNoOpAuditLogger()
 
 	mfs := newMockFileSystem()
-	mgr, err := NewPersistentReplicationManager(mfs, "policies.json", time.Minute, logger, auditLog)
+	mgr, err := newLocalTestManager(mfs, "policies.json", time.Minute, logger, auditLog)
 	require.NoError(t, err)
 
 	mgr.fs = &closeFailFS{}
@@ -251,7 +251,7 @@ func TestSyncAllParallel_TwoFailing(t *testing.T) {
 	logger := adapters.NewNoOpLogger()
 	auditLog := auditlog.NewNoOpAuditLogger()
 
-	mgr, err := NewPersistentReplicationManager(mfs, "policies.json", time.Minute, logger, auditLog)
+	mgr, err := newLocalTestManager(mfs, "policies.json", time.Minute, logger, auditLog)
 	require.NoError(t, err)
 
 	for i := 1; i <= 2; i++ {
@@ -283,7 +283,7 @@ func TestRun_SyncAllError(t *testing.T) {
 	logger := adapters.NewNoOpLogger()
 	auditLog := auditlog.NewNoOpAuditLogger()
 
-	mgr, err := NewPersistentReplicationManager(mfs, "policies.json", 10*time.Millisecond, logger, auditLog)
+	mgr, err := newLocalTestManager(mfs, "policies.json", 10*time.Millisecond, logger, auditLog)
 	require.NoError(t, err)
 
 	// Add a policy that will fail (invalid backend), so SyncAll logs an error.
@@ -482,7 +482,7 @@ func (l *listErrorStorage) GetPolicies() ([]common.LifecyclePolicy, error)      
 
 func TestSyncPolicyParallel_NotFound(t *testing.T) {
 	mfs := newMockFileSystem()
-	mgr, err := NewPersistentReplicationManager(mfs, "policies.json", time.Minute,
+	mgr, err := newLocalTestManager(mfs, "policies.json", time.Minute,
 		adapters.NewNoOpLogger(), auditlog.NewNoOpAuditLogger())
 	require.NoError(t, err)
 
