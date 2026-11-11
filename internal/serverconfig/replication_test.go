@@ -1,10 +1,12 @@
 package serverconfig
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
@@ -135,5 +137,62 @@ func TestLoad_ReplicationAllowClientLocalBackends(t *testing.T) {
 	t.Setenv("OBJSTORE_REPLICATION_ALLOW_CLIENT_LOCAL_BACKENDS", "true")
 	if cfg := mustLoad(t, nil, Defaults(), BindServerFlags); !cfg.Replication.AllowClientLocalBackends {
 		t.Error("environment did not set replication.allow_client_local_backends")
+	}
+}
+
+// TestEnableReplication_Interval: with replication.interval the enabler gets
+// RunInBackground, the interval and the caller's context; without one,
+// nothing runs in the background (#222).
+func TestEnableReplication_Interval(t *testing.T) {
+	type ctxKey struct{}
+	ctx := context.WithValue(context.Background(), ctxKey{}, "server")
+
+	capture := func(cfg *Config) *objstore.ReplicationConfig {
+		t.Helper()
+		var got *objstore.ReplicationConfig
+		if !cfg.EnableReplicationContext(ctx, func(_ string, rc *objstore.ReplicationConfig) error {
+			got = rc
+			return nil
+		}) {
+			t.Fatal("EnableReplicationContext reported not enabled")
+		}
+		return got
+	}
+
+	cfg := Defaults()
+	cfg.Path = t.TempDir()
+	if rc := capture(&cfg); rc.RunInBackground || rc.Interval != 0 || rc.Context != nil {
+		t.Errorf("no interval: RunInBackground=%v Interval=%v Context=%v, want trigger-only", rc.RunInBackground, rc.Interval, rc.Context)
+	}
+
+	cfg.Replication.Interval = 15 * time.Minute
+	rc := capture(&cfg)
+	if !rc.RunInBackground || rc.Interval != 15*time.Minute {
+		t.Errorf("interval 15m: RunInBackground=%v Interval=%v, want true/15m", rc.RunInBackground, rc.Interval)
+	}
+	if rc.Context == nil || rc.Context.Value(ctxKey{}) != "server" {
+		t.Error("interval set: the enabler did not get the caller's context")
+	}
+}
+
+func TestLoad_ReplicationInterval(t *testing.T) {
+	if cfg := mustLoad(t, nil, Defaults(), BindServerFlags); cfg.Replication.Interval != 0 {
+		t.Errorf("default replication.interval = %v, want 0", cfg.Replication.Interval)
+	}
+	file := writeConfig(t, "replication:\n  interval: 10m\n")
+	if cfg := mustLoad(t, []string{"-config", file}, Defaults(), BindServerFlags); cfg.Replication.Interval != 10*time.Minute {
+		t.Errorf("file replication.interval = %v, want 10m", cfg.Replication.Interval)
+	}
+	t.Setenv("OBJSTORE_REPLICATION_INTERVAL", "20m")
+	if cfg := mustLoad(t, []string{"-config", file}, Defaults(), BindServerFlags); cfg.Replication.Interval != 20*time.Minute {
+		t.Errorf("env replication.interval = %v, want 20m", cfg.Replication.Interval)
+	}
+	if cfg := mustLoad(t, []string{"-replication-interval", "30s"}, Defaults(), BindServerFlags); cfg.Replication.Interval != 30*time.Second {
+		t.Errorf("flag replication.interval = %v, want 30s", cfg.Replication.Interval)
+	}
+
+	_, err := Load("test", []string{"-replication-interval", "-1m"}, Defaults(), BindServerFlags)
+	if keys := invalidKeys(err); len(keys) != 1 || keys[0] != "replication.interval" {
+		t.Errorf("negative interval: invalid keys = %v, want [replication.interval] (err %v)", keys, err)
 	}
 }

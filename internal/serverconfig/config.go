@@ -290,5 +290,11 @@ func (c *Config) Validate() error {
 		errs = append(errs, err)
 	}
 	errs = append(errs, c.validateAuth()...)
+	if c.Replication.Interval < 0 {
+		errs = append(errs, &InvalidSettingError{
+			Key: "replication.interval", Value: c.Replication.Interval.String(),
+			Reason: "must not be negative (0 or empty means replication runs only when triggered)",
+		})
+	}
 	return errors.Join(errs...)
 }
