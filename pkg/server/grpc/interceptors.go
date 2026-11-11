@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	objstorepb "github.com/jeremyhahn/go-objstore/api/proto"
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"github.com/jeremyhahn/go-objstore/pkg/server/metrics"
 	"google.golang.org/grpc"
@@ -429,8 +430,15 @@ var methodActions = map[string]struct {
 // isPublicAuthzMethod reports whether the gRPC method is exempt from
 // authorization (health checks and server reflection).
 func isPublicAuthzMethod(fullMethod string) bool {
-	return strings.Contains(fullMethod, "grpc.health.v1.Health") ||
-		strings.Contains(fullMethod, "grpc.reflection.")
+	return strings.HasPrefix(fullMethod, "/grpc.health.v1.Health/") ||
+		strings.HasPrefix(fullMethod, "/grpc.reflection.")
+}
+
+// isAnyPrincipalMethod reports whether fullMethod is open to every
+// authenticated principal, whatever its roles. Only the objstore Health RPC
+// qualifies, matched by its exact full method name (#239).
+func isAnyPrincipalMethod(fullMethod string) bool {
+	return fullMethod == objstorepb.ObjectStore_Health_FullMethodName
 }
 
 // actionForMethod derives the (action, resource) pair for a gRPC FullMethod.
@@ -474,6 +482,9 @@ func AuthorizationUnaryInterceptor(authorizer adapters.Authorizer, logger adapte
 		if principal == nil {
 			return nil, status.Error(codes.PermissionDenied, "authorization denied")
 		}
+		if isAnyPrincipalMethod(info.FullMethod) {
+			return handler(ctx, req)
+		}
 
 		action, resource := actionForMethod(info.FullMethod)
 		if err := authorizer.Authorize(ctx, principal, action, resource); err != nil {
@@ -506,6 +517,9 @@ func AuthorizationStreamInterceptor(authorizer adapters.Authorizer, logger adapt
 		principal := principalFromContext(ctx)
 		if principal == nil {
 			return status.Error(codes.PermissionDenied, "authorization denied")
+		}
+		if isAnyPrincipalMethod(info.FullMethod) {
+			return handler(srv, ss)
 		}
 
 		action, resource := actionForMethod(info.FullMethod)

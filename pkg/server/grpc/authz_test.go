@@ -17,6 +17,7 @@ import (
 	"context"
 	"testing"
 
+	objstorepb "github.com/jeremyhahn/go-objstore/api/proto"
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -130,4 +131,85 @@ func TestAuthorizationStreamInterceptor_RBACEnforced(t *testing.T) {
 			t.Errorf("Put stream = %v, want PermissionDenied", err)
 		}
 	})
+}
+
+// TestAuthorization_ObjstoreHealthAnyPrincipal covers #239: the objstore
+// Health RPC is open to any authenticated principal, even one with no roles,
+// while every other method, known or unknown, still goes through the
+// authorizer.
+func TestAuthorization_ObjstoreHealthAnyPrincipal(t *testing.T) {
+	authz := adapters.NewRBACAuthorizer(map[string][]string{
+		"reader": {adapters.ActionRead, adapters.ActionList},
+	})
+	unary := AuthorizationUnaryInterceptor(authz, adapters.NewNoOpLogger())
+	stream := AuthorizationStreamInterceptor(authz, adapters.NewNoOpLogger())
+	noRoles := ctxWithPrincipal(adapters.Principal{ID: "nobody"})
+	reader := ctxWithPrincipal(adapters.Principal{ID: "r", Roles: []string{"reader"}})
+	handler := func(context.Context, any) (any, error) { return "ok", nil }
+	streamHandler := func(any, grpc.ServerStream) error { return nil }
+	health := objstorepb.ObjectStore_Health_FullMethodName
+
+	unaryCall := func(ctx context.Context, method string) error {
+		_, err := unary(ctx, nil, &grpc.UnaryServerInfo{FullMethod: method}, handler)
+		return err
+	}
+	streamCall := func(ctx context.Context, method string) error {
+		return stream(nil, &wrappedServerStream{ctx: ctx}, &grpc.StreamServerInfo{FullMethod: method}, streamHandler)
+	}
+
+	for name, call := range map[string]func(context.Context, string) error{"unary": unaryCall, "stream": streamCall} {
+		t.Run(name+" no roles may call Health", func(t *testing.T) {
+			if err := call(noRoles, health); err != nil {
+				t.Errorf("Health with no roles = %v, want nil", err)
+			}
+		})
+		t.Run(name+" no roles refused Put", func(t *testing.T) {
+			if err := call(noRoles, objstorepb.ObjectStore_Put_FullMethodName); status.Code(err) != codes.PermissionDenied {
+				t.Errorf("Put with no roles = %v, want PermissionDenied", err)
+			}
+		})
+		t.Run(name+" no principal refused Health", func(t *testing.T) {
+			if err := call(context.Background(), health); status.Code(err) != codes.PermissionDenied {
+				t.Errorf("Health without principal = %v, want PermissionDenied", err)
+			}
+		})
+		t.Run(name+" unknown method needs admin", func(t *testing.T) {
+			if err := call(reader, "/objstore.v1.ObjectStore/NoSuchMethod"); status.Code(err) != codes.PermissionDenied {
+				t.Errorf("unknown method = %v, want PermissionDenied", err)
+			}
+		})
+		t.Run(name+" Health lookalikes still need admin", func(t *testing.T) {
+			for _, m := range []string{
+				"/other.v1.ObjectStore/Health",
+				"/objstore.v1.ObjectStore/HealthCheck",
+				"/evil/objstore.v1.ObjectStore/Health",
+			} {
+				if err := call(reader, m); status.Code(err) != codes.PermissionDenied {
+					t.Errorf("%s = %v, want PermissionDenied", m, err)
+				}
+			}
+		})
+	}
+}
+
+// TestIsPublicAuthzMethod_ExactServicePrefix checks that only the standard
+// health and reflection services skip authorization, matched by service
+// prefix rather than by substring (#239).
+func TestIsPublicAuthzMethod_ExactServicePrefix(t *testing.T) {
+	cases := map[string]bool{
+		"/grpc.health.v1.Health/Check":                                   true,
+		"/grpc.health.v1.Health/Watch":                                   true,
+		"/grpc.reflection.v1.ServerReflection/ServerReflectionInfo":      true,
+		"/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo": true,
+		"/objstore.v1.ObjectStore/Health":                                false,
+		"/evil.grpc.health.v1.Health/Check":                              false,
+		"/x/grpc.health.v1.Health/Check":                                 false,
+		"/evil.grpc.reflection.v1.ServerReflection/ServerReflectionInfo": false,
+		"/grpc.health.v1.HealthX/Check":                                  false,
+	}
+	for m, want := range cases {
+		if got := isPublicAuthzMethod(m); got != want {
+			t.Errorf("isPublicAuthzMethod(%q) = %v, want %v", m, got, want)
+		}
+	}
 }
