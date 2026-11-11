@@ -18,6 +18,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -452,7 +453,7 @@ func TestExampleConfig_MatchesDefaults(t *testing.T) {
 
 	var zero Config
 	cfg := mustLoad(t, []string{"-config", file}, zero, BindServerFlags)
-	if *cfg != Defaults() {
+	if !reflect.DeepEqual(*cfg, Defaults()) {
 		t.Errorf("example config differs from Defaults():\n got %+v\nwant %+v", *cfg, Defaults())
 	}
 }
