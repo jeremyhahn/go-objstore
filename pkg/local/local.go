@@ -15,6 +15,7 @@ package local
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,11 +34,12 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
-const metadataSuffix = ".metadata.json"
+const metadataSuffix = common.MetadataSuffix
 
 // Local is a storage backend that stores files on the local disk.
 type Local struct {
 	path                   string
+	policyFile             string // a non-default lifecyclePolicyFile, refused as a key
 	lifecycleManager       common.LifecycleManager
 	replicationManager     common.ReplicationManager
 	atRestEncrypterFactory common.EncrypterFactory
@@ -54,6 +56,55 @@ type Local struct {
 	// temporary file exists in it; pruneEmptyDirs holds the write side while
 	// it removes directories. Writers never block one another.
 	pruneMu sync.RWMutex
+
+	// root is the configured directory opened as an os.Root. Every open,
+	// create, rename and remove goes through it, so a symlink planted below
+	// the root cannot lead a call outside it. rootMu guards the field; the
+	// root itself is safe for concurrent use.
+	rootMu sync.Mutex
+	root   *os.Root
+}
+
+// fsRoot returns the store's root, opening it on first use for a Local built
+// without Configure.
+func (l *Local) fsRoot() (*os.Root, error) {
+	l.rootMu.Lock()
+	defer l.rootMu.Unlock()
+	if l.root != nil {
+		return l.root, nil
+	}
+	if l.path == "" {
+		return nil, common.ErrPathNotSet
+	}
+	r, err := os.OpenRoot(l.path)
+	if err != nil {
+		return nil, err
+	}
+	l.root = r
+	return r, nil
+}
+
+// setRoot installs r as the store's root and closes the one it replaces.
+func (l *Local) setRoot(r *os.Root) {
+	l.rootMu.Lock()
+	old := l.root
+	l.root = r
+	l.rootMu.Unlock()
+	if old != nil && old != r {
+		_ = old.Close()
+	}
+}
+
+// rootName turns a key, or any other store-relative name, into a name below
+// the root. Leading separators are dropped and the name is cleaned, so it can
+// never be absolute; the root refuses what still tries to leave it.
+func rootName(name string) string {
+	sep := string(filepath.Separator)
+	n := strings.TrimLeft(filepath.Clean(sep+filepath.FromSlash(name)), sep)
+	if n == "" {
+		return "."
+	}
+	return n
 }
 
 // New creates a new Local storage backend.
@@ -76,6 +127,14 @@ func New() common.Storage {
 // This allows the caller to configure replication with custom settings and avoids
 // import cycles between packages.
 func (l *Local) Configure(settings map[string]string, _ common.Credentials) error {
+	return l.configure(settings, nil)
+}
+
+// configure is Configure with an optional root already opened on the path,
+// which a bucket store gets from its bucket root so that a symlinked bucket
+// directory cannot lead it outside. With a nil root the path is created and
+// opened here.
+func (l *Local) configure(settings map[string]string, root *os.Root) error {
 	if err := common.RejectCredentialSettings(settings); err != nil {
 		return err
 	}
@@ -90,10 +149,17 @@ func (l *Local) Configure(settings map[string]string, _ common.Credentials) erro
 	}
 	l.multipartExpiry = expiry
 
-	// Ensure directory exists
-	if err := os.MkdirAll(l.path, 0750); err != nil {
-		return err
+	if root == nil {
+		// Ensure directory exists
+		if err := os.MkdirAll(l.path, 0750); err != nil {
+			return err
+		}
+		root, err = os.OpenRoot(l.path)
+		if err != nil {
+			return err
+		}
 	}
+	l.setRoot(root)
 
 	l.buckets = nil
 	if settings[settingBucketRoot] != "" {
@@ -119,6 +185,7 @@ func (l *Local) Configure(settings map[string]string, _ common.Credentials) erro
 		managerType = "memory" // Default to in-memory for backwards compatibility
 	}
 
+	l.policyFile = ""
 	switch managerType {
 	case "memory":
 		// Use in-memory lifecycle manager (default)
@@ -127,10 +194,15 @@ func (l *Local) Configure(settings map[string]string, _ common.Credentials) erro
 		// Use persistent lifecycle manager with storagefs
 		policyFile := settings["lifecyclePolicyFile"]
 		if policyFile == "" {
-			policyFile = ".lifecycle-policies.json"
+			policyFile = common.LifecyclePolicyFile
+		}
+		if !common.SameKey(policyFile, common.LifecyclePolicyFile) {
+			// The default name is refused by ValidateKey; a custom one
+			// is refused by this store's validateKey.
+			l.policyFile = policyFile
 		}
 
-		fs := &localFileSystem{basePath: l.path, pruneMu: &l.pruneMu}
+		fs := &localFileSystem{root: root, pruneMu: &l.pruneMu}
 		persistentManager, err := common.NewPersistentLifecycleManager(fs, policyFile)
 		if err != nil {
 			return err
@@ -171,22 +243,22 @@ func (l *Local) SetChangeLog(changeLog ChangeLog) {
 
 // localFileSystem is a simple FileSystem implementation that uses local files
 type localFileSystem struct {
-	basePath string
-	pruneMu  *sync.RWMutex // the owning store's pruneMu; nil when no store prunes the tree
+	root    *os.Root      // the store's root; every name is resolved below it
+	pruneMu *sync.RWMutex // the owning store's pruneMu; nil when no store prunes the tree
 }
 
 func (lfs *localFileSystem) OpenFile(name string, flag int, perm os.FileMode) (common.LifecycleFile, error) {
-	fullPath := filepath.Join(lfs.basePath, name)
+	name = rootName(name)
 	// Ensure parent directory exists
 	var file *os.File
 	for attempt := 1; ; attempt++ {
 		release := holdDirs(lfs.pruneMu)
-		if err := mkdirAllPruneSafe(filepath.Dir(fullPath)); err != nil {
+		if err := mkdirAllPruneSafe(lfs.root, filepath.Dir(name)); err != nil {
 			release()
 			return nil, err
 		}
 		var err error
-		file, err = os.OpenFile(fullPath, flag, perm) // #nosec G304 -- Path is controlled by system
+		file, err = lfs.root.OpenFile(name, flag, perm)
 		release()
 		if err == nil {
 			break
@@ -199,15 +271,11 @@ func (lfs *localFileSystem) OpenFile(name string, flag int, perm os.FileMode) (c
 }
 
 func (lfs *localFileSystem) Remove(name string) error {
-	fullPath := filepath.Join(lfs.basePath, name)
-	return os.Remove(fullPath)
+	return lfs.root.Remove(rootName(name))
 }
 
 func (lfs *localFileSystem) Rename(src, dst string) error {
-	return os.Rename(
-		filepath.Join(lfs.basePath, src),
-		filepath.Join(lfs.basePath, dst),
-	)
+	return lfs.root.Rename(rootName(src), rootName(dst))
 }
 
 // localFile wraps os.File to implement common.LifecycleFile
@@ -227,7 +295,16 @@ func (l *Local) PutWithContext(ctx context.Context, key string, data io.Reader) 
 
 // validateKey checks if a key is safe to use (no path traversal attacks)
 func (l *Local) validateKey(key string) error {
-	return common.ValidateKey(key)
+	if err := common.ValidateKey(key); err != nil {
+		return err
+	}
+	if l.policyFile != "" && common.SameKey(key, l.policyFile) {
+		return &common.ValidationError{
+			Field:   "key",
+			Message: fmt.Sprintf("key %q is the store's lifecycle policy file", key),
+		}
+	}
+	return nil
 }
 
 // PutWithMetadata stores an object with associated metadata.
@@ -242,7 +319,12 @@ func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 	default:
 	}
 
-	path := filepath.Join(l.path, key)
+	root, err := l.fsRoot()
+	if err != nil {
+		return err
+	}
+	name := rootName(key)
+	path := filepath.Join(l.path, name)
 
 	// Get at-rest encrypter if factory is set
 	var encrypter common.Encrypter
@@ -266,7 +348,7 @@ func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 	}
 
 	var size int64
-	if err := writeObjectAtomic(&l.pruneMu, path, 0644, func(w io.Writer) error {
+	if err := writeObjectAtomic(root, &l.pruneMu, name, 0644, func(w io.Writer) error {
 		n, werr := io.Copy(w, dataToWrite)
 		size = n
 		return werr
@@ -283,7 +365,7 @@ func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 	metadata.LastModified = time.Now()
 
 	// Get file info for ETag (using modification time as simple ETag)
-	info, err := os.Stat(path)
+	info, err := root.Stat(name)
 	if err == nil {
 		metadata.ETag = fmt.Sprintf("%d-%d", info.ModTime().Unix(), size)
 	}
@@ -347,8 +429,13 @@ func (l *Local) GetWithContext(ctx context.Context, key string) (io.ReadCloser, 
 	default:
 	}
 
-	path := filepath.Join(l.path, key)
-	file, err := os.Open(path) // #nosec G304 -- Path validated by validateKey() to prevent directory traversal
+	root, err := l.fsRoot()
+	if err != nil {
+		return nil, err
+	}
+	name := rootName(key)
+	path := filepath.Join(l.path, name)
+	file, err := root.Open(name)
 	if err != nil {
 		// Don't log "not found" errors - these are expected during initialization
 		// and should be handled by the caller. Only return a wrapped error.
@@ -380,7 +467,7 @@ func (l *Local) GetWithContext(ctx context.Context, key string) (io.ReadCloser, 
 		}
 		// Note: file will be closed when decryptedData is closed
 		// Get file size for logging
-		info, err := os.Stat(path)
+		info, err := root.Stat(name)
 		if err == nil {
 			sizeStr := formatBytes(info.Size())
 			log.Printf("[LOCAL] ✓ GET '%s' ← %s (%s, decrypted)", key, path, sizeStr)
@@ -430,8 +517,11 @@ func (l *Local) UpdateMetadata(ctx context.Context, key string, metadata *common
 	}
 
 	// Verify object exists
-	path := filepath.Join(l.path, key)
-	info, err := os.Stat(path)
+	root, err := l.fsRoot()
+	if err != nil {
+		return err
+	}
+	info, err := root.Stat(rootName(key))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return fmt.Errorf("%w: %s", common.ErrKeyNotFound, key)
@@ -467,19 +557,29 @@ func (l *Local) DeleteWithContext(ctx context.Context, key string) error {
 	default:
 	}
 
-	path := filepath.Join(l.path, key)
+	root, err := l.fsRoot()
+	if err != nil {
+		return err
+	}
+	name := rootName(key)
+	path := filepath.Join(l.path, name)
 
-	// Get file size before deletion for logging
+	// Get file size before deletion for logging. A key that resolves
+	// outside the root is refused here rather than unlinked.
 	var sizeStr string
-	if info, err := os.Stat(path); err == nil {
+	info, err := root.Stat(name)
+	switch {
+	case err == nil:
 		sizeStr = formatBytes(info.Size())
+	case !errors.Is(err, fs.ErrNotExist):
+		log.Printf("[LOCAL] ✗ DELETE '%s' failed: %v", key, err)
+		return err
 	}
 
 	// Delete metadata file if it exists
-	metadataPath := path + metadataSuffix
-	_ = os.Remove(metadataPath) // Ignore error if metadata doesn't exist
+	_ = root.Remove(name + metadataSuffix) // Ignore error if metadata doesn't exist
 
-	err := os.Remove(path)
+	err = root.Remove(name)
 	if err != nil {
 		// Don't log "not found" errors - these are expected during cleanup
 		// and should be handled by the caller
@@ -491,7 +591,7 @@ func (l *Local) DeleteWithContext(ctx context.Context, key string) error {
 		return err
 	}
 
-	l.pruneEmptyDirs(filepath.Dir(path))
+	l.pruneEmptyDirs(filepath.Dir(name))
 
 	if sizeStr != "" {
 		log.Printf("[LOCAL] ✓ DELETE '%s' ✗ %s (freed %s)", key, path, sizeStr)
@@ -518,14 +618,16 @@ func (l *Local) DeleteWithContext(ctx context.Context, key string) error {
 // It holds the write side of pruneMu, so it waits for the writers that are
 // between creating a directory and creating a file in it.
 func (l *Local) pruneEmptyDirs(dir string) {
+	root, err := l.fsRoot()
+	if err != nil {
+		return
+	}
 	l.pruneMu.Lock()
 	defer l.pruneMu.Unlock()
-	root := filepath.Clean(l.path)
-	for strings.HasPrefix(dir, root+string(filepath.Separator)) {
-		if err := os.Remove(dir); err != nil {
+	for dir = rootName(dir); dir != "." && dir != string(filepath.Separator); dir = filepath.Dir(dir) {
+		if err := root.Remove(dir); err != nil {
 			return
 		}
-		dir = filepath.Dir(dir)
 	}
 }
 
@@ -541,8 +643,11 @@ func (l *Local) Exists(ctx context.Context, key string) (bool, error) {
 	default:
 	}
 
-	path := filepath.Join(l.path, key)
-	_, err := os.Stat(path)
+	root, err := l.fsRoot()
+	if err != nil {
+		return false, err
+	}
+	_, err = root.Stat(rootName(key))
 	if err == nil {
 		return true, nil
 	}
@@ -579,19 +684,15 @@ func (l *Local) ListWithContext(ctx context.Context, prefix string) ([]string, e
 	// keys "k01", "k02") must not be short-circuited here. Only guard against
 	// a missing base directory, which yields an empty list rather than an
 	// error.
-	if _, err := os.Stat(l.path); os.IsNotExist(err) {
+	root, err := l.fsRoot()
+	if errors.Is(err, fs.ErrNotExist) {
 		return keys, nil
 	}
+	if err != nil {
+		return nil, err
+	}
 
-	err := walkObjects(ctx, l.path, func(path string, _ fs.DirEntry) error {
-		// Get relative path from basePath
-		relPath, err := filepath.Rel(l.path, path)
-		if err != nil {
-			return err
-		}
-
-		// Normalize path separators for comparison (use forward slashes)
-		normalizedRel := filepath.ToSlash(relPath)
+	err = walkObjects(ctx, root, func(normalizedRel string, _ fs.DirEntry) error {
 		normalizedPrefix := filepath.ToSlash(prefix)
 
 		// Check if this path matches the prefix
@@ -633,15 +734,15 @@ func (l *Local) ListWithOptions(ctx context.Context, opts *common.ListOptions) (
 	prefixMap := make(map[string]bool)
 	var allObjects []*common.ObjectInfo
 
-	err := walkObjects(ctx, l.path, func(path string, d fs.DirEntry) error {
-		// Get relative path from basePath
-		relPath, err := filepath.Rel(l.path, path)
-		if err != nil {
-			return err
-		}
+	root, err := l.fsRoot()
+	if errors.Is(err, fs.ErrNotExist) {
+		return result, nil
+	}
+	if err != nil {
+		return nil, err
+	}
 
-		// Normalize path separators
-		normalizedRel := filepath.ToSlash(relPath)
+	err = walkObjects(ctx, root, func(normalizedRel string, d fs.DirEntry) error {
 		normalizedPrefix := filepath.ToSlash(opts.Prefix)
 
 		// Check if this path matches the prefix
@@ -787,8 +888,11 @@ func (l *Local) saveMetadata(key string, metadata *common.Metadata) error {
 		}
 	}
 
-	path := filepath.Join(l.path, key)
-	metadataPath := path + metadataSuffix
+	root, err := l.fsRoot()
+	if err != nil {
+		return err
+	}
+	metadataName := rootName(key) + metadataSuffix
 
 	data, err := json.Marshal(metadata)
 	if err != nil {
@@ -798,7 +902,7 @@ func (l *Local) saveMetadata(key string, metadata *common.Metadata) error {
 	// Write the sidecar atomically so a crash mid-write cannot leave a
 	// truncated or partial metadata file alongside the object. The parent
 	// directory is created under the prune lock.
-	return writeObjectAtomic(&l.pruneMu, metadataPath, 0600, func(w io.Writer) error {
+	return writeObjectAtomic(root, &l.pruneMu, metadataName, 0600, func(w io.Writer) error {
 		_, werr := w.Write(data)
 		return werr
 	})
@@ -810,10 +914,11 @@ func (l *Local) loadMetadata(key string) (*common.Metadata, error) {
 		return nil, err
 	}
 
-	path := filepath.Join(l.path, key)
-	metadataPath := path + metadataSuffix
-
-	data, err := os.ReadFile(metadataPath) // #nosec G304 -- Path validated by validateKey() to prevent directory traversal
+	root, err := l.fsRoot()
+	if err != nil {
+		return nil, err
+	}
+	data, err := root.ReadFile(rootName(key) + metadataSuffix)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// If metadata file doesn't exist, return error
@@ -830,28 +935,19 @@ func (l *Local) loadMetadata(key string) (*common.Metadata, error) {
 	return &metadata, nil
 }
 
-// writeFileAtomic writes a file durably and atomically. It streams the payload
-// into a temporary file created in filepath.Dir(path) — the same directory as
-// path, so the final rename stays on a single filesystem and the temp location
-// can never diverge from the rename target — fsyncs it, then renames it over
-// path. A crash or concurrent reader therefore never observes a truncated or
-// partial file: the target either contains the previous contents or the fully
-// written new ones. On any error the temporary file is removed and path is left
-// untouched.
-//
-// write is invoked with the open temporary file. The final file is given the
-// supplied mode.
 // tmpFilePrefix is the name prefix of the in-flight files writeFileAtomic
-// creates before renaming them into place. They are never objects.
-const tmpFilePrefix = ".tmp-"
+// creates before renaming them into place. They are never objects, and
+// ValidateKey refuses keys that would name one.
+const tmpFilePrefix = common.TempFilePrefix
 
-// walkObjects walks root and calls fn for every object file, skipping
-// directories, metadata sidecars and in-flight temporary files. Entries that
-// vanish while the walk is in progress (a concurrent Put renaming its temp
-// file, a concurrent Delete) are treated as absent rather than failing the
-// whole walk; any other error aborts it.
-func walkObjects(ctx context.Context, root string, fn func(path string, d fs.DirEntry) error) error {
-	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+// walkObjects walks root and calls fn with the slash-separated name of every
+// object file, skipping directories, metadata sidecars and in-flight
+// temporary files. The walk reads the tree through the root and never
+// follows a symlink. Entries that vanish while the walk is in progress (a
+// concurrent Put renaming its temp file, a concurrent Delete) are treated as
+// absent rather than failing the whole walk; any other error aborts it.
+func walkObjects(ctx context.Context, root *os.Root, fn func(name string, d fs.DirEntry) error) error {
+	return fs.WalkDir(root.FS(), ".", func(name string, d fs.DirEntry, err error) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -866,28 +962,39 @@ func walkObjects(ctx context.Context, root string, fn func(path string, d fs.Dir
 		}
 
 		// Staged multipart state is never an object.
-		if d.IsDir() && path == filepath.Join(root, stagingDir) {
-			return filepath.SkipDir
+		if d.IsDir() && name == stagingDir {
+			return fs.SkipDir
 		}
 
-		if d.IsDir() || strings.HasSuffix(path, metadataSuffix) || strings.HasPrefix(d.Name(), tmpFilePrefix) {
+		if d.IsDir() || strings.HasSuffix(name, metadataSuffix) || strings.HasPrefix(d.Name(), tmpFilePrefix) {
 			return nil
 		}
 
-		return fn(path, d)
+		return fn(name, d)
 	})
 }
 
-func writeFileAtomic(path string, mode os.FileMode, write func(io.Writer) error) error {
-	return writeAtomic(nil, path, mode, false, write)
+// writeFileAtomic writes the file name below root durably and atomically. It
+// streams the payload into a temporary file created in filepath.Dir(name) —
+// the same directory as name, so the final rename stays on a single
+// filesystem and the temp location can never diverge from the rename target
+// — fsyncs it, then renames it over name. A crash or concurrent reader
+// therefore never observes a truncated or partial file: the target either
+// contains the previous contents or the fully written new ones. On any error
+// the temporary file is removed and name is left untouched.
+//
+// write is invoked with the open temporary file. The final file is given the
+// supplied mode.
+func writeFileAtomic(root *os.Root, name string, mode os.FileMode, write func(io.Writer) error) error {
+	return writeAtomic(root, nil, name, mode, false, write)
 }
 
 // writeObjectAtomic is writeFileAtomic for a file whose directory may not exist
 // yet. Deleting an object prunes the directories it leaves empty, so the
 // directory is created, and the temp file made in it, while holding off the
 // prune of mu's store (see createObjectTemp).
-func writeObjectAtomic(mu *sync.RWMutex, path string, mode os.FileMode, write func(io.Writer) error) error {
-	return writeAtomic(mu, path, mode, true, write)
+func writeObjectAtomic(root *os.Root, mu *sync.RWMutex, name string, mode os.FileMode, write func(io.Writer) error) error {
+	return writeAtomic(root, mu, name, mode, true, write)
 }
 
 // holdDirs takes the read side of mu, which keeps pruneEmptyDirs from removing
@@ -904,29 +1011,67 @@ func holdDirs(mu *sync.RWMutex) (release func()) {
 	return mu.RUnlock
 }
 
-// createObjectTemp creates the temp file for a write to dir. With makeDirs it
-// also creates dir. mu is held from the mkdir until the temp file exists, and
-// a file in dir keeps os.Remove from pruning it, so within one store no prune
-// can land in that window.
+// tempNameAttempts bounds the retries of a temp name that already exists.
+const tempNameAttempts = 100
+
+// tempName returns a fresh, unpredictable name for an in-flight file or
+// directory in dir.
+func tempName(dir string) string {
+	return filepath.Join(dir, tmpFilePrefix+rand.Text())
+}
+
+// createTemp is os.CreateTemp below root: os.Root has none, so the file is
+// made with O_EXCL under a random name, and a name that is taken is retried.
+func createTemp(root *os.Root, dir string) (*os.File, string, error) {
+	for attempt := 1; ; attempt++ {
+		name := tempName(dir)
+		f, err := root.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
+		if err == nil {
+			return f, name, nil
+		}
+		if !errors.Is(err, fs.ErrExist) || attempt == tempNameAttempts {
+			return nil, "", err
+		}
+	}
+}
+
+// mkdirTemp is os.MkdirTemp below root.
+func mkdirTemp(root *os.Root, dir string) (string, error) {
+	for attempt := 1; ; attempt++ {
+		name := tempName(dir)
+		err := root.Mkdir(name, 0700)
+		if err == nil {
+			return name, nil
+		}
+		if !errors.Is(err, fs.ErrExist) || attempt == tempNameAttempts {
+			return "", err
+		}
+	}
+}
+
+// createObjectTemp creates the temp file for a write to dir and returns it
+// with its name. With makeDirs it also creates dir. mu is held from the mkdir
+// until the temp file exists, and a file in dir keeps a remove from pruning
+// it, so within one store no prune can land in that window.
 //
 // Pruning by another process sharing the root takes no part in mu, so the
 // ENOENT retry stays as a second line of defense. It is bounded by
 // pruneRetryAttempts and so only makes losing the race unlikely: a writer
 // that loses every round still fails. The store-level lock, not the retry, is
 // what makes writers within one process safe.
-func createObjectTemp(mu *sync.RWMutex, dir string, makeDirs bool) (*os.File, error) {
+func createObjectTemp(root *os.Root, mu *sync.RWMutex, dir string, makeDirs bool) (*os.File, string, error) {
 	for attempt := 1; ; attempt++ {
 		release := holdDirs(mu)
 		if makeDirs {
-			if err := mkdirAllPruneSafe(dir); err != nil {
+			if err := mkdirAllPruneSafe(root, dir); err != nil {
 				release()
-				return nil, err
+				return nil, "", err
 			}
 		}
-		tmp, err := os.CreateTemp(dir, tmpFilePrefix+"*") // #nosec G304 -- dir derived from a key validated by validateKey() to prevent directory traversal
+		tmp, name, err := createTemp(root, dir)
 		release()
 		if err == nil || !makeDirs || !errors.Is(err, fs.ErrNotExist) || attempt == pruneRetryAttempts {
-			return tmp, err
+			return tmp, name, err
 		}
 	}
 }
@@ -935,39 +1080,48 @@ func createObjectTemp(mu *sync.RWMutex, dir string, makeDirs bool) (*os.File, er
 // sequence that a prune by another process interrupted.
 const pruneRetryAttempts = 100
 
-// mkdirAllPruneSafe is os.MkdirAll that survives a prune removing the
+// mkdirAllPruneSafe is Root.MkdirAll that survives a prune removing the
 // directory, or one of its parents, while the path is being created. Within
 // a store the caller excludes pruneEmptyDirs with holdDirs; this retry covers
 // a prune by another process sharing the same root, which no in-process lock
 // can order. Each retry follows a prune that has already completed, and the
 // number of prunes is bounded by the deletes in flight, but the bound is not
-// a guarantee. EEXIST is retried too: os.MkdirAll reports it when the
-// directory it found was pruned again before its follow-up stat. A caller
-// still has to retry its own create step after this returns, since a prune
-// can land between the two.
-func mkdirAllPruneSafe(dir string) error {
+// a guarantee. EEXIST is retried too: MkdirAll reports it when the directory
+// it found was pruned again before its follow-up stat. A caller still has to
+// retry its own create step after this returns, since a prune can land
+// between the two.
+func mkdirAllPruneSafe(root *os.Root, dir string) error {
+	if dir == "." || dir == "" {
+		return nil
+	}
 	for attempt := 1; ; attempt++ {
-		err := os.MkdirAll(dir, 0750)
+		err := root.MkdirAll(dir, 0750)
 		if err == nil || !(errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrExist)) || attempt == pruneRetryAttempts {
 			return err
 		}
 	}
 }
 
-func writeAtomic(mu *sync.RWMutex, path string, mode os.FileMode, makeDirs bool, write func(io.Writer) error) error {
-	dir := filepath.Dir(path)
-	tmp, err := createObjectTemp(mu, dir, makeDirs)
+func writeAtomic(root *os.Root, mu *sync.RWMutex, name string, mode os.FileMode, makeDirs bool, write func(io.Writer) error) error {
+	// A target that is a symlink leading out of the root is refused. The
+	// rename below would only replace the link, but the caller asked to
+	// write through it, which the root forbids.
+	if _, err := root.Stat(name); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+
+	dir := filepath.Dir(name)
+	tmp, tmpName, err := createObjectTemp(root, mu, dir, makeDirs)
 	if err != nil {
 		return err
 	}
-	tmpName := tmp.Name()
 
 	// Ensure the temp file is cleaned up unless it was successfully renamed.
 	committed := false
 	defer func() {
 		if !committed {
 			_ = tmp.Close()
-			_ = os.Remove(tmpName)
+			_ = root.Remove(tmpName)
 		}
 	}()
 
@@ -990,13 +1144,13 @@ func writeAtomic(mu *sync.RWMutex, path string, mode os.FileMode, makeDirs bool,
 		return err
 	}
 
-	if err := os.Rename(tmpName, path); err != nil {
+	if err := root.Rename(tmpName, name); err != nil {
 		return err
 	}
 	committed = true
 
 	// Fsync the parent directory so the rename is durable on the inode level.
-	d, err := os.Open(dir) // #nosec G304 -- dir is derived from a validated key path
+	d, err := root.Open(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		// A concurrent delete removed the renamed file and pruned the now
 		// empty directory; there is nothing left to make durable.
@@ -1075,4 +1229,6 @@ func (l *Local) Close() {
 	if l.lifecycleCancel != nil {
 		l.lifecycleCancel()
 	}
+	// A later call reopens the root on the configured path.
+	l.setRoot(nil)
 }

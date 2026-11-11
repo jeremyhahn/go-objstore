@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/internal/serverconfig"
+	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	quicserver "github.com/jeremyhahn/go-objstore/pkg/server/quic"
 )
@@ -56,7 +57,7 @@ func main() {
 	}
 
 	// Enable replication on the default backend
-	policyPath := cfg.Path + "/.replication-policies.json"
+	policyPath := cfg.Path + "/" + common.ReplicationPolicyFile
 	if err := objstore.EnableReplication("", &objstore.ReplicationConfig{
 		PolicyFilePath:  policyPath,
 		RunInBackground: false,

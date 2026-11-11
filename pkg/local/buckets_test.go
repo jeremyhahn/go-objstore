@@ -602,7 +602,7 @@ func TestLocal_PutRacesWithPruning(t *testing.T) {
 	const writers = 8
 	// Several levels deep, so a prune can remove a parent between the mkdir of
 	// one level and the next.
-	dir := filepath.Join(l.path, "shared", "a", "b", "c", "dir")
+	dir := filepath.Join("shared", "a", "b", "c", "dir")
 
 	// Pruners model the Deletes of other keys, and of other processes sharing
 	// the root, which prune the same directories without ever writing.

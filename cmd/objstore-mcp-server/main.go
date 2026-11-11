@@ -23,6 +23,7 @@ import (
 	"syscall"
 
 	"github.com/jeremyhahn/go-objstore/internal/serverconfig"
+	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	mcpserver "github.com/jeremyhahn/go-objstore/pkg/server/mcp"
 )
@@ -54,7 +55,7 @@ func main() {
 	slog.Info("Initialized storage backend", "backend", cfg.Backend)
 
 	// Enable replication on the default backend
-	policyPath := cfg.Path + "/.replication-policies.json"
+	policyPath := cfg.Path + "/" + common.ReplicationPolicyFile
 	if err := objstore.EnableReplication("", &objstore.ReplicationConfig{
 		PolicyFilePath:  policyPath,
 		RunInBackground: false,

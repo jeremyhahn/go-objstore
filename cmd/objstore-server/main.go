@@ -72,7 +72,7 @@ func main() {
 	// Enable replication on the default backend so the replication API
 	// (policies, trigger, status) is fully functional. Backends that do not
 	// support a replication manager simply log a warning and continue.
-	replicationPolicyPath := cfg.Path + "/.replication-policies.json"
+	replicationPolicyPath := cfg.Path + "/" + common.ReplicationPolicyFile
 	if err := objstore.EnableReplication("", &objstore.ReplicationConfig{
 		PolicyFilePath:  replicationPolicyPath,
 		RunInBackground: false,
