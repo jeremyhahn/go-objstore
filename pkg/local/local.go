@@ -54,9 +54,14 @@ type Local struct {
 	// lifecycle pass completes. It lets tests observe a pass instead of
 	// sleeping for one.
 	lifecyclePassHook atomic.Pointer[func()]
-	multipartExpiry   time.Duration    // age after which an upload in progress is treated as aborted
-	now               func() time.Time // time source for upload expiry; nil means time.Now
-	buckets           *Buckets         // set when the bucketRoot setting is present
+	// walkVisits and metadataReads count the entries the object walk
+	// visits and the metadata objectMetadata reads, so tests can bound the
+	// cost of paging through a listing.
+	walkVisits      atomic.Int64
+	metadataReads   atomic.Int64
+	multipartExpiry time.Duration    // age after which an upload in progress is treated as aborted
+	now             func() time.Time // time source for upload expiry; nil means time.Now
+	buckets         *Buckets         // set when the bucketRoot setting is present
 
 	// pruneMu orders directory pruning against writers. A writer holds the
 	// read side from the moment it creates a parent directory until its
@@ -763,7 +768,24 @@ func (l *Local) ListWithOptions(ctx context.Context, opts *common.ListOptions) (
 		return nil, err
 	}
 
-	err = l.walkObjects(ctx, root, func(normalizedRel string, d fs.DirEntry) error {
+	maxResults := opts.MaxResults
+	if maxResults <= 0 {
+		maxResults = 1000 // Default max results
+	}
+
+	// Without a delimiter the walk resumes after the continuation key and
+	// stops as soon as the page is full, so paging through N objects visits
+	// and reads each about once instead of the whole tree per page. With a
+	// delimiter, CommonPrefixes covers the whole listing, so the walk still
+	// sees every key and the page is sliced from it below.
+	paged := opts.Delimiter == ""
+	after := ""
+	if paged {
+		after = filepath.ToSlash(opts.ContinueFrom)
+	}
+	more := false
+
+	err = l.walkObjectsAfter(ctx, root, after, func(normalizedRel string, d fs.DirEntry) error {
 		normalizedPrefix := filepath.ToSlash(opts.Prefix)
 
 		// Check if this path matches the prefix
@@ -788,6 +810,11 @@ func (l *Local) ListWithOptions(ctx context.Context, opts *common.ListOptions) (
 			}
 		}
 
+		if paged && len(allObjects) == maxResults {
+			more = true
+			return fs.SkipAll
+		}
+
 		metadata, err := l.objectMetadata(normalizedRel, d)
 		if err != nil {
 			return err
@@ -809,34 +836,36 @@ func (l *Local) ListWithOptions(ctx context.Context, opts *common.ListOptions) (
 		return nil, err
 	}
 
-	// Handle pagination
-	startIdx := 0
-	if opts.ContinueFrom != "" {
-		// Find the starting index based on continuation token
-		for i, obj := range allObjects {
-			if obj.Key == opts.ContinueFrom {
-				startIdx = i + 1
-				break
+	if paged {
+		result.Objects = allObjects
+		if more {
+			result.Truncated = true
+			result.NextToken = allObjects[len(allObjects)-1].Key
+		}
+	} else {
+		startIdx := 0
+		if opts.ContinueFrom != "" {
+			// Find the starting index based on continuation token
+			for i, obj := range allObjects {
+				if obj.Key == opts.ContinueFrom {
+					startIdx = i + 1
+					break
+				}
 			}
 		}
-	}
 
-	maxResults := opts.MaxResults
-	if maxResults <= 0 {
-		maxResults = 1000 // Default max results
-	}
+		endIdx := startIdx + maxResults
+		if endIdx > len(allObjects) {
+			endIdx = len(allObjects)
+		}
 
-	endIdx := startIdx + maxResults
-	if endIdx > len(allObjects) {
-		endIdx = len(allObjects)
-	}
+		result.Objects = allObjects[startIdx:endIdx]
 
-	result.Objects = allObjects[startIdx:endIdx]
-
-	// Set pagination info
-	if endIdx < len(allObjects) {
-		result.Truncated = true
-		result.NextToken = allObjects[endIdx-1].Key
+		// Set pagination info
+		if endIdx < len(allObjects) {
+			result.Truncated = true
+			result.NextToken = allObjects[endIdx-1].Key
+		}
 	}
 
 	// Log list operation
@@ -962,6 +991,7 @@ const tmpFilePrefix = common.TempFilePrefix
 // read. Listing and the scheduled lifecycle pass both age an object by the
 // LastModified this returns, so they agree on which objects are expired.
 func (l *Local) objectMetadata(name string, d fs.DirEntry) (*common.Metadata, error) {
+	l.metadataReads.Add(1)
 	metadata, err := l.loadMetadata(name)
 	if err == nil {
 		return metadata, nil
@@ -981,7 +1011,19 @@ func (l *Local) objectMetadata(name string, d fs.DirEntry) (*common.Metadata, er
 }
 
 func (l *Local) walkObjects(ctx context.Context, root *os.Root, fn func(name string, d fs.DirEntry) error) error {
+	return l.walkObjectsAfter(ctx, root, "", fn)
+}
+
+// walkObjectsAfter is walkObjects starting after the key after (all keys
+// when after is empty). The walk visits keys in walk order (see
+// compareWalkOrder); a directory whose whole subtree comes before after is
+// skipped without being read, and so is every object up to and including
+// after, so resuming a paged listing costs the page, not the keys before
+// it. A key that was deleted since it was handed out still resumes at the
+// first key after it.
+func (l *Local) walkObjectsAfter(ctx context.Context, root *os.Root, after string, fn func(name string, d fs.DirEntry) error) error {
 	return fs.WalkDir(root.FS(), ".", func(name string, d fs.DirEntry, err error) error {
+		l.walkVisits.Add(1)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -1000,6 +1042,16 @@ func (l *Local) walkObjects(ctx context.Context, root *os.Root, fn func(name str
 			return fs.SkipDir
 		}
 
+		if after != "" && name != "." {
+			if d.IsDir() {
+				if !strings.HasPrefix(after, name+"/") && compareWalkOrder(name, after) < 0 {
+					return fs.SkipDir
+				}
+			} else if compareWalkOrder(name, after) <= 0 {
+				return nil
+			}
+		}
+
 		if d.IsDir() || strings.HasSuffix(name, metadataSuffix) || strings.HasPrefix(d.Name(), tmpFilePrefix) {
 			return nil
 		}
@@ -1012,6 +1064,20 @@ func (l *Local) walkObjects(ctx context.Context, root *os.Root, fn func(name str
 
 		return fn(name, d)
 	})
+}
+
+// compareWalkOrder compares two slash-separated keys in the order
+// fs.WalkDir visits them: segment by segment, each segment by bytes, a
+// directory before its contents. It differs from plain string order
+// ("a-b" sorts before "a/b" as strings but after it in the walk).
+func compareWalkOrder(a, b string) int {
+	sa, sb := strings.Split(a, "/"), strings.Split(b, "/")
+	for i := 0; i < len(sa) && i < len(sb); i++ {
+		if c := strings.Compare(sa[i], sb[i]); c != 0 {
+			return c
+		}
+	}
+	return len(sa) - len(sb)
 }
 
 // writeFileAtomic writes the file name below root durably and atomically. It
