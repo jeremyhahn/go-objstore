@@ -661,9 +661,13 @@ func ApplyPolicies(ctx context.Context, backendName string, onError PolicyAction
 		return result, nil
 	}
 
+	// An action keeps the revision the listing showed, so it acts only on
+	// that revision: an object replaced while later pages were listed is
+	// left alone.
 	type action struct {
 		key    string
 		policy *common.LifecyclePolicy
+		seen   common.Metadata
 	}
 	var actions []action
 	now := time.Now()
@@ -686,7 +690,7 @@ func ApplyPolicies(ctx context.Context, backendName string, onError PolicyAction
 				if now.Sub(obj.Metadata.LastModified) <= p.Retention {
 					continue
 				}
-				actions = append(actions, action{key: obj.Key, policy: p})
+				actions = append(actions, action{key: obj.Key, policy: p, seen: *obj.Metadata})
 			}
 		}
 		if !page.Truncated {
@@ -715,13 +719,21 @@ func ApplyPolicies(ctx context.Context, backendName string, onError PolicyAction
 		var actErr error
 		switch a.policy.Action {
 		case "delete":
-			actErr = DeleteWithContext(ctx, keyRef(a.key))
+			actErr = deleteIfUnmodified(ctx, keyRef(a.key), &a.seen)
 		case "archive":
 			if a.policy.Destination == nil {
 				continue
 			}
-			actErr = Archive(keyRef(a.key), a.policy.Destination)
+			actErr = checkUnmodified(ctx, keyRef(a.key), &a.seen)
+			if actErr == nil {
+				actErr = Archive(keyRef(a.key), a.policy.Destination)
+			}
 		default:
+			continue
+		}
+		// An object replaced or removed since the listing is not acted on
+		// and is not a failure.
+		if errors.Is(actErr, common.ErrObjectChanged) || errors.Is(actErr, common.ErrKeyNotFound) {
 			continue
 		}
 		if actErr != nil {
@@ -733,6 +745,41 @@ func ApplyPolicies(ctx context.Context, backendName string, onError PolicyAction
 		result.ObjectsProcessed++
 	}
 	return result, nil
+}
+
+// deleteIfUnmodified deletes keyRef only if it is still the revision seen.
+// A backend that implements common.ConditionalDeleter checks and deletes
+// under its own lock; any other is re-checked just before the delete.
+func deleteIfUnmodified(ctx context.Context, keyRef string, seen *common.Metadata) error {
+	if err := validation.ValidateKeyReference(keyRef); err != nil {
+		return fmt.Errorf("invalid key reference: %w", err)
+	}
+	storage, key, err := getStorageForKey(keyRef)
+	if err != nil {
+		return err
+	}
+	if cd, ok := storage.(common.ConditionalDeleter); ok {
+		return cd.DeleteIfUnmodified(ctx, key, seen.LastModified)
+	}
+	if err := checkUnmodified(ctx, keyRef, seen); err != nil {
+		return err
+	}
+	return storage.DeleteWithContext(ctx, key)
+}
+
+// checkUnmodified returns common.ErrObjectChanged when keyRef's current
+// LastModified or ETag differs from the revision seen.
+func checkUnmodified(ctx context.Context, keyRef string, seen *common.Metadata) error {
+	current, err := GetMetadata(ctx, keyRef)
+	if err != nil {
+		return err
+	}
+	if current == nil ||
+		(!seen.LastModified.IsZero() && !current.LastModified.Equal(seen.LastModified)) ||
+		(seen.ETag != "" && current.ETag != seen.ETag) {
+		return fmt.Errorf("%w: %s", common.ErrObjectChanged, keyRef)
+	}
+	return nil
 }
 
 // GetReplicationManager returns the replication manager for a backend if supported

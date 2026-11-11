@@ -222,7 +222,8 @@ func (l *Local) expireObject(root *os.Root, key string, judged time.Time, policy
 	}
 	switch policy.Action {
 	case actionDelete:
-		_ = l.Delete(key)
+		// The key lock is held: delete without taking it again.
+		_ = l.deleteLocked(key)
 	case actionArchive:
 		if policy.Destination != nil {
 			_ = l.Archive(key, policy.Destination)

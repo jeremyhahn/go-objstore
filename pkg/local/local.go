@@ -616,6 +616,52 @@ func (l *Local) DeleteWithContext(ctx context.Context, key string) error {
 	default:
 	}
 
+	unlock := l.keyMu.lock(key)
+	defer unlock()
+	return l.deleteLocked(key)
+}
+
+// DeleteIfUnmodified deletes key only if its LastModified still equals
+// lastModified, checking and deleting under the key's lock so a PUT or
+// metadata update cannot land in between. It implements
+// common.ConditionalDeleter.
+func (l *Local) DeleteIfUnmodified(ctx context.Context, key string, lastModified time.Time) error {
+	if err := l.validateKey(key); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	unlock := l.keyMu.lock(key)
+	defer unlock()
+
+	root, err := l.fsRoot()
+	if err != nil {
+		return err
+	}
+	info, err := root.Stat(rootName(key))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("%w: %s", common.ErrKeyNotFound, key)
+		}
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%w: %s", common.ErrKeyNotFound, key)
+	}
+	current, err := l.objectMetadata(filepath.FromSlash(key), fs.FileInfoToDirEntry(info))
+	if err != nil {
+		return err
+	}
+	if current == nil || !current.LastModified.Equal(lastModified) {
+		return fmt.Errorf("%w: %s", common.ErrObjectChanged, key)
+	}
+	return l.deleteLocked(key)
+}
+
+// deleteLocked removes key and its metadata sidecar. The caller holds the
+// key's lock.
+func (l *Local) deleteLocked(key string) error {
 	root, err := l.fsRoot()
 	if err != nil {
 		return err
