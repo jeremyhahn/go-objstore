@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/internal/serverconfig"
-	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	restserver "github.com/jeremyhahn/go-objstore/pkg/server/rest"
 )
@@ -56,15 +55,7 @@ func main() {
 	slog.Info("Initialized storage backend", "backend", cfg.Backend)
 
 	// Enable replication on the default backend
-	policyPath := cfg.Path + "/" + common.ReplicationPolicyFile
-	if err := objstore.EnableReplication("", &objstore.ReplicationConfig{
-		PolicyFilePath:  policyPath,
-		RunInBackground: false,
-	}); err != nil {
-		slog.Warn("Failed to enable replication", "error", err)
-	} else {
-		slog.Info("Replication enabled", "policy_file", policyPath)
-	}
+	cfg.EnableReplication(objstore.EnableReplication)
 
 	// Create server configuration
 	config := cfg.RESTServerConfig(cfg.Middleware())
