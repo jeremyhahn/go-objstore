@@ -59,7 +59,9 @@ The server runs with these defaults (`pkg/server/grpc` options):
 
 - `address`: `:50051`
 - `max_receive_message_size`: 32 MiB (33554432 bytes), twice the backup agent's
-  default 16 MiB pack, so a pack upload fits with its framing
+  default 16 MiB pack, so a pack upload fits with its framing; it bounds the
+  unary `Put`, while `PutStream` uploads (the CLI's, chunks just under 1 MiB) of any
+  size fit
 - `max_send_message_size`: 10 MiB (10485760 bytes); `Get` streams objects in
   64 KiB chunks, so no single response approaches it
 

@@ -213,6 +213,11 @@ func TestPutStream_CancelStoresNothing(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("send header: %v", err)
 	}
+	// Wait for the server to accept the header, so the handler has reached
+	// the backend put before the cancel.
+	if _, err := stream.Header(); err != nil {
+		t.Fatalf("header: %v", err)
+	}
 	for i := 0; i < 4; i++ {
 		if err := stream.Send(&objstorepb.PutStreamRequest{Payload: &objstorepb.PutStreamRequest_Chunk{Chunk: testPayload(8 * 1024)}}); err != nil {
 			t.Fatalf("send chunk %d: %v", i, err)

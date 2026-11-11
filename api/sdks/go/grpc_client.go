@@ -743,8 +743,10 @@ func (c *GRPCClient) GetStream(ctx context.Context, key string) (io.ReadCloser, 
 	return pr, streamMeta, nil
 }
 
-// grpcPutChunkSize is the size of the data chunks PutStream sends.
-const grpcPutChunkSize = 1 << 20
+// grpcPutChunkSize is the size of the data chunks PutStream sends: 1 MiB less
+// 1 KiB of headroom for the message framing, so a chunk message fits the
+// smallest receive limit the server accepts (1 MiB).
+const grpcPutChunkSize = 1<<20 - 1<<10
 
 // PutStream stores an object from an io.Reader over the PutStream RPC: a
 // header message with key and metadata, then chunks of grpcPutChunkSize read
