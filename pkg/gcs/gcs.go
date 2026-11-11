@@ -18,6 +18,7 @@ package gcs
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -198,12 +199,27 @@ func (g *GCS) Put(key string, data io.Reader) error {
 	return w.Close()
 }
 
-// Get retrieves an object from the backend.
+// Get retrieves an object from the backend. A missing key returns an error
+// that wraps common.ErrKeyNotFound.
 func (g *GCS) Get(key string) (io.ReadCloser, error) {
 	if err := common.ValidateKey(key); err != nil {
 		return nil, err
 	}
-	return g.client.Bucket(g.bucket).Object(key).NewReader(context.Background())
+	r, err := g.client.Bucket(g.bucket).Object(key).NewReader(context.Background())
+	if err != nil {
+		return nil, objectError(err, key)
+	}
+	return r, nil
+}
+
+// objectError maps storage.ErrObjectNotExist to common.ErrKeyNotFound,
+// keeping the SDK error in the chain. Any other error, and nil, is returned
+// unchanged.
+func objectError(err error, key string) error {
+	if errors.Is(err, storage.ErrObjectNotExist) {
+		return fmt.Errorf("%w: %s: %w", common.ErrKeyNotFound, key, err)
+	}
+	return err
 }
 
 // Delete removes an object from the backend.

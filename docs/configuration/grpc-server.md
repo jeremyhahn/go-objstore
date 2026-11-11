@@ -17,9 +17,9 @@ environment variables behind every flag below. Two binaries serve gRPC:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--addr` | `:50051` | gRPC server address |
+| `--addr` | `127.0.0.1:50051` | gRPC server address (loopback only; set `0.0.0.0:50051` to serve other machines) |
 | `--backend` | `local` | Storage backend (`local`, `s3`, `gcs`, `azure`) |
-| `--path` | `/tmp/objstore` | Storage path for the local backend |
+| `--path` | none (required) | Storage path for the local backend |
 | `--tls-cert` | (none) | TLS certificate file |
 | `--tls-key` | (none) | TLS key file |
 | `--max-recv-msg-size` | `33554432` (32 MiB) | Largest message the server accepts, in bytes |
@@ -43,7 +43,7 @@ the server listens in plaintext.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--grpc` | `true` | Enable the gRPC server |
-| `--grpc-addr` | `:50051` | gRPC server address |
+| `--grpc-addr` | `127.0.0.1:50051` | gRPC server address |
 | `--grpc-tls-cert` | — | gRPC TLS certificate file (set together with `--grpc-tls-key`) |
 | `--grpc-tls-key` | — | gRPC TLS key file (set together with `--grpc-tls-cert`) |
 | `--grpc-max-recv-msg-size` | `33554432` (32 MiB) | Largest message the gRPC server accepts, in bytes |
@@ -59,7 +59,9 @@ The server runs with these defaults (`pkg/server/grpc` options):
 
 - `address`: `:50051`
 - `max_receive_message_size`: 32 MiB (33554432 bytes), twice the backup agent's
-  default 16 MiB pack, so a pack upload fits with its framing
+  default 16 MiB pack, so a pack upload fits with its framing; it bounds the
+  unary `Put`, while `PutStream` uploads (the CLI's, chunks just under 1 MiB) of any
+  size fit
 - `max_send_message_size`: 10 MiB (10485760 bytes); `Get` streams objects in
   64 KiB chunks, so no single response approaches it
 

@@ -123,31 +123,50 @@ type ArchiveConfig struct {
 	AllowClientLocalDestinations bool `mapstructure:"allow_client_local_destinations"`
 }
 
-// Defaults is the defaults layer. Every listen address is taken from the
-// owning transport package's own defaults so the value exists in exactly one
-// place; the file, environment and flag layers override it.
+// LoopbackHost is the host the server's listeners bind by default. Exposing
+// a listener beyond the machine takes an explicit address in the file, the
+// environment or a flag.
+const LoopbackHost = "127.0.0.1"
+
+// onLoopback returns addr with its host replaced by LoopbackHost, keeping
+// the port. An addr that is not host:port is returned unchanged, for
+// Validate to report.
+func onLoopback(addr string) string {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	return net.JoinHostPort(LoopbackHost, port)
+}
+
+// Defaults is the defaults layer. Every listen port is taken from the owning
+// transport package's own defaults so the value exists in exactly one place;
+// the file, environment and flag layers override it.
+//
+// The defaults are safe to start as is: there is no default storage path,
+// so the local backend needs one set explicitly; gRPC, REST and MCP listen
+// on loopback only; QUIC and MCP are off until enabled.
 func Defaults() Config {
 	rest := restserver.DefaultServerConfig()
 	quic := quicserver.DefaultOptions()
 	mcp := mcpserver.DefaultServerConfig()
 	return Config{
 		Backend: "local",
-		Path:    "/tmp/objstore",
 		GRPC: GRPCConfig{
 			Enabled:        true,
-			Addr:           grpcserver.DefaultServerOptions().Address,
+			Addr:           onLoopback(grpcserver.DefaultServerOptions().Address),
 			MaxRecvMsgSize: grpcserver.DefaultMaxReceiveMessageSize,
 			MaxSendMsgSize: grpcserver.DefaultMaxSendMessageSize,
 		},
 		REST: RESTConfig{
 			Enabled:       true,
-			Host:          rest.Host,
+			Host:          LoopbackHost,
 			Port:          rest.Port,
 			MetricsPublic: rest.MetricsPublic,
 		},
 		QUIC: QUICConfig{
-			Enabled:      true,
-			Addr:         quic.Addr,
+			Enabled:      false,
+			Addr:         onLoopback(quic.Addr),
 			MaxBodySize:  quic.MaxRequestBodySize,
 			ReadTimeout:  quic.ReadTimeout,
 			WriteTimeout: quic.WriteTimeout,
@@ -155,9 +174,9 @@ func Defaults() Config {
 			MaxStreams:   quic.MaxBiStreams,
 		},
 		MCP: MCPConfig{
-			Enabled: true,
+			Enabled: false,
 			Mode:    string(mcp.Mode),
-			Addr:    mcp.HTTPAddress,
+			Addr:    onLoopback(mcp.HTTPAddress),
 		},
 		Unix: UnixConfig{
 			Enabled: false,
@@ -214,6 +233,9 @@ func (c *Config) Validate() error {
 	var errs []error
 	if c.Backend == "" {
 		errs = append(errs, &InvalidSettingError{Key: "backend", Reason: "must not be empty"})
+	}
+	if c.Backend == "local" && c.Path == "" {
+		errs = append(errs, &InvalidSettingError{Key: "path", Reason: "must be set when backend is local"})
 	}
 	if c.REST.Port < 0 || c.REST.Port > 65535 {
 		errs = append(errs, &InvalidSettingError{

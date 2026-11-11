@@ -409,6 +409,7 @@ var methodActions = map[string]struct {
 	"GetMetadata":             {adapters.ActionRead, resourceObject},
 	"Exists":                  {adapters.ActionRead, resourceObject},
 	"Put":                     {adapters.ActionWrite, resourceObject},
+	"PutStream":               {adapters.ActionWrite, resourceObject},
 	"UpdateMetadata":          {adapters.ActionWrite, resourceObject},
 	"Delete":                  {adapters.ActionDelete, resourceObject},
 	"List":                    {adapters.ActionList, resourceObject},

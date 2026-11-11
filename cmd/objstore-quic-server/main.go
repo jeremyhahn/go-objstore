@@ -56,15 +56,7 @@ func main() {
 	}
 
 	// Enable replication on the default backend
-	policyPath := cfg.Path + "/.replication-policies.json"
-	if err := objstore.EnableReplication("", &objstore.ReplicationConfig{
-		PolicyFilePath:  policyPath,
-		RunInBackground: false,
-	}); err != nil {
-		slog.Warn("Failed to enable replication", "error", err)
-	} else {
-		slog.Info("Replication enabled", "policy_file", policyPath)
-	}
+	cfg.EnableReplication(objstore.EnableReplication)
 
 	// Configure TLS
 	var tlsConfig *tls.Config

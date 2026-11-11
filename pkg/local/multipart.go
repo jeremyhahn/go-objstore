@@ -76,7 +76,7 @@ func (l *Local) expiry() time.Duration {
 }
 
 func (l *Local) stagingPath() string {
-	return filepath.Join(l.path, stagingDir)
+	return stagingDir
 }
 
 // encrypter returns the at-rest encrypter, or nil when none is configured.
@@ -96,13 +96,18 @@ func notFound(uploadID string) error {
 }
 
 // readUpload loads the record of an upload. The ID is checked before it is
-// used as a path. A missing or unreadable record means no such upload.
+// used as a path. A missing or unreadable record means no such upload. The
+// returned directory is relative to the store's root.
 func (l *Local) readUpload(uploadID string) (*uploadRecord, string, error) {
 	if !multipart.ValidUploadID(uploadID) {
 		return nil, "", notFound(uploadID)
 	}
+	root, err := l.fsRoot()
+	if err != nil {
+		return nil, "", err
+	}
 	dir := filepath.Join(l.stagingPath(), uploadID)
-	raw, err := os.ReadFile(filepath.Join(dir, uploadFile)) // #nosec G304 -- uploadID is checked by ValidUploadID
+	raw, err := root.ReadFile(filepath.Join(dir, uploadFile))
 	if err != nil {
 		return nil, "", notFound(uploadID)
 	}
@@ -124,18 +129,27 @@ func (l *Local) liveUpload(key, uploadID string) (*uploadRecord, string, error) 
 		return nil, "", notFound(uploadID)
 	}
 	if multipart.Expired(rec.Initiated, l.expiry(), l.clock()) {
-		_ = os.RemoveAll(dir)
+		_ = l.removeAll(dir)
 		return nil, "", fmt.Errorf("%w: %s (expired)", common.ErrUploadNotFound, uploadID)
 	}
 	return rec, dir, nil
+}
+
+// removeAll removes the root-relative name and everything below it.
+func (l *Local) removeAll(name string) error {
+	root, err := l.fsRoot()
+	if err != nil {
+		return err
+	}
+	return root.RemoveAll(name)
 }
 
 func partRecordPath(dir string, n int) string {
 	return filepath.Join(dir, fmt.Sprintf("p%05d.json", n))
 }
 
-func loadPart(dir string, n int) (partRecord, bool) {
-	raw, err := os.ReadFile(partRecordPath(dir, n)) // #nosec G304 -- dir is built from a validated upload ID
+func loadPart(root *os.Root, dir string, n int) (partRecord, bool) {
+	raw, err := root.ReadFile(partRecordPath(dir, n))
 	if err != nil {
 		return partRecord{}, false
 	}
@@ -146,12 +160,12 @@ func loadPart(dir string, n int) (partRecord, bool) {
 	return pr, true
 }
 
-func writeJSONAtomic(path string, v any) error {
+func writeJSONAtomic(root *os.Root, name string, v any) error {
 	raw, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(path, 0600, func(w io.Writer) error {
+	return writeFileAtomic(root, name, 0600, func(w io.Writer) error {
 		_, werr := w.Write(raw)
 		return werr
 	})
@@ -171,24 +185,28 @@ func (l *Local) InitiateMultipartUpload(ctx context.Context, key string, metadat
 		return "", err
 	}
 
+	root, err := l.fsRoot()
+	if err != nil {
+		return "", err
+	}
 	stage := l.stagingPath()
 	release := holdDirs(&l.pruneMu)
-	err = os.MkdirAll(stage, 0750)
+	err = root.MkdirAll(stage, 0750)
 	var tmp string
 	if err == nil {
-		tmp, err = os.MkdirTemp(stage, tmpFilePrefix+"*")
+		tmp, err = mkdirTemp(root, stage)
 	}
 	release()
 	if err != nil {
 		return "", err
 	}
 	rec := uploadRecord{Key: key, Metadata: multipart.CloneMetadata(metadata), Initiated: l.clock()}
-	if err := writeJSONAtomic(filepath.Join(tmp, uploadFile), rec); err != nil {
-		_ = os.RemoveAll(tmp)
+	if err := writeJSONAtomic(root, filepath.Join(tmp, uploadFile), rec); err != nil {
+		_ = root.RemoveAll(tmp)
 		return "", err
 	}
-	if err := os.Rename(tmp, filepath.Join(stage, id)); err != nil {
-		_ = os.RemoveAll(tmp)
+	if err := root.Rename(tmp, filepath.Join(stage, id)); err != nil {
+		_ = root.RemoveAll(tmp)
 		return "", err
 	}
 	return id, nil
@@ -197,7 +215,7 @@ func (l *Local) InitiateMultipartUpload(ctx context.Context, key string, metadat
 // UploadPart stages one part of an upload. The part is encrypted at rest when
 // an encrypter is configured, like any other object.
 func (l *Local) UploadPart(ctx context.Context, key, uploadID string, partNumber int, data io.Reader, size int64) (common.PartInfo, error) {
-	if err := common.ValidateKey(key); err != nil {
+	if err := l.validateKey(key); err != nil {
 		return common.PartInfo{}, err
 	}
 	if err := multipart.ValidatePartNumber(partNumber); err != nil {
@@ -207,6 +225,10 @@ func (l *Local) UploadPart(ctx context.Context, key, uploadID string, partNumber
 		return common.PartInfo{}, err
 	}
 	_, dir, err := l.liveUpload(key, uploadID)
+	if err != nil {
+		return common.PartInfo{}, err
+	}
+	root, err := l.fsRoot()
 	if err != nil {
 		return common.PartInfo{}, err
 	}
@@ -221,7 +243,7 @@ func (l *Local) UploadPart(ctx context.Context, key, uploadID string, partNumber
 	}
 	file := fmt.Sprintf("p%05d-%s", partNumber, token)
 	var etag string
-	err = writeFileAtomic(filepath.Join(dir, file), 0600, func(w io.Writer) error {
+	err = writeFileAtomic(root, filepath.Join(dir, file), 0600, func(w io.Writer) error {
 		var cerr error
 		if enc == nil {
 			etag, cerr = multipart.CopyPart(w, data, size)
@@ -234,18 +256,18 @@ func (l *Local) UploadPart(ctx context.Context, key, uploadID string, partNumber
 		return common.PartInfo{}, err
 	}
 
-	previous, hadPrevious := loadPart(dir, partNumber)
+	previous, hadPrevious := loadPart(root, dir, partNumber)
 	rec := partRecord{ETag: etag, Size: size, Encrypted: enc != nil, File: file}
 	if err := ctx.Err(); err != nil {
-		_ = os.Remove(filepath.Join(dir, file))
+		_ = root.Remove(filepath.Join(dir, file))
 		return common.PartInfo{}, err
 	}
-	if err := writeJSONAtomic(partRecordPath(dir, partNumber), rec); err != nil {
-		_ = os.Remove(filepath.Join(dir, file))
+	if err := writeJSONAtomic(root, partRecordPath(dir, partNumber), rec); err != nil {
+		_ = root.Remove(filepath.Join(dir, file))
 		return common.PartInfo{}, err
 	}
 	if hadPrevious && previous.File != file {
-		_ = os.Remove(filepath.Join(dir, previous.File))
+		_ = root.Remove(filepath.Join(dir, previous.File))
 	}
 	return common.PartInfo{PartNumber: partNumber, ETag: etag, Size: size}, nil
 }
@@ -274,6 +296,7 @@ func copyEncryptedPart(ctx context.Context, enc common.Encrypter, w io.Writer, d
 // each one that was stored encrypted.
 type partStream struct {
 	ctx     context.Context
+	root    *os.Root
 	dir     string
 	parts   []partRecord
 	enc     common.Encrypter
@@ -283,7 +306,7 @@ type partStream struct {
 }
 
 func (s *partStream) open(pr partRecord) error {
-	f, err := os.Open(filepath.Join(s.dir, pr.File)) // #nosec G304 -- File is a base name checked by loadPart
+	f, err := s.root.Open(filepath.Join(s.dir, pr.File))
 	if err != nil {
 		return err
 	}
@@ -335,7 +358,7 @@ func (s *partStream) Read(p []byte) (int, error) {
 // CompleteMultipartUpload assembles the parts into the object. The object
 // appears whole or not at all, and the staged parts are dropped on success.
 func (l *Local) CompleteMultipartUpload(ctx context.Context, key, uploadID string, parts []common.CompletedPart) error {
-	if err := common.ValidateKey(key); err != nil {
+	if err := l.validateKey(key); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
@@ -345,10 +368,14 @@ func (l *Local) CompleteMultipartUpload(ctx context.Context, key, uploadID strin
 	if err != nil {
 		return err
 	}
+	root, err := l.fsRoot()
+	if err != nil {
+		return err
+	}
 
 	records := make(map[int]partRecord, len(parts))
 	numbers, err := multipart.CheckComplete(parts, func(n int) (common.PartInfo, bool) {
-		pr, ok := loadPart(dir, n)
+		pr, ok := loadPart(root, dir, n)
 		if !ok {
 			return common.PartInfo{}, false
 		}
@@ -371,7 +398,7 @@ func (l *Local) CompleteMultipartUpload(ctx context.Context, key, uploadID strin
 		ordered = append(ordered, records[n])
 	}
 
-	stream := &partStream{ctx: ctx, dir: dir, parts: ordered, enc: enc}
+	stream := &partStream{ctx: ctx, root: root, dir: dir, parts: ordered, enc: enc}
 	defer stream.closeCurrent()
 	var in io.Reader = stream
 	if enc != nil {
@@ -383,9 +410,9 @@ func (l *Local) CompleteMultipartUpload(ctx context.Context, key, uploadID strin
 		in = sealed
 	}
 
-	path := filepath.Join(l.path, key)
+	name := rootName(key)
 	var size int64
-	if err := writeObjectAtomic(&l.pruneMu, path, 0644, func(w io.Writer) error {
+	if err := writeObjectAtomic(root, &l.pruneMu, name, 0644, func(w io.Writer) error {
 		n, werr := io.Copy(w, in)
 		size = n
 		return werr
@@ -396,7 +423,7 @@ func (l *Local) CompleteMultipartUpload(ctx context.Context, key, uploadID strin
 	md := multipart.CloneMetadata(rec.Metadata)
 	md.Size = size
 	md.LastModified = time.Now()
-	if info, err := os.Stat(path); err == nil {
+	if info, err := root.Stat(name); err == nil {
 		md.ETag = fmt.Sprintf("%d-%d", info.ModTime().Unix(), size)
 	}
 	if enc != nil {
@@ -411,7 +438,7 @@ func (l *Local) CompleteMultipartUpload(ctx context.Context, key, uploadID strin
 	}
 
 	// A directory that cannot be removed is dropped by the expiry cleanup.
-	_ = os.RemoveAll(dir)
+	_ = root.RemoveAll(dir)
 
 	if l.changeLog != nil {
 		_ = l.changeLog.RecordChange(ChangeEvent{
@@ -429,7 +456,7 @@ func (l *Local) CompleteMultipartUpload(ctx context.Context, key, uploadID strin
 // past its expiry is still removed, so the cleanup that lists and aborts
 // expired uploads succeeds.
 func (l *Local) AbortMultipartUpload(ctx context.Context, key, uploadID string) error {
-	if err := common.ValidateKey(key); err != nil {
+	if err := l.validateKey(key); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
@@ -442,7 +469,7 @@ func (l *Local) AbortMultipartUpload(ctx context.Context, key, uploadID string) 
 	if rec.Key != key {
 		return notFound(uploadID)
 	}
-	return os.RemoveAll(dir)
+	return l.removeAll(dir)
 }
 
 // ListMultipartUploads returns the uploads in progress whose key starts with
@@ -458,7 +485,14 @@ func (l *Local) ListMultipartUploads(ctx context.Context, prefix string) ([]comm
 		return nil, err
 	}
 
-	entries, err := os.ReadDir(l.stagingPath())
+	root, err := l.fsRoot()
+	if errors.Is(err, fs.ErrNotExist) {
+		return []common.MultipartUploadInfo{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	entries, err := fs.ReadDir(root.FS(), filepath.ToSlash(l.stagingPath()))
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return []common.MultipartUploadInfo{}, nil
@@ -496,7 +530,11 @@ func (l *Local) expireUploads() int {
 	if l.path == "" {
 		return 0
 	}
-	entries, err := os.ReadDir(l.stagingPath())
+	root, err := l.fsRoot()
+	if err != nil {
+		return 0
+	}
+	entries, err := fs.ReadDir(root.FS(), filepath.ToSlash(l.stagingPath()))
 	if err != nil {
 		return 0
 	}
@@ -518,7 +556,7 @@ func (l *Local) expireUploads() int {
 			continue
 		}
 		if multipart.Expired(initiated, expiry, now) {
-			if os.RemoveAll(dir) == nil {
+			if root.RemoveAll(dir) == nil {
 				removed++
 			}
 		}

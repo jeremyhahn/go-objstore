@@ -15,8 +15,7 @@ package local
 
 import (
 	"context"
-	"os"
-	"path/filepath"
+	"io/fs"
 	"strings"
 	"sync"
 	"time"
@@ -104,21 +103,27 @@ func (lm *LifecycleManager) Process(storage *Local) {
 	// GetPolicies acquires RLock internally and returns a copy; no outer lock needed.
 	policies, _ := lm.GetPolicies()
 
+	// The walk reads the tree through the store's root, so a symlinked
+	// directory below it is never followed.
+	root, err := storage.fsRoot()
+	if err != nil {
+		return
+	}
+
 	for _, policy := range policies {
-		walkFn := func(path string, info os.FileInfo, err error) error {
+		walkFn := func(relPath string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
-			if info.IsDir() {
-				if path == filepath.Join(storage.path, stagingDir) {
-					return filepath.SkipDir
+			if d.IsDir() {
+				if relPath == stagingDir {
+					return fs.SkipDir
 				}
 				return nil
 			}
-
-			relPath, err := filepath.Rel(storage.path, path)
+			info, err := d.Info()
 			if err != nil {
-				return err
+				return nil
 			}
 
 			if strings.HasPrefix(relPath, policy.Prefix) {
@@ -135,6 +140,6 @@ func (lm *LifecycleManager) Process(storage *Local) {
 			}
 			return nil
 		}
-		_ = filepath.Walk(storage.path, walkFn)
+		_ = fs.WalkDir(root.FS(), ".", walkFn)
 	}
 }

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # Dockerfile for REST server
-FROM golang:1.27.3-alpine
+FROM golang:1.27.4-alpine
 
 # Allow Go toolchain auto-upgrade
 ENV GOTOOLCHAIN=auto
@@ -45,4 +45,6 @@ RUN mkdir -p /tmp/objstore
 
 EXPOSE 8080
 
-CMD ["objstore-server", "-grpc=false", "-rest=true", "-rest-port", "8080", "-backend", "local", "-path", "/tmp/objstore"]
+# The server binds loopback by default; the test client reaches it from
+# outside the container, so the REST listener binds every interface.
+CMD ["objstore-server", "-grpc=false", "-rest=true", "-rest-host", "0.0.0.0", "-rest-port", "8080", "-quic=false", "-mcp=false", "-backend", "local", "-path", "/tmp/objstore"]

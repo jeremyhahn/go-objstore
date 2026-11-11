@@ -392,7 +392,7 @@ func TestS3_Exists(t *testing.T) {
 
 func TestS3_Exists_NotFound(t *testing.T) {
 	mockS3 := &mockS3Client{
-		headObjectError: errors.New("NotFound"),
+		headObjectError: awsErr("NotFound"),
 	}
 
 	s := &S3{svc: mockS3, bucket: "test-bucket"}

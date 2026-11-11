@@ -175,6 +175,86 @@ func TestValidateKey(t *testing.T) {
 	}
 }
 
+func TestValidateKey_ReservedNames(t *testing.T) {
+	reserved := []string{
+		// Sidecars, top level and nested.
+		"obj.metadata.json",
+		"a/obj.metadata.json",
+		"a/b.metadata.json/c",
+		".metadata.json",
+		// In-flight temp files and directories.
+		".tmp-123",
+		"a/.tmp-123",
+		".tmp-dir/obj",
+		// Policy files at the top level.
+		common.LifecyclePolicyFile,
+		common.ReplicationPolicyFile,
+		// ./ prefixed.
+		"./" + common.LifecyclePolicyFile,
+		"././" + common.ReplicationPolicyFile,
+		"./a/obj.metadata.json",
+		"a/./.tmp-x",
+		// Backslash separated.
+		`a\obj.metadata.json`,
+		`a\.tmp-x`,
+		`.\` + common.ReplicationPolicyFile,
+		// Letter case.
+		"OBJ.METADATA.JSON",
+		"a/Obj.Metadata.Json",
+		".TMP-x",
+		".Lifecycle-Policies.JSON",
+		".REPLICATION-POLICIES.json",
+	}
+	for _, key := range reserved {
+		t.Run(key, func(t *testing.T) {
+			err := common.ValidateKey(key)
+			if !errors.Is(err, common.ErrInvalidArgument) {
+				t.Fatalf("ValidateKey(%q) = %v, want ErrInvalidArgument", key, err)
+			}
+			var ve *common.ValidationError
+			if !errors.As(err, &ve) {
+				t.Errorf("ValidateKey(%q) = %T, want *ValidationError", key, err)
+			}
+		})
+	}
+
+	allowed := []string{
+		"a/metadata.json",
+		"metadata.json",
+		"obj.metadata.json.bak",
+		"tmp-123",
+		"a/x.tmp-1",
+		"a/" + common.LifecyclePolicyFile,
+		"a/" + common.ReplicationPolicyFile,
+	}
+	for _, key := range allowed {
+		t.Run(key, func(t *testing.T) {
+			if err := common.ValidateKey(key); err != nil {
+				t.Errorf("ValidateKey(%q) = %v, want nil", key, err)
+			}
+		})
+	}
+}
+
+func TestSameKey(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"policies.json", "policies.json", true},
+		{"./policies.json", "POLICIES.JSON", true},
+		{`dir\p.json`, "dir/p.json", true},
+		{"dir/p.json", "p.json", false},
+		{"", "", false},
+		{".", ".", false},
+	}
+	for _, c := range cases {
+		if got := common.SameKey(c.a, c.b); got != c.want {
+			t.Errorf("SameKey(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+}
+
 func TestValidateMetadata(t *testing.T) {
 	tests := []struct {
 		name     string

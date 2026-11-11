@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -763,9 +764,8 @@ func TestWalkObjects_SkipsOnlyTheRootStagingDirectory(t *testing.T) {
 		}
 	}
 	var seen []string
-	err := walkObjects(context.Background(), dir, func(p string, _ os.DirEntry) error {
-		rel, _ := filepath.Rel(dir, p)
-		seen = append(seen, filepath.ToSlash(rel))
+	err := (&Local{}).walkObjects(context.Background(), openTestRoot(t, dir), func(p string, _ fs.DirEntry) error {
+		seen = append(seen, filepath.ToSlash(p))
 		return nil
 	})
 	if err != nil {
