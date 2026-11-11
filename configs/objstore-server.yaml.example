@@ -35,7 +35,7 @@
 
 # quic:
 #   enabled: false
-#   addr: ":4433"
+#   addr: "127.0.0.1:4433"
 #   tls_cert: ""
 #   tls_key: ""
 #   self_signed: false

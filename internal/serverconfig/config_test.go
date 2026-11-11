@@ -87,7 +87,7 @@ func TestDefaults_ComeFromTransportPackages(t *testing.T) {
 		{"grpc.max_send_msg_size", d.GRPC.MaxSendMsgSize, grpcserver.DefaultServerOptions().MaxSendMessageSize},
 		{"rest.host", d.REST.Host, LoopbackHost},
 		{"rest.port", d.REST.Port, rest.Port},
-		{"quic.addr", d.QUIC.Addr, quic.Addr},
+		{"quic.addr", d.QUIC.Addr, onLoopback(quic.Addr)},
 		{"quic.max_body_size", d.QUIC.MaxBodySize, quic.MaxRequestBodySize},
 		{"quic.read_timeout", d.QUIC.ReadTimeout, quic.ReadTimeout},
 		{"quic.max_streams", d.QUIC.MaxStreams, quic.MaxBiStreams},
@@ -119,20 +119,18 @@ func TestDefaults_AreSafe(t *testing.T) {
 		t.Error("mcp is enabled by default")
 	}
 
+	// Every default address is loopback, including the listeners that are off
+	// by default, so enabling one (quic.enabled: true alone) binds loopback.
 	listeners := []struct {
-		name    string
-		enabled bool
-		addr    string
+		name string
+		addr string
 	}{
-		{"grpc", d.GRPC.Enabled, d.GRPC.Addr},
-		{"rest", d.REST.Enabled, d.RESTAddr()},
-		{"quic", d.QUIC.Enabled, d.QUIC.Addr},
-		{"mcp", d.MCP.Enabled, d.MCP.Addr},
+		{"grpc", d.GRPC.Addr},
+		{"rest", d.RESTAddr()},
+		{"quic", d.QUIC.Addr},
+		{"mcp", d.MCP.Addr},
 	}
 	for _, l := range listeners {
-		if !l.enabled {
-			continue
-		}
 		host, _, err := net.SplitHostPort(l.addr)
 		if err != nil {
 			t.Errorf("%s addr %q: %v", l.name, l.addr, err)

@@ -155,7 +155,7 @@ func Defaults() Config {
 		},
 		QUIC: QUICConfig{
 			Enabled:      false,
-			Addr:         quic.Addr,
+			Addr:         onLoopback(quic.Addr),
 			MaxBodySize:  quic.MaxRequestBodySize,
 			ReadTimeout:  quic.ReadTimeout,
 			WriteTimeout: quic.WriteTimeout,

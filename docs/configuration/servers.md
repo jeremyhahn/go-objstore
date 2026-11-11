@@ -63,7 +63,7 @@ table notes one.
 | `rest.port` | `OBJSTORE_REST_PORT` | `8080` | `-rest-port` | `-port` (rest) |
 | `rest.metrics_public` | `OBJSTORE_REST_METRICS_PUBLIC` | `false` | `-metrics-public` | `-metrics-public` (rest) |
 | `quic.enabled` | `OBJSTORE_QUIC_ENABLED` | `false` | `-quic` | — |
-| `quic.addr` | `OBJSTORE_QUIC_ADDR` | `:4433` | `-quic-addr` | `-addr` (quic) |
+| `quic.addr` | `OBJSTORE_QUIC_ADDR` | `127.0.0.1:4433` | `-quic-addr` | `-addr` (quic) |
 | `quic.tls_cert` | `OBJSTORE_QUIC_TLS_CERT` | — | `-quic-tls-cert` | `-tlscert` (quic) |
 | `quic.tls_key` | `OBJSTORE_QUIC_TLS_KEY` | — | `-quic-tls-key` | `-tlskey` (quic) |
 | `quic.self_signed` | `OBJSTORE_QUIC_SELF_SIGNED` | `false` | `-quic-self-signed` | `-selfsigned` (quic) |

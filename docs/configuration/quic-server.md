@@ -17,7 +17,7 @@ environment variables behind every flag below. Two binaries serve QUIC/HTTP3:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-addr` | `:4433` | UDP address to listen on |
+| `-addr` | `127.0.0.1:4433` | UDP address to listen on (loopback only; set `0.0.0.0:4433` to serve other machines) |
 | `-backend` | `local` | Storage backend type (`local`, `s3`, `gcs`, `azure`) |
 | `-path` | `./data` | Storage path (for local backend) |
 | `-tlscert` | (none) | Path to TLS certificate file |
@@ -43,7 +43,7 @@ objstore-quic-server \
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--quic` | `false` | Enable the QUIC/HTTP3 server (`--quic=true` turns it on) |
-| `--quic-addr` | `:4433` | QUIC server address |
+| `--quic-addr` | `127.0.0.1:4433` | QUIC server address |
 | `--quic-tls-cert` | (none) | QUIC TLS certificate file |
 | `--quic-tls-key` | (none) | QUIC TLS key file |
 | `--quic-self-signed` | `false` | Use self-signed cert for QUIC (testing only) |
