@@ -31,6 +31,10 @@ import (
 // client by the common name of its verified certificate.
 const UIDSubjectPrefix = "uid:"
 
+// AnonymousSubject is the principal ID a transport gives a peer it cannot
+// identify; an identity with this subject is refused.
+const AnonymousSubject = "anonymous"
+
 // wildcardAction grants every action (the RBACAuthorizer convention).
 const wildcardAction = "*"
 
@@ -160,6 +164,11 @@ func (c *Config) validateAuth() []error {
 		switch {
 		case id.Subject == "":
 			errs = append(errs, &InvalidSettingError{Key: key + ".subject", Reason: "must not be empty"})
+		case id.Subject == AnonymousSubject:
+			// A transport that cannot identify its peer (e.g. a Unix socket
+			// peer whose credentials cannot be read) yields this principal;
+			// granting it roles would grant them to unidentified clients.
+			errs = append(errs, &InvalidSettingError{Key: key + ".subject", Value: id.Subject, Reason: "is the unauthenticated principal and cannot hold roles"})
 		case seen[id.Subject]:
 			errs = append(errs, &InvalidSettingError{Key: key + ".subject", Value: id.Subject, Reason: "duplicate subject"})
 		}

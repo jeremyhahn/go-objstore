@@ -150,6 +150,11 @@ func TestValidate_AuthProblems(t *testing.T) {
 			want:   []string{"auth.identities[1].subject", "auth.identities[2].subject"},
 		},
 		{
+			name:   "anonymous subject",
+			mutate: func(c *Config) { c.Auth.Identities[0].Subject = AnonymousSubject },
+			want:   []string{"auth.identities[0].subject"},
+		},
+		{
 			name:   "identity without roles",
 			mutate: func(c *Config) { c.Auth.Identities[0].Roles = nil },
 			want:   []string{"auth.identities[0].roles"},
