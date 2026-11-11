@@ -56,7 +56,7 @@ func TestS3_Archive_KeepsEncryptionMetadata(t *testing.T) {
 	if err := encryptedS3().Archive("key", dst); err != nil {
 		t.Fatalf("Archive: %v", err)
 	}
-	if dst.md == nil || dst.md.Custom["Encryption_key_id"] != "dek-1" {
+	if dst.md == nil || dst.md.Custom["encryption_key_id"] != "dek-1" {
 		t.Fatalf("archived metadata = %+v, want encryption key id carried", dst.md)
 	}
 }
