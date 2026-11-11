@@ -18,7 +18,6 @@ package s3
 import (
 	"context"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
@@ -64,6 +63,7 @@ func (s *S3) PutWithMetadata(ctx context.Context, key string, data io.Reader, me
 }
 
 // GetWithContext retrieves an object from the backend with context support.
+// A missing key returns an error that wraps common.ErrKeyNotFound.
 func (s *S3) GetWithContext(ctx context.Context, key string) (io.ReadCloser, error) {
 	if err := common.ValidateKey(key); err != nil {
 		return nil, err
@@ -73,12 +73,13 @@ func (s *S3) GetWithContext(ctx context.Context, key string) (io.ReadCloser, err
 		Key:    aws.String(key),
 	})
 	if err != nil {
-		return nil, err
+		return nil, objectError(err, key)
 	}
 	return result.Body, nil
 }
 
-// GetMetadata retrieves only the metadata for an object.
+// GetMetadata retrieves only the metadata for an object. A missing key
+// returns an error that wraps common.ErrKeyNotFound.
 func (s *S3) GetMetadata(ctx context.Context, key string) (*common.Metadata, error) {
 	if err := common.ValidateKey(key); err != nil {
 		return nil, err
@@ -88,7 +89,7 @@ func (s *S3) GetMetadata(ctx context.Context, key string) (*common.Metadata, err
 		Key:    aws.String(key),
 	})
 	if err != nil {
-		return nil, err
+		return nil, objectError(err, key)
 	}
 
 	metadata := &common.Metadata{
@@ -117,7 +118,8 @@ func (s *S3) GetMetadata(ctx context.Context, key string) (*common.Metadata, err
 	return metadata, nil
 }
 
-// UpdateMetadata updates the metadata for an existing object.
+// UpdateMetadata updates the metadata for an existing object. A missing key
+// returns an error that wraps common.ErrKeyNotFound.
 func (s *S3) UpdateMetadata(ctx context.Context, key string, metadata *common.Metadata) error {
 	input := &s3.CopyObjectInput{
 		Bucket:            aws.String(s.bucket),
@@ -142,7 +144,7 @@ func (s *S3) UpdateMetadata(ctx context.Context, key string, metadata *common.Me
 	}
 
 	_, err := s.svc.CopyObjectWithContext(ctx, input)
-	return err
+	return objectError(err, key)
 }
 
 // DeleteWithContext removes an object from the backend with context support.
@@ -157,7 +159,8 @@ func (s *S3) DeleteWithContext(ctx context.Context, key string) error {
 	return err
 }
 
-// Exists checks if an object exists in the backend.
+// Exists checks if an object exists in the backend. A missing key gives
+// false and a nil error; any other failure is returned.
 func (s *S3) Exists(ctx context.Context, key string) (bool, error) {
 	if err := common.ValidateKey(key); err != nil {
 		return false, err
@@ -167,7 +170,7 @@ func (s *S3) Exists(ctx context.Context, key string) (bool, error) {
 		Key:    aws.String(key),
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "NotFound") {
+		if isObjectNotFound(err) {
 			return false, nil
 		}
 		return false, err
