@@ -62,3 +62,10 @@
 
 # audit:
 #   enabled: true
+
+# replication:
+#   allow_client_local_backends: false
+# Replication policies name their backends and settings, so a "local" backend
+# could open any directory the service user can read. Policies with a local
+# source or destination are refused (and a policy file holding one fails to
+# load) unless this is true.
