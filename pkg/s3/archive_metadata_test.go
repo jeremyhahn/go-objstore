@@ -41,23 +41,34 @@ func (m *mdCaptureArchiver) PutWithMetadata(_ context.Context, _ string, r io.Re
 
 // encryptedS3 serves one object whose HEAD carries client-side encryption
 // metadata, with the key canonicalised the way S3 returns it.
+// encryptedS3 serves a client-encrypted object whose key was overwritten
+// between the read and a HEAD: GetObject returns the version sealed with
+// dek-1, HeadObject already the next version's dek-2.
 func encryptedS3() *S3 {
 	return &S3{bucket: "b", svc: &mockS3Client{
-		getObjectOutput: &s3.GetObjectOutput{Body: io.NopCloser(bytes.NewReader([]byte("ct")))},
+		getObjectOutput: &s3.GetObjectOutput{
+			Body: io.NopCloser(bytes.NewReader([]byte("ct"))),
+			Metadata: map[string]*string{
+				"Encryption_key_id":    aws.String("dek-1"),
+				"Encryption_algorithm": aws.String("AES-256-GCM"),
+			},
+		},
 		headObjectOutput: &s3.HeadObjectOutput{Metadata: map[string]*string{
-			"Encryption_key_id":    aws.String("dek-1"),
+			"Encryption_key_id":    aws.String("dek-2"),
 			"Encryption_algorithm": aws.String("AES-256-GCM"),
 		}},
 	}}
 }
 
+// The archived copy carries the encryption metadata of the version whose
+// bytes it copies, not of whatever version a later HEAD sees (#243).
 func TestS3_Archive_KeepsEncryptionMetadata(t *testing.T) {
 	dst := &mdCaptureArchiver{}
 	if err := encryptedS3().Archive("key", dst); err != nil {
 		t.Fatalf("Archive: %v", err)
 	}
 	if dst.md == nil || dst.md.Custom["encryption_key_id"] != "dek-1" {
-		t.Fatalf("archived metadata = %+v, want encryption key id carried", dst.md)
+		t.Fatalf("archived metadata = %+v, want the key id of the bytes read (dek-1)", dst.md)
 	}
 }
 
@@ -67,12 +78,18 @@ func TestS3_Archive_EncryptedRefusesMetadataLessDestination(t *testing.T) {
 	}
 }
 
+// Archive takes the metadata from the GetObject response, so a failing HEAD
+// does not matter, and a failing GET is returned.
 func TestS3_Archive_MetadataError(t *testing.T) {
 	s := &S3{bucket: "b", svc: &mockS3Client{
 		getObjectOutput: &s3.GetObjectOutput{Body: io.NopCloser(bytes.NewReader([]byte("x")))},
 		headObjectError: errors.New("head failed"),
 	}}
+	if err := s.Archive("key", &mockArchiver{}); err != nil {
+		t.Fatalf("Archive must not depend on HEAD: %v", err)
+	}
+	s = &S3{bucket: "b", svc: &mockS3Client{getObjectError: errors.New("get failed")}}
 	if err := s.Archive("key", &mockArchiver{}); err == nil {
-		t.Fatal("Archive with failing HEAD: want error")
+		t.Fatal("Archive with failing GET: want error")
 	}
 }
