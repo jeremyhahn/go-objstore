@@ -89,11 +89,22 @@ var (
 		return err
 	}
 	azureUploadWithMetadataFn = func(ctx context.Context, r io.Reader, b azblob.BlockBlobURL, metadata map[string]string, headers azblob.BlobHTTPHeaders) error {
-		_, err := azblob.UploadStreamToBlockBlob(ctx, r, b, azblob.UploadStreamToBlockBlobOptions{
+		_, err := azureUploadWithMetadataResultFn(ctx, r, b, metadata, headers)
+		return err
+	}
+
+	// azureUploadWithMetadataResultFn is the one upload of payload,
+	// metadata and headers, returning the ETag and time the service
+	// reported for the blob it wrote.
+	azureUploadWithMetadataResultFn = func(ctx context.Context, r io.Reader, b azblob.BlockBlobURL, metadata map[string]string, headers azblob.BlobHTTPHeaders) (BlobProperties, error) {
+		resp, err := azblob.UploadStreamToBlockBlob(ctx, r, b, azblob.UploadStreamToBlockBlobOptions{
 			Metadata:        azblob.Metadata(metadata),
 			BlobHTTPHeaders: headers,
 		})
-		return err
+		if err != nil || resp == nil {
+			return BlobProperties{}, err
+		}
+		return BlobProperties{ETag: string(resp.ETag()), LastModified: resp.LastModified()}, nil
 	}
 	azureDownloadFn = func(ctx context.Context, b azblob.BlockBlobURL) (io.ReadCloser, error) {
 		resp, err := b.Download(ctx, 0, azblob.CountToEnd, azblob.BlobAccessConditions{}, false, azblob.ClientProvidedKeyOptions{})
@@ -166,6 +177,12 @@ func (b blobWrapper) UploadFromReader(ctx context.Context, r io.Reader) error {
 
 func (b blobWrapper) UploadWithMetadata(ctx context.Context, r io.Reader, metadata map[string]string, headers azblob.BlobHTTPHeaders) error {
 	return azureUploadWithMetadataFn(ctx, r, b.BlockBlobURL, metadata, headers)
+}
+
+// UploadWithMetadataResult is UploadWithMetadata that also returns the ETag
+// and time the service reported for the blob it wrote (resultUploader).
+func (b blobWrapper) UploadWithMetadataResult(ctx context.Context, r io.Reader, metadata map[string]string, headers azblob.BlobHTTPHeaders) (BlobProperties, error) {
+	return azureUploadWithMetadataResultFn(ctx, r, b.BlockBlobURL, metadata, headers)
 }
 func (b blobWrapper) NewReader(ctx context.Context) (io.ReadCloser, error) {
 	return azureDownloadFn(ctx, b.BlockBlobURL)
