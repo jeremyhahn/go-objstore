@@ -262,8 +262,9 @@ func (lm *PersistentLifecycleManager) save() error {
 		return err
 	}
 
-	// Write atomically: temp file → fsync → rename.
-	tmpName := lm.policyFile + ".tmp"
+	// Write atomically: temp file → fsync → rename. The temp file is named in
+	// the reserved temp namespace so no object key can reach it.
+	tmpName := PolicyStagingName(lm.policyFile)
 	tmp, err := lm.fs.OpenFile(tmpName, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return err
