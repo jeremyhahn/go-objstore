@@ -182,6 +182,64 @@ func TestGRPCClient_Put_ReadErrorCancelsStream(t *testing.T) {
 	}
 }
 
+// TestGRPCClient_Put_SourceUnexpectedEOFCancelsStream checks a source that
+// returns io.ErrUnexpectedEOF mid-object aborts the put, rather than being
+// taken for the end of the data and storing a truncated object.
+func TestGRPCClient_Put_SourceUnexpectedEOFCancelsStream(t *testing.T) {
+	srv := newPutStreamRecorder()
+	c := newTestGRPCClient(t, srv)
+	r := io.MultiReader(bytes.NewReader(payload(putStreamChunkSize+10)), &failingReader{err: io.ErrUnexpectedEOF})
+
+	if err := c.Put(context.Background(), "truncated.bin", r, nil); !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("Put = %v, want io.ErrUnexpectedEOF", err)
+	}
+	select {
+	case <-srv.done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("server handler did not end after the client aborted")
+	}
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	if status.Code(srv.recvErr) != codes.Canceled {
+		t.Errorf("server Recv error = %v, want Canceled (the put must not complete)", srv.recvErr)
+	}
+}
+
+// shortReader hands out at most max bytes per Read.
+type shortReader struct {
+	r   io.Reader
+	max int
+}
+
+func (s *shortReader) Read(p []byte) (int, error) {
+	if len(p) > s.max {
+		p = p[:s.max]
+	}
+	return s.r.Read(p)
+}
+
+// TestGRPCClient_Put_ShortReadsSendWholeObject checks a source that returns
+// fewer bytes per Read than a chunk still has the whole object sent.
+func TestGRPCClient_Put_ShortReadsSendWholeObject(t *testing.T) {
+	srv := newPutStreamRecorder()
+	c := newTestGRPCClient(t, srv)
+	data := payload(2*putStreamChunkSize + 777)
+	r := &shortReader{r: bytes.NewReader(data), max: 4093}
+
+	if err := c.Put(context.Background(), "short.bin", r, nil); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	<-srv.done
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	if !bytes.Equal(srv.data.Bytes(), data) {
+		t.Errorf("server got %d bytes, want the %d bytes sent", srv.data.Len(), len(data))
+	}
+	if srv.chunks != 3 {
+		t.Errorf("server got %d chunks, want 3 full-size fills", srv.chunks)
+	}
+}
+
 type failingReader struct{ err error }
 
 func (r *failingReader) Read([]byte) (int, error) { return 0, r.err }

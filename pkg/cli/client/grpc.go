@@ -65,7 +65,7 @@ func (c *GRPCClient) Put(ctx context.Context, key string, reader io.Reader, meta
 		header.Metadata = metadataToProto(metadata)
 	}
 
-	// Cancelling the stream on an early return (a read error) aborts the
+	// Canceling the stream on an early return (a read error) aborts the
 	// put on the server, which then stores nothing.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()

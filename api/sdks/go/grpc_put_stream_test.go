@@ -193,6 +193,64 @@ func TestGRPCPutStream_ReadErrorCancels(t *testing.T) {
 	}
 }
 
+// TestGRPCPutStream_SourceUnexpectedEOFCancels checks a source that returns
+// io.ErrUnexpectedEOF mid-object aborts the put instead of being taken for
+// the end of the data, so the server stores nothing.
+func TestGRPCPutStream_SourceUnexpectedEOFCancels(t *testing.T) {
+	srv := newStreamRecorder()
+	c := newBufconnGRPCClient(t, srv)
+	r := io.MultiReader(bytes.NewReader(sdkPayload(grpcPutChunkSize+1)), &errReader{err: io.ErrUnexpectedEOF})
+
+	if _, err := c.PutStream(context.Background(), "truncated", r, -1, nil); !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("PutStream = %v, want io.ErrUnexpectedEOF", err)
+	}
+	select {
+	case <-srv.done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("server handler did not end after the client aborted")
+	}
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	if status.Code(srv.recvErr) != codes.Canceled {
+		t.Errorf("server Recv error = %v, want Canceled (the put must not complete)", srv.recvErr)
+	}
+}
+
+// smallReads hands out at most max bytes per Read.
+type smallReads struct {
+	r   io.Reader
+	max int
+}
+
+func (s *smallReads) Read(p []byte) (int, error) {
+	if len(p) > s.max {
+		p = p[:s.max]
+	}
+	return s.r.Read(p)
+}
+
+// TestGRPCPutStream_ShortReadsSendWholeObject checks a source that returns
+// fewer bytes per Read than a chunk still has the whole object sent.
+func TestGRPCPutStream_ShortReadsSendWholeObject(t *testing.T) {
+	srv := newStreamRecorder()
+	c := newBufconnGRPCClient(t, srv)
+	data := sdkPayload(2*grpcPutChunkSize + 777)
+	r := &smallReads{r: bytes.NewReader(data), max: 4093}
+
+	if _, err := c.PutStream(context.Background(), "short", r, -1, nil); err != nil {
+		t.Fatalf("PutStream: %v", err)
+	}
+	<-srv.done
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	if !bytes.Equal(srv.data.Bytes(), data) {
+		t.Errorf("server got %d bytes, want the %d bytes sent", srv.data.Len(), len(data))
+	}
+	if srv.chunks != 3 {
+		t.Errorf("server got %d chunks, want 3 full-size fills", srv.chunks)
+	}
+}
+
 func TestGRPCPutStream_RefusedBeforeRead(t *testing.T) {
 	c := newBufconnGRPCClient(t, newStreamRecorder())
 	// validateKey refuses "" client-side; a server refusal of the header
