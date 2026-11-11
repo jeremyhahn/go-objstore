@@ -692,7 +692,7 @@ func (l *Local) ListWithContext(ctx context.Context, prefix string) ([]string, e
 		return nil, err
 	}
 
-	err = walkObjects(ctx, root, func(normalizedRel string, _ fs.DirEntry) error {
+	err = l.walkObjects(ctx, root, func(normalizedRel string, _ fs.DirEntry) error {
 		normalizedPrefix := filepath.ToSlash(prefix)
 
 		// Check if this path matches the prefix
@@ -742,7 +742,7 @@ func (l *Local) ListWithOptions(ctx context.Context, opts *common.ListOptions) (
 		return nil, err
 	}
 
-	err = walkObjects(ctx, root, func(normalizedRel string, d fs.DirEntry) error {
+	err = l.walkObjects(ctx, root, func(normalizedRel string, d fs.DirEntry) error {
 		normalizedPrefix := filepath.ToSlash(opts.Prefix)
 
 		// Check if this path matches the prefix
@@ -946,7 +946,7 @@ const tmpFilePrefix = common.TempFilePrefix
 // follows a symlink. Entries that vanish while the walk is in progress (a
 // concurrent Put renaming its temp file, a concurrent Delete) are treated as
 // absent rather than failing the whole walk; any other error aborts it.
-func walkObjects(ctx context.Context, root *os.Root, fn func(name string, d fs.DirEntry) error) error {
+func (l *Local) walkObjects(ctx context.Context, root *os.Root, fn func(name string, d fs.DirEntry) error) error {
 	return fs.WalkDir(root.FS(), ".", func(name string, d fs.DirEntry, err error) error {
 		select {
 		case <-ctx.Done():
@@ -967,6 +967,12 @@ func walkObjects(ctx context.Context, root *os.Root, fn func(name string, d fs.D
 		}
 
 		if d.IsDir() || strings.HasSuffix(name, metadataSuffix) || strings.HasPrefix(d.Name(), tmpFilePrefix) {
+			return nil
+		}
+
+		// A name Get, Put and Delete refuse (a reserved policy file, the
+		// store's custom lifecycle policy file) is never listed either.
+		if l.validateKey(filepath.ToSlash(name)) != nil {
 			return nil
 		}
 

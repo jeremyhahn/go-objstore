@@ -764,7 +764,7 @@ func TestWalkObjects_SkipsOnlyTheRootStagingDirectory(t *testing.T) {
 		}
 	}
 	var seen []string
-	err := walkObjects(context.Background(), openTestRoot(t, dir), func(p string, _ fs.DirEntry) error {
+	err := (&Local{}).walkObjects(context.Background(), openTestRoot(t, dir), func(p string, _ fs.DirEntry) error {
 		seen = append(seen, filepath.ToSlash(p))
 		return nil
 	})
