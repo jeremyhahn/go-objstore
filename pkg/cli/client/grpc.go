@@ -123,19 +123,36 @@ const putStreamChunkSize = 1<<20 - 1<<10
 func sendPutChunks(reader io.Reader, send func([]byte) error) error {
 	for {
 		buf := make([]byte, putStreamChunkSize)
-		n, rerr := io.ReadFull(reader, buf)
+		n, rerr := fillPutChunk(reader, buf)
+		if rerr != nil && rerr != io.EOF { // io.Reader returns io.EOF itself, unwrapped
+			// The caller cancels the stream, so the server stores nothing.
+			return fmt.Errorf("read object data: %w", rerr)
+		}
 		if n > 0 {
 			if err := send(buf[:n]); err != nil {
 				return err
 			}
 		}
-		if errors.Is(rerr, io.EOF) || errors.Is(rerr, io.ErrUnexpectedEOF) {
+		if rerr != nil {
 			return nil
 		}
-		if rerr != nil {
-			return fmt.Errorf("read object data: %w", rerr)
+	}
+}
+
+// fillPutChunk reads from r until buf is full or r returns an error. Only
+// io.EOF ends the data: it is returned with the bytes read before it. Any
+// other error, io.ErrUnexpectedEOF from the source included, is returned
+// as is, so the put is aborted instead of storing a short object.
+func fillPutChunk(r io.Reader, buf []byte) (int, error) {
+	n := 0
+	for n < len(buf) {
+		m, err := r.Read(buf[n:])
+		n += m
+		if err != nil {
+			return n, err
 		}
 	}
+	return n, nil
 }
 
 // putUnary stores the object with the unary Put RPC, for a server that has

@@ -796,7 +796,11 @@ func (c *GRPCClient) PutStream(ctx context.Context, key string, r io.Reader, siz
 
 	for {
 		buf := make([]byte, grpcPutChunkSize) // gRPC forbids reusing a sent message
-		n, rerr := io.ReadFull(r, buf)
+		n, rerr := fillChunk(r, buf)
+		if rerr != nil && rerr != io.EOF {
+			// Returning cancels the stream, so the server stores nothing.
+			return nil, fmt.Errorf("read stream: %w", rerr)
+		}
 		if n > 0 {
 			if err := stream.Send(&objstorepb.PutStreamRequest{
 				Payload: &objstorepb.PutStreamRequest_Chunk{Chunk: buf[:n]},
@@ -810,11 +814,8 @@ func (c *GRPCClient) PutStream(ctx context.Context, key string, r io.Reader, siz
 				return nil, wrapGRPCError("put operation failed", err)
 			}
 		}
-		if rerr == io.EOF || rerr == io.ErrUnexpectedEOF {
+		if rerr == io.EOF {
 			break
-		}
-		if rerr != nil {
-			return nil, fmt.Errorf("read stream: %w", rerr)
 		}
 	}
 
@@ -827,6 +828,22 @@ func (c *GRPCClient) PutStream(ctx context.Context, key string, r io.Reader, siz
 		Message: resp.Message,
 		ETag:    resp.Etag,
 	}, nil
+}
+
+// fillChunk reads from r until buf is full or r returns an error. Only
+// io.EOF ends the data: it is returned with the bytes read before it. Any
+// other error, io.ErrUnexpectedEOF from the source included, is returned
+// as is, so the caller aborts the put instead of storing a short object.
+func fillChunk(r io.Reader, buf []byte) (int, error) {
+	n := 0
+	for n < len(buf) {
+		m, err := r.Read(buf[n:])
+		n += m
+		if err != nil {
+			return n, err
+		}
+	}
+	return n, nil
 }
 
 // Close closes the gRPC connection.  Idempotent: subsequent calls return nil.
