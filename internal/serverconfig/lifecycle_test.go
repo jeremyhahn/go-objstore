@@ -130,6 +130,50 @@ func TestConfig_StorageSettings(t *testing.T) {
 	}
 }
 
+// TestLifecycleFlags_EveryBinary proves each server binary accepts the
+// -lifecycle-* flags and that StorageSettings hands them to the backend, so
+// a single-transport server runs lifecycle policies as objstore-server does.
+func TestLifecycleFlags_EveryBinary(t *testing.T) {
+	cases := []struct {
+		binary   string
+		defaults Config
+		bind     BindFunc
+	}{
+		{"objstore-server", Defaults(), BindServerFlags},
+		{"objstore-grpc-server", Defaults(), BindGRPCServerFlags},
+		{"objstore-rest-server", RESTServerDefaults(), BindRESTServerFlags},
+		{"objstore-quic-server", QUICServerDefaults(), BindQUICServerFlags},
+		{"objstore-mcp-server", Defaults(), BindMCPServerFlags},
+	}
+	args := []string{
+		"-backend", "local",
+		"-lifecycle-run=false",
+		"-lifecycle-manager", "memory",
+		"-lifecycle-policy-file", "rules/life.json",
+		"-lifecycle-interval", "90s",
+	}
+	for _, c := range cases {
+		t.Run(c.binary, func(t *testing.T) {
+			cfg := mustLoad(t, args, c.defaults, c.bind)
+			want := LifecycleConfig{Run: false, Manager: "memory", PolicyFile: "rules/life.json", Interval: 90 * time.Second}
+			if cfg.Lifecycle != want {
+				t.Fatalf("Lifecycle = %+v, want %+v", cfg.Lifecycle, want)
+			}
+			got := cfg.StorageSettings()
+			wantSettings := map[string]string{
+				"path":                 cfg.Path,
+				"lifecycleManagerType": "memory",
+				"lifecyclePolicyFile":  "rules/life.json",
+				"lifecycleInterval":    "1m30s",
+				"runLifecycle":         "false",
+			}
+			if !reflect.DeepEqual(got, wantSettings) {
+				t.Fatalf("StorageSettings() = %v, want %v", got, wantSettings)
+			}
+		})
+	}
+}
+
 // Two spellings of one policy file reserve the same key, and a path that
 // leaves the storage path is refused (#224).
 func TestConfig_PolicyFileCanonical(t *testing.T) {
