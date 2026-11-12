@@ -128,6 +128,8 @@ type repoFlags struct {
 	repo      string
 	passFile  string
 	passStdin bool
+	// keyProvider names the keyseam provider that unwraps the data key.
+	keyProvider string
 }
 
 func (r *repoFlags) register(fs *flag.FlagSet) {
@@ -135,6 +137,8 @@ func (r *repoFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&r.passFile, "passphrase-file", "",
 		"file holding the repository passphrase: a regular file with no group or other permissions")
 	fs.BoolVar(&r.passStdin, "passphrase-stdin", false, "read the repository passphrase from standard input")
+	fs.StringVar(&r.keyProvider, "key-provider", keyseam.PassphraseName,
+		"key provider that wraps and unwraps the data key: "+strings.Join(keyseam.Providers(), ", "))
 }
 
 func (r *repoFlags) check() error {
@@ -144,38 +148,57 @@ func (r *repoFlags) check() error {
 	case r.passFile == "" && !r.passStdin:
 		return errors.New("a passphrase is required: --passphrase-file or --passphrase-stdin")
 	}
-	return nil
+	return keyseam.CheckProvider(r.providerName())
 }
 
 // provider reads the passphrase into locked memory and returns a provider
 // that owns it. The buffer the passphrase was read into is cleared before
 // provider returns.
-func (r *repoFlags) provider(stdin io.Reader, iterations int) (*keyseam.PassphraseProvider, error) {
+func (r *repoFlags) provider(stdin io.Reader, iterations int) (keyseam.ProviderCloser, error) {
+	h, err := lockSecret(stdin, r.passFile, r.passStdin, "passphrase")
+	if err != nil {
+		return nil, err
+	}
+	p, err := keyseam.NewProvider(r.providerName(), keyseam.ProviderConfig{Secret: h, Iterations: iterations})
+	if err != nil {
+		return nil, errors.Join(err, h.Destroy())
+	}
+	return p, nil
+}
+
+// providerName is the --key-provider name, the passphrase provider by
+// default (and for the service, whose config names none).
+func (r *repoFlags) providerName() string {
+	if r.keyProvider == "" {
+		return keyseam.PassphraseName
+	}
+	return r.keyProvider
+}
+
+// lockSecret reads a secret named what from standard input or from file
+// and moves it into go-enclave locked memory; the read buffer is cleared.
+func lockSecret(stdin io.Reader, file string, fromStdin bool, what string) (enclave.ByteAccess, error) {
 	var (
 		buf []byte
 		err error
 	)
-	if r.passStdin {
+	if fromStdin {
 		buf, err = readSecret(stdin)
 		if err != nil {
-			return nil, &secretError{what: "passphrase", source: "from standard input", err: err}
+			return nil, &secretError{what: what, source: "from standard input", err: err}
 		}
 	} else {
-		buf, err = readSecretFile(r.passFile)
+		buf, err = readSecretFile(file)
 		if err != nil {
-			return nil, &secretError{what: "passphrase file", source: r.passFile, err: err}
+			return nil, &secretError{what: what + " file", source: file, err: err}
 		}
 	}
 	defer clear(buf)
 	h, err := enclave.NewMemory(buf)
 	if err != nil {
-		return nil, fmt.Errorf("lock the passphrase in memory: %w", err)
+		return nil, &secretError{what: what, source: "in locked memory", err: err}
 	}
-	p, err := keyseam.NewPassphraseProvider(h, iterations)
-	if err != nil {
-		return nil, errors.Join(err, h.Destroy())
-	}
-	return p, nil
+	return h, nil
 }
 
 // newFlags returns a flag set that reports nothing itself: parse does.

@@ -30,6 +30,10 @@ var (
 	// ErrIterations reports a PBKDF2 iteration count below MinIterations or
 	// above MaxIterations.
 	ErrIterations = errors.New("keyseam: PBKDF2 iteration count out of bounds")
+	// ErrUnknownProvider means no provider is registered under the name.
+	ErrUnknownProvider = errors.New("keyseam: unknown key provider")
+	// ErrProviderRegistered means a provider name is already taken.
+	ErrProviderRegistered = errors.New("keyseam: key provider already registered")
 )
 
 // Error is the error every operation in this package returns. Err is one of the
