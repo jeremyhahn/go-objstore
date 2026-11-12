@@ -334,17 +334,31 @@ func TestS3_Put_AutoMultipart_Failures(t *testing.T) {
 		})
 	}
 
-	// A canceled context still aborts the upload it made.
+	// A context canceled mid-upload still aborts the upload it made, on a
+	// context of its own that is live and bounded.
 	r := newClassRecorder()
 	s := &S3{svc: r, bucket: "bucket-one", multipartThreshold: 1, partSize: common.MinPartSize}
 	cctx, cancel := context.WithCancel(ctx)
-	r.errs["UploadPart"] = context.Canceled
+	defer cancel()
+	r.onUploadPart = func(context.Context) { cancel() }
+	var abortErr error
+	var abortHasDeadline bool
+	r.onAbort = func(actx context.Context) error {
+		abortErr = actx.Err()
+		_, abortHasDeadline = actx.Deadline()
+		return nil
+	}
 	if err := s.PutWithMetadata(cctx, "big", bytes.NewReader(data), nil); !errors.Is(err, context.Canceled) {
 		t.Errorf("canceled = %v", err)
 	}
-	cancel()
-	if r.aborts != 1 || len(r.buckets["bucket-one"].uploads) != 0 {
-		t.Errorf("aborts = %d, open = %d", r.aborts, len(r.buckets["bucket-one"].uploads))
+	if r.aborts != 1 {
+		t.Errorf("aborts = %d, want 1", r.aborts)
+	}
+	if abortErr != nil || !abortHasDeadline {
+		t.Errorf("abort context: err = %v, deadline = %v; want live and bounded", abortErr, abortHasDeadline)
+	}
+	if n := len(r.buckets["bucket-one"].uploads); n != 0 {
+		t.Errorf("%d uploads left open after cancel", n)
 	}
 
 	// An object over the S3 maximum is refused before anything is sent.
