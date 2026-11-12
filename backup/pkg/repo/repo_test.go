@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -143,7 +144,7 @@ func TestInitOpen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	if o.Config() != cfg {
+	if !reflect.DeepEqual(o.Config(), cfg) {
 		t.Fatalf("opened config %+v, want %+v", o.Config(), cfg)
 	}
 	a, _ := r.ChunkID([]byte("same"))
@@ -198,6 +199,127 @@ func TestOpenPassesOverOtherKeys(t *testing.T) {
 	}
 	_, err = Open(ctx, st, testPrefix, passphrase(t, "correct horse"))
 	assertRepoError(t, err, ErrNoKey, seal.ErrOpen)
+}
+
+func TestKeySlots(t *testing.T) {
+	ctx := context.Background()
+	r, st := newRepo(t)
+	if got := r.Config(); got.Version != formatVersion || len(got.Keys) != 1 || got.Keys[0] != r.Slot() {
+		t.Fatalf("Init config = %+v, slot %s", got, r.Slot())
+	}
+	// Data sealed under the data key before any key change.
+	data := []byte("snapshot data")
+	sealedData, err := r.keys.Seal(seal.TypeConfig, []byte("old"), seal.CompressionNone, data)
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+	first := r.Slot()
+
+	// Two keys: either opens.
+	added, err := r.AddKey(ctx, passphrase(t, "second key"))
+	if err != nil {
+		t.Fatalf("AddKey: %v", err)
+	}
+	for _, pass := range []string{"correct horse", "second key"} {
+		o, err := Open(ctx, st, testPrefix, passphrase(t, pass))
+		if err != nil {
+			t.Fatalf("Open %q: %v", pass, err)
+		}
+		if keys, _ := o.Keys(ctx); len(keys) != 2 || o.Config().Generation != 1 {
+			t.Fatalf("keys = %v, generation %d", keys, o.Config().Generation)
+		}
+		_ = o.Close()
+	}
+
+	// Remove the added key: it no longer opens, though its object stays.
+	if err := r.RemoveKey(ctx, added); err != nil {
+		t.Fatalf("RemoveKey: %v", err)
+	}
+	if ok, _ := st.Exists(ctx, r.layout.Name(KindKey, added)); !ok {
+		t.Fatal("RemoveKey deleted the key object")
+	}
+	_, err = Open(ctx, st, testPrefix, passphrase(t, "second key"))
+	assertRepoError(t, err, ErrNoKey, ErrKeyRemoved)
+	assertRepoError(t, r.RemoveKey(ctx, added), ErrUnknownKey)
+
+	// The last key cannot go.
+	assertRepoError(t, r.RemoveKey(ctx, first), ErrLastKey)
+
+	// A key change: the new passphrase opens, the old is refused, and the
+	// data sealed before still opens.
+	newID, err := r.ChangeKey(ctx, passphrase(t, "new horse"))
+	if err != nil {
+		t.Fatalf("ChangeKey: %v", err)
+	}
+	if r.Slot() != newID {
+		t.Fatalf("slot = %s, want %s", r.Slot(), newID)
+	}
+	_, err = Open(ctx, st, testPrefix, passphrase(t, "correct horse"))
+	assertRepoError(t, err, ErrNoKey, ErrKeyRemoved)
+	o, err := Open(ctx, st, testPrefix, passphrase(t, "new horse"))
+	if err != nil {
+		t.Fatalf("Open new: %v", err)
+	}
+	defer func() { _ = o.Close() }()
+	got, err := o.keys.Open(seal.TypeConfig, []byte("old"), sealedData)
+	if err != nil || string(got) != string(data) {
+		t.Fatalf("Get = %q, %v", got, err)
+	}
+	if keys, _ := o.Keys(ctx); len(keys) != 1 || keys[0] != newID {
+		t.Fatalf("keys = %v", keys)
+	}
+
+	// A stale handle writing a generation that exists is a conflict.
+	r.cfg.Generation = 0
+	_, err = r.AddKey(ctx, passphrase(t, "late"))
+	assertRepoError(t, err, ErrKeyConflict)
+}
+
+func TestFormat1Upgrade(t *testing.T) {
+	ctx := context.Background()
+	r, st := newRepo(t)
+	// Rewrite the config as the format before key slots wrote it.
+	v1 := r.Config()
+	v1.Version = formatVersionV1
+	v1.Keys = nil
+	plain, _ := json.Marshal(v1)
+	sealed, err := r.keys.Seal(seal.TypeConfig, configID, seal.CompressionNone, plain)
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+	st.Replace(testPrefix+"/config", sealed)
+
+	o, err := Open(ctx, st, testPrefix, passphrase(t, "correct horse"))
+	if err != nil {
+		t.Fatalf("Open format 1: %v", err)
+	}
+	if o.Config().Version != formatVersionV1 {
+		t.Fatalf("version = %d", o.Config().Version)
+	}
+	keys, err := o.Keys(ctx)
+	if err != nil || len(keys) != 1 || keys[0] != o.Slot() {
+		t.Fatalf("Keys = %v, %v", keys, err)
+	}
+	if _, err := o.AddKey(ctx, passphrase(t, "second key")); err != nil {
+		t.Fatalf("AddKey: %v", err)
+	}
+	_ = o.Close()
+
+	// The first key change upgraded the repository to format 2.
+	u, err := Open(ctx, st, testPrefix, passphrase(t, "second key"))
+	if err != nil {
+		t.Fatalf("Open upgraded: %v", err)
+	}
+	defer func() { _ = u.Close() }()
+	if c := u.Config(); c.Version != formatVersion || c.Generation != 1 || len(c.Keys) != 2 {
+		t.Fatalf("upgraded config = %+v", c)
+	}
+
+	// A generation whose name does not match its content is corrupt.
+	gen, _ := st.Get(ctx, testPrefix+"/keyring/0000000000000001")
+	st.Replace(testPrefix+"/keyring/0000000000000002", gen)
+	_, err = Open(ctx, st, testPrefix, passphrase(t, "second key"))
+	assertRepoError(t, err, ErrCorrupt)
 }
 
 func keyNames(t *testing.T, st store.Store) []string {
