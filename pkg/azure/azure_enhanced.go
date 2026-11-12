@@ -47,7 +47,22 @@ func (a *Azure) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 		return err
 	}
 	blob := a.container.NewBlockBlob(key)
-	return blob.UploadFromReader(ctx, data)
+	if err := blob.UploadFromReader(ctx, data); err != nil {
+		return err
+	}
+	if !common.HasMetadataFields(metadata) {
+		return nil
+	}
+	// The upload interface cannot carry blob metadata, so it is applied right
+	// after the upload. A blob that cannot get its metadata is removed: an
+	// archived copy without its encryption metadata cannot be decrypted (#243).
+	if err := a.UpdateMetadata(ctx, key, metadata); err != nil {
+		if delErr := blob.Delete(ctx); delErr != nil {
+			return errors.Join(err, fmt.Errorf("remove %s without its metadata: %w", key, delErr))
+		}
+		return err
+	}
+	return nil
 }
 
 // GetWithContext retrieves an object from the backend with context support.

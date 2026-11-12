@@ -77,6 +77,43 @@ func TestGCS_PutWithMetadata(t *testing.T) {
 	}
 }
 
+// An archived copy keeps its encryption metadata (#243): PutWithMetadata
+// stores the custom keys and content headers it is given.
+func TestGCS_PutWithMetadata_StoresMetadata(t *testing.T) {
+	fc := fakeClient{b: fakeBucket{objs: map[string]*fakeObj{}}}
+	g := &GCS{client: fc, bucket: "test-bucket"}
+	md := &common.Metadata{
+		ContentType: "application/octet-stream",
+		Custom:      map[string]string{"encryption_key_id": "k1", "encryption_algorithm": "AES-256-GCM"},
+	}
+	if err := g.PutWithMetadata(context.Background(), "key", bytes.NewReader([]byte("ct")), md); err != nil {
+		t.Fatalf("PutWithMetadata: %v", err)
+	}
+	up := fc.b.objs["key"].updated
+	if up == nil {
+		t.Fatal("metadata was not stored")
+	}
+	if up.Metadata["encryption_key_id"] != "k1" || up.Metadata["encryption_algorithm"] != "AES-256-GCM" {
+		t.Fatalf("stored metadata = %v", up.Metadata)
+	}
+	if up.ContentType != "application/octet-stream" {
+		t.Fatalf("stored content type = %v", up.ContentType)
+	}
+}
+
+// A copy whose metadata cannot be stored is removed and the error returned.
+func TestGCS_PutWithMetadata_UpdateErrorRemovesObject(t *testing.T) {
+	fc := fakeClient{b: fakeBucket{objs: map[string]*fakeObj{"key": {updateErr: true}}}}
+	g := &GCS{client: fc, bucket: "test-bucket"}
+	md := &common.Metadata{Custom: map[string]string{"encryption_key_id": "k1"}}
+	if err := g.PutWithMetadata(context.Background(), "key", bytes.NewReader([]byte("ct")), md); err == nil {
+		t.Fatal("expected an error when the metadata cannot be stored")
+	}
+	if fc.b.objs["key"].data != nil {
+		t.Fatal("object without its metadata was left behind")
+	}
+}
+
 func TestGCS_PutWithMetadata_NilMetadata(t *testing.T) {
 	fc := fakeClient{b: fakeBucket{objs: map[string]*fakeObj{}}}
 	g := &GCS{client: fc, bucket: "test-bucket"}

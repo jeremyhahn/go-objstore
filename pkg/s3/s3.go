@@ -18,6 +18,7 @@
 package s3
 
 import (
+	"context"
 	"io"
 	"strings"
 	"sync"
@@ -214,13 +215,31 @@ func (s *S3) List(prefix string) ([]string, error) {
 
 // Archive copies an object to another backend for archival.
 func (s *S3) Archive(key string, destination common.Archiver) error {
-	rc, err := s.Get(key)
-	if err != nil {
+	if destination == nil {
+		return common.ErrArchiveDestinationNil
+	}
+	if err := common.ValidateKey(key); err != nil {
 		return err
 	}
-	defer func() { _ = rc.Close() }()
+	// The archived copy keeps the object's client-side encryption metadata
+	// (or the archive is refused when the destination cannot store it). The
+	// ciphertext and its metadata come from one GetObject, so they belong to
+	// the same object version even when the key is overwritten meanwhile:
+	// a separate HeadObject could pair the bytes with another version's
+	// encryption key ID (#243).
+	ctx := context.TODO()
+	result, err := s.svc.GetObjectWithContext(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return objectError(err, key)
+	}
+	defer func() { _ = result.Body.Close() }()
+	md := objectMetadata(result.ContentLength, result.LastModified, result.ETag,
+		result.ContentType, result.ContentEncoding, result.Metadata)
 
-	return destination.Put(key, rc)
+	return common.ArchiveCopy(ctx, key, result.Body, md, destination)
 }
 
 // AddPolicy adds a new lifecycle policy by configuring S3 bucket lifecycle rules.

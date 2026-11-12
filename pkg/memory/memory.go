@@ -416,13 +416,21 @@ func (m *Memory) Archive(key string, destination common.Archiver) error {
 		return common.ErrArchiveDestinationNil
 	}
 
+	// The archived copy keeps the object's client-side encryption metadata
+	// (or the archive is refused when the destination cannot store it).
+	ctx := context.TODO()
+	md, err := m.GetMetadata(ctx, key)
+	if err != nil {
+		return err
+	}
+
 	reader, err := m.Get(key)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = reader.Close() }()
 
-	return destination.Put(key, reader)
+	return common.ArchiveCopy(ctx, key, reader, md, destination)
 }
 
 // AddPolicy adds a new lifecycle policy.

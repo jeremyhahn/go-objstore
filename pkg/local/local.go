@@ -63,6 +63,10 @@ type Local struct {
 	// root itself is safe for concurrent use.
 	rootMu sync.Mutex
 	root   *os.Root
+
+	// keyLocks keeps a key's data and its at-rest metadata from two writers
+	// apart (see keyLocks).
+	keyLocks keyLocks
 }
 
 // fsRoot returns the store's root, opening it on first use for a Local built
@@ -347,6 +351,11 @@ func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 		dataToWrite = encryptedData
 	}
 
+	// Hold the key from the data write until its metadata is saved, so a
+	// concurrent put or UpdateMetadata cannot pair these bytes with another
+	// write's at-rest key ID (#243).
+	defer l.keyLocks.lock(name)()
+
 	var size int64
 	if err := writeObjectAtomic(root, &l.pruneMu, name, 0644, func(w io.Writer) error {
 		n, werr := io.Copy(w, dataToWrite)
@@ -450,10 +459,17 @@ func (l *Local) GetWithContext(ctx context.Context, key string) (io.ReadCloser, 
 	// Get at-rest encrypter if factory is set
 	var encrypter common.Encrypter
 	if l.atRestEncrypterFactory != nil {
-		var err error
-		encrypter, err = l.atRestEncrypterFactory.GetEncrypter("")
+		keyID, err := l.atRestKeyID(key)
 		if err != nil {
 			_ = file.Close()
+			return nil, err
+		}
+		encrypter, err = l.atRestEncrypterFactory.GetEncrypter(keyID)
+		if err != nil {
+			_ = file.Close()
+			if keyID != "" {
+				return nil, fmt.Errorf("failed to get at-rest encrypter for key id %q: %w", keyID, err)
+			}
 			return nil, fmt.Errorf("failed to get encrypter: %w", err)
 		}
 	}
@@ -489,6 +505,24 @@ func (l *Local) GetWithContext(ctx context.Context, key string) (io.ReadCloser, 
 	return file, nil
 }
 
+// atRestKeyID returns the at-rest encryption key id recorded for key when it
+// was written, or "" (the factory's default key) when the object has no
+// metadata or the metadata records no key id. Any other metadata error is
+// returned, so a read never silently decrypts with the wrong key.
+func (l *Local) atRestKeyID(key string) (string, error) {
+	md, err := l.loadMetadata(key)
+	if err != nil {
+		if errors.Is(err, common.ErrMetadataNotFound) {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to load metadata for at-rest key id: %w", err)
+	}
+	if md.Custom == nil {
+		return "", nil
+	}
+	return md.Custom["at_rest_encryption_key_id"], nil
+}
+
 // GetMetadata retrieves only the metadata for an object.
 func (l *Local) GetMetadata(ctx context.Context, key string) (*common.Metadata, error) {
 	if err := l.validateKey(key); err != nil {
@@ -521,6 +555,9 @@ func (l *Local) UpdateMetadata(ctx context.Context, key string, metadata *common
 	if err != nil {
 		return err
 	}
+	// Hold the key from reading the stored at-rest fields until the save, so
+	// a put in between cannot have its key ID replaced by the old one (#243).
+	defer l.keyLocks.lock(rootName(key))()
 	info, err := root.Stat(rootName(key))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -529,15 +566,62 @@ func (l *Local) UpdateMetadata(ctx context.Context, key string, metadata *common
 		return err
 	}
 
-	// Update size and last modified from file
-	if metadata == nil {
-		metadata = &common.Metadata{}
+	metadata, err = l.keepAtRestFields(key, metadata)
+	if err != nil {
+		return err
 	}
+
+	// Update size and last modified from file
 	metadata.Size = info.Size()
 	metadata.LastModified = time.Now()
 	metadata.ETag = fmt.Sprintf("%d-%d", info.ModTime().Unix(), info.Size())
 
 	return l.saveMetadata(key, metadata)
+}
+
+// keepAtRestFields returns a copy of metadata (an empty one when it is nil)
+// whose "at_rest_encryption_*" entries are those of the stored sidecar:
+// UpdateMetadata replaces the whole sidecar, so without this an update would
+// drop at_rest_encryption_key_id, and the object would no longer decrypt once
+// the default key changes. Caller supplied "at_rest_encryption_*" entries are
+// ignored, matched case-insensitively, so a caller cannot redirect decryption
+// to another key. An object without a sidecar keeps none. The caller's
+// metadata is not modified.
+func (l *Local) keepAtRestFields(key string, metadata *common.Metadata) (*common.Metadata, error) {
+	updated := &common.Metadata{}
+	if metadata != nil {
+		*updated = *metadata
+	}
+	custom := make(map[string]string, len(updated.Custom))
+	for k, v := range updated.Custom {
+		if !isAtRestField(k) {
+			custom[k] = v
+		}
+	}
+
+	stored, err := l.loadMetadata(key)
+	if err != nil && !errors.Is(err, common.ErrMetadataNotFound) {
+		return nil, fmt.Errorf("failed to load metadata for at-rest fields: %w", err)
+	}
+	if stored != nil {
+		for k, v := range stored.Custom {
+			if isAtRestField(k) {
+				custom[k] = v
+			}
+		}
+	}
+
+	updated.Custom = nil
+	if len(custom) > 0 {
+		updated.Custom = custom
+	}
+	return updated, nil
+}
+
+// isAtRestField reports whether a custom metadata key is owned by the at-rest
+// encryption of the local backend.
+func isAtRestField(k string) bool {
+	return strings.HasPrefix(strings.ToLower(k), "at_rest_encryption_")
 }
 
 // Delete removes an object from the backend.
@@ -848,12 +932,18 @@ func (l *Local) Archive(key string, destination common.Archiver) error {
 	if destination == nil {
 		return common.ErrArchiveDestinationNil
 	}
+	// The archived copy keeps the object's client-side encryption metadata
+	// (or the archive is refused when the destination cannot store it).
+	md, err := l.loadMetadata(key)
+	if err != nil && !errors.Is(err, common.ErrMetadataNotFound) {
+		return err
+	}
 	r, err := l.Get(key)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = r.Close() }()
-	return destination.Put(key, r)
+	return common.ArchiveCopy(context.TODO(), key, r, md, destination)
 }
 
 // AddPolicy adds a new lifecycle policy.

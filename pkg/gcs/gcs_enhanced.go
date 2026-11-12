@@ -37,14 +37,31 @@ func (g *GCS) PutWithMetadata(ctx context.Context, key string, data io.Reader, m
 	if err := common.ValidateKey(key); err != nil {
 		return err
 	}
-	w := g.client.Bucket(g.bucket).Object(key).NewWriter(ctx)
+	obj := g.client.Bucket(g.bucket).Object(key)
+	w := obj.NewWriter(ctx)
 	if _, err := io.Copy(w, data); err != nil {
 		// Close to release the GCS write stream; ignore close error.
 		_ = w.Close()
 		return err
 	}
 	// Close finalizes the GCS upload; capture its error.
-	return w.Close()
+	if err := w.Close(); err != nil {
+		return err
+	}
+	if !common.HasMetadataFields(metadata) {
+		return nil
+	}
+	// The writer interface cannot carry object attributes, so the metadata
+	// is applied right after the upload. An object that cannot get its
+	// metadata is removed: an archived copy without its encryption metadata
+	// cannot be decrypted (#243).
+	if err := g.UpdateMetadata(ctx, key, metadata); err != nil {
+		if delErr := obj.Delete(ctx); delErr != nil {
+			return errors.Join(err, fmt.Errorf("remove %s without its metadata: %w", key, delErr))
+		}
+		return err
+	}
+	return nil
 }
 
 // GetWithContext retrieves an object from the backend with context support.
@@ -68,19 +85,37 @@ func (g *GCS) GetMetadata(ctx context.Context, key string) (*common.Metadata, er
 	if err := common.ValidateKey(key); err != nil {
 		return nil, err
 	}
-	meta := &common.Metadata{}
+	meta, err := g.attrsMetadata(ctx, key)
+	if errors.Is(err, storage.ErrObjectNotExist) {
+		return nil, err
+	}
+	if err != nil {
+		// Return the empty struct rather than nil so callers never dereference nil.
+		return &common.Metadata{}, nil
+	}
+	return meta, nil
+}
+
+// attrsMetadata is GetMetadata without the fallback to empty metadata when
+// the attributes cannot be read: Archive must know whether the object
+// carries client-side encryption metadata (#243).
+func (g *GCS) attrsMetadata(ctx context.Context, key string) (*common.Metadata, error) {
+	if err := common.ValidateKey(key); err != nil {
+		return nil, err
+	}
 	obj := g.client.Bucket(g.bucket).Object(key)
 	attrs, err := obj.Attrs(ctx)
 	if errors.Is(err, storage.ErrObjectNotExist) {
 		return nil, objectError(err, key)
 	}
 	if err != nil {
-		// Return the empty struct rather than nil so callers never dereference nil.
-		return meta, nil
+		return nil, fmt.Errorf("failed to read object attributes for %s: %w", key, err)
 	}
-	meta.Size = attrs.Size
-	meta.ContentType = attrs.ContentType
-	meta.ContentEncoding = attrs.ContentEncoding
+	meta := &common.Metadata{
+		Size:            attrs.Size,
+		ContentType:     attrs.ContentType,
+		ContentEncoding: attrs.ContentEncoding,
+	}
 	if len(attrs.Metadata) > 0 {
 		meta.Custom = make(map[string]string, len(attrs.Metadata))
 		for k, v := range attrs.Metadata {
