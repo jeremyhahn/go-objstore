@@ -58,3 +58,29 @@ func TestRegistry(t *testing.T) {
 		t.Fatalf("registered factory: called %v, %v", called, err)
 	}
 }
+
+func TestCheckProvider(t *testing.T) {
+	tests := []struct {
+		name string
+		want error
+	}{
+		{PassphraseName, nil},
+		{"no-such-provider", ErrUnknownProvider},
+		{"", ErrUnknownProvider},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := CheckProvider(tt.name)
+			if tt.want == nil {
+				if err != nil {
+					t.Fatalf("CheckProvider(%q) = %v", tt.name, err)
+				}
+				return
+			}
+			var e *Error
+			if !errors.As(err, &e) || !errors.Is(err, tt.want) {
+				t.Fatalf("CheckProvider(%q) = %v, want %v", tt.name, err, tt.want)
+			}
+		})
+	}
+}
