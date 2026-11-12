@@ -91,6 +91,7 @@ table notes one.
 | `auth.roles` | file only | — | — | — |
 | `auth.identities` | file only | — | — | — |
 | `replication.allow_client_local_backends` | `OBJSTORE_REPLICATION_ALLOW_CLIENT_LOCAL_BACKENDS` | `false` | `-replication-allow-client-local-backends` | `-replication-allow-client-local-backends` (all) |
+| `replication.interval` | `OBJSTORE_REPLICATION_INTERVAL` | `0` (trigger only) | `-replication-interval` | `-replication-interval` (all) |
 
 `tls_cert` and `tls_key` are set together or not at all, on every listener.
 On REST and MCP HTTP they serve TLS; without `auth` the listener asks for no
@@ -123,6 +124,19 @@ replication policy file that already holds one fails to load, with an error
 naming the policy ID. Set `replication.allow_client_local_backends: true` only
 when every client that may add a policy is trusted with the service user's
 filesystem access.
+
+Replication runs only when triggered (the trigger call on each transport)
+unless `replication.interval` is set to a positive duration such as `15m`: the
+server then syncs every enabled policy in the background at that interval, and
+`objstore-server` stops the schedule when it shuts down. `0` or empty keeps
+replication trigger-only; a negative interval refuses to start. Each copy
+records the source object's ETag and size in its custom metadata
+(`replication_source_etag`, `replication_source_size`), and a later sync skips
+an object whose source ETag and size still match that record, so a sync with
+no changes copies nothing even between backends whose ETags differ (local and
+S3). A destination object without the record is compared as before (ETag, size,
+modification time). A full sync does not copy deletes: an object deleted at the
+source stays at the destination.
 
 `objstore-server` applies the QUIC body-size, timeout and stream-limit keys too;
 they have no flag on that binary but are set through the file or environment.

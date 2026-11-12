@@ -94,20 +94,27 @@ func (m *Memory) validateKey(key string) error {
 
 // PutWithMetadata stores an object with associated metadata.
 func (m *Memory) PutWithMetadata(ctx context.Context, key string, data io.Reader, metadata *common.Metadata) error {
+	_, err := m.PutWithMetadataResult(ctx, key, data, metadata)
+	return err
+}
+
+// PutWithMetadataResult stores data and metadata like PutWithMetadata and
+// returns the stored object's ETag and size (common.IdentityPutter).
+func (m *Memory) PutWithMetadataResult(ctx context.Context, key string, data io.Reader, metadata *common.Metadata) (*common.Metadata, error) {
 	if err := m.validateKey(key); err != nil {
-		return err
+		return nil, err
 	}
 
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return nil, ctx.Err()
 	default:
 	}
 
 	// Read all data from the reader
 	dataBytes, err := io.ReadAll(data)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Create or update metadata
@@ -117,6 +124,7 @@ func (m *Memory) PutWithMetadata(ctx context.Context, key string, data io.Reader
 	metadata.Size = int64(len(dataBytes))
 	metadata.LastModified = time.Now()
 	metadata.ETag = fmt.Sprintf("%d-%d", metadata.LastModified.Unix(), metadata.Size)
+	stored := &common.Metadata{ETag: metadata.ETag, Size: metadata.Size, LastModified: metadata.LastModified}
 
 	m.mu.Lock()
 	m.objects[key] = &object{
@@ -125,7 +133,7 @@ func (m *Memory) PutWithMetadata(ctx context.Context, key string, data io.Reader
 	}
 	m.mu.Unlock()
 
-	return nil
+	return stored, nil
 }
 
 // Get retrieves an object from the backend.

@@ -44,6 +44,20 @@ var (
 type memBlob struct {
 	data                          []byte
 	upErr, rdErr, delErr, propErr error
+	setMetaErr                    error
+	meta                          map[string]string
+	headers                       azblob.BlobHTTPHeaders
+	calls                         []string
+}
+
+func (m *memBlob) UploadWithMetadata(_ context.Context, r io.Reader, md map[string]string, h azblob.BlobHTTPHeaders) error {
+	m.calls = append(m.calls, "uploadWithMetadata")
+	if m.upErr != nil {
+		return m.upErr
+	}
+	b, _ := io.ReadAll(r)
+	m.data, m.meta, m.headers = b, md, h
+	return nil
 }
 
 func (m *memBlob) UploadFromReader(_ context.Context, r io.Reader) error {
@@ -52,6 +66,8 @@ func (m *memBlob) UploadFromReader(_ context.Context, r io.Reader) error {
 	}
 	b, _ := io.ReadAll(r)
 	m.data = b
+	// An upload replaces the blob, its metadata and headers included.
+	m.meta, m.headers = nil, azblob.BlobHTTPHeaders{}
 	return nil
 }
 
@@ -77,20 +93,27 @@ func (m *memBlob) GetProperties(_ context.Context) (*BlobProperties, error) {
 	if m.data == nil {
 		return nil, errTestBlobNotFound
 	}
-	return &BlobProperties{Size: int64(len(m.data))}, nil
+	return &BlobProperties{Size: int64(len(m.data)), Metadata: m.meta,
+		ContentType: m.headers.ContentType, ContentEncoding: m.headers.ContentEncoding}, nil
 }
 
-func (m *memBlob) SetMetadata(_ context.Context, _ map[string]string) error {
+func (m *memBlob) SetMetadata(_ context.Context, md map[string]string) error {
 	if m.data == nil {
 		return errTestBlobNotFound
 	}
+	m.calls = append(m.calls, "setMetadata")
+	if m.setMetaErr != nil {
+		return m.setMetaErr
+	}
+	m.meta = md
 	return nil
 }
 
-func (m *memBlob) SetHTTPHeaders(_ context.Context, _ azblob.BlobHTTPHeaders) error {
+func (m *memBlob) SetHTTPHeaders(_ context.Context, h azblob.BlobHTTPHeaders) error {
 	if m.data == nil {
 		return errTestBlobNotFound
 	}
+	m.headers = h
 	return nil
 }
 

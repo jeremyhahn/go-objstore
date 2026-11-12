@@ -17,9 +17,11 @@ package gcs
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 
@@ -34,17 +36,60 @@ func (g *GCS) PutWithContext(ctx context.Context, key string, data io.Reader) er
 
 // PutWithMetadata stores an object with associated metadata.
 func (g *GCS) PutWithMetadata(ctx context.Context, key string, data io.Reader, metadata *common.Metadata) error {
+	_, err := g.PutWithMetadataResult(ctx, key, data, metadata)
+	return err
+}
+
+// uploadAttrsWriter is a GCS writer that reports, after Close, the attributes of
+// the object its upload created (*storage.Writer does).
+type uploadAttrsWriter interface {
+	Attrs() *storage.ObjectAttrs
+}
+
+// PutWithMetadataResult stores data and metadata like PutWithMetadata and
+// returns the identity of the object the upload created, read from the
+// writer's attributes after Close: its generation (see objectETag), size
+// and update time (common.IdentityPutter). The result is nil when the
+// writer reports no attributes.
+func (g *GCS) PutWithMetadataResult(ctx context.Context, key string, data io.Reader, metadata *common.Metadata) (*common.Metadata, error) {
 	if err := common.ValidateKey(key); err != nil {
-		return err
+		return nil, err
 	}
-	w := g.client.Bucket(g.bucket).Object(key).NewWriter(ctx)
+	obj := g.client.Bucket(g.bucket).Object(key)
+	var w io.WriteCloser
+	if metadata == nil {
+		w = obj.NewWriter(ctx)
+	} else {
+		// One upload carries the data and the metadata, so a replication
+		// fingerprint is never stored apart from the bytes it describes.
+		w = obj.NewWriterWithAttrs(ctx, storage.ObjectAttrs{
+			ContentType:     metadata.ContentType,
+			ContentEncoding: metadata.ContentEncoding,
+			Metadata:        metadata.Custom,
+		})
+	}
 	if _, err := io.Copy(w, data); err != nil {
 		// Close to release the GCS write stream; ignore close error.
 		_ = w.Close()
-		return err
+		return nil, err
 	}
 	// Close finalizes the GCS upload; capture its error.
-	return w.Close()
+	if err := w.Close(); err != nil {
+		return nil, err
+	}
+	aw, ok := w.(uploadAttrsWriter)
+	if !ok {
+		return nil, nil
+	}
+	attrs := aw.Attrs()
+	if attrs == nil {
+		return nil, nil
+	}
+	etag := objectETag(attrs)
+	if etag == "" {
+		return nil, nil
+	}
+	return &common.Metadata{ETag: etag, Size: attrs.Size, LastModified: attrs.Updated}, nil
 }
 
 // GetWithContext retrieves an object from the backend with context support.
@@ -81,6 +126,8 @@ func (g *GCS) GetMetadata(ctx context.Context, key string) (*common.Metadata, er
 	meta.Size = attrs.Size
 	meta.ContentType = attrs.ContentType
 	meta.ContentEncoding = attrs.ContentEncoding
+	meta.ETag = objectETag(attrs)
+	meta.LastModified = attrs.Updated
 	if len(attrs.Metadata) > 0 {
 		meta.Custom = make(map[string]string, len(attrs.Metadata))
 		for k, v := range attrs.Metadata {
@@ -88,6 +135,21 @@ func (g *GCS) GetMetadata(ctx context.Context, key string) (*common.Metadata, er
 		}
 	}
 	return meta, nil
+}
+
+// objectETag is the identity of the object's current content: its
+// generation, which the service changes on every write (a rewrite of the same
+// length included), else the service entity tag, else the MD5 of the data.
+func objectETag(attrs *storage.ObjectAttrs) string {
+	switch {
+	case attrs.Generation != 0:
+		return strconv.FormatInt(attrs.Generation, 10)
+	case attrs.Etag != "":
+		return attrs.Etag
+	case len(attrs.MD5) > 0:
+		return hex.EncodeToString(attrs.MD5)
+	}
+	return ""
 }
 
 // UpdateMetadata updates the metadata for an existing object.

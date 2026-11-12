@@ -15,8 +15,38 @@ package replication
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
+)
+
+// Custom metadata keys SyncObject writes on each destination copy: the ETag,
+// size, precise modification time (Unix nanoseconds) and a digest of the
+// content type, content encoding and user metadata of the source object it
+// was copied from. Lowercase, as S3 returns user metadata keys lowercased.
+// ETags alone are not enough: local and memory ETags are Unix seconds plus
+// size, so a same-size rewrite in the same second keeps its ETag. They are
+// common.ReplicationFingerprintKeys, which do not count toward the
+// user-metadata entry limit.
+const (
+	MetaReplicationSourceETag     = "replication_source_etag"
+	MetaReplicationSourceSize     = "replication_source_size"
+	MetaReplicationSourceModified = "replication_source_modified"
+	MetaReplicationSourceMeta     = "replication_source_meta"
+	// MetaReplicationDestSize binds the record to the copy: the size the
+	// destination reported for it after the write. A destination rewritten
+	// later keeps the custom metadata but not, in general, this size.
+	MetaReplicationDestSize = "replication_dest_size"
+	// MetaReplicationDestETag binds the record to the copy's ETag, so a
+	// same-size rewrite of the destination is seen too. It is recorded only
+	// where the destination keeps an object's ETag across a metadata write
+	// (local, memory, S3 single-part); elsewhere it is absent.
+	MetaReplicationDestETag = "replication_dest_etag"
 )
 
 // ChangeDetector detects changes between source and destination storage backends.
@@ -53,7 +83,15 @@ func (cd *ChangeDetector) DetectChanges(ctx context.Context, prefix string) ([]s
 		for _, obj := range result.Objects {
 			destMeta, err := cd.dest.GetMetadata(ctx, obj.Key)
 			// If error occurs getting dest metadata, assume object doesn't exist or needs sync
-			if err != nil || hasChanged(obj.Metadata, destMeta) {
+			if err != nil {
+				changedKeys = append(changedKeys, obj.Key)
+				continue
+			}
+			srcMeta, err := cd.sourceMetadata(ctx, obj, destMeta)
+			if err != nil {
+				return nil, err
+			}
+			if hasChanged(srcMeta, destMeta) {
 				changedKeys = append(changedKeys, obj.Key)
 			}
 		}
@@ -67,10 +105,52 @@ func (cd *ChangeDetector) DetectChanges(ctx context.Context, prefix string) ([]s
 	return changedKeys, nil
 }
 
+// sourceMetadata is the metadata hasChanged compares for obj. Against a
+// recorded fingerprint it is the source's full metadata, the same call
+// SyncObject records it from: a listing may carry no user metadata and
+// a different modification time. When that call fails the listing's
+// metadata is used.
+func (cd *ChangeDetector) sourceMetadata(ctx context.Context, obj *common.ObjectInfo, dest *common.Metadata) (*common.Metadata, error) {
+	// GCS and Azure listings carry no metadata: the source has to be
+	// looked up whatever the destination holds, and a failed lookup is
+	// reported rather than compared as nothing.
+	if obj.Metadata == nil {
+		md, err := cd.source.GetMetadata(ctx, obj.Key)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get source metadata for %s: %w", obj.Key, err)
+		}
+		if md == nil {
+			md = &common.Metadata{}
+		}
+		return md, nil
+	}
+	if dest == nil || dest.Custom[MetaReplicationSourceETag] == "" {
+		return obj.Metadata, nil
+	}
+	md, err := cd.source.GetMetadata(ctx, obj.Key)
+	if err != nil || md == nil {
+		return obj.Metadata, nil
+	}
+	return md, nil
+}
+
 // hasChanged compares source and destination metadata to determine if sync is needed.
 func hasChanged(src, dest *common.Metadata) bool {
 	if dest == nil {
 		return true // Object doesn't exist at destination
+	}
+
+	// A copy made by SyncObject records the source fingerprint it was made
+	// from. ETags are not comparable across backends (local is mtime-size,
+	// S3 is an MD5), so when the record is there it decides alone. A record
+	// missing any field (an older copy) counts as changed.
+	if recorded, ok := dest.Custom[MetaReplicationSourceETag]; ok && src.ETag != "" {
+		return recorded != src.ETag ||
+			!recordIs(dest, MetaReplicationSourceSize, strconv.FormatInt(src.Size, 10)) ||
+			!recordIs(dest, MetaReplicationSourceModified, modifiedStamp(src)) ||
+			!recordIs(dest, MetaReplicationSourceMeta, metadataDigest(src)) ||
+			!recordIs(dest, MetaReplicationDestSize, strconv.FormatInt(dest.Size, 10)) ||
+			!destETagMatches(dest)
 	}
 
 	// Compare ETags (most reliable)
@@ -89,4 +169,83 @@ func hasChanged(src, dest *common.Metadata) bool {
 	}
 
 	return false
+}
+
+// recordIs reports whether dest records key with value want.
+func recordIs(dest *common.Metadata, key, want string) bool {
+	got, ok := dest.Custom[key]
+	return ok && got == want
+}
+
+// destETagMatches reports whether dest is the copy its record names: true
+// when no destination ETag is recorded, else whether it is dest's ETag.
+func destETagMatches(dest *common.Metadata) bool {
+	recorded, ok := dest.Custom[MetaReplicationDestETag]
+	return ok && recorded != "" && recorded == dest.ETag
+}
+
+// sourceFingerprint returns the metadata to write with the destination copy
+// of an object: src with the source's ETag and size recorded under
+// MetaReplicationSourceETag and MetaReplicationSourceSize. src is not
+// modified.
+func sourceFingerprint(src *common.Metadata) *common.Metadata {
+	out := *src
+	out.Custom = make(map[string]string, len(src.Custom)+4)
+	for k, v := range src.Custom {
+		if !isFingerprintKey(k) {
+			out.Custom[k] = v
+		}
+	}
+	// Without a source ETag nothing is recorded, and any record copied
+	// from upstream is dropped above, so the fallback comparison applies.
+	if src.ETag != "" {
+		out.Custom[MetaReplicationSourceETag] = src.ETag
+		out.Custom[MetaReplicationSourceSize] = strconv.FormatInt(src.Size, 10)
+		out.Custom[MetaReplicationSourceModified] = modifiedStamp(src)
+		out.Custom[MetaReplicationSourceMeta] = metadataDigest(src)
+		// The copy is expected to be stored at the source size; SyncObject
+		// corrects this after the write when the destination says otherwise.
+		out.Custom[MetaReplicationDestSize] = strconv.FormatInt(src.Size, 10)
+	}
+	return &out
+}
+
+// isFingerprintKey reports whether k is one of the keys sourceFingerprint
+// records.
+func isFingerprintKey(k string) bool {
+	return common.IsReplicationFingerprintKey(k)
+}
+
+// modifiedStamp is src's modification time in Unix nanoseconds, or "" when
+// the backend reports none.
+func modifiedStamp(src *common.Metadata) string {
+	if src.LastModified.IsZero() {
+		return ""
+	}
+	return strconv.FormatInt(src.LastModified.UnixNano(), 10)
+}
+
+// metadataDigest is a digest of src's content type, content encoding and
+// user metadata (fingerprint keys excluded), so a metadata-only update is
+// seen as a change.
+func metadataDigest(src *common.Metadata) string {
+	keys := make([]string, 0, len(src.Custom))
+	for k := range src.Custom {
+		if !isFingerprintKey(k) {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	b.WriteString(src.ContentType)
+	b.WriteByte(0)
+	b.WriteString(src.ContentEncoding)
+	for _, k := range keys {
+		b.WriteByte(0)
+		b.WriteString(k)
+		b.WriteByte('=')
+		b.WriteString(src.Custom[k])
+	}
+	sum := sha256.Sum256([]byte(b.String()))
+	return hex.EncodeToString(sum[:16])
 }

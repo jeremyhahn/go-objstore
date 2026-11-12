@@ -74,6 +74,8 @@ func TestSyncObject_SourceError(t *testing.T) {
 	dest := newExtendedMockStorage()
 
 	source.getError = errors.New("source read failed")
+	// The metadata read comes first and succeeds; the data read fails.
+	source.objects["test.txt"] = &common.Metadata{Size: 1}
 
 	syncer := &Syncer{
 		policy: common.ReplicationPolicy{

@@ -43,6 +43,9 @@ const (
 // Small internal interfaces to enable unit tests without real GCS.
 type gcsObject interface {
 	NewWriter(ctx context.Context) io.WriteCloser
+	// NewWriterWithAttrs returns a writer whose upload stores the data and
+	// the given content type, content encoding and metadata in one call.
+	NewWriterWithAttrs(ctx context.Context, attrs storage.ObjectAttrs) io.WriteCloser
 	NewReader(ctx context.Context) (io.ReadCloser, error)
 	Delete(ctx context.Context) error
 	Attrs(ctx context.Context) (*storage.ObjectAttrs, error)
@@ -88,8 +91,21 @@ func (i iteratorWrapper) Next() (*storage.ObjectAttrs, error) {
 
 // Function variables to enable unit testing without real network I/O.
 var (
-	gcsNewWriterFn    = func(o *storage.ObjectHandle, ctx context.Context) io.WriteCloser { w := o.NewWriter(ctx); return w }
-	gcsNewReaderFn    = func(o *storage.ObjectHandle, ctx context.Context) (io.ReadCloser, error) { return o.NewReader(ctx) }
+	gcsNewWriterFn          = func(o *storage.ObjectHandle, ctx context.Context) io.WriteCloser { w := o.NewWriter(ctx); return w }
+	gcsNewWriterWithAttrsFn = func(o *storage.ObjectHandle, ctx context.Context, attrs storage.ObjectAttrs) io.WriteCloser {
+		w := o.NewWriter(ctx)
+		// Set before the first Write: the SDK sends the attributes with the
+		// upload, so data and metadata are committed together.
+		w.ContentType = attrs.ContentType
+		w.ContentEncoding = attrs.ContentEncoding
+		w.Metadata = attrs.Metadata
+		return w
+	}
+	// ReadCompressed: an object stored with Content-Encoding gzip is read as
+	// its stored bytes, so a copy written with the same encoding stays valid.
+	gcsNewReaderFn = func(o *storage.ObjectHandle, ctx context.Context) (io.ReadCloser, error) {
+		return o.ReadCompressed(true).NewReader(ctx)
+	}
 	gcsDeleteFn       = func(o *storage.ObjectHandle, ctx context.Context) error { return o.Delete(ctx) }
 	gcsAttrsFn        = func(o *storage.ObjectHandle, ctx context.Context) (*storage.ObjectAttrs, error) { return o.Attrs(ctx) }
 	gcsUpdateObjectFn = func(o *storage.ObjectHandle, ctx context.Context, uattrs storage.ObjectAttrsToUpdate) (*storage.ObjectAttrs, error) {
@@ -103,6 +119,9 @@ var (
 
 func (o objectWrapper) NewWriter(ctx context.Context) io.WriteCloser {
 	return gcsNewWriterFn(o.ObjectHandle, ctx)
+}
+func (o objectWrapper) NewWriterWithAttrs(ctx context.Context, attrs storage.ObjectAttrs) io.WriteCloser {
+	return gcsNewWriterWithAttrsFn(o.ObjectHandle, ctx, attrs)
 }
 func (o objectWrapper) NewReader(ctx context.Context) (io.ReadCloser, error) {
 	return gcsNewReaderFn(o.ObjectHandle, ctx)

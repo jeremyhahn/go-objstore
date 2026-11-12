@@ -380,3 +380,54 @@ func TestHasChanged_DestinationOlder(t *testing.T) {
 		t.Error("expected hasChanged to return false when destination is newer")
 	}
 }
+
+// bareListingStorage lists keys without metadata, as the GCS and Azure
+// listings do, so the detector has to look the source metadata up itself.
+type bareListingStorage struct {
+	*mockStorage
+}
+
+func (b bareListingStorage) ListWithOptions(ctx context.Context, opts *common.ListOptions) (*common.ListResult, error) {
+	res, err := b.mockStorage.ListWithOptions(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	out := &common.ListResult{Truncated: res.Truncated, NextToken: res.NextToken}
+	for _, o := range res.Objects {
+		out.Objects = append(out.Objects, &common.ObjectInfo{Key: o.Key})
+	}
+	return out, nil
+}
+
+func TestDetectChanges_ListingWithoutMetadata(t *testing.T) {
+	now := time.Now()
+	src := newMockStorage()
+	src.objects["plain.txt"] = &common.Metadata{Size: 10, ETag: "e1", LastModified: now}
+	src.objects["recorded.txt"] = &common.Metadata{Size: 20, ETag: "e2", LastModified: now}
+	src.objects["new.txt"] = &common.Metadata{Size: 30, ETag: "e3", LastModified: now}
+	dest := newMockStorage()
+	dest.objects["plain.txt"] = &common.Metadata{Size: 10, ETag: "e1", LastModified: now}
+	recorded := sourceFingerprint(src.objects["recorded.txt"])
+	recorded.ETag = "dest-e2"
+	recorded.Custom[MetaReplicationDestETag] = "dest-e2"
+	dest.objects["recorded.txt"] = recorded
+	detector := NewChangeDetector(bareListingStorage{src}, dest)
+
+	// Two scheduled scans in a row: neither panics, and only the new key
+	// is reported.
+	for scan := 0; scan < 2; scan++ {
+		changed, err := detector.DetectChanges(context.Background(), "")
+		if err != nil {
+			t.Fatalf("scan %d: %v", scan, err)
+		}
+		if len(changed) != 1 || changed[0] != "new.txt" {
+			t.Fatalf("scan %d: changed = %v, want [new.txt]", scan, changed)
+		}
+	}
+
+	// A failed source lookup is an error, not a nil passed on.
+	src.getMetaError = errors.New("lookup failed")
+	if _, err := detector.DetectChanges(context.Background(), ""); err == nil {
+		t.Fatal("expected the source lookup error")
+	}
+}

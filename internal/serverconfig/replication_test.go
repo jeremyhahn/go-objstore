@@ -1,12 +1,21 @@
 package serverconfig
 
 import (
+	"bytes"
+	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
+	"github.com/jeremyhahn/go-objstore/pkg/factory"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
 	"github.com/jeremyhahn/go-objstore/pkg/replication"
 )
@@ -135,5 +144,254 @@ func TestLoad_ReplicationAllowClientLocalBackends(t *testing.T) {
 	t.Setenv("OBJSTORE_REPLICATION_ALLOW_CLIENT_LOCAL_BACKENDS", "true")
 	if cfg := mustLoad(t, nil, Defaults(), BindServerFlags); !cfg.Replication.AllowClientLocalBackends {
 		t.Error("environment did not set replication.allow_client_local_backends")
+	}
+}
+
+// TestEnableReplication_Interval: with replication.interval the enabler gets
+// RunInBackground, the interval and the caller's context; without one,
+// nothing runs in the background (#222).
+func TestEnableReplication_Interval(t *testing.T) {
+	type ctxKey struct{}
+	ctx := context.WithValue(context.Background(), ctxKey{}, "server")
+
+	capture := func(cfg *Config) *objstore.ReplicationConfig {
+		t.Helper()
+		var got *objstore.ReplicationConfig
+		if !cfg.EnableReplicationContext(ctx, func(_ string, rc *objstore.ReplicationConfig) error {
+			got = rc
+			return nil
+		}) {
+			t.Fatal("EnableReplicationContext reported not enabled")
+		}
+		return got
+	}
+
+	cfg := Defaults()
+	cfg.Path = t.TempDir()
+	if rc := capture(&cfg); rc.RunInBackground || rc.Interval != 0 || rc.Context != nil {
+		t.Errorf("no interval: RunInBackground=%v Interval=%v Context=%v, want trigger-only", rc.RunInBackground, rc.Interval, rc.Context)
+	}
+
+	cfg.Replication.Interval = 15 * time.Minute
+	rc := capture(&cfg)
+	if !rc.RunInBackground || rc.Interval != 15*time.Minute {
+		t.Errorf("interval 15m: RunInBackground=%v Interval=%v, want true/15m", rc.RunInBackground, rc.Interval)
+	}
+	if rc.Context == nil || rc.Context.Value(ctxKey{}) != "server" {
+		t.Error("interval set: the enabler did not get the caller's context")
+	}
+}
+
+// TestEnableReplicationContext_ScheduleCopiesThenStops drives the real
+// enabler, objstore.EnableReplication: with an interval set, a scheduled sync
+// copies a source object to the destination with no trigger, and once the
+// context is cancelled no further copy happens (#222).
+func TestEnableReplicationContext_ScheduleCopiesThenStops(t *testing.T) {
+	srcDir, destDir := t.TempDir(), t.TempDir()
+	source, err := factory.NewStorage("local", map[string]string{"path": srcDir}, common.Credentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest, err := factory.NewStorage("local", map[string]string{"path": destDir}, common.Credentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	objstore.Reset()
+	t.Cleanup(objstore.Reset)
+	if err := objstore.Initialize(&objstore.FacadeConfig{
+		Backends:       map[string]common.Storage{"default": source},
+		DefaultBackend: "default",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := Defaults()
+	cfg.Path = t.TempDir()
+	cfg.Replication.AllowClientLocalBackends = true
+	cfg.Replication.Interval = 20 * time.Millisecond
+	mgr, err := replication.NewPersistentReplicationManager(&replication.OSFileSystem{},
+		cfg.ReplicationPolicyPath(), 0, nil, nil, replication.WithClientLocalBackends(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.AddPolicy(common.ReplicationPolicy{
+		ID:                  "scheduled",
+		SourceBackend:       "local",
+		SourceSettings:      map[string]string{"path": srcDir},
+		DestinationBackend:  "local",
+		DestinationSettings: map[string]string{"path": destDir},
+		ReplicationMode:     common.ReplicationModeTransparent,
+		Enabled:             true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	if err := source.PutWithContext(ctx, "before", bytes.NewReader([]byte("1"))); err != nil {
+		t.Fatal(err)
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if !cfg.EnableReplicationContext(runCtx, nil) {
+		t.Fatal("EnableReplicationContext reported not enabled")
+	}
+
+	copied := func(key string) bool {
+		ok, err := dest.Exists(ctx, key)
+		return err == nil && ok
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for !copied("before") {
+		if time.Now().After(deadline) {
+			t.Fatal("no scheduled copy within 10s")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	cancel()
+	time.Sleep(200 * time.Millisecond) // let an in-flight sync finish
+	if err := source.PutWithContext(ctx, "after", bytes.NewReader([]byte("2"))); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(15 * cfg.Replication.Interval)
+	if copied("after") {
+		t.Fatal("a copy happened after the context was cancelled")
+	}
+}
+
+// syncBuffer is a log sink safe for the replication goroutine to write
+// while the test reads it.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func TestEnableReplicationContext_ScheduledFailureIsLogged(t *testing.T) {
+	logs := &syncBuffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	srcDir := t.TempDir()
+	source, err := factory.NewStorage("local", map[string]string{"path": srcDir}, common.Credentials{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	objstore.Reset()
+	t.Cleanup(objstore.Reset)
+	if err := objstore.Initialize(&objstore.FacadeConfig{
+		Backends:       map[string]common.Storage{"default": source},
+		DefaultBackend: "default",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// A regular file where the destination directory should be: the
+	// destination backend cannot be opened, so every scheduled sync fails.
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := Defaults()
+	cfg.Path = t.TempDir()
+	cfg.Replication.AllowClientLocalBackends = true
+	cfg.Replication.Interval = 20 * time.Millisecond
+	mgr, err := replication.NewPersistentReplicationManager(&replication.OSFileSystem{},
+		cfg.ReplicationPolicyPath(), 0, nil, nil, replication.WithClientLocalBackends(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.AddPolicy(common.ReplicationPolicy{
+		ID:                  "doomed",
+		SourceBackend:       "local",
+		SourceSettings:      map[string]string{"path": srcDir},
+		DestinationBackend:  "local",
+		DestinationSettings: map[string]string{"path": filepath.Join(blocker, "sub")},
+		ReplicationMode:     common.ReplicationModeTransparent,
+		Enabled:             true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if !cfg.EnableReplicationContext(runCtx, nil) {
+		t.Fatal("EnableReplicationContext reported not enabled")
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		out := logs.String()
+		if strings.Contains(out, "Policy sync failed") &&
+			strings.Contains(out, "policy_id=doomed") &&
+			strings.Contains(out, "not-a-dir") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no failed scheduled sync logged with its policy and cause; log:\n%s", out)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	time.Sleep(100 * time.Millisecond) // let the manager stop
+}
+
+func TestSlogLogger_FieldsAndLevel(t *testing.T) {
+	logs := &syncBuffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	ctx := context.Background()
+	l := newSlogLogger().WithFields(adapters.Field{Key: "component", Value: "replication"}).WithContext(ctx)
+	l.Debug(ctx, "d")
+	l.Info(ctx, "i", adapters.Field{Key: "k", Value: 1})
+	l.Warn(ctx, "w")
+	l.SetLevel(adapters.ErrorLevel)
+	if l.GetLevel() != adapters.ErrorLevel {
+		t.Fatalf("level = %v", l.GetLevel())
+	}
+	l.Warn(ctx, "suppressed")
+	l.Error(ctx, "e")
+	out := logs.String()
+	for _, want := range []string{"msg=d", "msg=i", "k=1", "msg=w", "msg=e", "component=replication"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "suppressed") {
+		t.Errorf("a warning below the set level was logged:\n%s", out)
+	}
+}
+
+func TestLoad_ReplicationInterval(t *testing.T) {
+	if cfg := mustLoad(t, nil, Defaults(), BindServerFlags); cfg.Replication.Interval != 0 {
+		t.Errorf("default replication.interval = %v, want 0", cfg.Replication.Interval)
+	}
+	file := writeConfig(t, "replication:\n  interval: 10m\n")
+	if cfg := mustLoad(t, []string{"-config", file}, Defaults(), BindServerFlags); cfg.Replication.Interval != 10*time.Minute {
+		t.Errorf("file replication.interval = %v, want 10m", cfg.Replication.Interval)
+	}
+	t.Setenv("OBJSTORE_REPLICATION_INTERVAL", "20m")
+	if cfg := mustLoad(t, []string{"-config", file}, Defaults(), BindServerFlags); cfg.Replication.Interval != 20*time.Minute {
+		t.Errorf("env replication.interval = %v, want 20m", cfg.Replication.Interval)
+	}
+	if cfg := mustLoad(t, []string{"-replication-interval", "30s"}, Defaults(), BindServerFlags); cfg.Replication.Interval != 30*time.Second {
+		t.Errorf("flag replication.interval = %v, want 30s", cfg.Replication.Interval)
+	}
+
+	_, err := Load("test", []string{"-replication-interval", "-1m"}, Defaults(), BindServerFlags)
+	if keys := invalidKeys(err); len(keys) != 1 || keys[0] != "replication.interval" {
+		t.Errorf("negative interval: invalid keys = %v, want [replication.interval] (err %v)", keys, err)
 	}
 }

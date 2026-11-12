@@ -47,7 +47,72 @@ func (a *Azure) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 		return err
 	}
 	blob := a.container.NewBlockBlob(key)
-	return blob.UploadFromReader(ctx, data)
+	if metadata == nil {
+		return blob.UploadFromReader(ctx, data)
+	}
+	// Payload, metadata and headers go up together, so a replication
+	// fingerprint is stored with the bytes it describes or not at all.
+	return blob.UploadWithMetadata(ctx, data, metadata.Custom, uploadHeaders(metadata))
+}
+
+// uploadHeaders are the HTTP headers an upload of metadata carries.
+func uploadHeaders(metadata *common.Metadata) azblob.BlobHTTPHeaders {
+	if metadata == nil {
+		return azblob.BlobHTTPHeaders{}
+	}
+	return azblob.BlobHTTPHeaders{
+		ContentType:     metadata.ContentType,
+		ContentEncoding: metadata.ContentEncoding,
+	}
+}
+
+// resultUploader is a blob whose upload reports the identity of the blob it
+// wrote; the SDK-backed blob is one.
+type resultUploader interface {
+	UploadWithMetadataResult(ctx context.Context, r io.Reader, metadata map[string]string, headers azblob.BlobHTTPHeaders) (BlobProperties, error)
+}
+
+// countingReader counts the bytes read through it.
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
+}
+
+// PutWithMetadataResult stores data and metadata like PutWithMetadata and
+// returns the ETag and time the upload response reported, with the number
+// of bytes uploaded (common.IdentityPutter). The result is nil when the
+// blob cannot report its upload's identity or the response had no ETag.
+//
+// Azure changes a blob's ETag when only its metadata is set, so a binding
+// recorded with SetMetadata after this upload does not match the blob.
+func (a *Azure) PutWithMetadataResult(ctx context.Context, key string, data io.Reader, metadata *common.Metadata) (*common.Metadata, error) {
+	if err := common.ValidateKey(key); err != nil {
+		return nil, err
+	}
+	blob := a.container.NewBlockBlob(key)
+	ru, ok := blob.(resultUploader)
+	if !ok {
+		return nil, a.PutWithMetadata(ctx, key, data, metadata)
+	}
+	var custom map[string]string
+	if metadata != nil {
+		custom = metadata.Custom
+	}
+	cr := &countingReader{r: data}
+	props, err := ru.UploadWithMetadataResult(ctx, cr, custom, uploadHeaders(metadata))
+	if err != nil {
+		return nil, err
+	}
+	if props.ETag == "" {
+		return nil, nil
+	}
+	return &common.Metadata{ETag: props.ETag, Size: cr.n, LastModified: props.LastModified}, nil
 }
 
 // GetWithContext retrieves an object from the backend with context support.

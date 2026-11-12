@@ -15,6 +15,7 @@ package common_test
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -429,6 +430,26 @@ func TestValidateMetadata(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestValidateMetadata_ReplicationFingerprintNotCounted: the replication
+// fingerprint entries are outside the user-entry limit (#222); only the
+// exact reserved keys are.
+func TestValidateMetadata_ReplicationFingerprintNotCounted(t *testing.T) {
+	md := make(map[string]string, common.MaxMetadataEntries+len(common.ReplicationFingerprintKeys))
+	for i := 0; i < common.MaxMetadataEntries; i++ {
+		md[fmt.Sprintf("k%03d", i)] = "v"
+	}
+	for _, k := range common.ReplicationFingerprintKeys {
+		md[k] = "x"
+	}
+	if err := common.ValidateMetadata(md); err != nil {
+		t.Fatalf("100 user entries plus the fingerprint: %v", err)
+	}
+	md["replication_source_other"] = "x"
+	if err := common.ValidateMetadata(md); err == nil {
+		t.Fatal("101 user entries accepted")
 	}
 }
 

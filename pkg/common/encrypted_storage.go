@@ -91,20 +91,38 @@ func (e *encryptedStorage) PutWithMetadata(ctx context.Context, key string, data
 // data with the default key, records the algorithm and key ID in metadata and
 // stores both in the underlying storage.
 func (e *encryptedStorage) putEncrypted(ctx context.Context, key string, data io.Reader, metadata *Metadata) error {
+	_, err := e.putEncryptedResult(ctx, key, data, metadata, false)
+	return err
+}
+
+// PutWithMetadataResult encrypts and stores like PutWithMetadata and returns
+// the identity the underlying upload reported, when the underlying storage
+// is an IdentityPutter; otherwise it stores the object and returns nil.
+func (e *encryptedStorage) PutWithMetadataResult(ctx context.Context, key string, data io.Reader, metadata *Metadata) (*Metadata, error) {
+	if metadata == nil {
+		metadata = &Metadata{}
+	}
+	return e.putEncryptedResult(ctx, key, data, metadata, true)
+}
+
+func (e *encryptedStorage) putEncryptedResult(ctx context.Context, key string, data io.Reader, metadata *Metadata, wantResult bool) (*Metadata, error) {
 	encrypter, err := e.encrypterFactory.GetEncrypter(e.defaultKeyID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	encryptedData, err := encrypter.Encrypt(ctx, data)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() { _ = encryptedData.Close() }()
 
 	recordEncryption(metadata, encrypter)
 
-	return e.underlying.PutWithMetadata(ctx, key, encryptedData, metadata)
+	if ip, ok := e.underlying.(IdentityPutter); ok && wantResult {
+		return ip.PutWithMetadataResult(ctx, key, encryptedData, metadata)
+	}
+	return nil, e.underlying.PutWithMetadata(ctx, key, encryptedData, metadata)
 }
 
 // recordEncryption stores the encrypter's algorithm and key ID in the custom

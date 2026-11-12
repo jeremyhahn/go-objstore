@@ -17,9 +17,12 @@ package azure
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Azure/azure-storage-blob-go/azblob"
 )
@@ -27,6 +30,23 @@ import (
 // TestAzure_FunctionVariables tests the internal function variables
 // These are normally only called through wrappers, but we test them directly
 // to achieve better coverage
+// offlineOptions makes one try per request, so an error answer from the
+// local server comes back at once instead of after the retry back-off.
+var offlineOptions = azblob.PipelineOptions{Retry: azblob.RetryOptions{MaxTries: 1, TryTimeout: 10 * time.Second}}
+
+// offlineBase starts a local server that answers every request 404 and
+// returns its URL. The tests below cover the default function variables'
+// error paths on it without reaching the network.
+func offlineBase(t *testing.T) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("x-ms-error-code", "BlobNotFound")
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
 func TestAzure_FunctionVariables(t *testing.T) {
 	t.Run("azureUploadFn", func(t *testing.T) {
 		// Create a minimal BlockBlobURL for testing
@@ -37,8 +57,8 @@ func TestAzure_FunctionVariables(t *testing.T) {
 			t.Fatalf("Cannot create credential: %v", err)
 		}
 
-		pipeline := azblob.NewPipeline(credential, azblob.PipelineOptions{})
-		u, _ := url.Parse("https://account.blob.core.windows.net/container/blob")
+		pipeline := azblob.NewPipeline(credential, offlineOptions)
+		u, _ := url.Parse(offlineBase(t) + "/container/blob")
 		blobURL := azblob.NewBlockBlobURL(*u, pipeline)
 
 		// Call the function variable
@@ -52,8 +72,8 @@ func TestAzure_FunctionVariables(t *testing.T) {
 			t.Fatalf("Cannot create credential: %v", err)
 		}
 
-		pipeline := azblob.NewPipeline(credential, azblob.PipelineOptions{})
-		u, _ := url.Parse("https://account.blob.core.windows.net/container/blob")
+		pipeline := azblob.NewPipeline(credential, offlineOptions)
+		u, _ := url.Parse(offlineBase(t) + "/container/blob")
 		blobURL := azblob.NewBlockBlobURL(*u, pipeline)
 
 		// Call the function variable - covers error path
@@ -66,8 +86,8 @@ func TestAzure_FunctionVariables(t *testing.T) {
 			t.Fatalf("Cannot create credential: %v", err)
 		}
 
-		pipeline := azblob.NewPipeline(credential, azblob.PipelineOptions{})
-		u, _ := url.Parse("https://account.blob.core.windows.net/container/blob")
+		pipeline := azblob.NewPipeline(credential, offlineOptions)
+		u, _ := url.Parse(offlineBase(t) + "/container/blob")
 		blobURL := azblob.NewBlockBlobURL(*u, pipeline)
 
 		// Call the function variable
@@ -80,8 +100,8 @@ func TestAzure_FunctionVariables(t *testing.T) {
 			t.Fatalf("Cannot create credential: %v", err)
 		}
 
-		pipeline := azblob.NewPipeline(credential, azblob.PipelineOptions{})
-		u, _ := url.Parse("https://account.blob.core.windows.net/container")
+		pipeline := azblob.NewPipeline(credential, offlineOptions)
+		u, _ := url.Parse(offlineBase(t) + "/container")
 		containerURL := azblob.NewContainerURL(*u, pipeline)
 
 		// Call the function variable - covers the loop and error handling
@@ -97,8 +117,8 @@ func TestAzure_WrapperMethods(t *testing.T) {
 		t.Fatalf("Cannot create credential: %v", err)
 	}
 
-	pipeline := azblob.NewPipeline(credential, azblob.PipelineOptions{})
-	u, _ := url.Parse("https://account.blob.core.windows.net/container")
+	pipeline := azblob.NewPipeline(credential, offlineOptions)
+	u, _ := url.Parse(offlineBase(t) + "/container")
 	containerURL := azblob.NewContainerURL(*u, pipeline)
 
 	wrapper := containerWrapper{containerURL}
@@ -113,7 +133,7 @@ func TestAzure_WrapperMethods(t *testing.T) {
 	_, _ = wrapper.ListBlobsFlat(context.Background(), "prefix")
 
 	// Test blobWrapper methods
-	u2, _ := url.Parse("https://account.blob.core.windows.net/container/blob")
+	u2, _ := url.Parse(offlineBase(t) + "/container/blob")
 	blobURL := azblob.NewBlockBlobURL(*u2, pipeline)
 	blobWrap := blobWrapper{blobURL}
 
@@ -133,8 +153,8 @@ func TestAzure_DownloadErrorPath(t *testing.T) {
 		t.Fatalf("Cannot create credential: %v", err)
 	}
 
-	pipeline := azblob.NewPipeline(credential, azblob.PipelineOptions{})
-	u, _ := url.Parse("https://account.blob.core.windows.net/container/nonexistent")
+	pipeline := azblob.NewPipeline(credential, offlineOptions)
+	u, _ := url.Parse(offlineBase(t) + "/container/nonexistent")
 	blobURL := azblob.NewBlockBlobURL(*u, pipeline)
 
 	// This should hit the error path
@@ -153,8 +173,8 @@ func TestAzure_ListErrorPath(t *testing.T) {
 		t.Fatalf("Cannot create credential: %v", err)
 	}
 
-	pipeline := azblob.NewPipeline(credential, azblob.PipelineOptions{})
-	u, _ := url.Parse("https://account.blob.core.windows.net/invalid")
+	pipeline := azblob.NewPipeline(credential, offlineOptions)
+	u, _ := url.Parse(offlineBase(t) + "/invalid")
 	containerURL := azblob.NewContainerURL(*u, pipeline)
 
 	// This should hit the error path when ListBlobsFlatSegment fails

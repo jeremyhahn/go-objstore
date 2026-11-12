@@ -58,6 +58,8 @@ type svcObj struct {
 	cenc    string
 	meta    map[string]string
 	created time.Time
+	gen     int64     // the generation, new on every write
+	updated time.Time // when the object was last written
 }
 
 type svcBucketData struct {
@@ -75,6 +77,7 @@ type svcStore struct {
 	errs     map[string]error
 	composes [][]string // the sources of each compose call
 	project  string     // the project of the last bucket call
+	gens     int64      // the last generation given to a write
 }
 
 func newSvcStore(buckets ...string) *svcStore {
@@ -260,6 +263,7 @@ func attrsOf(bucket, name string, o *svcObj) *storage.ObjectAttrs {
 	return &storage.ObjectAttrs{
 		Bucket: bucket, Name: name, Size: size, MD5: o.md5, Created: o.created,
 		ContentType: o.ctype, ContentEncoding: o.cenc, Metadata: o.meta,
+		Generation: o.gen, Updated: o.updated,
 	}
 }
 
@@ -364,9 +368,11 @@ type svcObject struct {
 }
 
 type svcWriter struct {
-	ctx context.Context
-	o   *svcObject
-	buf bytes.Buffer
+	ctx    context.Context
+	o      *svcObject
+	buf    bytes.Buffer
+	attrs  *storage.ObjectAttrs // set by NewWriterWithAttrs
+	result *storage.ObjectAttrs // the stored object, set by Close
 }
 
 func (w *svcWriter) Write(p []byte) (int, error) { return w.buf.Write(p) }
@@ -388,12 +394,28 @@ func (w *svcWriter) Close() error {
 	}
 	body := append([]byte(nil), w.buf.Bytes()...)
 	sum := fakeDigest(body)
-	data.objects[w.o.name] = &svcObj{data: body, md5: sum[:], created: time.Now()}
+	st.gens++
+	now := time.Now()
+	obj := &svcObj{data: body, md5: sum[:], created: now, gen: st.gens, updated: now}
+	if w.attrs != nil {
+		obj.ctype, obj.cenc, obj.meta = w.attrs.ContentType, w.attrs.ContentEncoding, w.attrs.Metadata
+	}
+	data.objects[w.o.name] = obj
+	w.result = attrsOf(w.o.bucket, w.o.name, obj)
 	return nil
 }
 
+// Attrs reports the object the upload stored, as storage.Writer does after
+// Close.
+func (w *svcWriter) Attrs() *storage.ObjectAttrs { return w.result }
+
 func (o *svcObject) NewWriter(ctx context.Context) io.WriteCloser {
 	return &svcWriter{ctx: ctx, o: o}
+}
+
+// NewWriterWithAttrs stores the attributes with the data on Close.
+func (o *svcObject) NewWriterWithAttrs(ctx context.Context, attrs storage.ObjectAttrs) io.WriteCloser {
+	return &svcWriter{ctx: ctx, o: o, attrs: &attrs}
 }
 
 func (o *svcObject) get(ctx context.Context, op string) (*svcObj, error) {

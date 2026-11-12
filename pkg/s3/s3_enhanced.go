@@ -34,9 +34,19 @@ func (s *S3) PutWithContext(ctx context.Context, key string, data io.Reader) err
 
 // PutWithMetadata stores an object with associated metadata.
 func (s *S3) PutWithMetadata(ctx context.Context, key string, data io.Reader, metadata *common.Metadata) error {
+	_, err := s.PutWithMetadataResult(ctx, key, data, metadata)
+	return err
+}
+
+// PutWithMetadataResult stores data and metadata like PutWithMetadata and
+// returns the ETag the PutObject response reported, with the size of the
+// body when the reader can tell it (common.IdentityPutter). The result is
+// nil when the response carried no ETag.
+func (s *S3) PutWithMetadataResult(ctx context.Context, key string, data io.Reader, metadata *common.Metadata) (*common.Metadata, error) {
 	if err := common.ValidateKey(key); err != nil {
-		return err
+		return nil, err
 	}
+	size := remainingSize(data)
 	input := &s3.PutObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
@@ -59,8 +69,32 @@ func (s *S3) PutWithMetadata(ctx context.Context, key string, data io.Reader, me
 		}
 	}
 
-	_, err := s.svc.PutObjectWithContext(ctx, input)
-	return err
+	out, err := s.svc.PutObjectWithContext(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	if out == nil || aws.StringValue(out.ETag) == "" {
+		return nil, nil
+	}
+	return &common.Metadata{ETag: aws.StringValue(out.ETag), Size: size}, nil
+}
+
+// remainingSize reports how many bytes a seekable reader holds from its
+// current offset, leaving the offset where it was; 0 when it cannot tell.
+func remainingSize(r io.Reader) int64 {
+	sk, ok := r.(io.Seeker)
+	if !ok {
+		return 0
+	}
+	cur, err := sk.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return 0
+	}
+	end, err := sk.Seek(0, io.SeekEnd)
+	if _, rerr := sk.Seek(cur, io.SeekStart); rerr != nil || err != nil || end < cur {
+		return 0
+	}
+	return end - cur
 }
 
 // GetWithContext retrieves an object from the backend with context support.
