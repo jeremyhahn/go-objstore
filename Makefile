@@ -439,6 +439,7 @@ test-servers:
 	@echo "$(CYAN)  Generating test certificates...$(RESET)"
 	@certdir=$$(mktemp -d) && trap 'rm -rf "$$certdir"' EXIT && \
 		go run ./internal/testutil/testcerts/cmd/gencerts "$$certdir" && \
+		chmod 755 "$$certdir" && chmod 644 "$$certdir"/* && \
 		export CERT_DIR="$$certdir" && \
 		echo "$(CYAN)  Starting server test environment...$(RESET)" && \
 		{ (cd test/integration/server && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-server down -v --remove-orphans --timeout 30 >/dev/null 2>&1) || true; } && \

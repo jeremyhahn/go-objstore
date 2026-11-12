@@ -118,7 +118,7 @@ func serial() *big.Int {
 }
 
 func writePair(certPath, keyPath string, der []byte, key *ecdsa.PrivateKey) error {
-	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644); err != nil {
+	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
 		return err
 	}
 	kb, err := x509.MarshalECPrivateKey(key)
@@ -127,5 +127,5 @@ func writePair(certPath, keyPath string, der []byte, key *ecdsa.PrivateKey) erro
 	}
 	// 0644 so a container running as another user can read the bind mount;
 	// the material is throwaway and lives in a temporary directory.
-	return os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kb}), 0o644)
+	return os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kb}), 0o600)
 }
