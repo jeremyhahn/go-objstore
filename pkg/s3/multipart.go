@@ -20,15 +20,19 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"sort"
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/internal/multipart"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 
-	"github.com/aws/aws-sdk-go/aws"         //nolint:staticcheck // Using v1 SDK, migration to v2 planned
-	"github.com/aws/aws-sdk-go/aws/request" //nolint:staticcheck // Using v1 SDK, migration to v2 planned
-	"github.com/aws/aws-sdk-go/service/s3"  //nolint:staticcheck // Using v1 SDK, migration to v2 planned
+	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go/middleware"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 // errPartSize is returned when a part's reader does not yield the declared
@@ -141,29 +145,35 @@ var errUnsignedPlain = fmt.Errorf("%w: a part body that cannot be seeked is sent
 // is still covered by the request signature; what is given up is the payload
 // hash, so integrity in transit rests on TLS alone. Over plain http nothing
 // would vouch for the payload, so the request is refused there.
-func unsignedPayload(r *request.Request) {
-	r.Handlers.Build.PushBack(func(r *request.Request) {
-		if r.HTTPRequest.URL.Scheme != "https" {
-			r.Error = errUnsignedPlain
-			return
-		}
-		r.HTTPRequest.Header.Set("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD")
-	})
+func unsignedPayload(o *s3.Options) {
+	o.APIOptions = append(o.APIOptions,
+		v4.SwapComputePayloadSHA256ForUnsignedPayloadMiddleware,
+		func(stack *middleware.Stack) error {
+			return stack.Finalize.Add(middleware.FinalizeMiddlewareFunc("objstoreUnsignedNeedsHTTPS",
+				func(ctx context.Context, in middleware.FinalizeInput, next middleware.FinalizeHandler) (middleware.FinalizeOutput, middleware.Metadata, error) {
+					if req, ok := in.Request.(*smithyhttp.Request); ok && req.URL.Scheme != "https" {
+						return middleware.FinalizeOutput{}, middleware.Metadata{}, errUnsignedPlain
+					}
+					return next.HandleFinalize(ctx, in)
+				}), middleware.After)
+		})
 }
 
-// noContentMD5 stops the SDK from adding a Content-MD5 header, which it does by
-// hashing a seekable body with MD5. The part is already covered by the
+// noContentMD5 stops the SDK from adding a body checksum it is not required
+// to send (v1 hashed a seekable body with MD5, v2 adds a CRC32 by default),
+// which means reading the body once more. The part is already covered by the
 // signature's payload hash (or, for a streamed part, by TLS), and MD5 is not
 // available under FIPS 140-only.
-func noContentMD5(r *request.Request) {
-	r.Config.S3DisableContentMD5Validation = aws.Bool(true)
+func noContentMD5(o *s3.Options) {
+	o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
+	o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
 }
 
 // partBody returns the reader to send for a part, the sizedReader that
 // reports how it failed, and the request options the body needs. A seekable
 // caller reader is sent as a rewindable view of the part; any other reader is
 // streamed with an unsigned payload.
-func partBody(data io.Reader, size int64) (io.Reader, *sizedReader, []request.Option, error) {
+func partBody(data io.Reader, size int64) (io.Reader, *sizedReader, []func(*s3.Options), error) {
 	if rs, ok := data.(io.ReadSeeker); ok {
 		start, end, ok, err := seekExtent(rs)
 		if err != nil {
@@ -176,11 +186,11 @@ func partBody(data io.Reader, size int64) (io.Reader, *sizedReader, []request.Op
 				return nil, nil, nil, errPartSize
 			}
 			body := &sizedSeeker{sizedReader: sizedReader{r: rs, size: size}, rs: rs, start: start}
-			return body, &body.sizedReader, []request.Option{noContentMD5}, nil
+			return body, &body.sizedReader, []func(*s3.Options){noContentMD5}, nil
 		}
 	}
 	body := &sizedReader{r: data, size: size}
-	return body, body, []request.Option{noContentMD5, unsignedPayload}, nil
+	return body, body, []func(*s3.Options){noContentMD5, unsignedPayload}, nil
 }
 
 // seekExtent reports the current offset of rs and the offset of its end, and
@@ -352,7 +362,7 @@ func (s *S3) putMultipart(ctx context.Context, in *s3.PutObjectInput, rs io.Read
 	if err != nil {
 		return err
 	}
-	out, err := s.svc.CreateMultipartUploadWithContext(ctx, &s3.CreateMultipartUploadInput{
+	out, err := s.svc.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
 		Bucket:          in.Bucket,
 		Key:             in.Key,
 		ContentType:     in.ContentType,
@@ -361,31 +371,31 @@ func (s *S3) putMultipart(ctx context.Context, in *s3.PutObjectInput, rs io.Read
 		StorageClass:    in.StorageClass,
 	})
 	if err != nil {
-		return objectError(err, aws.StringValue(in.Key))
+		return objectError(err, aws.ToString(in.Key))
 	}
 	id := out.UploadId
 	fail := func(err error) error {
 		actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.abortTimeoutOrDefault())
 		defer cancel()
-		if _, aerr := s.svc.AbortMultipartUploadWithContext(actx, &s3.AbortMultipartUploadInput{
+		if _, aerr := s.svc.AbortMultipartUpload(actx, &s3.AbortMultipartUploadInput{
 			Bucket: in.Bucket, Key: in.Key, UploadId: id,
 		}); aerr != nil {
-			return errors.Join(err, uploadError(aerr, aws.StringValue(id)))
+			return errors.Join(err, uploadError(aerr, aws.ToString(id)))
 		}
 		return err
 	}
-	completed := make([]*s3.CompletedPart, 0, (size+partSize-1)/partSize)
-	for n, off := int64(1), int64(0); off < size; n, off = n+1, off+partSize {
+	completed := make([]types.CompletedPart, 0, (size+partSize-1)/partSize)
+	for n, off := int32(1), int64(0); off < size; n, off = n+1, off+partSize {
 		length := min(partSize, size-off)
 		body := &partWindow{rs: rs, start: start + off, size: length}
 		if _, err := body.Seek(0, io.SeekStart); err != nil {
 			return fail(err)
 		}
-		up, err := s.svc.UploadPartWithContext(ctx, &s3.UploadPartInput{
+		up, err := s.svc.UploadPart(ctx, &s3.UploadPartInput{
 			Bucket:        in.Bucket,
 			Key:           in.Key,
 			UploadId:      id,
-			PartNumber:    aws.Int64(n),
+			PartNumber:    aws.Int32(n),
 			ContentLength: aws.Int64(length),
 			Body:          body,
 		}, noContentMD5)
@@ -393,18 +403,18 @@ func (s *S3) putMultipart(ctx context.Context, in *s3.PutObjectInput, rs io.Read
 			if errors.Is(err, errPartSize) {
 				return fail(errPartSize)
 			}
-			return fail(uploadError(err, aws.StringValue(id)))
+			return fail(uploadError(err, aws.ToString(id)))
 		}
-		completed = append(completed, &s3.CompletedPart{ETag: up.ETag, PartNumber: aws.Int64(n)})
+		completed = append(completed, types.CompletedPart{ETag: up.ETag, PartNumber: aws.Int32(n)})
 	}
-	_, err = s.svc.CompleteMultipartUploadWithContext(ctx, &s3.CompleteMultipartUploadInput{
+	_, err = s.svc.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
 		Bucket:          in.Bucket,
 		Key:             in.Key,
 		UploadId:        id,
-		MultipartUpload: &s3.CompletedMultipartUpload{Parts: completed},
+		MultipartUpload: &types.CompletedMultipartUpload{Parts: completed},
 	})
 	if err != nil {
-		return fail(uploadError(err, aws.StringValue(id)))
+		return fail(uploadError(err, aws.ToString(id)))
 	}
 	return nil
 }
@@ -433,7 +443,7 @@ func (s *S3) InitiateMultipartUpload(ctx context.Context, key string, metadata *
 		Key:    aws.String(key),
 	}
 	if s.storageClass != "" {
-		input.StorageClass = aws.String(s.storageClass)
+		input.StorageClass = types.StorageClass(s.storageClass)
 	}
 	if metadata != nil {
 		if metadata.ContentType != "" {
@@ -443,17 +453,14 @@ func (s *S3) InitiateMultipartUpload(ctx context.Context, key string, metadata *
 			input.ContentEncoding = aws.String(metadata.ContentEncoding)
 		}
 		if len(metadata.Custom) > 0 {
-			input.Metadata = make(map[string]*string, len(metadata.Custom))
-			for k, v := range metadata.Custom {
-				input.Metadata[k] = aws.String(v)
-			}
+			input.Metadata = maps.Clone(metadata.Custom)
 		}
 	}
-	out, err := s.svc.CreateMultipartUploadWithContext(ctx, input)
+	out, err := s.svc.CreateMultipartUpload(ctx, input)
 	if err != nil {
 		return "", bucketError(err, s.bucket)
 	}
-	return aws.StringValue(out.UploadId), nil
+	return aws.ToString(out.UploadId), nil
 }
 
 // UploadPart stores one part. The body is wrapped with aws.ReadSeekCloser, as
@@ -485,13 +492,13 @@ func (s *S3) UploadPart(ctx context.Context, key, uploadID string, partNumber in
 	if err != nil {
 		return common.PartInfo{}, err
 	}
-	out, err := s.svc.UploadPartWithContext(ctx, &s3.UploadPartInput{
+	out, err := s.svc.UploadPart(ctx, &s3.UploadPartInput{
 		Bucket:        aws.String(s.bucket),
 		Key:           aws.String(key),
 		UploadId:      aws.String(uploadID),
-		PartNumber:    aws.Int64(int64(partNumber)),
+		PartNumber:    aws.Int32(int32(partNumber)), //nolint:gosec // ValidatePartNumber bounds it to 1..10000
 		ContentLength: aws.Int64(size),
-		Body:          aws.ReadSeekCloser(body),
+		Body:          body,
 	}, opts...)
 	switch {
 	case sized.err != nil:
@@ -503,7 +510,7 @@ func (s *S3) UploadPart(ctx context.Context, key, uploadID string, partNumber in
 	case err != nil:
 		return common.PartInfo{}, uploadError(err, uploadID)
 	}
-	return common.PartInfo{PartNumber: partNumber, ETag: aws.StringValue(out.ETag), Size: size}, nil
+	return common.PartInfo{PartNumber: partNumber, ETag: aws.ToString(out.ETag), Size: size}, nil
 }
 
 // CompleteMultipartUpload assembles the listed parts. The order and the
@@ -542,18 +549,18 @@ func (s *S3) CompleteMultipartUpload(ctx context.Context, key, uploadID string, 
 		return err
 	}
 
-	completed := make([]*s3.CompletedPart, 0, len(parts))
+	completed := make([]types.CompletedPart, 0, len(parts))
 	for _, p := range parts {
-		completed = append(completed, &s3.CompletedPart{
+		completed = append(completed, types.CompletedPart{
 			ETag:       aws.String(p.ETag),
-			PartNumber: aws.Int64(int64(p.PartNumber)),
+			PartNumber: aws.Int32(int32(p.PartNumber)), //nolint:gosec // CheckComplete bounds part numbers to 1..10000
 		})
 	}
-	_, err = s.svc.CompleteMultipartUploadWithContext(ctx, &s3.CompleteMultipartUploadInput{
+	_, err = s.svc.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
 		Bucket:          aws.String(s.bucket),
 		Key:             aws.String(key),
 		UploadId:        aws.String(uploadID),
-		MultipartUpload: &s3.CompletedMultipartUpload{Parts: completed},
+		MultipartUpload: &types.CompletedMultipartUpload{Parts: completed},
 	})
 	return uploadError(err, uploadID)
 }
@@ -589,7 +596,7 @@ func (s *S3) AbortMultipartUpload(ctx context.Context, key, uploadID string) err
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	_, err := s.svc.AbortMultipartUploadWithContext(ctx, &s3.AbortMultipartUploadInput{
+	_, err := s.svc.AbortMultipartUpload(ctx, &s3.AbortMultipartUploadInput{
 		Bucket:   aws.String(s.bucket),
 		Key:      aws.String(key),
 		UploadId: aws.String(uploadID),
@@ -614,7 +621,7 @@ func (s *S3) ListMultipartUploads(ctx context.Context, prefix string) ([]common.
 	uploads := []common.MultipartUploadInfo{}
 	var keyMarker, idMarker *string
 	for {
-		out, err := s.svc.ListMultipartUploadsWithContext(ctx, &s3.ListMultipartUploadsInput{
+		out, err := s.svc.ListMultipartUploads(ctx, &s3.ListMultipartUploadsInput{
 			Bucket:         aws.String(s.bucket),
 			Prefix:         aws.String(prefix),
 			KeyMarker:      keyMarker,
@@ -625,12 +632,12 @@ func (s *S3) ListMultipartUploads(ctx context.Context, prefix string) ([]common.
 		}
 		for _, u := range out.Uploads {
 			uploads = append(uploads, common.MultipartUploadInfo{
-				Key:       aws.StringValue(u.Key),
-				UploadID:  aws.StringValue(u.UploadId),
-				Initiated: aws.TimeValue(u.Initiated),
+				Key:       aws.ToString(u.Key),
+				UploadID:  aws.ToString(u.UploadId),
+				Initiated: aws.ToTime(u.Initiated),
 			})
 		}
-		if !aws.BoolValue(out.IsTruncated) {
+		if !aws.ToBool(out.IsTruncated) {
 			break
 		}
 		keyMarker, idMarker = out.NextKeyMarker, out.NextUploadIdMarker

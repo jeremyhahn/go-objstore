@@ -18,13 +18,16 @@ package s3
 import (
 	"context"
 	"io"
+	"maps"
+	"math"
 	"strings"
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 
-	"github.com/aws/aws-sdk-go/aws"        //nolint:staticcheck // Using v1 SDK, migration to v2 planned
-	"github.com/aws/aws-sdk-go/service/s3" //nolint:staticcheck // Using v1 SDK, migration to v2 planned
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 // PutWithContext stores an object in the backend with context support.
@@ -51,15 +54,12 @@ func (s *S3) PutWithMetadata(ctx context.Context, key string, data io.Reader, me
 			input.ContentEncoding = aws.String(metadata.ContentEncoding)
 		}
 		if len(metadata.Custom) > 0 {
-			input.Metadata = make(map[string]*string)
-			for k, v := range metadata.Custom {
-				input.Metadata[k] = aws.String(v)
-			}
+			input.Metadata = maps.Clone(metadata.Custom)
 		}
 	}
 
 	return s.put(ctx, input, data, func(in *s3.PutObjectInput) error {
-		_, err := s.svc.PutObjectWithContext(ctx, in)
+		_, err := s.svc.PutObject(ctx, in)
 		return err
 	})
 }
@@ -70,7 +70,7 @@ func (s *S3) GetWithContext(ctx context.Context, key string) (io.ReadCloser, err
 	if err := common.ValidateKey(key); err != nil {
 		return nil, err
 	}
-	result, err := s.svc.GetObjectWithContext(ctx, &s3.GetObjectInput{
+	result, err := s.svc.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
 	})
@@ -87,7 +87,7 @@ func (s *S3) GetMetadata(ctx context.Context, key string) (*common.Metadata, err
 	if err := common.ValidateKey(key); err != nil {
 		return nil, err
 	}
-	result, err := s.svc.HeadObjectWithContext(ctx, &s3.HeadObjectInput{
+	result, err := s.svc.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
 	})
@@ -96,16 +96,16 @@ func (s *S3) GetMetadata(ctx context.Context, key string) (*common.Metadata, err
 	}
 
 	metadata := &common.Metadata{
-		Size:         aws.Int64Value(result.ContentLength),
-		LastModified: aws.TimeValue(result.LastModified),
-		ETag:         aws.StringValue(result.ETag),
+		Size:         aws.ToInt64(result.ContentLength),
+		LastModified: aws.ToTime(result.LastModified),
+		ETag:         aws.ToString(result.ETag),
 	}
 
 	if result.ContentType != nil {
-		metadata.ContentType = aws.StringValue(result.ContentType)
+		metadata.ContentType = aws.ToString(result.ContentType)
 	}
 	if result.ContentEncoding != nil {
-		metadata.ContentEncoding = aws.StringValue(result.ContentEncoding)
+		metadata.ContentEncoding = aws.ToString(result.ContentEncoding)
 	}
 
 	// Convert S3 metadata to custom metadata. The SDK returns user metadata
@@ -115,9 +115,7 @@ func (s *S3) GetMetadata(ctx context.Context, key string) (*common.Metadata, err
 	if len(result.Metadata) > 0 {
 		metadata.Custom = make(map[string]string)
 		for k, v := range result.Metadata {
-			if v != nil {
-				metadata.Custom[strings.ToLower(k)] = *v
-			}
+			metadata.Custom[strings.ToLower(k)] = v
 		}
 	}
 
@@ -131,19 +129,19 @@ func (s *S3) UpdateMetadata(ctx context.Context, key string, metadata *common.Me
 		Bucket:            aws.String(s.bucket),
 		CopySource:        aws.String(s.bucket + "/" + key),
 		Key:               aws.String(key),
-		MetadataDirective: aws.String("REPLACE"),
+		MetadataDirective: types.MetadataDirectiveReplace,
 	}
 
 	// S3 gives a copy the STANDARD class unless the request names one, so a
 	// self-copy must carry the class the object already has.
-	head, err := s.svc.HeadObjectWithContext(ctx, &s3.HeadObjectInput{
+	head, err := s.svc.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
 	})
 	if err != nil {
 		return objectError(err, key)
 	}
-	if head != nil && aws.StringValue(head.StorageClass) != "" {
+	if head != nil && head.StorageClass != "" {
 		input.StorageClass = head.StorageClass
 	}
 
@@ -155,14 +153,11 @@ func (s *S3) UpdateMetadata(ctx context.Context, key string, metadata *common.Me
 			input.ContentEncoding = aws.String(metadata.ContentEncoding)
 		}
 		if len(metadata.Custom) > 0 {
-			input.Metadata = make(map[string]*string)
-			for k, v := range metadata.Custom {
-				input.Metadata[k] = aws.String(v)
-			}
+			input.Metadata = maps.Clone(metadata.Custom)
 		}
 	}
 
-	_, err = s.svc.CopyObjectWithContext(ctx, input)
+	_, err = s.svc.CopyObject(ctx, input)
 	return objectError(err, key)
 }
 
@@ -171,7 +166,7 @@ func (s *S3) DeleteWithContext(ctx context.Context, key string) error {
 	if err := common.ValidateKey(key); err != nil {
 		return err
 	}
-	_, err := s.svc.DeleteObjectWithContext(ctx, &s3.DeleteObjectInput{
+	_, err := s.svc.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
 	})
@@ -185,7 +180,7 @@ func (s *S3) Exists(ctx context.Context, key string) (bool, error) {
 	if err := common.ValidateKey(key); err != nil {
 		return false, err
 	}
-	_, err := s.svc.HeadObjectWithContext(ctx, &s3.HeadObjectInput{
+	_, err := s.svc.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
 	})
@@ -213,7 +208,7 @@ func (s *S3) ListWithContext(ctx context.Context, prefix string) ([]string, erro
 			input.ContinuationToken = continuationToken
 		}
 
-		result, err := s.svc.ListObjectsV2WithContext(ctx, input)
+		result, err := s.svc.ListObjectsV2(ctx, input)
 		if err != nil {
 			return nil, err
 		}
@@ -224,7 +219,7 @@ func (s *S3) ListWithContext(ctx context.Context, prefix string) ([]string, erro
 			}
 		}
 
-		if !aws.BoolValue(result.IsTruncated) {
+		if !aws.ToBool(result.IsTruncated) {
 			break
 		}
 
@@ -251,13 +246,13 @@ func (s *S3) ListWithOptions(ctx context.Context, opts *common.ListOptions) (*co
 		input.Delimiter = aws.String(opts.Delimiter)
 	}
 	if opts.MaxResults > 0 {
-		input.MaxKeys = aws.Int64(int64(opts.MaxResults))
+		input.MaxKeys = aws.Int32(int32(min(opts.MaxResults, math.MaxInt32))) //nolint:gosec // clamped to the int32 range
 	}
 	if opts.ContinueFrom != "" {
 		input.ContinuationToken = aws.String(opts.ContinueFrom)
 	}
 
-	result, err := s.svc.ListObjectsV2WithContext(ctx, input)
+	result, err := s.svc.ListObjectsV2(ctx, input)
 	if err != nil {
 		return nil, err
 	}
@@ -265,7 +260,7 @@ func (s *S3) ListWithOptions(ctx context.Context, opts *common.ListOptions) (*co
 	listResult := &common.ListResult{
 		Objects:        make([]*common.ObjectInfo, 0, len(result.Contents)),
 		CommonPrefixes: make([]string, 0, len(result.CommonPrefixes)),
-		Truncated:      aws.BoolValue(result.IsTruncated),
+		Truncated:      aws.ToBool(result.IsTruncated),
 	}
 
 	// Convert S3 objects to ObjectInfo
@@ -275,8 +270,8 @@ func (s *S3) ListWithOptions(ctx context.Context, opts *common.ListOptions) (*co
 		}
 
 		metadata := &common.Metadata{
-			Size: aws.Int64Value(obj.Size),
-			ETag: aws.StringValue(obj.ETag),
+			Size: aws.ToInt64(obj.Size),
+			ETag: aws.ToString(obj.ETag),
 		}
 		if obj.LastModified != nil {
 			metadata.LastModified = *obj.LastModified

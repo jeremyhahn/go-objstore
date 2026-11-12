@@ -52,18 +52,18 @@ func newClassRecorder() *classRecorder { return &classRecorder{fakeS3: newFakeS3
 
 func (r *classRecorder) PutObject(in *s3.PutObjectInput) (*s3.PutObjectOutput, error) {
 	r.puts++
-	r.putClasses = append(r.putClasses, aws.StringValue(in.StorageClass))
+	r.putClasses = append(r.putClasses, aws.ToString(in.StorageClass))
 	return r.fakeS3.PutObject(in)
 }
 
 func (r *classRecorder) PutObjectWithContext(ctx context.Context, in *s3.PutObjectInput, o ...request.Option) (*s3.PutObjectOutput, error) {
 	r.puts++
-	r.putClasses = append(r.putClasses, aws.StringValue(in.StorageClass))
+	r.putClasses = append(r.putClasses, aws.ToString(in.StorageClass))
 	return r.fakeS3.PutObjectWithContext(ctx, in, o...)
 }
 
 func (r *classRecorder) CreateMultipartUploadWithContext(ctx context.Context, in *s3.CreateMultipartUploadInput, o ...request.Option) (*s3.CreateMultipartUploadOutput, error) {
-	r.createClasses = append(r.createClasses, aws.StringValue(in.StorageClass))
+	r.createClasses = append(r.createClasses, aws.ToString(in.StorageClass))
 	return r.fakeS3.CreateMultipartUploadWithContext(ctx, in, o...)
 }
 
@@ -204,7 +204,7 @@ func TestS3_AddPolicy_TransitionClass(t *testing.T) {
 			t.Fatal(err)
 		}
 		tr := r.lifecycle.Rules[0].Transitions
-		if len(tr) != 1 || aws.StringValue(tr[0].StorageClass) != tt.want || aws.Int64Value(tr[0].Days) != 2 {
+		if len(tr) != 1 || aws.ToString(tr[0].StorageClass) != tt.want || aws.ToInt64(tr[0].Days) != 2 {
 			t.Errorf("configured %q: transitions = %v", tt.configured, tr)
 		}
 	}

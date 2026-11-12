@@ -404,7 +404,7 @@ func TestS3_UpdateMetadata_KeepsStorageClass(t *testing.T) {
 			}
 			got := mockS3.copyObjectInput.StorageClass
 			if (got == nil) != (tt.want == nil) || (got != nil && *got != *tt.want) {
-				t.Errorf("copy StorageClass = %v, want %v", aws.StringValue(got), aws.StringValue(tt.want))
+				t.Errorf("copy StorageClass = %v, want %v", aws.ToString(got), aws.ToString(tt.want))
 			}
 		})
 	}

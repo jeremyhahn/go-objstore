@@ -125,7 +125,7 @@ func (f *fakeS3) CreateBucketWithContext(ctx context.Context, in *s3.CreateBucke
 	}
 	f.creates++
 	f.createInput = in
-	name := aws.StringValue(in.Bucket)
+	name := aws.ToString(in.Bucket)
 	if _, ok := f.buckets[name]; ok {
 		return nil, awsErr(s3.ErrCodeBucketAlreadyOwnedByYou)
 	}
@@ -142,7 +142,7 @@ func (f *fakeS3) DeleteBucketWithContext(ctx context.Context, in *s3.DeleteBucke
 	if err := f.begin(ctx, "DeleteBucket"); err != nil {
 		return nil, err
 	}
-	name := aws.StringValue(in.Bucket)
+	name := aws.ToString(in.Bucket)
 	b, err := f.bucket(name)
 	if err != nil {
 		return nil, err
@@ -173,14 +173,14 @@ func (f *fakeS3) HeadBucketWithContext(ctx context.Context, in *s3.HeadBucketInp
 	if err := f.begin(ctx, "HeadBucket"); err != nil {
 		return nil, err
 	}
-	if _, ok := f.buckets[aws.StringValue(in.Bucket)]; !ok {
+	if _, ok := f.buckets[aws.ToString(in.Bucket)]; !ok {
 		return nil, awsErr("NotFound")
 	}
 	return &s3.HeadBucketOutput{}, nil
 }
 
 func (f *fakeS3) putObject(in *s3.PutObjectInput) (*s3.PutObjectOutput, error) {
-	b, err := f.bucket(aws.StringValue(in.Bucket))
+	b, err := f.bucket(aws.ToString(in.Bucket))
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +188,7 @@ func (f *fakeS3) putObject(in *s3.PutObjectInput) (*s3.PutObjectOutput, error) {
 	if err != nil {
 		return nil, err
 	}
-	b.objects[aws.StringValue(in.Key)] = &fakeObject{
+	b.objects[aws.ToString(in.Key)] = &fakeObject{
 		data: data, meta: in.Metadata, ctype: in.ContentType, cenc: in.ContentEncoding, modified: time.Now(),
 	}
 	return &s3.PutObjectOutput{}, nil
@@ -209,11 +209,11 @@ func (f *fakeS3) PutObjectWithContext(ctx context.Context, in *s3.PutObjectInput
 }
 
 func (f *fakeS3) getObject(in *s3.GetObjectInput) (*s3.GetObjectOutput, error) {
-	b, err := f.bucket(aws.StringValue(in.Bucket))
+	b, err := f.bucket(aws.ToString(in.Bucket))
 	if err != nil {
 		return nil, err
 	}
-	o, ok := b.objects[aws.StringValue(in.Key)]
+	o, ok := b.objects[aws.ToString(in.Key)]
 	if !ok {
 		return nil, awsErr(s3.ErrCodeNoSuchKey)
 	}
@@ -239,11 +239,11 @@ func (f *fakeS3) HeadObjectWithContext(ctx context.Context, in *s3.HeadObjectInp
 	if err := f.begin(ctx, "HeadObject"); err != nil {
 		return nil, err
 	}
-	b, err := f.bucket(aws.StringValue(in.Bucket))
+	b, err := f.bucket(aws.ToString(in.Bucket))
 	if err != nil {
 		return nil, err
 	}
-	o, ok := b.objects[aws.StringValue(in.Key)]
+	o, ok := b.objects[aws.ToString(in.Key)]
 	if !ok {
 		return nil, awsErr("NotFound")
 	}
@@ -258,11 +258,11 @@ func (f *fakeS3) HeadObjectWithContext(ctx context.Context, in *s3.HeadObjectInp
 }
 
 func (f *fakeS3) deleteObject(in *s3.DeleteObjectInput) (*s3.DeleteObjectOutput, error) {
-	b, err := f.bucket(aws.StringValue(in.Bucket))
+	b, err := f.bucket(aws.ToString(in.Bucket))
 	if err != nil {
 		return nil, err
 	}
-	delete(b.objects, aws.StringValue(in.Key))
+	delete(b.objects, aws.ToString(in.Key))
 	return &s3.DeleteObjectOutput{}, nil
 }
 
@@ -281,13 +281,13 @@ func (f *fakeS3) DeleteObjectWithContext(ctx context.Context, in *s3.DeleteObjec
 }
 
 func (f *fakeS3) listObjects(in *s3.ListObjectsV2Input) (*s3.ListObjectsV2Output, error) {
-	b, err := f.bucket(aws.StringValue(in.Bucket))
+	b, err := f.bucket(aws.ToString(in.Bucket))
 	if err != nil {
 		return nil, err
 	}
 	keys := make([]string, 0, len(b.objects))
 	for k := range b.objects {
-		if strings.HasPrefix(k, aws.StringValue(in.Prefix)) {
+		if strings.HasPrefix(k, aws.ToString(in.Prefix)) {
 			keys = append(keys, k)
 		}
 	}
@@ -323,14 +323,14 @@ func (f *fakeS3) CreateMultipartUploadWithContext(ctx context.Context, in *s3.Cr
 	if err := f.begin(ctx, "CreateMultipartUpload"); err != nil {
 		return nil, err
 	}
-	b, err := f.bucket(aws.StringValue(in.Bucket))
+	b, err := f.bucket(aws.ToString(in.Bucket))
 	if err != nil {
 		return nil, err
 	}
 	f.nextID++
 	id := fmt.Sprintf("upload-%d", f.nextID)
 	b.uploads[id] = &fakeUpload{
-		key: aws.StringValue(in.Key), initiated: time.Now(), meta: in.Metadata,
+		key: aws.ToString(in.Key), initiated: time.Now(), meta: in.Metadata,
 		ctype: in.ContentType, cenc: in.ContentEncoding, parts: map[int]fakePart{},
 	}
 	return &s3.CreateMultipartUploadOutput{UploadId: aws.String(id)}, nil
@@ -347,19 +347,19 @@ func (f *fakeS3) UploadPartWithContext(ctx context.Context, in *s3.UploadPartInp
 	if err != nil {
 		return nil, err
 	}
-	if int64(len(data)) != aws.Int64Value(in.ContentLength) {
+	if int64(len(data)) != aws.ToInt64(in.ContentLength) {
 		return nil, awsErr("IncompleteBody")
 	}
-	b, err := f.bucket(aws.StringValue(in.Bucket))
+	b, err := f.bucket(aws.ToString(in.Bucket))
 	if err != nil {
 		return nil, err
 	}
-	u, ok := b.uploads[aws.StringValue(in.UploadId)]
-	if !ok || u.key != aws.StringValue(in.Key) {
+	u, ok := b.uploads[aws.ToString(in.UploadId)]
+	if !ok || u.key != aws.ToString(in.Key) {
 		return nil, awsErr(s3.ErrCodeNoSuchUpload)
 	}
 	etag := etagOf(data)
-	u.parts[int(aws.Int64Value(in.PartNumber))] = fakePart{data: data, etag: etag}
+	u.parts[int(aws.ToInt64(in.PartNumber))] = fakePart{data: data, etag: etag}
 	return &s3.UploadPartOutput{ETag: aws.String(etag)}, nil
 }
 
@@ -368,26 +368,26 @@ func (f *fakeS3) CompleteMultipartUploadWithContext(ctx context.Context, in *s3.
 	if err := f.begin(ctx, "CompleteMultipartUpload"); err != nil {
 		return nil, err
 	}
-	b, err := f.bucket(aws.StringValue(in.Bucket))
+	b, err := f.bucket(aws.ToString(in.Bucket))
 	if err != nil {
 		return nil, err
 	}
-	id := aws.StringValue(in.UploadId)
+	id := aws.ToString(in.UploadId)
 	u, ok := b.uploads[id]
-	if !ok || u.key != aws.StringValue(in.Key) {
+	if !ok || u.key != aws.ToString(in.Key) {
 		return nil, awsErr(s3.ErrCodeNoSuchUpload)
 	}
 	listed := in.MultipartUpload.Parts
 	var data []byte
 	prev := int64(0)
 	for i, p := range listed {
-		n := aws.Int64Value(p.PartNumber)
+		n := aws.ToInt64(p.PartNumber)
 		if n <= prev {
 			return nil, awsErr("InvalidPartOrder")
 		}
 		prev = n
 		stored, ok := u.parts[int(n)]
-		if !ok || stored.etag != aws.StringValue(p.ETag) {
+		if !ok || stored.etag != aws.ToString(p.ETag) {
 			return nil, awsErr("InvalidPart")
 		}
 		if i < len(listed)-1 && len(stored.data) < common.MinPartSize {
@@ -405,12 +405,12 @@ func (f *fakeS3) AbortMultipartUploadWithContext(ctx context.Context, in *s3.Abo
 	if err := f.begin(ctx, "AbortMultipartUpload"); err != nil {
 		return nil, err
 	}
-	b, err := f.bucket(aws.StringValue(in.Bucket))
+	b, err := f.bucket(aws.ToString(in.Bucket))
 	if err != nil {
 		return nil, err
 	}
-	id := aws.StringValue(in.UploadId)
-	if u, ok := b.uploads[id]; !ok || u.key != aws.StringValue(in.Key) {
+	id := aws.ToString(in.UploadId)
+	if u, ok := b.uploads[id]; !ok || u.key != aws.ToString(in.Key) {
 		return nil, awsErr(s3.ErrCodeNoSuchUpload)
 	}
 	delete(b.uploads, id)
@@ -422,7 +422,7 @@ func (f *fakeS3) ListMultipartUploadsWithContext(ctx context.Context, in *s3.Lis
 	if err := f.begin(ctx, "ListMultipartUploads"); err != nil {
 		return nil, err
 	}
-	b, err := f.bucket(aws.StringValue(in.Bucket))
+	b, err := f.bucket(aws.ToString(in.Bucket))
 	if err != nil {
 		return nil, err
 	}
@@ -432,7 +432,7 @@ func (f *fakeS3) ListMultipartUploadsWithContext(ctx context.Context, in *s3.Lis
 	}
 	var all []entry
 	for id, u := range b.uploads {
-		if strings.HasPrefix(u.key, aws.StringValue(in.Prefix)) {
+		if strings.HasPrefix(u.key, aws.ToString(in.Prefix)) {
 			all = append(all, entry{id, u})
 		}
 	}
@@ -567,7 +567,7 @@ func TestS3_CreateBucket_LocationConstraint(t *testing.T) {
 			switch {
 			case tt.want == "" && cfg != nil:
 				t.Errorf("constraint set to %v", cfg)
-			case tt.want != "" && aws.StringValue(cfg.LocationConstraint) != tt.want:
+			case tt.want != "" && aws.ToString(cfg.LocationConstraint) != tt.want:
 				t.Errorf("constraint = %+v, want %s", cfg, tt.want)
 			}
 		})
@@ -1054,7 +1054,7 @@ func TestS3_Initiate_AppliesMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	u := f.buckets["bucket-one"].uploads[id]
-	if aws.StringValue(u.ctype) != "text/plain" || aws.StringValue(u.cenc) != "gzip" || aws.StringValue(u.meta["a"]) != "b" {
+	if aws.ToString(u.ctype) != "text/plain" || aws.ToString(u.cenc) != "gzip" || aws.ToString(u.meta["a"]) != "b" {
 		t.Errorf("upload = %+v", u)
 	}
 }
