@@ -25,7 +25,7 @@ The agent stores a snapshot repository of immutable packs, an index and snapshot
 - **Chunk identity.** Each chunk ID is HMAC-SHA-256 of the chunk under a repository secret. The agent uploads only chunks the index does not already hold.
 - **Packing.** Chunks are compressed with the algorithm the sealed format records (`none` today; zstd or gzip waits on the open item below), then encrypted, then grouped into immutable pack objects written once.
 - **Encryption.** Each pack, index, snapshot and config object is sealed with AES-256-GCM under a subkey derived with HKDF-SHA-256 from the repository data key.
-- **Snapshot format.** Immutable packs; an index object per backup run that stores new chunks, mapping chunk IDs to packs, with all of them merged on load; and one snapshot manifest per backup run (tree, file metadata, chunk lists), written last. Objects are written once under `config`, `keys/`, `packs/<id[:2]>/`, `index/`, `snapshots/` and, for prune, `marks/`, each named by a keyed ID of its content; time and host are only inside the sealed manifest.
+- **Snapshot format.** Immutable packs; an index object per backup run that stores new chunks, mapping chunk IDs to packs, with all of them merged on load; and one snapshot manifest per backup run (tree, file metadata, chunk lists), written last. Objects are written once under `config`, `keys/`, `keyring/` (key-list generations, see Key management), `packs/<id[:2]>/`, `index/`, `snapshots/` and, for prune, `marks/`, each named by a keyed ID of its content; time and host are only inside the sealed manifest.
 - **Key seam.** The data key is wrapped by a KEK that a key provider supplies. The interface is `keyseam.Provider` in the `backup/` module (`backup/pkg/keyseam`): `WrapKey(ctx, dataKey)` and `UnwrapKey(ctx, wrapped)`, with typed errors that carry no key material. The provider is a go-xkms client that implements the interface downward, in go-xkms; neither go-objstore module imports go-xkms. The unwrapped data key lives in go-enclave locked memory and is destroyed when the repository closes; only its wrapped form is persisted. Standalone mode, with no KMS, derives the KEK from a passphrase with PBKDF2-HMAC-SHA-256 (a random 16-byte salt stored beside the wrapped key, at least 600000 iterations) and holds it in go-enclave locked memory.
 - **Restore.** Restore reads a snapshot manifest, fetches and decrypts the chunks it lists, rebuilds files and metadata, and verifies every chunk ID and file digest end to end. `verify` runs the same check on a repository without writing files.
 - **Prune.** Retention prunes snapshots from a separate, privileged identity. The backup identity needs no delete right, so the repository works on a WORM bucket. In code, removal is a `store.PruneStore` that only `backup/pkg/prune` holds; a repository never hands it on. A policy keeps the last N snapshots, those within a duration, and the newest of each of the last N days, ISO weeks, months and years, by the time sealed in each manifest; it keeps the union. The policy applies to each group of snapshots with the same host and source directory on its own, so with several sources (or hosts) each keeps its own newest snapshots; the report lists each group's kept and forgotten snapshots (`groups` in `--json` output). A policy that would keep no snapshot of a group, such as `--keep-within` alone for a source whose backups stopped, is refused, as is one that keeps nothing. Prune takes no lock, which the backup identity could not remove; it marks and sweeps. Each run writes a sealed mark under `marks/` naming the packs no kept snapshot uses, each with the time a run first marked it. A backup reads every mark before it loads the index, and neither dedups against a marked pack nor writes one under a marked name: it stores those chunks again under another name. A run removes a pack only if it is still unused and the newest earlier mark has named it for a grace period (24 hours by default) that must exceed the longest backup, so a backup that started before the mark has written its snapshot by then and its chunks keep their packs. One prune runs at a time. A run writes the new index first, then removes forgotten snapshots, superseded indexes, unused packs and old marks, so an interrupted run leaves every kept snapshot restorable and a rerun completes it. Partly used packs are kept and their unused bytes reported; repacking is not done. A dry run reports what would go and changes nothing, and `verify` reports packs that no index names.
@@ -45,6 +45,7 @@ objstore-backup prune     --prune-address <host:port> --repo <prefix> --passphra
                           [--keep-last n] [--keep-within 30d] [--keep-daily n] [--keep-weekly n] \
                           [--keep-monthly n] [--keep-yearly n] [--grace 24h] [--dry-run] [--json]
 objstore-backup service   --config <file> [--check]
+objstore-backup key       list|add|remove <slot>|passwd [flags] [--new-passphrase-file <file> | --new-passphrase-stdin]
 ```
 
 - **Connection.** The server is reached through the Go client SDK: `--protocol` (rest, grpc, quic, mcp, unix), `--address`, `--tls`, `--ca-file`, `--cert-file`, `--key-file`, `--token-file`, `--tenant`, `--timeout`. `--repo` is the prefix the repository lives under.
@@ -53,6 +54,35 @@ objstore-backup service   --config <file> [--check]
 - **Passphrase.** From `--passphrase-file`, refused unless it is a regular file with no group or other permission bits, or from standard input with `--passphrase-stdin`; never from an argument or the environment. The read buffer is cleared once the passphrase is in go-enclave locked memory. A bearer token file follows the same permission rule.
 - **Snapshots** are named by ID or by a prefix that names one snapshot only.
 - **Exit status.** 0 success, 1 failure, 2 usage error, 3 `verify` found problems.
+
+## Key management
+
+A repository holds one data key, which every pack, index, snapshot and config object is sealed under, and one or more key slots: each slot is that data key wrapped under one passphrase, with its own slot ID and its own PBKDF2 salt. Opening the repository tries each slot until one unwraps, so any slot's passphrase opens it. Snapshots are never re-encrypted; a key change rewrites only the wrap of the data key.
+
+```
+objstore-backup key list   [flags]
+objstore-backup key add    [flags] --new-passphrase-file <file> | --new-passphrase-stdin
+objstore-backup key remove [flags] <slot>
+objstore-backup key passwd [flags] --new-passphrase-file <file> | --new-passphrase-stdin
+```
+
+- **`key list`** lists the slots; `*` marks the one the current passphrase opened.
+- **`key add`** adds a slot for the new passphrase. Both passphrases then open the repository.
+- **`key remove <slot>`** removes a slot, named by its ID or by a prefix that names one slot only. The last slot is refused, so a repository always has a passphrase that opens it.
+- **`key passwd`** wraps the data key under the new passphrase and removes the slot the current passphrase opened. Every existing snapshot restores with the new passphrase; the old one is refused.
+- **Passphrases.** The current passphrase comes from `--passphrase-file` or `--passphrase-stdin`, and the new one from `--new-passphrase-file` or `--new-passphrase-stdin`, under the same rules (see Usage); only one of them can come from standard input. Neither is ever taken from an argument or the environment.
+- **`--key-provider`** (every command; default `passphrase`) chooses the `keyseam.Provider` by name through the registry in `backup/pkg/keyseam` (`NewProvider`, `Register`). Only `passphrase` is built in; an unknown name is a usage error (`keyseam.ErrUnknownProvider`). `Register` is the seam a key-management provider such as go-xkms's plugs into later; the `backup/` module does not import one.
+
+### Repository format
+
+Format 2 adds key slots. The packs, indexes and snapshots are written once and never replaced, so a key change does not rewrite `config`: it writes a new, sealed, immutable generation of the key list under `keyring/` (`keyring/<n>`, 16 hex digits), naming the slots (`keys/` objects) that open the repository. Opening uses the latest generation and refuses a key whose slot it no longer lists.
+
+A format 1 repository, written before key slots, opens as before with its single key, and is upgraded to format 2 by its first key change (`key add`, `key remove` or `key passwd`); until then nothing in it changes. There is no separate upgrade step.
+
+Two consequences of the write-once store:
+
+- **A removed slot's key object stays in the store.** `key remove` and `key passwd` drop the slot from the new key list, and the current binary refuses it, but its object under `keys/` is not deleted (the backup identity has no delete right). Anyone holding that object and the old passphrase can still unwrap the data key. If the old passphrase is compromised, delete the object with a delete-capable identity, or treat the data key as exposed and start a new repository.
+- **An older binary ignores `keyring/`.** A binary from before format 2 reads only `config` and `keys/`, so on an upgraded repository it still accepts the passphrase of the original key even after its slot was removed. Upgrade every host that opens the repository before relying on `key remove` or `key passwd`.
 
 ## Service
 
