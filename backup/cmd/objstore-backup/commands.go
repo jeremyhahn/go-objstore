@@ -96,7 +96,7 @@ func (o *repoOpts) check() error {
 
 // session is a passphrase provider and an open store connection.
 type session struct {
-	provider *keyseam.PassphraseProvider
+	provider keyseam.ProviderCloser
 	closer   func() error
 }
 

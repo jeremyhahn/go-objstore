@@ -75,6 +75,18 @@ func NewProvider(name string, cfg ProviderConfig) (ProviderCloser, error) {
 	return f(cfg)
 }
 
+// CheckProvider fails with ErrUnknownProvider unless a provider is
+// registered under name.
+func CheckProvider(name string) error {
+	registryMu.RLock()
+	_, ok := registry[name]
+	registryMu.RUnlock()
+	if !ok {
+		return newError("provider "+name, ErrUnknownProvider, nil)
+	}
+	return nil
+}
+
 // Providers returns the registered provider names, sorted.
 func Providers() []string {
 	registryMu.RLock()
