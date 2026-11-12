@@ -13,6 +13,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.21.0
 	github.com/aws/aws-sdk-go-v2/service/glacier v1.41.12
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.10
+	github.com/aws/smithy-go v1.28.9
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/gin-gonic/gin v1.12.0
 	github.com/google/uuid v1.6.0
@@ -60,7 +61,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sso v1.39.5 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.44.5 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.52.0 // indirect
-	github.com/aws/smithy-go v1.28.9 // indirect
 	github.com/bytedance/gopkg v0.1.4 // indirect
 	github.com/bytedance/sonic v1.15.5 // indirect
 	github.com/bytedance/sonic/loader v0.5.3 // indirect

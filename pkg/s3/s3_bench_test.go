@@ -17,24 +17,25 @@ package s3
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/aws/aws-sdk-go/service/s3/s3iface"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
 // benchS3Client is a mock S3 client for benchmarking
 type benchS3Client struct {
-	s3iface.S3API
+	s3API
 	objects map[string][]byte
 }
 
-func (m *benchS3Client) PutObject(input *s3.PutObjectInput) (*s3.PutObjectOutput, error) {
+func (m *benchS3Client) PutObject(_ context.Context, input *s3.PutObjectInput, _ ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
 	data, err := io.ReadAll(input.Body)
 	if err != nil {
 		return nil, err
@@ -45,7 +46,7 @@ func (m *benchS3Client) PutObject(input *s3.PutObjectInput) (*s3.PutObjectOutput
 	}, nil
 }
 
-func (m *benchS3Client) GetObject(input *s3.GetObjectInput) (*s3.GetObjectOutput, error) {
+func (m *benchS3Client) GetObject(_ context.Context, input *s3.GetObjectInput, _ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
 	data, ok := m.objects[*input.Key]
 	if !ok {
 		return nil, fmt.Errorf("key not found")
@@ -55,15 +56,15 @@ func (m *benchS3Client) GetObject(input *s3.GetObjectInput) (*s3.GetObjectOutput
 	}, nil
 }
 
-func (m *benchS3Client) DeleteObject(input *s3.DeleteObjectInput) (*s3.DeleteObjectOutput, error) {
+func (m *benchS3Client) DeleteObject(_ context.Context, input *s3.DeleteObjectInput, _ ...func(*s3.Options)) (*s3.DeleteObjectOutput, error) {
 	delete(m.objects, *input.Key)
 	return &s3.DeleteObjectOutput{}, nil
 }
 
-func (m *benchS3Client) ListObjectsV2(input *s3.ListObjectsV2Input) (*s3.ListObjectsV2Output, error) {
-	var contents []*s3.Object
+func (m *benchS3Client) ListObjectsV2(_ context.Context, input *s3.ListObjectsV2Input, _ ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
+	var contents []types.Object
 	for key := range m.objects {
-		contents = append(contents, &s3.Object{
+		contents = append(contents, types.Object{
 			Key: aws.String(key),
 		})
 	}

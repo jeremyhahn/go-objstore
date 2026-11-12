@@ -26,9 +26,9 @@ import (
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 
-	"github.com/aws/aws-sdk-go/aws"         //nolint:staticcheck // Using v1 SDK, migration to v2 planned
-	"github.com/aws/aws-sdk-go/aws/request" //nolint:staticcheck // Using v1 SDK, migration to v2 planned
-	"github.com/aws/aws-sdk-go/service/s3"  //nolint:staticcheck // Using v1 SDK, migration to v2 planned
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 // classRecorder is the in-memory fake, recording the storage class of each
@@ -38,7 +38,7 @@ type classRecorder struct {
 	putClasses    []string
 	createClasses []string
 	puts, aborts  int
-	lifecycle     *s3.BucketLifecycleConfiguration
+	lifecycle     *types.BucketLifecycleConfiguration
 
 	// onUploadPart runs before each UploadPart is answered.
 	onUploadPart func(ctx context.Context)
@@ -50,24 +50,18 @@ type classRecorder struct {
 
 func newClassRecorder() *classRecorder { return &classRecorder{fakeS3: newFakeS3("bucket-one")} }
 
-func (r *classRecorder) PutObject(in *s3.PutObjectInput) (*s3.PutObjectOutput, error) {
+func (r *classRecorder) PutObject(ctx context.Context, in *s3.PutObjectInput, o ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
 	r.puts++
-	r.putClasses = append(r.putClasses, aws.ToString(in.StorageClass))
-	return r.fakeS3.PutObject(in)
+	r.putClasses = append(r.putClasses, string(in.StorageClass))
+	return r.fakeS3.PutObject(ctx, in, o...)
 }
 
-func (r *classRecorder) PutObjectWithContext(ctx context.Context, in *s3.PutObjectInput, o ...request.Option) (*s3.PutObjectOutput, error) {
-	r.puts++
-	r.putClasses = append(r.putClasses, aws.ToString(in.StorageClass))
-	return r.fakeS3.PutObjectWithContext(ctx, in, o...)
+func (r *classRecorder) CreateMultipartUpload(ctx context.Context, in *s3.CreateMultipartUploadInput, o ...func(*s3.Options)) (*s3.CreateMultipartUploadOutput, error) {
+	r.createClasses = append(r.createClasses, string(in.StorageClass))
+	return r.fakeS3.CreateMultipartUpload(ctx, in, o...)
 }
 
-func (r *classRecorder) CreateMultipartUploadWithContext(ctx context.Context, in *s3.CreateMultipartUploadInput, o ...request.Option) (*s3.CreateMultipartUploadOutput, error) {
-	r.createClasses = append(r.createClasses, aws.ToString(in.StorageClass))
-	return r.fakeS3.CreateMultipartUploadWithContext(ctx, in, o...)
-}
-
-func (r *classRecorder) AbortMultipartUploadWithContext(ctx context.Context, in *s3.AbortMultipartUploadInput, o ...request.Option) (*s3.AbortMultipartUploadOutput, error) {
+func (r *classRecorder) AbortMultipartUpload(ctx context.Context, in *s3.AbortMultipartUploadInput, o ...func(*s3.Options)) (*s3.AbortMultipartUploadOutput, error) {
 	r.aborts++
 	r.abortCtx = ctx
 	if r.onAbort != nil {
@@ -75,21 +69,21 @@ func (r *classRecorder) AbortMultipartUploadWithContext(ctx context.Context, in 
 			return nil, err
 		}
 	}
-	return r.fakeS3.AbortMultipartUploadWithContext(ctx, in, o...)
+	return r.fakeS3.AbortMultipartUpload(ctx, in, o...)
 }
 
-func (r *classRecorder) UploadPartWithContext(ctx context.Context, in *s3.UploadPartInput, o ...request.Option) (*s3.UploadPartOutput, error) {
+func (r *classRecorder) UploadPart(ctx context.Context, in *s3.UploadPartInput, o ...func(*s3.Options)) (*s3.UploadPartOutput, error) {
 	if r.onUploadPart != nil {
 		r.onUploadPart(ctx)
 	}
-	return r.fakeS3.UploadPartWithContext(ctx, in, o...)
+	return r.fakeS3.UploadPart(ctx, in, o...)
 }
 
-func (r *classRecorder) GetBucketLifecycleConfiguration(*s3.GetBucketLifecycleConfigurationInput) (*s3.GetBucketLifecycleConfigurationOutput, error) {
+func (r *classRecorder) GetBucketLifecycleConfiguration(context.Context, *s3.GetBucketLifecycleConfigurationInput, ...func(*s3.Options)) (*s3.GetBucketLifecycleConfigurationOutput, error) {
 	return nil, awsErr("NoSuchLifecycleConfiguration")
 }
 
-func (r *classRecorder) PutBucketLifecycleConfiguration(in *s3.PutBucketLifecycleConfigurationInput) (*s3.PutBucketLifecycleConfigurationOutput, error) {
+func (r *classRecorder) PutBucketLifecycleConfiguration(_ context.Context, in *s3.PutBucketLifecycleConfigurationInput, _ ...func(*s3.Options)) (*s3.PutBucketLifecycleConfigurationOutput, error) {
 	r.lifecycle = in.LifecycleConfiguration
 	return &s3.PutBucketLifecycleConfigurationOutput{}, nil
 }
@@ -110,7 +104,7 @@ func TestS3_Configure_StorageClass(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.storageClass != s3.StorageClassStandardIa || s.transitionClass != s3.TransitionStorageClassDeepArchive {
+	if s.storageClass != string(types.StorageClassStandardIa) || s.transitionClass != string(types.TransitionStorageClassDeepArchive) {
 		t.Errorf("classes = %q, %q", s.storageClass, s.transitionClass)
 	}
 
@@ -118,7 +112,7 @@ func TestS3_Configure_StorageClass(t *testing.T) {
 	if err := s.Configure(map[string]string{"bucket": "b", "region": "us-east-1"}, noCreds); err != nil {
 		t.Fatal(err)
 	}
-	if s.storageClass != "" || s.transitionStorageClass() != s3.TransitionStorageClassGlacier {
+	if s.storageClass != "" || s.transitionStorageClass() != string(types.TransitionStorageClassGlacier) {
 		t.Errorf("defaults = %q, %q", s.storageClass, s.transitionStorageClass())
 	}
 
@@ -126,8 +120,8 @@ func TestS3_Configure_StorageClass(t *testing.T) {
 		{"storage_class", "PLATINUM"},
 		{"transition_storage_class", "PLATINUM"},
 		// A class objects can be written with but not transitioned to.
-		{"transition_storage_class", s3.StorageClassReducedRedundancy},
-		{"transition_storage_class", s3.StorageClassStandard},
+		{"transition_storage_class", string(types.StorageClassReducedRedundancy)},
+		{"transition_storage_class", string(types.StorageClassStandard)},
 	} {
 		err := (&S3{}).Configure(map[string]string{"bucket": "b", tt.setting: tt.class}, noCreds)
 		var sce *StorageClassError
@@ -143,7 +137,7 @@ func TestS3_Configure_StorageClass(t *testing.T) {
 func TestS3_StorageClass_OnWrites(t *testing.T) {
 	ctx := context.Background()
 	r := newClassRecorder()
-	s := &S3{svc: r, bucket: "bucket-one", storageClass: s3.StorageClassOnezoneIa}
+	s := &S3{svc: r, bucket: "bucket-one", storageClass: string(types.StorageClassOnezoneIa)}
 	if err := s.Put("a", strings.NewReader("x")); err != nil {
 		t.Fatal(err)
 	}
@@ -192,10 +186,10 @@ func TestS3_Bucket_KeepsStorageSettings(t *testing.T) {
 
 func TestS3_AddPolicy_TransitionClass(t *testing.T) {
 	for _, tt := range []struct{ configured, want string }{
-		{"", s3.TransitionStorageClassGlacier},
-		{s3.TransitionStorageClassDeepArchive, s3.TransitionStorageClassDeepArchive},
-		{s3.TransitionStorageClassStandardIa, s3.TransitionStorageClassStandardIa},
-		{s3.TransitionStorageClassGlacierIr, s3.TransitionStorageClassGlacierIr},
+		{"", string(types.TransitionStorageClassGlacier)},
+		{string(types.TransitionStorageClassDeepArchive), string(types.TransitionStorageClassDeepArchive)},
+		{string(types.TransitionStorageClassStandardIa), string(types.TransitionStorageClassStandardIa)},
+		{string(types.TransitionStorageClassGlacierIr), string(types.TransitionStorageClassGlacierIr)},
 	} {
 		r := newClassRecorder()
 		s := &S3{svc: r, bucket: "bucket-one", transitionClass: tt.configured}
@@ -313,7 +307,7 @@ func TestS3_Put_AutoMultipart_Failures(t *testing.T) {
 		wantErr error
 		aborts  int
 	}{
-		{"CreateMultipartUpload", awsErr(s3.ErrCodeNoSuchBucket), common.ErrBucketNotFound, 0},
+		{"CreateMultipartUpload", awsErr(codeNoSuchBucket), common.ErrBucketNotFound, 0},
 		{"UploadPart", boom, boom, 1},
 		{"UploadPart", awsErr("EntityTooLarge"), common.ErrPartTooLarge, 1},
 		{"CompleteMultipartUpload", awsErr("EntityTooSmall"), common.ErrPartTooSmall, 1},

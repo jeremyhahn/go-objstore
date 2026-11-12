@@ -24,8 +24,9 @@ import (
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 // TestS3_New verifies that New returns a non-nil Storage value.
@@ -315,14 +316,14 @@ func TestS3_GetPolicies_GetLifecycleNonNoSuchError(t *testing.T) {
 
 // GetPolicies skips rules that have neither Expiration nor Transitions.
 func TestS3_GetPolicies_SkipsUnknownRuleType(t *testing.T) {
-	status := "Enabled"
+	status := types.ExpirationStatusEnabled
 	id := "weird-rule"
 	mockS3 := &mockS3Client{
-		lifecycleConfig: &s3.BucketLifecycleConfiguration{
-			Rules: []*s3.LifecycleRule{
+		lifecycleConfig: &types.BucketLifecycleConfiguration{
+			Rules: []types.LifecycleRule{
 				{
 					ID:     &id,
-					Status: &status,
+					Status: status,
 					// No Expiration, no Transitions — should be skipped.
 				},
 			},
@@ -341,25 +342,25 @@ func TestS3_GetPolicies_SkipsUnknownRuleType(t *testing.T) {
 // GetPolicies skips rules where ID or Status is nil, or Status != "Enabled".
 func TestS3_GetPolicies_SkipsDisabledRule(t *testing.T) {
 	idEnabled := "enabled-rule"
-	statusEnabled := "Enabled"
+	statusEnabled := types.ExpirationStatusEnabled
 	idDisabled := "disabled-rule"
-	statusDisabled := "Disabled"
-	days := int64(7)
+	statusDisabled := types.ExpirationStatusDisabled
+	days := int32(7)
 	mockS3 := &mockS3Client{
-		lifecycleConfig: &s3.BucketLifecycleConfiguration{
-			Rules: []*s3.LifecycleRule{
+		lifecycleConfig: &types.BucketLifecycleConfiguration{
+			Rules: []types.LifecycleRule{
 				{
 					ID:     &idDisabled,
-					Status: &statusDisabled,
-					Expiration: &s3.LifecycleExpiration{
-						Days: aws.Int64(days),
+					Status: statusDisabled,
+					Expiration: &types.LifecycleExpiration{
+						Days: aws.Int32(days),
 					},
 				},
 				{
 					ID:     &idEnabled,
-					Status: &statusEnabled,
-					Expiration: &s3.LifecycleExpiration{
-						Days: aws.Int64(days),
+					Status: statusEnabled,
+					Expiration: &types.LifecycleExpiration{
+						Days: aws.Int32(days),
 					},
 				},
 			},

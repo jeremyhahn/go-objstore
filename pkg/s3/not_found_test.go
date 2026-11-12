@@ -23,14 +23,48 @@ import (
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 
-	"github.com/aws/aws-sdk-go/aws/awserr" //nolint:staticcheck // Using v1 SDK, migration to v2 planned
-	"github.com/aws/aws-sdk-go/service/s3" //nolint:staticcheck // Using v1 SDK, migration to v2 planned
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
 
 // sdkFailure builds the error the v1 SDK returns for a failed request: a
 // RequestFailure carrying the service code and the HTTP status.
 func sdkFailure(code string, status int) error {
-	return awserr.NewRequestFailure(awserr.New(code, code, nil), status, "req-id")
+	var cause error = &smithy.GenericAPIError{Code: code, Message: code}
+	if code == "" {
+		cause = errors.New("response with no error code")
+	}
+	return &smithy.OperationError{
+		ServiceID:     "S3",
+		OperationName: "Test",
+		Err: &awshttp.ResponseError{
+			ResponseError: &smithyhttp.ResponseError{
+				Response: &smithyhttp.Response{Response: &http.Response{StatusCode: status}},
+				Err:      cause,
+			},
+			RequestID: "req-id",
+		},
+	}
+}
+
+// typedFailure wraps one of the SDK's modelled errors the way the client
+// returns it.
+func typedFailure(err error, status int) error {
+	return &smithy.OperationError{
+		ServiceID:     "S3",
+		OperationName: "Test",
+		Err: &awshttp.ResponseError{
+			ResponseError: &smithyhttp.ResponseError{
+				Response: &smithyhttp.Response{Response: &http.Response{StatusCode: status}},
+				Err:      err,
+			},
+			RequestID: "req-id",
+		},
+	}
 }
 
 // assertKeyNotFound checks err wraps common.ErrKeyNotFound and still reaches
@@ -40,8 +74,9 @@ func assertKeyNotFound(t *testing.T, err error) {
 	if !errors.Is(err, common.ErrKeyNotFound) {
 		t.Fatalf("expected common.ErrKeyNotFound, got %v", err)
 	}
-	var ae awserr.Error
-	if !errors.As(err, &ae) {
+	var ae smithy.APIError
+	var re *awshttp.ResponseError
+	if !errors.As(err, &ae) && !errors.As(err, &re) {
 		t.Fatalf("expected the SDK error in the chain, got %v", err)
 	}
 }
@@ -49,12 +84,14 @@ func assertKeyNotFound(t *testing.T, err error) {
 func TestS3_NotFound_MapsToErrKeyNotFound(t *testing.T) {
 	ctx := context.Background()
 	missingGet := map[string]error{
-		"NoSuchKey":       sdkFailure(s3.ErrCodeNoSuchKey, http.StatusNotFound),
-		"NoSuchKey plain": awsErr(s3.ErrCodeNoSuchKey),
+		"NoSuchKey":       sdkFailure(codeNoSuchKey, http.StatusNotFound),
+		"NoSuchKey plain": awsErr(codeNoSuchKey),
+		"NoSuchKey typed": typedFailure(&types.NoSuchKey{Message: aws.String("missing")}, http.StatusNotFound),
 	}
 	missingHead := map[string]error{
-		"NotFound":    sdkFailure(codeNotFound, http.StatusNotFound),
-		"no code 404": sdkFailure("", http.StatusNotFound),
+		"NotFound":       sdkFailure(codeNotFound, http.StatusNotFound),
+		"NotFound typed": typedFailure(&types.NotFound{}, http.StatusNotFound),
+		"no code 404":    sdkFailure("", http.StatusNotFound),
 	}
 
 	for name, sdkErr := range missingGet {
@@ -124,7 +161,7 @@ func TestS3_AccessDenied_IsNotKeyNotFound(t *testing.T) {
 
 func TestS3_NoSuchBucket_IsBucketNotFound(t *testing.T) {
 	ctx := context.Background()
-	noBucket := sdkFailure(s3.ErrCodeNoSuchBucket, http.StatusNotFound)
+	noBucket := sdkFailure(codeNoSuchBucket, http.StatusNotFound)
 	s := &S3{svc: &mockS3Client{getObjectError: noBucket, copyObjectError: noBucket}, bucket: "b"}
 
 	_, getErr := s.Get("k")

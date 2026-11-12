@@ -11,7 +11,7 @@ import (
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 
-	"github.com/aws/aws-sdk-go/service/s3" //nolint:staticcheck // Using v1 SDK, migration to v2 planned
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 // A failed auto-multipart put whose abort also fails reports both errors,
@@ -21,7 +21,7 @@ func TestS3_Put_AutoMultipart_AbortFails(t *testing.T) {
 	boom := errors.New("boom")
 	r := newClassRecorder()
 	r.errs["UploadPart"] = boom
-	r.errs["AbortMultipartUpload"] = awsErr(s3.ErrCodeNoSuchUpload)
+	r.errs["AbortMultipartUpload"] = awsErr(codeNoSuchUpload)
 	s := &S3{svc: r, bucket: "bucket-one", multipartThreshold: 1, partSize: common.MinPartSize}
 	err := s.PutWithMetadata(context.Background(), "big", bytes.NewReader(data), nil)
 	if !errors.Is(err, boom) {
