@@ -27,6 +27,7 @@ import (
     "fmt"
     "io"
     "log"
+    "os"
 
     "github.com/jeremyhahn/go-objstore/pkg/common"
     "github.com/jeremyhahn/go-objstore/pkg/factory"
@@ -45,8 +46,9 @@ func main() {
     // Wrap with filesystem interface
     fs := storagefs.New(storage)
 
-    // Now use like a regular filesystem
-    file, err := fs.Create("docs/readme.txt")
+    // Now use like a regular filesystem. Open the new file write-only:
+    // Create (O_RDWR|O_CREATE) fails on a missing key (see Limitations).
+    file, err := fs.OpenFile("docs/readme.txt", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
     if err != nil {
         log.Fatal(err)
     }
@@ -109,7 +111,7 @@ file, err := fs.Open("path/to/file.txt")
 file, err := fs.OpenFile("path/to/file.txt", os.O_RDWR|os.O_CREATE, 0644)
 ```
 
-`Create(name)` is `OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)`. Opening a missing file without `os.O_CREATE` returns `os.ErrNotExist`. The content is held in memory while the file is open and is written to the backend only by `Sync` or `Close`, and only when the file was opened with `os.O_WRONLY` or `os.O_RDWR`.
+`Create(name)` is `OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)`. Because of a known defect (see Limitations), `Create` and any `OpenFile` with `os.O_RDWR|os.O_CREATE` fail on a missing file on the local backend with a "key not found: <key>" error; `os.O_WRONLY|os.O_CREATE` works. Opening a missing file without `os.O_CREATE` returns `os.ErrNotExist` only when the backend's error is `os.ErrNotExist` or exactly "key not found"; the local backend's wrapped `common.ErrKeyNotFound` is not recognised, so it returns that error instead. The content is held in memory while the file is open and is written to the backend only by `Sync` or `Close`, and only when the file was opened with `os.O_WRONLY` or `os.O_RDWR`.
 
 #### Write to File
 
@@ -261,7 +263,7 @@ for _, name := range names {
 }
 ```
 
-`Readdir(count int) ([]os.FileInfo, error)` and `Readdirnames(n int) ([]string, error)` list the direct children through the backend's `ListWithOptions` with the `/` delimiter, skipping `.meta/` keys and `.dir` markers. With `count <= 0` they return all remaining entries and a `nil` error. With `count > 0` they return up to `count` entries, and `io.EOF` together with the last batch (unlike `os.File`, which returns `io.EOF` only with an empty slice). On a file that is not a directory they return `storagefs.ErrNotDirectory`.
+`Readdir(count int) ([]os.FileInfo, error)` and `Readdirnames(n int) ([]string, error)` list the direct children through the backend's `ListWithOptions` with the `/` delimiter, skipping `.meta/` keys and `.dir` markers. They call `ListWithOptions` once and ignore `Truncated` and `NextToken`, so only the first page the backend returns is listed (the local backend returns 1,000 objects per page): in a directory with more entries than that, the rest are never returned and repeated `Readdir` calls return the same page again. With `count <= 0` they return the entries of that page and a `nil` error. With `count > 0` they return up to `count` entries, and `io.EOF` together with the last batch (unlike `os.File`, which returns `io.EOF` only with an empty slice). On a file that is not a directory they return `storagefs.ErrNotDirectory`.
 
 #### Paginated Directory Reading
 
@@ -421,6 +423,8 @@ Every path passed to `StorageFS` is normalized:
 5. **RemoveAll**: it deletes keys only through an unexported `listKeys(prefix string) []string` method on the backend, which the built-in backends do not have; on them it deletes nothing. It always returns `nil`, and the match is a plain key prefix
 6. **Directory Remove and Rename**: they act on the `.dir` marker and metadata only, not on the children
 7. **Whole-object I/O**: an open file holds its whole content in memory; `Sync` and `Close` rewrite the whole object
+8. **Create on a missing key (defect)**: `newStorageFile` recognises only `os.ErrNotExist` or the exact string "key not found", but the local backend's `Get` returns `common.ErrKeyNotFound` wrapped with the key. `Create` and `OpenFile` with `os.O_RDWR` or read-only flags on a missing file therefore return "key not found: <key>", even with `os.O_CREATE`, and `Open` of a missing file does not return `os.ErrNotExist`. Write-only opens (`os.O_WRONLY|os.O_CREATE`) are not affected
+9. **Readdir pagination (defect)**: `Readdir` and `Readdirnames` read only the first page of `ListWithOptions` (1,000 objects on the local backend) and ignore `Truncated` and `NextToken`
 
 ## Performance Considerations
 
@@ -435,7 +439,7 @@ StorageFS returns standard `os` errors and its own sentinels; check them with `e
 
 | Error | Returned by |
 |-------|-------------|
-| `os.ErrNotExist` | `Open`/`OpenFile` of a missing file without `os.O_CREATE`; `Stat`, `Remove` and `Rename` of a missing path |
+| `os.ErrNotExist` | `Open`/`OpenFile` of a missing file without `os.O_CREATE`, only when the backend reports `os.ErrNotExist` (not the local backend, see Limitations 8); `Stat`, `Remove` and `Rename` of a missing path |
 | `os.ErrExist` | `Mkdir` of an existing directory |
 | `os.ErrInvalid` | `Chown`, always |
 | `os.ErrPermission` | writes and `Truncate` on a file opened read-only; reads on a file opened `os.O_WRONLY` |
