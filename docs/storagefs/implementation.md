@@ -26,7 +26,7 @@ Created a complete filesystem abstraction with the following files:
 - Sentinel errors `ErrIsDirectory` and `ErrNotDirectory`
 
 #### file.go (482 lines)
-- `*StorageFile` implements the package's `storagefs.File` interface, not `io/fs.File`
+- `*StorageFile` implements the package's `storagefs.File` interface; it also satisfies `io/fs.File` (it has `Read`, `Close` and a `Stat` returning `os.FileInfo`, an alias of `fs.FileInfo`)
 - Complete file operations: Close, Read, Write, WriteString, Seek, ReadAt, WriteAt, Name, Stat, Truncate, Sync
 - Each open file serialises its own operations with a `sync.Mutex` (`StorageFS` itself holds no lock)
 - Sentinel errors `ErrInvalidWhence` and `ErrNegativeOffset` (from `Seek`)
