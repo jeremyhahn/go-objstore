@@ -53,12 +53,13 @@ object goes as 96 parts of 64 MiB). Objects over 5 TiB are refused with
 cannot seek has no known size and is always sent as a single PUT.
 
 ### Credentials
-Uses AWS SDK credential chain in order:
-1. Environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)
-2. Shared credentials file (`~/.aws/credentials`)
-3. EC2 instance profile (IAM role)
+The backend is built on the AWS SDK for Go v2 (`aws-sdk-go-v2`). Without
+`accessKey`/`secretKey` it uses the SDK's default credential chain, in order:
+1. Environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`)
+2. Shared config and credentials files (`~/.aws/config`, `~/.aws/credentials`; `AWS_PROFILE` selects the profile, including SSO and role profiles). `~/.aws/config` is always read; `AWS_SDK_LOAD_CONFIG` is no longer needed
+3. Web identity token (`AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_ROLE_ARN`)
 4. ECS task role
-5. Web identity token
+5. EC2 instance profile (IAM role, IMDSv2)
 
 ### Example Configuration
 ```yaml
