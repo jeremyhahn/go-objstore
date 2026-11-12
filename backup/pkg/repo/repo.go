@@ -331,33 +331,25 @@ func (r *Repository) Slot() seal.ID {
 }
 
 // Keys returns the IDs of the repository's key slots. On a format 1
-// repository every key object is a slot.
-func (r *Repository) Keys(ctx context.Context) ([]seal.ID, error) {
+// repository the only slot is the key that opened it. The error is reserved
+// for providers of a key list that must be read.
+func (r *Repository) Keys(_ context.Context) ([]seal.ID, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.slots(ctx)
+	return r.slots(), nil
 }
 
 // slots lists the key slots. The caller holds r.mu.
-func (r *Repository) slots(ctx context.Context) ([]seal.ID, error) {
-	const op = "keys"
+//
+// A format 1 repository has no key list, and its keys/ directory can hold
+// key objects that are not its own, such as an orphan from a failed Init.
+// The only one known to unwrap this repository's data key is the one that
+// opened it, so that is its single slot, as for Open.
+func (r *Repository) slots() []seal.ID {
 	if r.cfg.Version >= formatVersion {
-		return slices.Clone(r.cfg.Keys), nil
+		return slices.Clone(r.cfg.Keys)
 	}
-	dir := r.layout.Dir(KindKey)
-	names, err := r.st.List(ctx, dir)
-	if err != nil {
-		return nil, fromStore(op, dir, err)
-	}
-	ids := make([]seal.ID, 0, len(names))
-	for _, name := range names {
-		id, err := r.layout.Parse(KindKey, name)
-		if err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, nil
+	return []seal.ID{r.slot}
 }
 
 // AddKey wraps the data key under p in a new key slot and returns its ID.
@@ -386,7 +378,7 @@ func (r *Repository) current(ctx context.Context) ([]seal.ID, error) {
 	if err := r.refresh(ctx, "key change"); err != nil {
 		return nil, err
 	}
-	return r.slots(ctx)
+	return r.slots(), nil
 }
 
 // RemoveKey drops the key slot id. It refuses to drop the last slot. The

@@ -2,6 +2,7 @@ package repo
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -392,6 +393,39 @@ func TestFormat1Upgrade(t *testing.T) {
 	st.Replace(testPrefix+"/keyring/0000000000000002", gen)
 	_, err = Open(ctx, st, testPrefix, passphrase(t, "second key"))
 	assertRepoError(t, err, ErrCorrupt)
+}
+
+func TestFormat1OrphanKey(t *testing.T) {
+	ctx := context.Background()
+	r, st := newRepo(t)
+	v1 := r.Config()
+	v1.Version = formatVersionV1
+	v1.Keys = nil
+	plain, _ := json.Marshal(v1)
+	sealed, err := r.keys.Seal(seal.TypeConfig, configID, seal.CompressionNone, plain)
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+	st.Replace(testPrefix+"/config", sealed)
+	// A failed legacy Init left a key object for another data key.
+	_, wrapped, err := keyseam.NewDataKey(ctx, passphrase(t, "correct horse"))
+	if err != nil {
+		t.Fatalf("NewDataKey: %v", err)
+	}
+	if err := st.Put(ctx, r.layout.Name(KindKey, sha256.Sum256(wrapped)), wrapped); err != nil {
+		t.Fatalf("Put orphan: %v", err)
+	}
+
+	o, err := Open(ctx, st, testPrefix, passphrase(t, "correct horse"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = o.Close() }()
+	keys, err := o.Keys(ctx)
+	if err != nil || len(keys) != 1 || keys[0] != o.Slot() {
+		t.Fatalf("Keys = %v, %v; want only the opening slot", keys, err)
+	}
+	assertRepoError(t, o.RemoveKey(ctx, o.Slot()), ErrLastKey)
 }
 
 func keyNames(t *testing.T, st store.Store) []string {
