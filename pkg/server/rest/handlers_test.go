@@ -97,6 +97,11 @@ func (m *MockStorage) GetWithContext(ctx context.Context, key string) (io.ReadCl
 func (m *MockStorage) GetMetadata(ctx context.Context, key string) (*common.Metadata, error) {
 	metadata, exists := m.metadata[key]
 	if !exists {
+		// Objects seeded straight into the map carry their metadata
+		// there; a real backend reports the metadata it lists.
+		if obj, ok := m.objects[key]; ok && obj.metadata != nil {
+			return obj.metadata, nil
+		}
 		return nil, common.ErrMetadataNotFound
 	}
 	return metadata, nil

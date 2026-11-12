@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/internal/multipart"
@@ -47,15 +48,36 @@ type Local struct {
 	logger                 adapters.Logger
 	auditLog               auditlog.AuditLogger
 	lifecycleCancel        context.CancelFunc // stops the background lifecycle goroutine
-	multipartExpiry        time.Duration      // age after which an upload in progress is treated as aborted
-	now                    func() time.Time   // time source for upload expiry; nil means time.Now
-	buckets                *Buckets           // set when the bucketRoot setting is present
+	lifecycleInterval      time.Duration      // time between scheduled lifecycle passes
+
+	// lifecyclePassHook, when set, is called after each scheduled
+	// lifecycle pass completes. It lets tests observe a pass instead of
+	// sleeping for one.
+	lifecyclePassHook atomic.Pointer[func()]
+	// walkVisits and metadataReads count the entries the object walk
+	// visits and the metadata objectMetadata reads, so tests can bound the
+	// cost of paging through a listing.
+	walkVisits      atomic.Int64
+	metadataReads   atomic.Int64
+	multipartExpiry time.Duration    // age after which an upload in progress is treated as aborted
+	now             func() time.Time // time source for upload expiry; nil means time.Now
+	buckets         *Buckets         // set when the bucketRoot setting is present
 
 	// pruneMu orders directory pruning against writers. A writer holds the
 	// read side from the moment it creates a parent directory until its
 	// temporary file exists in it; pruneEmptyDirs holds the write side while
 	// it removes directories. Writers never block one another.
 	pruneMu sync.RWMutex
+
+	// keyMu holds a lock per object key. A write holds its key's lock
+	// from before the object is published until its metadata is saved;
+	// lifecycle expiry holds it while it re-reads an object's age and
+	// deletes it, so it never deletes a replacement it did not judge.
+	keyMu keyLocks
+
+	// expiryHook, when set (by tests), runs between lifecycle expiry's
+	// decision on a key and the delete.
+	expiryHook func(key string)
 
 	// root is the configured directory opened as an os.Root. Every open,
 	// create, rename and remove goes through it, so a symlink planted below
@@ -119,7 +141,10 @@ func New() common.Storage {
 // settings is an error.
 // Settings:
 //   - path: The directory path for local storage (required)
-//   - runLifecycle: "true" to run lifecycle processing in background (optional)
+//   - runLifecycle: "true" to run lifecycle processing in background with
+//     whichever manager is configured, memory or persistent (optional)
+//   - lifecycleInterval: Go duration between scheduled lifecycle passes
+//     (optional, default "1h"; zero, negative or unparsable is refused)
 //   - lifecycleManagerType: "memory" (default) or "persistent" (optional)
 //   - lifecyclePolicyFile: Path to policy file when using persistent manager (optional, default: ".lifecycle-policies.json")
 //
@@ -212,14 +237,25 @@ func (l *Local) configure(settings map[string]string, root *os.Root) error {
 		return common.ErrInvalidLifecycleManagerType
 	}
 
-	// Start background lifecycle processing if requested
+	interval, err := parseLifecycleInterval(settings)
+	if err != nil {
+		return err
+	}
+	l.lifecycleInterval = interval
+	if memManager, ok := l.lifecycleManager.(*LifecycleManager); ok {
+		memManager.interval = interval
+	}
+
+	// Start background lifecycle processing if requested. The scheduled
+	// pass reads the policies of whichever manager was built above.
+	if l.lifecycleCancel != nil {
+		l.lifecycleCancel()
+		l.lifecycleCancel = nil
+	}
 	if settings["runLifecycle"] == "true" {
-		// Only in-memory manager supports Run method
-		if memManager, ok := l.lifecycleManager.(*LifecycleManager); ok {
-			ctx, cancel := context.WithCancel(context.Background())
-			l.lifecycleCancel = cancel
-			go memManager.Run(ctx, l)
-		}
+		ctx, cancel := context.WithCancel(context.Background())
+		l.lifecycleCancel = cancel
+		go l.runLifecycle(ctx, interval)
 	}
 
 	return nil
@@ -274,6 +310,10 @@ func (lfs *localFileSystem) Remove(name string) error {
 	return lfs.root.Remove(rootName(name))
 }
 
+// ReservesStagingNames reports that the store refuses object keys under the
+// reserved temp prefix, so the policy file can be staged there.
+func (lfs *localFileSystem) ReservesStagingNames() bool { return true }
+
 func (lfs *localFileSystem) Rename(src, dst string) error {
 	return lfs.root.Rename(rootName(src), rootName(dst))
 }
@@ -304,8 +344,19 @@ func (l *Local) validateKey(key string) error {
 			Message: fmt.Sprintf("key %q is the store's lifecycle policy file", key),
 		}
 	}
+	if l.policyFile != "" && common.SameKey(key+metadataSuffix, l.policyFile) {
+		return fmt.Errorf("%w: %w", ErrKeyAliasesPolicyFile, &common.ValidationError{
+			Field:   "key",
+			Message: fmt.Sprintf("the metadata of key %q would overwrite the store's lifecycle policy file", key),
+		})
+	}
 	return nil
 }
+
+// ErrKeyAliasesPolicyFile reports an object key whose metadata sidecar
+// would be the store's lifecycle policy file: storing the object would
+// overwrite the policies with its metadata.
+var ErrKeyAliasesPolicyFile = errors.New("key's metadata sidecar is the lifecycle policy file")
 
 // PutWithMetadata stores an object with associated metadata.
 func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader, metadata *common.Metadata) error {
@@ -346,6 +397,11 @@ func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 		defer func() { _ = encryptedData.Close() }()
 		dataToWrite = encryptedData
 	}
+
+	// The key stays locked until the metadata is saved, so lifecycle
+	// expiry never sees the new data with the old age.
+	unlock := l.keyMu.lock(key)
+	defer unlock()
 
 	var size int64
 	if err := writeObjectAtomic(root, &l.pruneMu, name, 0644, func(w io.Writer) error {
@@ -516,6 +572,13 @@ func (l *Local) UpdateMetadata(ctx context.Context, key string, metadata *common
 	default:
 	}
 
+	// Hold the key's lock from the existence check through saving the
+	// sidecar, as the expiry pass does from its re-read through Delete: a
+	// refreshed LastModified is published either before expiry judges the
+	// object (which then keeps it) or after expiry has finished.
+	unlock := l.keyMu.lock(key)
+	defer unlock()
+
 	// Verify object exists
 	root, err := l.fsRoot()
 	if err != nil {
@@ -557,6 +620,52 @@ func (l *Local) DeleteWithContext(ctx context.Context, key string) error {
 	default:
 	}
 
+	unlock := l.keyMu.lock(key)
+	defer unlock()
+	return l.deleteLocked(key)
+}
+
+// DeleteIfUnmodified deletes key only if its LastModified still equals
+// lastModified, checking and deleting under the key's lock so a PUT or
+// metadata update cannot land in between. It implements
+// common.ConditionalDeleter.
+func (l *Local) DeleteIfUnmodified(ctx context.Context, key string, lastModified time.Time) error {
+	if err := l.validateKey(key); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	unlock := l.keyMu.lock(key)
+	defer unlock()
+
+	root, err := l.fsRoot()
+	if err != nil {
+		return err
+	}
+	info, err := root.Stat(rootName(key))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("%w: %s", common.ErrKeyNotFound, key)
+		}
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%w: %s", common.ErrKeyNotFound, key)
+	}
+	current, err := l.objectMetadata(filepath.FromSlash(key), fs.FileInfoToDirEntry(info))
+	if err != nil {
+		return err
+	}
+	if current == nil || !current.LastModified.Equal(lastModified) {
+		return fmt.Errorf("%w: %s", common.ErrObjectChanged, key)
+	}
+	return l.deleteLocked(key)
+}
+
+// deleteLocked removes key and its metadata sidecar. The caller holds the
+// key's lock.
+func (l *Local) deleteLocked(key string) error {
 	root, err := l.fsRoot()
 	if err != nil {
 		return err
@@ -742,7 +851,24 @@ func (l *Local) ListWithOptions(ctx context.Context, opts *common.ListOptions) (
 		return nil, err
 	}
 
-	err = l.walkObjects(ctx, root, func(normalizedRel string, d fs.DirEntry) error {
+	maxResults := opts.MaxResults
+	if maxResults <= 0 {
+		maxResults = 1000 // Default max results
+	}
+
+	// Without a delimiter the walk resumes after the continuation key and
+	// stops as soon as the page is full, so paging through N objects visits
+	// and reads each about once instead of the whole tree per page. With a
+	// delimiter, CommonPrefixes covers the whole listing, so the walk still
+	// sees every key and the page is sliced from it below.
+	paged := opts.Delimiter == ""
+	after := ""
+	if paged {
+		after = filepath.ToSlash(opts.ContinueFrom)
+	}
+	more := false
+
+	err = l.walkObjectsAfter(ctx, root, after, func(normalizedRel string, d fs.DirEntry) error {
 		normalizedPrefix := filepath.ToSlash(opts.Prefix)
 
 		// Check if this path matches the prefix
@@ -767,23 +893,17 @@ func (l *Local) ListWithOptions(ctx context.Context, opts *common.ListOptions) (
 			}
 		}
 
-		// Load metadata
-		metadata, err := l.loadMetadata(normalizedRel)
+		if paged && len(allObjects) == maxResults {
+			more = true
+			return fs.SkipAll
+		}
+
+		metadata, err := l.objectMetadata(normalizedRel, d)
 		if err != nil {
-			// Create basic metadata if not found. The entry may have been
-			// removed since the directory was read; treat that as absent.
-			info, ierr := d.Info()
-			if ierr != nil {
-				if errors.Is(ierr, fs.ErrNotExist) {
-					return nil
-				}
-				return ierr
-			}
-			metadata = &common.Metadata{
-				Size:         info.Size(),
-				LastModified: info.ModTime(),
-				ETag:         fmt.Sprintf("%d-%d", info.ModTime().Unix(), info.Size()),
-			}
+			return err
+		}
+		if metadata == nil {
+			return nil
 		}
 
 		objInfo := &common.ObjectInfo{
@@ -799,34 +919,36 @@ func (l *Local) ListWithOptions(ctx context.Context, opts *common.ListOptions) (
 		return nil, err
 	}
 
-	// Handle pagination
-	startIdx := 0
-	if opts.ContinueFrom != "" {
-		// Find the starting index based on continuation token
-		for i, obj := range allObjects {
-			if obj.Key == opts.ContinueFrom {
-				startIdx = i + 1
-				break
+	if paged {
+		result.Objects = allObjects
+		if more {
+			result.Truncated = true
+			result.NextToken = allObjects[len(allObjects)-1].Key
+		}
+	} else {
+		startIdx := 0
+		if opts.ContinueFrom != "" {
+			// Find the starting index based on continuation token
+			for i, obj := range allObjects {
+				if obj.Key == opts.ContinueFrom {
+					startIdx = i + 1
+					break
+				}
 			}
 		}
-	}
 
-	maxResults := opts.MaxResults
-	if maxResults <= 0 {
-		maxResults = 1000 // Default max results
-	}
+		endIdx := startIdx + maxResults
+		if endIdx > len(allObjects) {
+			endIdx = len(allObjects)
+		}
 
-	endIdx := startIdx + maxResults
-	if endIdx > len(allObjects) {
-		endIdx = len(allObjects)
-	}
+		result.Objects = allObjects[startIdx:endIdx]
 
-	result.Objects = allObjects[startIdx:endIdx]
-
-	// Set pagination info
-	if endIdx < len(allObjects) {
-		result.Truncated = true
-		result.NextToken = allObjects[endIdx-1].Key
+		// Set pagination info
+		if endIdx < len(allObjects) {
+			result.Truncated = true
+			result.NextToken = allObjects[endIdx-1].Key
+		}
 	}
 
 	// Log list operation
@@ -946,8 +1068,45 @@ const tmpFilePrefix = common.TempFilePrefix
 // follows a symlink. Entries that vanish while the walk is in progress (a
 // concurrent Put renaming its temp file, a concurrent Delete) are treated as
 // absent rather than failing the whole walk; any other error aborts it.
+// objectMetadata returns the metadata of the object the walk found at name:
+// its sidecar, or, when it has none, one built from the data file. A nil
+// result with no error means the object was removed since its directory was
+// read. Listing and the scheduled lifecycle pass both age an object by the
+// LastModified this returns, so they agree on which objects are expired.
+func (l *Local) objectMetadata(name string, d fs.DirEntry) (*common.Metadata, error) {
+	l.metadataReads.Add(1)
+	metadata, err := l.loadMetadata(name)
+	if err == nil {
+		return metadata, nil
+	}
+	info, ierr := d.Info()
+	if ierr != nil {
+		if errors.Is(ierr, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, ierr
+	}
+	return &common.Metadata{
+		Size:         info.Size(),
+		LastModified: info.ModTime(),
+		ETag:         fmt.Sprintf("%d-%d", info.ModTime().Unix(), info.Size()),
+	}, nil
+}
+
 func (l *Local) walkObjects(ctx context.Context, root *os.Root, fn func(name string, d fs.DirEntry) error) error {
+	return l.walkObjectsAfter(ctx, root, "", fn)
+}
+
+// walkObjectsAfter is walkObjects starting after the key after (all keys
+// when after is empty). The walk visits keys in walk order (see
+// compareWalkOrder); a directory whose whole subtree comes before after is
+// skipped without being read, and so is every object up to and including
+// after, so resuming a paged listing costs the page, not the keys before
+// it. A key that was deleted since it was handed out still resumes at the
+// first key after it.
+func (l *Local) walkObjectsAfter(ctx context.Context, root *os.Root, after string, fn func(name string, d fs.DirEntry) error) error {
 	return fs.WalkDir(root.FS(), ".", func(name string, d fs.DirEntry, err error) error {
+		l.walkVisits.Add(1)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -966,6 +1125,16 @@ func (l *Local) walkObjects(ctx context.Context, root *os.Root, fn func(name str
 			return fs.SkipDir
 		}
 
+		if after != "" && name != "." {
+			if d.IsDir() {
+				if !strings.HasPrefix(after, name+"/") && compareWalkOrder(name, after) < 0 {
+					return fs.SkipDir
+				}
+			} else if compareWalkOrder(name, after) <= 0 {
+				return nil
+			}
+		}
+
 		if d.IsDir() || strings.HasSuffix(name, metadataSuffix) || strings.HasPrefix(d.Name(), tmpFilePrefix) {
 			return nil
 		}
@@ -978,6 +1147,20 @@ func (l *Local) walkObjects(ctx context.Context, root *os.Root, fn func(name str
 
 		return fn(name, d)
 	})
+}
+
+// compareWalkOrder compares two slash-separated keys in the order
+// fs.WalkDir visits them: segment by segment, each segment by bytes, a
+// directory before its contents. It differs from plain string order
+// ("a-b" sorts before "a/b" as strings but after it in the walk).
+func compareWalkOrder(a, b string) int {
+	sa, sb := strings.Split(a, "/"), strings.Split(b, "/")
+	for i := 0; i < len(sa) && i < len(sb); i++ {
+		if c := strings.Compare(sa[i], sb[i]); c != 0 {
+			return c
+		}
+	}
+	return len(sa) - len(sb)
 }
 
 // writeFileAtomic writes the file name below root durably and atomically. It

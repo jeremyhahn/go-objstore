@@ -653,16 +653,14 @@ func (h *Handler) ExistsObject(c *gin.Context) {
 
 // ApplyPolicies handles POST /api/v1/policies/apply - executes all lifecycle policies.
 func (h *Handler) ApplyPolicies(c *gin.Context) {
-	ctx := c.Request.Context()
-
-	// Get policies using facade
-	policies, err := objstore.GetPolicies(h.backend)
+	// The facade pages through the whole listing.
+	result, err := objstore.ApplyPolicies(c.Request.Context(), h.backend, nil)
 	if err != nil {
 		RespondWithBackendError(c, err)
 		return
 	}
 
-	if len(policies) == 0 {
+	if result.PoliciesCount == 0 {
 		c.JSON(http.StatusOK, gin.H{
 			"message":           "No lifecycle policies to apply",
 			"policies_count":    0,
@@ -671,57 +669,10 @@ func (h *Handler) ApplyPolicies(c *gin.Context) {
 		return
 	}
 
-	// Apply policies by listing objects and checking retention
-	objectsProcessed := 0
-	opts := &common.ListOptions{
-		Prefix: "",
-	}
-	result, err := objstore.ListWithOptions(ctx, h.backend, opts)
-	if err != nil {
-		RespondWithBackendError(c, err)
-		return
-	}
-
-	for _, policy := range policies {
-		for _, obj := range result.Objects {
-			// Check if object matches policy prefix
-			if policy.Prefix != "" && !hasPrefix(obj.Key, policy.Prefix) {
-				continue
-			}
-
-			// Get metadata to check last modified time
-			if obj.Metadata == nil {
-				continue
-			}
-
-			// Check if object is older than retention period
-			age := time.Since(obj.Metadata.LastModified)
-			if age <= policy.Retention {
-				continue
-			}
-
-			// Apply action using facade
-			switch policy.Action {
-			case "delete":
-				if err := objstore.DeleteWithContext(ctx, h.keyRef(obj.Key)); err != nil {
-					continue
-				}
-				objectsProcessed++
-			case "archive":
-				if policy.Destination != nil {
-					if err := objstore.Archive(h.keyRef(obj.Key), policy.Destination); err != nil {
-						continue
-					}
-					objectsProcessed++
-				}
-			}
-		}
-	}
-
 	c.JSON(http.StatusOK, gin.H{
 		"message":           "Lifecycle policies applied successfully",
-		"policies_count":    len(policies),
-		"objects_processed": objectsProcessed,
+		"policies_count":    result.PoliciesCount,
+		"objects_processed": result.ObjectsProcessed,
 	})
 }
 
@@ -747,9 +698,4 @@ func extractPrincipal(c *gin.Context) (principal string, userID string) {
 // createArchiver creates an archiver from factory based on destination type
 func createArchiver(destinationType string, settings map[string]string, opts factory.WireOptions) (common.Archiver, error) {
 	return factory.NewArchiverFromWireOpts(destinationType, settings, opts)
-}
-
-// hasPrefix checks if a string starts with the given prefix
-func hasPrefix(s, prefix string) bool {
-	return len(s) >= len(prefix) && s[0:len(prefix)] == prefix
 }

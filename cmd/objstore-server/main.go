@@ -51,8 +51,15 @@ func main() {
 	mw := cfg.Middleware()
 
 	// Create storage backend
-	settings := make(map[string]string)
-	settings["path"] = cfg.Path
+	// The local backend also gets the lifecycle settings; other backends
+	// ignore the lifecycle section.
+	settings := cfg.StorageSettings()
+	if cfg.Backend != "local" {
+		slog.Info("Lifecycle settings ignored: they apply to the local backend only", "backend", cfg.Backend)
+	} else if cfg.Lifecycle.Run {
+		slog.Info("Lifecycle policies run on a schedule",
+			"manager", cfg.Lifecycle.Manager, "interval", cfg.Lifecycle.Interval.String())
+	}
 
 	storage, err := factory.NewStorage(cfg.Backend, settings, common.Credentials{})
 	if err != nil {

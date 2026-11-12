@@ -55,6 +55,20 @@ func BindServerFlags(fs *flag.FlagSet, c *Config) {
 	stringVar(fs, &c.Unix.Socket, "unix-socket", "unix.socket", "Unix socket path")
 
 	bindMiddlewareFlags(fs, c)
+	bindLifecycleFlags(fs, c)
+}
+
+// bindLifecycleFlags binds the lifecycle section, which every server binary
+// passes to its backend through StorageSettings.
+func bindLifecycleFlags(fs *flag.FlagSet, c *Config) {
+	boolVar(fs, &c.Lifecycle.Run, "lifecycle-run", "lifecycle.run",
+		"Run lifecycle policies on a schedule (local backend)")
+	stringVar(fs, &c.Lifecycle.Manager, "lifecycle-manager", "lifecycle.manager",
+		"Lifecycle manager type: persistent or memory (local backend)")
+	stringVar(fs, &c.Lifecycle.PolicyFile, "lifecycle-policy-file", "lifecycle.policy_file",
+		"File, relative to path, that holds persistent lifecycle policies (local backend)")
+	durationVar(fs, &c.Lifecycle.Interval, "lifecycle-interval", "lifecycle.interval",
+		"Time between scheduled lifecycle passes (local backend)")
 }
 
 // BindGRPCServerFlags registers the flags of objstore-grpc-server.
@@ -66,6 +80,7 @@ func BindGRPCServerFlags(fs *flag.FlagSet, c *Config) {
 	intVar(fs, &c.GRPC.MaxRecvMsgSize, "max-recv-msg-size", "grpc.max_recv_msg_size", "Maximum received message size in bytes")
 	intVar(fs, &c.GRPC.MaxSendMsgSize, "max-send-msg-size", "grpc.max_send_msg_size", "Maximum sent message size in bytes")
 	bindMiddlewareFlags(fs, c)
+	bindLifecycleFlags(fs, c)
 }
 
 // BindRESTServerFlags registers the flags of objstore-rest-server.
@@ -75,6 +90,7 @@ func BindRESTServerFlags(fs *flag.FlagSet, c *Config) {
 	intVar(fs, &c.REST.Port, "port", "rest.port", "REST server port")
 	boolVar(fs, &c.REST.MetricsPublic, "metrics-public", "rest.metrics_public", "Expose /metrics without authorization")
 	bindMiddlewareFlags(fs, c)
+	bindLifecycleFlags(fs, c)
 }
 
 // BindQUICServerFlags registers the flags of objstore-quic-server.
@@ -90,6 +106,7 @@ func BindQUICServerFlags(fs *flag.FlagSet, c *Config) {
 	int64Var(fs, &c.QUIC.MaxStreams, "maxstreams", "quic.max_streams", "Maximum bidirectional streams per connection")
 	boolVar(fs, &c.QUIC.SelfSigned, "selfsigned", "quic.self_signed", "Use self-signed certificate (for testing only)")
 	bindMiddlewareFlags(fs, c)
+	bindLifecycleFlags(fs, c)
 }
 
 // BindMCPServerFlags registers the flags of objstore-mcp-server.
@@ -98,6 +115,7 @@ func BindMCPServerFlags(fs *flag.FlagSet, c *Config) {
 	stringVar(fs, &c.MCP.Mode, "mode", "mcp.mode", "Server mode: stdio or http")
 	stringVar(fs, &c.MCP.Addr, "addr", "mcp.addr", "HTTP server address (only for http mode)")
 	bindMiddlewareFlags(fs, c)
+	bindLifecycleFlags(fs, c)
 }
 
 // bindMiddlewareFlags registers the cross-transport middleware flags every

@@ -44,6 +44,10 @@ var (
 	// ErrInitializationFailed wraps the error from the first Initialize call
 	// when it failed; later calls return the same error.
 	ErrInitializationFailed = errors.New("objstore facade initialization failed")
+
+	// ErrListingStalled is returned by ApplyPolicies when a backend reports
+	// a truncated listing page but gives no new continuation token.
+	ErrListingStalled = errors.New("listing did not advance")
 )
 
 // Facade singleton instance
@@ -622,6 +626,160 @@ func GetPolicies(backendName string) ([]common.LifecyclePolicy, error) {
 	}
 
 	return storage.GetPolicies()
+}
+
+// applyPoliciesPageSize is the page size ApplyPolicies lists with. Tests
+// lower it to cover more than one page.
+var applyPoliciesPageSize = 1000
+
+// ApplyPoliciesResult reports what ApplyPolicies did.
+type ApplyPoliciesResult struct {
+	// PoliciesCount is the number of policies the backend holds.
+	PoliciesCount int
+	// ObjectsProcessed counts the objects deleted or archived.
+	ObjectsProcessed int
+}
+
+// PolicyActionError reports an object a policy could not act on. ApplyPolicies
+// passes each one to its onError callback and carries on.
+type PolicyActionError func(key, action string, err error)
+
+// ApplyPolicies applies every lifecycle policy of the backend once. It pages
+// through the whole listing (following the continuation token until the
+// result says there is no more), records each object older than a matching
+// policy's retention, and then deletes or archives it. Actions run after the
+// listing so a delete never moves the continuation point of a backend that
+// pages by key. A failed action is passed to onError (when non-nil) and
+// skipped; listing and policy errors are returned.
+func ApplyPolicies(ctx context.Context, backendName string, onError PolicyActionError) (*ApplyPoliciesResult, error) {
+	policies, err := GetPolicies(backendName)
+	if err != nil {
+		return nil, err
+	}
+	result := &ApplyPoliciesResult{PoliciesCount: len(policies)}
+	if len(policies) == 0 {
+		return result, nil
+	}
+
+	// An action keeps the revision the listing showed, so it acts only on
+	// that revision: an object replaced while later pages were listed is
+	// left alone.
+	type action struct {
+		key    string
+		policy *common.LifecyclePolicy
+		seen   common.Metadata
+	}
+	var actions []action
+	now := time.Now()
+	opts := &common.ListOptions{MaxResults: applyPoliciesPageSize}
+	seen := make(map[string]bool)
+	for {
+		page, err := ListWithOptions(ctx, backendName, opts)
+		if err != nil {
+			return nil, err
+		}
+		for _, obj := range page.Objects {
+			if obj == nil || obj.Metadata == nil {
+				continue
+			}
+			for i := range policies {
+				p := &policies[i]
+				if !strings.HasPrefix(obj.Key, p.Prefix) {
+					continue
+				}
+				if now.Sub(obj.Metadata.LastModified) <= p.Retention {
+					continue
+				}
+				actions = append(actions, action{key: obj.Key, policy: p, seen: *obj.Metadata})
+			}
+		}
+		if !page.Truncated {
+			break
+		}
+		// A truncated page that does not advance would loop forever or,
+		// if the pass stopped there, leave the rest of the store unseen.
+		if page.NextToken == "" || seen[page.NextToken] || page.NextToken == opts.ContinueFrom {
+			return nil, fmt.Errorf("%w: listing backend %q reported a truncated page without a new continuation token",
+				ErrListingStalled, backendName)
+		}
+		seen[page.NextToken] = true
+		opts = &common.ListOptions{MaxResults: applyPoliciesPageSize, ContinueFrom: page.NextToken}
+	}
+
+	keyRef := func(key string) string {
+		if backendName == "" {
+			return key
+		}
+		return backendName + ":" + key
+	}
+	for _, a := range actions {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		var actErr error
+		switch a.policy.Action {
+		case "delete":
+			actErr = deleteIfUnmodified(ctx, keyRef(a.key), &a.seen)
+		case "archive":
+			if a.policy.Destination == nil {
+				continue
+			}
+			actErr = checkUnmodified(ctx, keyRef(a.key), &a.seen)
+			if actErr == nil {
+				actErr = Archive(keyRef(a.key), a.policy.Destination)
+			}
+		default:
+			continue
+		}
+		// An object replaced or removed since the listing is not acted on
+		// and is not a failure.
+		if errors.Is(actErr, common.ErrObjectChanged) || errors.Is(actErr, common.ErrKeyNotFound) {
+			continue
+		}
+		if actErr != nil {
+			if onError != nil {
+				onError(a.key, a.policy.Action, actErr)
+			}
+			continue
+		}
+		result.ObjectsProcessed++
+	}
+	return result, nil
+}
+
+// deleteIfUnmodified deletes keyRef only if it is still the revision seen.
+// A backend that implements common.ConditionalDeleter checks and deletes
+// under its own lock; any other is re-checked just before the delete.
+func deleteIfUnmodified(ctx context.Context, keyRef string, seen *common.Metadata) error {
+	if err := validation.ValidateKeyReference(keyRef); err != nil {
+		return fmt.Errorf("invalid key reference: %w", err)
+	}
+	storage, key, err := getStorageForKey(keyRef)
+	if err != nil {
+		return err
+	}
+	if cd, ok := storage.(common.ConditionalDeleter); ok {
+		return cd.DeleteIfUnmodified(ctx, key, seen.LastModified)
+	}
+	if err := checkUnmodified(ctx, keyRef, seen); err != nil {
+		return err
+	}
+	return storage.DeleteWithContext(ctx, key)
+}
+
+// checkUnmodified returns common.ErrObjectChanged when keyRef's current
+// LastModified or ETag differs from the revision seen.
+func checkUnmodified(ctx context.Context, keyRef string, seen *common.Metadata) error {
+	current, err := GetMetadata(ctx, keyRef)
+	if err != nil {
+		return err
+	}
+	if current == nil ||
+		(!seen.LastModified.IsZero() && !current.LastModified.Equal(seen.LastModified)) ||
+		(seen.ETag != "" && current.ETag != seen.ETag) {
+		return fmt.Errorf("%w: %s", common.ErrObjectChanged, keyRef)
+	}
+	return nil
 }
 
 // GetReplicationManager returns the replication manager for a backend if supported

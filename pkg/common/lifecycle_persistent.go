@@ -212,9 +212,19 @@ func (lm *PersistentLifecycleManager) AddPolicy(policy LifecyclePolicy) error {
 	lm.mutex.Lock()
 	defer lm.mutex.Unlock()
 
+	// The live map only keeps the policy once it is on disk: a policy that
+	// failed to persist must never run.
+	prev, had := lm.policies[policy.ID]
 	lm.policies[policy.ID] = policy
-
-	return lm.save()
+	if err := lm.save(); err != nil {
+		if had {
+			lm.policies[policy.ID] = prev
+		} else {
+			delete(lm.policies, policy.ID)
+		}
+		return err
+	}
+	return nil
 }
 
 // RemovePolicy removes a lifecycle policy and persists the change to storage.
@@ -222,9 +232,17 @@ func (lm *PersistentLifecycleManager) RemovePolicy(id string) error {
 	lm.mutex.Lock()
 	defer lm.mutex.Unlock()
 
+	prev, had := lm.policies[id]
 	delete(lm.policies, id)
-
-	return lm.save()
+	if err := lm.save(); err != nil {
+		// A removal that failed to persist leaves the policy in force, as
+		// it will be after a restart.
+		if had {
+			lm.policies[id] = prev
+		}
+		return err
+	}
+	return nil
 }
 
 // GetPolicies returns all the lifecycle policies.
@@ -262,8 +280,15 @@ func (lm *PersistentLifecycleManager) save() error {
 		return err
 	}
 
-	// Write atomically: temp file → fsync → rename.
-	tmpName := lm.policyFile + ".tmp"
+	// A FileSystem that keeps the reserved temp namespace out of reach of
+	// object keys gets temp file → fsync → rename. Any other (a StorageFS
+	// over an object store, whose providers refuse ".tmp-" keys) gets the
+	// file written in place: there Sync is one Put, which replaces the
+	// object whole.
+	if sfs, ok := lm.fs.(StagingFileSystem); !ok || !sfs.ReservesStagingNames() {
+		return lm.writeInPlace(jsonData)
+	}
+	tmpName := PolicyStagingName(lm.policyFile)
 	tmp, err := lm.fs.OpenFile(tmpName, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return err
@@ -292,6 +317,33 @@ func (lm *PersistentLifecycleManager) save() error {
 	}
 	committed = true
 	return nil
+}
+
+// writeInPlace writes data over the policy file itself, for a FileSystem
+// with no protected staging names.
+func (lm *PersistentLifecycleManager) writeInPlace(data []byte) error {
+	f, err := lm.fs.OpenFile(lm.policyFile, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close() //nolint:errcheck // already failing
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close() //nolint:errcheck // already failing
+		return err
+	}
+	return f.Close()
+}
+
+// StagingFileSystem is a FileSystem whose names under PolicyStagingName are
+// unreachable by object keys (the local backend's own filesystem). Only
+// such a FileSystem has the policy file staged and renamed into place.
+type StagingFileSystem interface {
+	FileSystem
+	// ReservesStagingNames reports that staging names are protected.
+	ReservesStagingNames() bool
 }
 
 // load reads policies from storage.

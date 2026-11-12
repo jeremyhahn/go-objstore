@@ -73,6 +73,10 @@ var (
 	// ErrKeyNotFound is returned when a key is not found in storage.
 	ErrKeyNotFound = errors.New("key not found")
 
+	// ErrObjectChanged is returned by a conditional operation when the object
+	// was replaced or updated after the revision the caller observed.
+	ErrObjectChanged = errors.New("object changed since it was observed")
+
 	// ErrMetadataNotFound is returned when metadata is not found for a key.
 	ErrMetadataNotFound = errors.New("metadata not found for key")
 
