@@ -1,6 +1,6 @@
 # Storage Backends
 
-> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-11-12
 > Conflicts with this document are defects. Fix them here first.
 
 go-objstore provides a unified interface for multiple storage backends, letting you switch between local storage and cloud providers with no code changes.
@@ -10,8 +10,15 @@ go-objstore provides a unified interface for multiple storage backends, letting 
 ### Local Storage
 - **Backend ID**: `local`
 - **Configuration**: `{"path": "/path/to/storage"}`
+- **Required**: `path`; a missing one returns `common.ErrPathNotSet`
 - **Use Case**: Development, testing, local file storage
 - **Features**: Full feature support including lifecycle policies
+
+### Memory
+- **Backend ID**: `memory`
+- **Configuration**: `{}` (no required settings)
+- **Use Case**: In-process storage for tests and caches; contents are lost when the process exits
+- **Features**: Same `Storage` interface as the other backends, held in process memory
 
 ### Amazon S3
 - **Backend ID**: `s3`
@@ -21,13 +28,15 @@ go-objstore provides a unified interface for multiple storage backends, letting 
 
 ### Google Cloud Storage (GCS)
 - **Backend ID**: `gcs`
-- **Configuration**: `{"bucket": "my-gcs-bucket"}`
+- **Configuration**: `{"bucket": "my-gcs-bucket"}` (optional: `project`)
+- **Required**: `bucket`; a missing one returns `common.ErrBucketNotSet`
 - **Credentials**: Uses Google Application Default Credentials
 - **Features**: Full GCS API support, lifecycle policies
 
 ### Azure Blob Storage
 - **Backend ID**: `azure`
 - **Configuration**: `{"accountName": "myaccount", "containerName": "mycontainer"}`
+- **Required**: `accountName`, `containerName` and the account key in `Credentials.Secret`; a missing one returns `common.ErrAccountNotSet`
 - **Credentials**: the account key is passed as `common.Credentials{Secret: handle}`, never in the settings map
 - **Features**: Full Azure Blob API support, lifecycle policies
 
@@ -42,18 +51,38 @@ These backends can only be used as archive destinations, not as primary storage:
 - **Retrieval**: Requires restore process before access
 
 ### Azure Archive
-- **Backend ID**: `azure-archive`
+- **Backend ID**: `azurearchive`
 - **Configuration**: `{"accountName": "myaccount", "containerName": "archive"}`
+- **Required**: `accountName`, `containerName` and the account key in `Credentials.Secret`; a missing one returns `common.ErrAccountNotSet`
 - **Credentials**: the account key is passed as `common.Credentials{Secret: handle}`, never in the settings map
 - **Use Case**: Cost-effective long-term storage
 - **Access Tier**: Archive tier with delayed retrieval
+
+## Build tags
+
+`local` and `memory` are always registered. The other backends are registered
+with the factory only when the binary is built with their tag:
+
+| Backend ID | Build tag |
+|------------|-----------|
+| `s3` | `awss3` |
+| `gcs` | `gcpstorage` |
+| `azure` | `azureblob` |
+| `glacier` | `glacier` |
+| `azurearchive` | `azurearchive` |
+
+A backend whose tag was not set is unknown to the factory:
+`factory.NewStorage` returns `factory.ErrUnknownBackend` for it.
 
 ## Usage Examples
 
 ### Creating a Backend
 
 ```go
-import "go-objstore/pkg/factory"
+import (
+    "github.com/jeremyhahn/go-objstore/pkg/common"
+    "github.com/jeremyhahn/go-objstore/pkg/factory"
+)
 
 // Local storage
 storage, err := factory.NewStorage("local", map[string]string{
@@ -81,8 +110,8 @@ storage, err := factory.NewStorage("azure", map[string]string{
 Credentials are go-enclave handles (`enclave.ByteAccess`), never settings
 values: an `accessKey`, `secretKey` or `accountKey` entry in the map is rejected
 with `common.ErrCredentialInSettings`. S3 reads `Key` (access key) and `Secret`
-(secret key); Azure reads `Secret` (account key). A nil field uses the SDK's
-default credential chain. See
+(secret key), and a nil field uses the SDK's default credential chain; Azure
+and Azure Archive read `Secret` (account key) and require it. See
 [Protected Memory](../architecture/protected-memory.md).
 
 The handle is the credential path wherever a credential is accepted:
@@ -134,23 +163,35 @@ keys, err := storage.List("path/to/")
 
 ## Configuration Best Practices
 
-1. **Use environment variables** for credentials rather than hardcoding
+1. **Pass credentials as handles** in `common.Credentials`, never in the settings map (a credential entry there returns `common.ErrCredentialInSettings`)
 2. **Validate configuration** before creating storage backend
 3. **Handle errors** from Configure() method
-4. **Test connectivity** after backend creation
-5. **Use appropriate backend** for your durability and cost requirements
+4. **Use appropriate backend** for your durability and cost requirements
 
 ## Error Handling
 
+Errors are typed: compare them with `errors.Is`, never by their text.
+
 ```go
-storage, err := factory.NewStorage("s3", config, creds)
-if err != nil {
-    if strings.Contains(err.Error(), "credentials") {
-        // Handle credential errors
-    }
-    if strings.Contains(err.Error(), "bucket") {
-        // Handle bucket configuration errors
-    }
+storage, err := factory.NewStorage(backendType, settings, creds)
+switch {
+case errors.Is(err, factory.ErrUnknownBackend):
+    // backend ID not registered (unknown, or built without its tag)
+case errors.Is(err, factory.ErrArchiveOnlyBackend):
+    // glacier and azurearchive are archive destinations, not storage
+case errors.Is(err, common.ErrCredentialInSettings):
+    // a credential was put in the settings map; pass it in common.Credentials
+case errors.Is(err, common.ErrPathNotSet),
+    errors.Is(err, common.ErrBucketNotSet),
+    errors.Is(err, common.ErrAccountNotSet):
+    // a required setting (or the Azure account key) is missing
+case err != nil:
+    // other configuration or client error
+}
+
+reader, err := storage.Get("path/to/file.txt")
+if errors.Is(err, common.ErrKeyNotFound) {
+    // no object at this key
 }
 ```
 
