@@ -437,10 +437,13 @@ test-cli: integration-test-cli
 test-servers:
 	@echo "$(CYAN)$(BOLD)→ Running server integration tests...$(RESET)"
 	@echo "$(CYAN)  Generating test certificates...$(RESET)"
-	@cd test/integration/server && bash generate-certs.sh
-	@echo "$(CYAN)  Starting server test environment...$(RESET)"
-	@cd test/integration/server && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-server down -v --remove-orphans --timeout 30 >/dev/null 2>&1 || true
-	@cd test/integration/server && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-server up --build --abort-on-container-exit --exit-code-from test; status=$$?; $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-server down -v --remove-orphans --timeout 30; exit $$status
+	@certdir=$$(mktemp -d) && trap 'rm -rf "$$certdir"' EXIT && \
+		go run ./internal/testutil/testcerts/cmd/gencerts "$$certdir" && \
+		chmod 755 "$$certdir" && chmod 644 "$$certdir"/* && \
+		export CERT_DIR="$$certdir" && \
+		echo "$(CYAN)  Starting server test environment...$(RESET)" && \
+		{ (cd test/integration/server && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-server down -v --remove-orphans --timeout 30 >/dev/null 2>&1) || true; } && \
+		cd test/integration/server && { $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-server up --build --abort-on-container-exit --exit-code-from test; status=$$?; $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-server down -v --remove-orphans --timeout 30; exit $$status; }
 	@echo "$(GREEN)✓ Server integration tests complete$(RESET)"
 
 .PHONY: integration-test-all
