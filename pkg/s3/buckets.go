@@ -176,9 +176,13 @@ func (s *S3) Bucket(ctx context.Context, name string) (common.Storage, error) {
 		return nil, bucketError(err, name)
 	}
 	return &S3{
-		svc:             s.svc,
-		bucket:          name,
-		region:          s.region,
-		multipartExpiry: s.multipartExpiry,
+		svc:                s.svc,
+		bucket:             name,
+		region:             s.region,
+		multipartExpiry:    s.multipartExpiry,
+		storageClass:       s.storageClass,
+		transitionClass:    s.transitionClass,
+		multipartThreshold: s.multipartThreshold,
+		partSize:           s.partSize,
 	}, nil
 }

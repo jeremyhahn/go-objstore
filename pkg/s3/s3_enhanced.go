@@ -40,7 +40,6 @@ func (s *S3) PutWithMetadata(ctx context.Context, key string, data io.Reader, me
 	input := &s3.PutObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
-		Body:   aws.ReadSeekCloser(data),
 	}
 
 	// Add metadata if provided
@@ -59,8 +58,10 @@ func (s *S3) PutWithMetadata(ctx context.Context, key string, data io.Reader, me
 		}
 	}
 
-	_, err := s.svc.PutObjectWithContext(ctx, input)
-	return err
+	return s.put(ctx, input, data, func(in *s3.PutObjectInput) error {
+		_, err := s.svc.PutObjectWithContext(ctx, in)
+		return err
+	})
 }
 
 // GetWithContext retrieves an object from the backend with context support.

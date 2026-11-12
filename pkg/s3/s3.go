@@ -18,6 +18,7 @@
 package s3
 
 import (
+	"context"
 	"io"
 	"strings"
 	"sync"
@@ -36,8 +37,13 @@ import (
 
 // Constants
 const (
-	actionDelete  = "delete"
-	actionArchive = "archive"
+	// settingStorageClass is the S3 storage class objects are written with.
+	settingStorageClass = "storage_class"
+	// settingTransitionStorageClass is the class an "archive" lifecycle
+	// policy transitions objects to (default GLACIER).
+	settingTransitionStorageClass = "transition_storage_class"
+	actionDelete                  = "delete"
+	actionArchive                 = "archive"
 )
 
 type s3Uploader interface {
@@ -54,6 +60,10 @@ type S3 struct {
 	bucket             string
 	region             string
 	multipartExpiry    time.Duration // zero means multipart.DefaultExpiry
+	storageClass       string        // StorageClass on PutObject and multipart create; empty leaves the bucket default
+	transitionClass    string        // lifecycle "archive" target; empty means GLACIER
+	multipartThreshold int64         // Put above this size goes multipart; zero means DefaultMultipartThreshold
+	partSize           int64         // smallest part of an automatic multipart Put; zero means DefaultPartSize
 	policiesMutex      sync.RWMutex
 	replicationManager common.ReplicationManager
 }
@@ -99,8 +109,14 @@ func (s *S3) configureClient(settings map[string]string, creds common.Credential
 	if err != nil {
 		return err
 	}
+	storageClass, transitionClass, err := parseStorageClasses(settings)
+	if err != nil {
+		return err
+	}
 	s.region = settings["region"]
 	s.multipartExpiry = expiry
+	s.storageClass = storageClass
+	s.transitionClass = transitionClass
 
 	cfg := &aws.Config{
 		Region: aws.String(settings["region"]),
@@ -139,12 +155,68 @@ func (s *S3) Put(key string, data io.Reader) error {
 	if err := common.ValidateKey(key); err != nil {
 		return err
 	}
-	_, err := s.svc.PutObject(&s3.PutObjectInput{
+	input := &s3.PutObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
-		Body:   aws.ReadSeekCloser(data),
+	}
+	return s.put(context.Background(), input, data, func(in *s3.PutObjectInput) error {
+		_, err := s.svc.PutObject(in)
+		return err
 	})
-	return err
+}
+
+// put sends input with data as its body through send, setting the configured
+// storage class. A seekable body larger than the multipart threshold goes
+// through an automatic multipart upload instead, since a single PutObject
+// cannot carry more than 5 GiB.
+func (s *S3) put(ctx context.Context, input *s3.PutObjectInput, data io.Reader, send func(*s3.PutObjectInput) error) error {
+	if s.storageClass != "" {
+		input.StorageClass = aws.String(s.storageClass)
+	}
+	if rs, ok := data.(io.ReadSeeker); ok {
+		if start, end, ok := seekExtent(rs); ok && end-start > s.threshold() {
+			return s.putMultipart(ctx, input, rs, start, end-start)
+		}
+	}
+	input.Body = aws.ReadSeekCloser(data)
+	return send(input)
+}
+
+// parseStorageClasses reads the storage_class and transition_storage_class
+// settings. Either may be empty; a value S3 does not know is a
+// *StorageClassError. Values are matched without regard to case.
+func parseStorageClasses(settings map[string]string) (storageClass, transitionClass string, err error) {
+	storageClass, err = storageClassSetting(settings, settingStorageClass, s3.StorageClass_Values())
+	if err != nil {
+		return "", "", err
+	}
+	transitionClass, err = storageClassSetting(settings, settingTransitionStorageClass, s3.TransitionStorageClass_Values())
+	if err != nil {
+		return "", "", err
+	}
+	return storageClass, transitionClass, nil
+}
+
+func storageClassSetting(settings map[string]string, name string, known []string) (string, error) {
+	v := strings.TrimSpace(settings[name])
+	if v == "" {
+		return "", nil
+	}
+	for _, k := range known {
+		if strings.EqualFold(v, k) {
+			return k, nil
+		}
+	}
+	return "", &StorageClassError{Setting: name, Class: settings[name]}
+}
+
+// transitionStorageClass is the class an "archive" lifecycle policy moves
+// objects to: the transition_storage_class setting, GLACIER by default.
+func (s *S3) transitionStorageClass() string {
+	if s.transitionClass != "" {
+		return s.transitionClass
+	}
+	return s3.TransitionStorageClassGlacier
 }
 
 // Get retrieves an object from the backend. A missing key returns an error
@@ -279,7 +351,7 @@ func (s *S3) AddPolicy(policy common.LifecyclePolicy) error {
 		rule.Transitions = []*s3.Transition{
 			{
 				Days:         aws.Int64(days),
-				StorageClass: aws.String(s3.TransitionStorageClassGlacier),
+				StorageClass: aws.String(s.transitionStorageClass()),
 			},
 		}
 	}

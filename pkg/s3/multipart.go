@@ -213,6 +213,156 @@ func uploadError(err error, uploadID string) error {
 	return err
 }
 
+const (
+	// DefaultMultipartThreshold is the size above which Put switches to a
+	// multipart upload: 5 GiB, the largest single PutObject S3 accepts.
+	DefaultMultipartThreshold = int64(common.MaxPartSize)
+	// DefaultPartSize is the smallest part an automatic multipart Put uses;
+	// larger objects get larger parts so they fit in common.MaxParts.
+	DefaultPartSize = int64(64 << 20)
+	// MaxObjectSize is the largest object S3 stores: 5 TiB.
+	MaxObjectSize = int64(5 << 40)
+)
+
+func (s *S3) threshold() int64 {
+	if s.multipartThreshold > 0 {
+		return s.multipartThreshold
+	}
+	return DefaultMultipartThreshold
+}
+
+// autoPartSize picks the part size for an automatic multipart upload of size
+// bytes: at least floor (DefaultPartSize when floor is zero, never under
+// common.MinPartSize), raised to a whole MiB that keeps the part count within
+// common.MaxParts. An object over MaxObjectSize is ErrObjectTooLarge.
+func autoPartSize(size, floor int64) (int64, error) {
+	if size > MaxObjectSize {
+		return 0, fmt.Errorf("%w: %d bytes, maximum is %d", ErrObjectTooLarge, size, MaxObjectSize)
+	}
+	if floor <= 0 {
+		floor = DefaultPartSize
+	}
+	floor = max(floor, int64(common.MinPartSize))
+	const mib = int64(1 << 20)
+	need := (size + common.MaxParts - 1) / common.MaxParts
+	need = (need + mib - 1) / mib * mib
+	return min(max(floor, need), int64(common.MaxPartSize)), nil
+}
+
+// partWindow is the [start, start+size) window of a seekable source, read as
+// one part's body. Unlike sizedSeeker it stops at the window's end without
+// probing the bytes that belong to the next part; a source that ends early
+// is errPartSize.
+type partWindow struct {
+	rs    io.ReadSeeker
+	start int64
+	size  int64
+	n     int64
+}
+
+func (w *partWindow) Read(p []byte) (int, error) {
+	remaining := w.size - w.n
+	if remaining <= 0 {
+		return 0, io.EOF
+	}
+	if int64(len(p)) > remaining {
+		p = p[:remaining]
+	}
+	n, err := w.rs.Read(p)
+	w.n += int64(n)
+	if err == io.EOF {
+		if w.n < w.size {
+			return n, errPartSize
+		}
+		return n, nil
+	}
+	return n, err
+}
+
+func (w *partWindow) Seek(offset int64, whence int) (int64, error) {
+	var target int64
+	switch whence {
+	case io.SeekStart:
+		target = offset
+	case io.SeekCurrent:
+		target = w.n + offset
+	case io.SeekEnd:
+		target = w.size + offset
+	default:
+		return 0, fmt.Errorf("%w: seek whence %d", common.ErrInvalidArgument, whence)
+	}
+	if target < 0 || target > w.size {
+		return 0, fmt.Errorf("%w: seek to %d outside the %d byte part", common.ErrInvalidArgument, target, w.size)
+	}
+	if _, err := w.rs.Seek(w.start+target, io.SeekStart); err != nil {
+		return 0, err
+	}
+	w.n = target
+	return target, nil
+}
+
+// putMultipart uploads the size bytes of rs from start as a multipart upload
+// carrying in's key, metadata and storage class. Parts are streamed from rs
+// one at a time, so no more than the SDK's signing buffer is held in memory.
+// Any failure after the upload is created aborts it.
+func (s *S3) putMultipart(ctx context.Context, in *s3.PutObjectInput, rs io.ReadSeeker, start, size int64) error {
+	partSize, err := autoPartSize(size, s.partSize)
+	if err != nil {
+		return err
+	}
+	out, err := s.svc.CreateMultipartUploadWithContext(ctx, &s3.CreateMultipartUploadInput{
+		Bucket:          in.Bucket,
+		Key:             in.Key,
+		ContentType:     in.ContentType,
+		ContentEncoding: in.ContentEncoding,
+		Metadata:        in.Metadata,
+		StorageClass:    in.StorageClass,
+	})
+	if err != nil {
+		return objectError(err, aws.StringValue(in.Key))
+	}
+	id := out.UploadId
+	fail := func(err error) error {
+		_, _ = s.svc.AbortMultipartUploadWithContext(context.WithoutCancel(ctx), &s3.AbortMultipartUploadInput{
+			Bucket: in.Bucket, Key: in.Key, UploadId: id,
+		})
+		return err
+	}
+	completed := make([]*s3.CompletedPart, 0, (size+partSize-1)/partSize)
+	for n, off := int64(1), int64(0); off < size; n, off = n+1, off+partSize {
+		length := min(partSize, size-off)
+		body := &partWindow{rs: rs, start: start + off, size: length}
+		if _, err := body.Seek(0, io.SeekStart); err != nil {
+			return fail(err)
+		}
+		up, err := s.svc.UploadPartWithContext(ctx, &s3.UploadPartInput{
+			Bucket:        in.Bucket,
+			Key:           in.Key,
+			UploadId:      id,
+			PartNumber:    aws.Int64(n),
+			ContentLength: aws.Int64(length),
+			Body:          body,
+		}, noContentMD5)
+		if err != nil {
+			if errors.Is(err, errPartSize) {
+				return fail(errPartSize)
+			}
+			return fail(uploadError(err, aws.StringValue(id)))
+		}
+		completed = append(completed, &s3.CompletedPart{ETag: up.ETag, PartNumber: aws.Int64(n)})
+	}
+	_, err = s.svc.CompleteMultipartUploadWithContext(ctx, &s3.CompleteMultipartUploadInput{
+		Bucket:          in.Bucket,
+		Key:             in.Key,
+		UploadId:        id,
+		MultipartUpload: &s3.CompletedMultipartUpload{Parts: completed},
+	})
+	if err != nil {
+		return fail(uploadError(err, aws.StringValue(id)))
+	}
+	return nil
+}
+
 func (s *S3) expiry() time.Duration {
 	if s.multipartExpiry > 0 {
 		return s.multipartExpiry
@@ -235,6 +385,9 @@ func (s *S3) InitiateMultipartUpload(ctx context.Context, key string, metadata *
 	input := &s3.CreateMultipartUploadInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
+	}
+	if s.storageClass != "" {
+		input.StorageClass = aws.String(s.storageClass)
 	}
 	if metadata != nil {
 		if metadata.ContentType != "" {

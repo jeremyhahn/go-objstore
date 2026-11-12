@@ -57,3 +57,28 @@ func objectError(err error, key string) error {
 	}
 	return fmt.Errorf("%w: %s: %w", common.ErrKeyNotFound, key, err)
 }
+
+// ErrUnknownStorageClass is the error for a storage class S3 does not know,
+// or one a lifecycle transition cannot target. It wraps
+// common.ErrInvalidArgument; errors.As reaches the *StorageClassError that
+// names the setting and the class.
+var ErrUnknownStorageClass = fmt.Errorf("%w: unknown S3 storage class", common.ErrInvalidArgument)
+
+// ErrObjectTooLarge is the error for a Put larger than S3's largest object
+// (common.MaxParts parts of common.MaxPartSize bytes, capped at 5 TiB).
+var ErrObjectTooLarge = fmt.Errorf("%w: object larger than the S3 maximum", common.ErrInvalidArgument)
+
+// StorageClassError names the setting that carried an unknown storage class.
+type StorageClassError struct {
+	Setting string // the settings key, e.g. "storage_class"
+	Class   string // the value given
+}
+
+// Error implements error.
+func (e *StorageClassError) Error() string {
+	return fmt.Sprintf("%s: %s %q", ErrUnknownStorageClass, e.Setting, e.Class)
+}
+
+// Unwrap makes errors.Is(err, ErrUnknownStorageClass) and
+// errors.Is(err, common.ErrInvalidArgument) true.
+func (e *StorageClassError) Unwrap() error { return ErrUnknownStorageClass }
