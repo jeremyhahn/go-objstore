@@ -120,6 +120,15 @@ local.AddPolicy(policy)
 // After process restart, the policy will be automatically reloaded
 ```
 
+**Servers**: every server binary (`objstore-server` and the single-transport
+`objstore-grpc-server`, `objstore-rest-server`, `objstore-quic-server` and
+`objstore-mcp-server`) passes the `lifecycle` configuration section to a local
+backend: `lifecycle.run`, `lifecycle.manager`, `lifecycle.policy_file` and
+`lifecycle.interval`, set in the config file, as `OBJSTORE_LIFECYCLE_*`
+environment variables, or with the `-lifecycle-run`, `-lifecycle-manager`,
+`-lifecycle-policy-file` and `-lifecycle-interval` flags. Other backends
+ignore the section and log that they do.
+
 #### In-Memory Manager
 
 The in-memory manager is available for programmatic use when you don't need persistence:
