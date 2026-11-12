@@ -65,7 +65,7 @@ jobs:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ github.event_name == 'schedule' && 'main' || 'pr' }}
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -117,7 +117,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     # Two paths for one scan. trivy-action's setup step cannot authenticate to
     # github.com from a Gitea runner and upload-sarif has no GHES-compatible
@@ -125,7 +125,7 @@ jobs:
     # runs the trivy CLI below.
     - name: Trivy scan (SARIF for code scanning)
       if: github.server_url == 'https://github.com'
-      uses: aquasecurity/trivy-action@master
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
       with:
         scan-type: fs
         scan-ref: .
@@ -137,14 +137,14 @@ jobs:
 
     - name: Upload Trivy SARIF
       if: always() && github.server_url == 'https://github.com'
-      uses: github/codeql-action/upload-sarif@v3
+      uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
       with:
         sarif_file: trivy-results.sarif
         category: trivy-fs
 
     - name: Trivy scan (fail on CRITICAL/HIGH)
       if: github.server_url == 'https://github.com'
-      uses: aquasecurity/trivy-action@master
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
       with:
         scan-type: fs
         scan-ref: .
