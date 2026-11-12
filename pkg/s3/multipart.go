@@ -323,9 +323,11 @@ func (s *S3) putMultipart(ctx context.Context, in *s3.PutObjectInput, rs io.Read
 	}
 	id := out.UploadId
 	fail := func(err error) error {
-		_, _ = s.svc.AbortMultipartUploadWithContext(context.WithoutCancel(ctx), &s3.AbortMultipartUploadInput{
+		if _, aerr := s.svc.AbortMultipartUploadWithContext(context.WithoutCancel(ctx), &s3.AbortMultipartUploadInput{
 			Bucket: in.Bucket, Key: in.Key, UploadId: id,
-		})
+		}); aerr != nil {
+			return errors.Join(err, uploadError(aerr, aws.StringValue(id)))
+		}
 		return err
 	}
 	completed := make([]*s3.CompletedPart, 0, (size+partSize-1)/partSize)
