@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Added
 
 - server: an `auth` section turns on mutual TLS (client certificates verified against `auth.client_ca`) and role-based access control on gRPC, REST, QUIC, MCP HTTP, MCP stdio and the Unix socket; identities are the certificate common name or `uid:N` of the local user; invalid or incomplete settings refuse to start; without `auth` behaviour is unchanged and each listener logs a warning; `rest.tls_cert`/`rest.tls_key` and `mcp.tls_cert`/`mcp.tls_key` serve TLS. See `docs/configuration/auth.md` (#216)
+- s3: `storage_class` setting, sent as `StorageClass` on PutObject and multipart create; `transition_storage_class` lets `archive` lifecycle policies transition to any S3 class, not only GLACIER; an unknown class is a typed `*StorageClassError` (`ErrUnknownStorageClass`); a seekable `Put` over 5 GiB goes through a multipart upload automatically, parts sized to stay under 10 000 (#223)
 
 ### Changed
 
@@ -17,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - ci: the labstrings gate reads the RELEASABILITY_PATTERNS secret as a 0600 runner temp file and fails on a push to main without it; the loader takes the file's class set (#212)
 - ci: the SDK Tests (go) and Integration jobs grant buildx bake the fs read of the out-of-tree module-auth secret (BUILDX_BAKE_ENTITLEMENTS_FS=0 in the job env); deps: cel.dev/expr v0.26.0
 - labstrings: the releasability rules load from the LABSTRINGS_PATTERNS file at test time; no rule or match is printed (IS-31)
+- deps: s3: the S3 backend and its tests move from `github.com/aws/aws-sdk-go` (v1, end of support) to `aws-sdk-go-v2`; v1 leaves go.mod. Credentials resolve through the v2 default chain, which always reads `~/.aws/config` (see `docs/configuration/storage-backends.md`) (#223)
 - deps: `golang.org/x/mod` v0.43.0 and `golang.org/x/text` v0.44.0 in the root module; `golang.org/x/text` v0.44.0 and the in-repo `go-objstore` require at v0.9.1-alpha (still replaced locally) in `backup` and `api/sdks/go`, so `make deps-check` passes
 
 ### Fixed

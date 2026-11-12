@@ -40,14 +40,26 @@ config:
 - `endpoint` - Custom endpoint URL (for S3-compatible services)
 - `forcePathStyle` - Use path-style addressing when `endpoint` is set (`"true"`/`"false"`)
 - `accessKey` / `secretKey` - Static credentials (otherwise the AWS credential chain is used)
+- `storage_class` - S3 storage class every object is written with, on single PUTs and on multipart uploads (`STANDARD`, `STANDARD_IA`, `ONEZONE_IA`, `INTELLIGENT_TIERING`, `GLACIER`, `GLACIER_IR`, `DEEP_ARCHIVE`, `REDUCED_REDUNDANCY`, ...; case-insensitive). Unset leaves the bucket default. An unknown class fails configuration with `ErrUnknownStorageClass`.
+- `transition_storage_class` - Class an `archive` lifecycle policy transitions objects to (`GLACIER` by default; any S3 transition class: `STANDARD_IA`, `ONEZONE_IA`, `INTELLIGENT_TIERING`, `GLACIER`, `GLACIER_IR`, `DEEP_ARCHIVE`).
+
+### Large objects
+A single S3 PUT carries at most 5 GiB. A `Put` whose body is seekable (a file,
+a `bytes.Reader`) and larger than 5 GiB is sent as a multipart upload
+automatically: parts are read from the body one at a time, at least 64 MiB
+each and larger when needed to keep the object within 10 000 parts (a 6 GiB
+object goes as 96 parts of 64 MiB). Objects over 5 TiB are refused with
+`ErrObjectTooLarge`. If any part fails the upload is aborted. A body that
+cannot seek has no known size and is always sent as a single PUT.
 
 ### Credentials
-Uses AWS SDK credential chain in order:
-1. Environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)
-2. Shared credentials file (`~/.aws/credentials`)
-3. EC2 instance profile (IAM role)
+The backend is built on the AWS SDK for Go v2 (`aws-sdk-go-v2`). Without
+`accessKey`/`secretKey` it uses the SDK's default credential chain, in order:
+1. Environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`)
+2. Shared config and credentials files (`~/.aws/config`, `~/.aws/credentials`; `AWS_PROFILE` selects the profile, including SSO and role profiles). `~/.aws/config` is always read; `AWS_SDK_LOAD_CONFIG` is no longer needed
+3. Web identity token (`AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_ROLE_ARN`)
 4. ECS task role
-5. Web identity token
+5. EC2 instance profile (IAM role, IMDSv2)
 
 ### Example Configuration
 ```yaml

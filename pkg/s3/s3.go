@@ -18,7 +18,9 @@
 package s3
 
 import (
+	"context"
 	"io"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -26,34 +28,63 @@ import (
 	"github.com/jeremyhahn/go-objstore/internal/multipart"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 
-	"github.com/aws/aws-sdk-go/aws"                  //nolint:staticcheck // Using v1 SDK, migration to v2 planned
-	"github.com/aws/aws-sdk-go/aws/credentials"      //nolint:staticcheck // Using v1 SDK, migration to v2 planned
-	"github.com/aws/aws-sdk-go/aws/session"          //nolint:staticcheck // Using v1 SDK, migration to v2 planned
-	"github.com/aws/aws-sdk-go/service/s3"           //nolint:staticcheck // Using v1 SDK, migration to v2 planned
-	"github.com/aws/aws-sdk-go/service/s3/s3iface"   //nolint:staticcheck // Using v1 SDK, migration to v2 planned
-	"github.com/aws/aws-sdk-go/service/s3/s3manager" //nolint:staticcheck // Using v1 SDK, migration to v2 planned
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 // Constants
 const (
-	actionDelete  = "delete"
-	actionArchive = "archive"
+	// settingStorageClass is the S3 storage class objects are written with.
+	settingStorageClass = "storage_class"
+	// settingTransitionStorageClass is the class an "archive" lifecycle
+	// policy transitions objects to (default GLACIER).
+	settingTransitionStorageClass = "transition_storage_class"
+	actionDelete                  = "delete"
+	actionArchive                 = "archive"
 )
 
-type s3Uploader interface {
-	Upload(input *s3manager.UploadInput, options ...func(*s3manager.Uploader)) (*s3manager.UploadOutput, error)
+// s3API is the part of the aws-sdk-go-v2 S3 client this backend calls;
+// *s3.Client implements it, and the tests put fakes in its place.
+type s3API interface {
+	PutObject(ctx context.Context, in *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error)
+	GetObject(ctx context.Context, in *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error)
+	HeadObject(ctx context.Context, in *s3.HeadObjectInput, optFns ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
+	CopyObject(ctx context.Context, in *s3.CopyObjectInput, optFns ...func(*s3.Options)) (*s3.CopyObjectOutput, error)
+	DeleteObject(ctx context.Context, in *s3.DeleteObjectInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
+	ListObjectsV2(ctx context.Context, in *s3.ListObjectsV2Input, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
+
+	GetBucketLifecycleConfiguration(ctx context.Context, in *s3.GetBucketLifecycleConfigurationInput, optFns ...func(*s3.Options)) (*s3.GetBucketLifecycleConfigurationOutput, error)
+	PutBucketLifecycleConfiguration(ctx context.Context, in *s3.PutBucketLifecycleConfigurationInput, optFns ...func(*s3.Options)) (*s3.PutBucketLifecycleConfigurationOutput, error)
+	DeleteBucketLifecycle(ctx context.Context, in *s3.DeleteBucketLifecycleInput, optFns ...func(*s3.Options)) (*s3.DeleteBucketLifecycleOutput, error)
+
+	CreateMultipartUpload(ctx context.Context, in *s3.CreateMultipartUploadInput, optFns ...func(*s3.Options)) (*s3.CreateMultipartUploadOutput, error)
+	UploadPart(ctx context.Context, in *s3.UploadPartInput, optFns ...func(*s3.Options)) (*s3.UploadPartOutput, error)
+	CompleteMultipartUpload(ctx context.Context, in *s3.CompleteMultipartUploadInput, optFns ...func(*s3.Options)) (*s3.CompleteMultipartUploadOutput, error)
+	AbortMultipartUpload(ctx context.Context, in *s3.AbortMultipartUploadInput, optFns ...func(*s3.Options)) (*s3.AbortMultipartUploadOutput, error)
+	ListMultipartUploads(ctx context.Context, in *s3.ListMultipartUploadsInput, optFns ...func(*s3.Options)) (*s3.ListMultipartUploadsOutput, error)
+
+	CreateBucket(ctx context.Context, in *s3.CreateBucketInput, optFns ...func(*s3.Options)) (*s3.CreateBucketOutput, error)
+	DeleteBucket(ctx context.Context, in *s3.DeleteBucketInput, optFns ...func(*s3.Options)) (*s3.DeleteBucketOutput, error)
+	HeadBucket(ctx context.Context, in *s3.HeadBucketInput, optFns ...func(*s3.Options)) (*s3.HeadBucketOutput, error)
+	ListBuckets(ctx context.Context, in *s3.ListBucketsInput, optFns ...func(*s3.Options)) (*s3.ListBucketsOutput, error)
 }
 
-var s3managerNewUploaderWithClient = func(c s3iface.S3API, options ...func(*s3manager.Uploader)) s3Uploader {
-	return s3manager.NewUploaderWithClient(c, options...)
-}
+var _ s3API = (*s3.Client)(nil)
 
 // S3 is a storage backend that stores files in Amazon S3.
 type S3 struct {
-	svc                s3iface.S3API
+	svc                s3API
 	bucket             string
 	region             string
 	multipartExpiry    time.Duration // zero means multipart.DefaultExpiry
+	storageClass       string        // StorageClass on PutObject and multipart create; empty leaves the bucket default
+	transitionClass    string        // lifecycle "archive" target; empty means GLACIER
+	multipartThreshold int64         // Put above this size goes multipart; zero means DefaultMultipartThreshold
+	partSize           int64         // smallest part of an automatic multipart Put; zero means DefaultPartSize
+	abortTimeout       time.Duration // bound on the cleanup abort of a failed automatic multipart Put; zero means DefaultAbortTimeout
 	policiesMutex      sync.RWMutex
 	replicationManager common.ReplicationManager
 }
@@ -99,16 +130,18 @@ func (s *S3) configureClient(settings map[string]string, creds common.Credential
 	if err != nil {
 		return err
 	}
+	storageClass, transitionClass, err := parseStorageClasses(settings)
+	if err != nil {
+		return err
+	}
 	s.region = settings["region"]
 	s.multipartExpiry = expiry
+	s.storageClass = storageClass
+	s.transitionClass = transitionClass
 
-	cfg := &aws.Config{
-		Region: aws.String(settings["region"]),
-	}
-	if ep := settings["endpoint"]; ep != "" {
-		cfg.Endpoint = aws.String(ep)
-		cfg.S3ForcePathStyle = aws.Bool(settings["forcePathStyle"] == "true")
-	}
+	// No credential handles leaves the SDK default chain (environment,
+	// shared files, instance role) to find credentials, as the v1 session did.
+	opts := []func(*config.LoadOptions) error{config.WithRegion(settings["region"])}
 	if !creds.IsZero() {
 		if creds.Key == nil {
 			return common.ErrAccessKeyNotSet
@@ -117,20 +150,31 @@ func (s *S3) configureClient(settings map[string]string, creds common.Credential
 			return common.ErrSecretKeyNotSet
 		}
 		err := creds.Open(func(key, secret []byte) error {
-			cfg.Credentials = credentials.NewStaticCredentials(string(key), string(secret), "")
+			opts = append(opts, config.WithCredentialsProvider(
+				credentials.NewStaticCredentialsProvider(string(key), string(secret), "")))
 			return nil
 		})
 		if err != nil {
 			return err
 		}
 	}
-
-	sess, err := session.NewSession(cfg)
+	cfg, err := config.LoadDefaultConfig(context.Background(), opts...)
 	if err != nil {
 		return err
 	}
 
-	s.svc = s3.New(sess)
+	endpoint, pathStyle := settings["endpoint"], settings["forcePathStyle"] == "true"
+	s.svc = s3.NewFromConfig(cfg, func(o *s3.Options) {
+		if endpoint != "" {
+			o.BaseEndpoint = aws.String(endpoint)
+			o.UsePathStyle = pathStyle
+		}
+		// Checksums only where the API requires them, as with the v1 SDK:
+		// S3-compatible endpoints do not all accept the v2 default CRC32
+		// trailers.
+		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
+		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
+	})
 	return nil
 }
 
@@ -139,12 +183,81 @@ func (s *S3) Put(key string, data io.Reader) error {
 	if err := common.ValidateKey(key); err != nil {
 		return err
 	}
-	_, err := s.svc.PutObject(&s3.PutObjectInput{
+	input := &s3.PutObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
-		Body:   aws.ReadSeekCloser(data),
+	}
+	return s.put(context.Background(), input, data, func(in *s3.PutObjectInput) error {
+		_, err := s.svc.PutObject(context.Background(), in)
+		return err
 	})
-	return err
+}
+
+// put sends input with data as its body through send, setting the configured
+// storage class. A seekable body larger than the multipart threshold goes
+// through an automatic multipart upload instead, since a single PutObject
+// cannot carry more than 5 GiB.
+func (s *S3) put(ctx context.Context, input *s3.PutObjectInput, data io.Reader, send func(*s3.PutObjectInput) error) error {
+	if s.storageClass != "" {
+		input.StorageClass = types.StorageClass(s.storageClass)
+	}
+	if rs, ok := data.(io.ReadSeeker); ok {
+		start, end, ok, err := seekExtent(rs)
+		if err != nil {
+			return err
+		}
+		if ok && end-start > s.threshold() {
+			return s.putMultipart(ctx, input, rs, start, end-start)
+		}
+	}
+	input.Body = data
+	return send(input)
+}
+
+// parseStorageClasses reads the storage_class and transition_storage_class
+// settings. Either may be empty; a value S3 does not know is a
+// *StorageClassError. Values are matched without regard to case.
+func parseStorageClasses(settings map[string]string) (storageClass, transitionClass string, err error) {
+	storageClass, err = storageClassSetting(settings, settingStorageClass, classNames(types.StorageClass("").Values()))
+	if err != nil {
+		return "", "", err
+	}
+	transitionClass, err = storageClassSetting(settings, settingTransitionStorageClass, classNames(types.TransitionStorageClass("").Values()))
+	if err != nil {
+		return "", "", err
+	}
+	return storageClass, transitionClass, nil
+}
+
+// classNames turns the SDK's enum values into the strings a setting names.
+func classNames[T ~string](values []T) []string {
+	names := make([]string, len(values))
+	for i, v := range values {
+		names[i] = string(v)
+	}
+	return names
+}
+
+func storageClassSetting(settings map[string]string, name string, known []string) (string, error) {
+	v := strings.TrimSpace(settings[name])
+	if v == "" {
+		return "", nil
+	}
+	for _, k := range known {
+		if strings.EqualFold(v, k) {
+			return k, nil
+		}
+	}
+	return "", &StorageClassError{Setting: name, Class: settings[name]}
+}
+
+// transitionStorageClass is the class an "archive" lifecycle policy moves
+// objects to: the transition_storage_class setting, GLACIER by default.
+func (s *S3) transitionStorageClass() string {
+	if s.transitionClass != "" {
+		return s.transitionClass
+	}
+	return string(types.TransitionStorageClassGlacier)
 }
 
 // Get retrieves an object from the backend. A missing key returns an error
@@ -153,7 +266,7 @@ func (s *S3) Get(key string) (io.ReadCloser, error) {
 	if err := common.ValidateKey(key); err != nil {
 		return nil, err
 	}
-	result, err := s.svc.GetObject(&s3.GetObjectInput{
+	result, err := s.svc.GetObject(context.Background(), &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
 	})
@@ -168,7 +281,7 @@ func (s *S3) Delete(key string) error {
 	if err := common.ValidateKey(key); err != nil {
 		return err
 	}
-	_, err := s.svc.DeleteObject(&s3.DeleteObjectInput{
+	_, err := s.svc.DeleteObject(context.Background(), &s3.DeleteObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
 	})
@@ -191,7 +304,7 @@ func (s *S3) List(prefix string) ([]string, error) {
 			input.ContinuationToken = continuationToken
 		}
 
-		result, err := s.svc.ListObjectsV2(input)
+		result, err := s.svc.ListObjectsV2(context.Background(), input)
 		if err != nil {
 			return nil, err
 		}
@@ -202,7 +315,7 @@ func (s *S3) List(prefix string) ([]string, error) {
 			}
 		}
 
-		if !aws.BoolValue(result.IsTruncated) {
+		if !aws.ToBool(result.IsTruncated) {
 			break
 		}
 
@@ -236,17 +349,17 @@ func (s *S3) AddPolicy(policy common.LifecyclePolicy) error {
 	defer s.policiesMutex.Unlock()
 
 	// Get existing lifecycle configuration
-	existingConfig, err := s.svc.GetBucketLifecycleConfiguration(&s3.GetBucketLifecycleConfigurationInput{
+	existingConfig, err := s.svc.GetBucketLifecycleConfiguration(context.Background(), &s3.GetBucketLifecycleConfigurationInput{
 		Bucket: aws.String(s.bucket),
 	})
 
-	var rules []*s3.LifecycleRule
+	var rules []types.LifecycleRule
 	if err != nil {
 		// If no lifecycle configuration exists, start with empty rules
 		if !isNoSuchLifecycleConfiguration(err) {
 			return err
 		}
-		rules = []*s3.LifecycleRule{}
+		rules = []types.LifecycleRule{}
 	} else {
 		// Remove existing rule with same ID if it exists
 		for _, rule := range existingConfig.Rules {
@@ -257,29 +370,26 @@ func (s *S3) AddPolicy(policy common.LifecyclePolicy) error {
 	}
 
 	// Convert retention duration to days (minimum 1 day)
-	days := int64(policy.Retention.Hours() / 24)
-	if days < 1 {
-		days = 1
-	}
+	days := int32(max(1, min(policy.Retention.Hours()/24, math.MaxInt32)))
 
 	// Create new lifecycle rule based on action
-	rule := &s3.LifecycleRule{
+	rule := types.LifecycleRule{
 		ID:     aws.String(policy.ID),
-		Status: aws.String("Enabled"),
-		Filter: &s3.LifecycleRuleFilter{
+		Status: types.ExpirationStatusEnabled,
+		Filter: &types.LifecycleRuleFilter{
 			Prefix: aws.String(policy.Prefix),
 		},
 	}
 
 	if policy.Action == "delete" {
-		rule.Expiration = &s3.LifecycleExpiration{
-			Days: aws.Int64(days),
+		rule.Expiration = &types.LifecycleExpiration{
+			Days: aws.Int32(days),
 		}
 	} else if policy.Action == "archive" {
-		rule.Transitions = []*s3.Transition{
+		rule.Transitions = []types.Transition{
 			{
-				Days:         aws.Int64(days),
-				StorageClass: aws.String(s3.TransitionStorageClassGlacier),
+				Days:         aws.Int32(days),
+				StorageClass: types.TransitionStorageClass(s.transitionStorageClass()),
 			},
 		}
 	}
@@ -287,9 +397,9 @@ func (s *S3) AddPolicy(policy common.LifecyclePolicy) error {
 	rules = append(rules, rule)
 
 	// Put the updated lifecycle configuration
-	_, err = s.svc.PutBucketLifecycleConfiguration(&s3.PutBucketLifecycleConfigurationInput{
+	_, err = s.svc.PutBucketLifecycleConfiguration(context.Background(), &s3.PutBucketLifecycleConfigurationInput{
 		Bucket: aws.String(s.bucket),
-		LifecycleConfiguration: &s3.BucketLifecycleConfiguration{
+		LifecycleConfiguration: &types.BucketLifecycleConfiguration{
 			Rules: rules,
 		},
 	})
@@ -303,7 +413,7 @@ func (s *S3) RemovePolicy(id string) error {
 	defer s.policiesMutex.Unlock()
 
 	// Get existing lifecycle configuration
-	existingConfig, err := s.svc.GetBucketLifecycleConfiguration(&s3.GetBucketLifecycleConfigurationInput{
+	existingConfig, err := s.svc.GetBucketLifecycleConfiguration(context.Background(), &s3.GetBucketLifecycleConfigurationInput{
 		Bucket: aws.String(s.bucket),
 	})
 
@@ -316,7 +426,7 @@ func (s *S3) RemovePolicy(id string) error {
 	}
 
 	// Filter out the rule with the given ID
-	var rules []*s3.LifecycleRule
+	var rules []types.LifecycleRule
 	for _, rule := range existingConfig.Rules {
 		if rule.ID != nil && *rule.ID != id {
 			rules = append(rules, rule)
@@ -325,16 +435,16 @@ func (s *S3) RemovePolicy(id string) error {
 
 	// If no rules left, delete the lifecycle configuration entirely
 	if len(rules) == 0 {
-		_, err = s.svc.DeleteBucketLifecycle(&s3.DeleteBucketLifecycleInput{
+		_, err = s.svc.DeleteBucketLifecycle(context.Background(), &s3.DeleteBucketLifecycleInput{
 			Bucket: aws.String(s.bucket),
 		})
 		return err
 	}
 
 	// Otherwise, put the updated configuration
-	_, err = s.svc.PutBucketLifecycleConfiguration(&s3.PutBucketLifecycleConfigurationInput{
+	_, err = s.svc.PutBucketLifecycleConfiguration(context.Background(), &s3.PutBucketLifecycleConfigurationInput{
 		Bucket: aws.String(s.bucket),
-		LifecycleConfiguration: &s3.BucketLifecycleConfiguration{
+		LifecycleConfiguration: &types.BucketLifecycleConfiguration{
 			Rules: rules,
 		},
 	})
@@ -348,7 +458,7 @@ func (s *S3) GetPolicies() ([]common.LifecyclePolicy, error) {
 	defer s.policiesMutex.RUnlock()
 
 	// Get lifecycle configuration from S3
-	lifecycleConfig, err := s.svc.GetBucketLifecycleConfiguration(&s3.GetBucketLifecycleConfigurationInput{
+	lifecycleConfig, err := s.svc.GetBucketLifecycleConfiguration(context.Background(), &s3.GetBucketLifecycleConfigurationInput{
 		Bucket: aws.String(s.bucket),
 	})
 
@@ -363,7 +473,7 @@ func (s *S3) GetPolicies() ([]common.LifecyclePolicy, error) {
 	// Convert S3 lifecycle rules to common.LifecyclePolicy
 	policies := make([]common.LifecyclePolicy, 0, len(lifecycleConfig.Rules))
 	for _, rule := range lifecycleConfig.Rules {
-		if rule.ID == nil || rule.Status == nil || *rule.Status != "Enabled" {
+		if rule.ID == nil || rule.Status != types.ExpirationStatusEnabled {
 			continue
 		}
 
@@ -400,8 +510,11 @@ func isNoSuchLifecycleConfiguration(err error) bool {
 	if err == nil {
 		return false
 	}
-	// AWS SDK returns "NoSuchLifecycleConfiguration" as the error code or as a prefix.
-	return strings.HasPrefix(err.Error(), "NoSuchLifecycleConfiguration")
+	if awsCode(err) == codeNoSuchLifecycle {
+		return true
+	}
+	// A plain error that names the code, as a proxy or a test double returns it.
+	return strings.HasPrefix(err.Error(), codeNoSuchLifecycle)
 }
 
 // GetReplicationManager returns the replication manager for this backend.

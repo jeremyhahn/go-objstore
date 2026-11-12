@@ -17,6 +17,7 @@ package s3
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"io/ioutil"
@@ -26,19 +27,20 @@ import (
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/aws/aws-sdk-go/service/s3/s3iface"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 type mockS3Client struct {
-	s3iface.S3API
+	s3API
 	putObjectOutput                       *s3.PutObjectOutput
 	getObjectOutput                       *s3.GetObjectOutput
 	deleteObjectOutput                    *s3.DeleteObjectOutput
 	listObjectsV2Output                   *s3.ListObjectsV2Output
 	headObjectOutput                      *s3.HeadObjectOutput
 	copyObjectOutput                      *s3.CopyObjectOutput
+	copyObjectInput                       *s3.CopyObjectInput
 	getBucketLifecycleConfigurationOutput *s3.GetBucketLifecycleConfigurationOutput
 	putBucketLifecycleConfigurationOutput *s3.PutBucketLifecycleConfigurationOutput
 	deleteBucketLifecycleOutput           *s3.DeleteBucketLifecycleOutput
@@ -53,43 +55,10 @@ type mockS3Client struct {
 	deleteBucketLifecycleError            error
 	listObjectsV2Calls                    int
 	listObjectsV2Outputs                  []*s3.ListObjectsV2Output
-	lifecycleConfig                       *s3.BucketLifecycleConfiguration
+	lifecycleConfig                       *types.BucketLifecycleConfiguration
 }
 
-func (m *mockS3Client) PutObject(input *s3.PutObjectInput) (*s3.PutObjectOutput, error) {
-	if m.putObjectError != nil {
-		return nil, m.putObjectError
-	}
-	return m.putObjectOutput, nil
-}
-
-func (m *mockS3Client) GetObject(input *s3.GetObjectInput) (*s3.GetObjectOutput, error) {
-	if m.getObjectError != nil {
-		return nil, m.getObjectError
-	}
-	return m.getObjectOutput, nil
-}
-
-func (m *mockS3Client) DeleteObject(input *s3.DeleteObjectInput) (*s3.DeleteObjectOutput, error) {
-	if m.deleteObjectError != nil {
-		return nil, m.deleteObjectError
-	}
-	return m.deleteObjectOutput, nil
-}
-
-func (m *mockS3Client) ListObjectsV2(input *s3.ListObjectsV2Input) (*s3.ListObjectsV2Output, error) {
-	if m.listObjectsV2Error != nil {
-		return nil, m.listObjectsV2Error
-	}
-	if len(m.listObjectsV2Outputs) > 0 {
-		output := m.listObjectsV2Outputs[m.listObjectsV2Calls]
-		m.listObjectsV2Calls++
-		return output, nil
-	}
-	return m.listObjectsV2Output, nil
-}
-
-func (m *mockS3Client) GetBucketLifecycleConfiguration(input *s3.GetBucketLifecycleConfigurationInput) (*s3.GetBucketLifecycleConfigurationOutput, error) {
+func (m *mockS3Client) GetBucketLifecycleConfiguration(_ context.Context, input *s3.GetBucketLifecycleConfigurationInput, _ ...func(*s3.Options)) (*s3.GetBucketLifecycleConfigurationOutput, error) {
 	// If lifecycle config exists, return it (ignoring the error)
 	if m.lifecycleConfig != nil {
 		return &s3.GetBucketLifecycleConfigurationOutput{
@@ -103,7 +72,7 @@ func (m *mockS3Client) GetBucketLifecycleConfiguration(input *s3.GetBucketLifecy
 	return m.getBucketLifecycleConfigurationOutput, nil
 }
 
-func (m *mockS3Client) PutBucketLifecycleConfiguration(input *s3.PutBucketLifecycleConfigurationInput) (*s3.PutBucketLifecycleConfigurationOutput, error) {
+func (m *mockS3Client) PutBucketLifecycleConfiguration(_ context.Context, input *s3.PutBucketLifecycleConfigurationInput, _ ...func(*s3.Options)) (*s3.PutBucketLifecycleConfigurationOutput, error) {
 	if m.putBucketLifecycleConfigurationError != nil {
 		return nil, m.putBucketLifecycleConfigurationError
 	}
@@ -114,7 +83,7 @@ func (m *mockS3Client) PutBucketLifecycleConfiguration(input *s3.PutBucketLifecy
 	return m.putBucketLifecycleConfigurationOutput, nil
 }
 
-func (m *mockS3Client) DeleteBucketLifecycle(input *s3.DeleteBucketLifecycleInput) (*s3.DeleteBucketLifecycleOutput, error) {
+func (m *mockS3Client) DeleteBucketLifecycle(_ context.Context, input *s3.DeleteBucketLifecycleInput, _ ...func(*s3.Options)) (*s3.DeleteBucketLifecycleOutput, error) {
 	if m.deleteBucketLifecycleError != nil {
 		return nil, m.deleteBucketLifecycleError
 	}
@@ -301,7 +270,7 @@ func TestS3_AddPolicy_Success(t *testing.T) {
 	}
 
 	// Verify rule status
-	if rule.Status == nil || *rule.Status != "Enabled" {
+	if rule.Status != types.ExpirationStatusEnabled {
 		t.Fatalf("expected rule status 'Enabled', got %v", rule.Status)
 	}
 
@@ -369,7 +338,7 @@ func TestS3_AddPolicy_Archive(t *testing.T) {
 	}
 
 	// Verify rule status
-	if rule.Status == nil || *rule.Status != "Enabled" {
+	if rule.Status != types.ExpirationStatusEnabled {
 		t.Fatalf("expected rule status 'Enabled', got %v", rule.Status)
 	}
 
@@ -391,7 +360,7 @@ func TestS3_AddPolicy_Archive(t *testing.T) {
 	}
 
 	// Verify storage class is GLACIER
-	if transition.StorageClass == nil || *transition.StorageClass != s3.TransitionStorageClassGlacier {
+	if transition.StorageClass != types.TransitionStorageClassGlacier {
 		t.Fatalf("expected storage class GLACIER, got %v", transition.StorageClass)
 	}
 
@@ -533,7 +502,7 @@ func TestS3_GetPolicies_Multiple(t *testing.T) {
 func TestS3_List_EmptyPrefix(t *testing.T) {
 	mockS3 := &mockS3Client{
 		listObjectsV2Output: &s3.ListObjectsV2Output{
-			Contents: []*s3.Object{
+			Contents: []types.Object{
 				{Key: aws.String("file1.txt")},
 				{Key: aws.String("file2.txt")},
 				{Key: aws.String("dir/file3.txt")},
@@ -567,7 +536,7 @@ func TestS3_List_EmptyPrefix(t *testing.T) {
 func TestS3_List_WithPrefix(t *testing.T) {
 	mockS3 := &mockS3Client{
 		listObjectsV2Output: &s3.ListObjectsV2Output{
-			Contents: []*s3.Object{
+			Contents: []types.Object{
 				{Key: aws.String("logs/2023/file1.log")},
 				{Key: aws.String("logs/2023/file2.log")},
 				{Key: aws.String("logs/2024/file3.log")},
@@ -602,7 +571,7 @@ func TestS3_List_WithPagination(t *testing.T) {
 	mockS3 := &mockS3Client{
 		listObjectsV2Outputs: []*s3.ListObjectsV2Output{
 			{
-				Contents: []*s3.Object{
+				Contents: []types.Object{
 					{Key: aws.String("file1.txt")},
 					{Key: aws.String("file2.txt")},
 				},
@@ -610,7 +579,7 @@ func TestS3_List_WithPagination(t *testing.T) {
 				NextContinuationToken: aws.String("token1"),
 			},
 			{
-				Contents: []*s3.Object{
+				Contents: []types.Object{
 					{Key: aws.String("file3.txt")},
 					{Key: aws.String("file4.txt")},
 				},
@@ -644,7 +613,7 @@ func TestS3_List_WithPagination(t *testing.T) {
 func TestS3_List_Empty(t *testing.T) {
 	mockS3 := &mockS3Client{
 		listObjectsV2Output: &s3.ListObjectsV2Output{
-			Contents:    []*s3.Object{},
+			Contents:    []types.Object{},
 			IsTruncated: aws.Bool(false),
 		},
 	}

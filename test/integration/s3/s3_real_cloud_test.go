@@ -22,9 +22,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	awss3 "github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
 	testcommon "github.com/jeremyhahn/go-objstore/test/integration/common"
 )
@@ -47,21 +47,21 @@ func TestS3_RealCloud(t *testing.T) {
 
 	t.Logf("Testing real AWS S3 with bucket: %s", bucket)
 
+	ctx := context.Background()
+
 	// Ensure bucket exists
-	sess, err := session.NewSession(&aws.Config{
-		Region: aws.String(region),
-	})
+	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
 	if err != nil {
-		t.Fatalf("Failed to create AWS session: %v", err)
+		t.Fatalf("Failed to load AWS config: %v", err)
 	}
 
-	svc := awss3.New(sess)
-	_, err = svc.CreateBucket(&awss3.CreateBucketInput{
+	svc := awss3.NewFromConfig(cfg)
+	_, err = svc.CreateBucket(ctx, &awss3.CreateBucketInput{
 		Bucket: aws.String(bucket),
 	})
 	if err != nil {
 		// Check if bucket exists
-		_, headErr := svc.HeadBucket(&awss3.HeadBucketInput{
+		_, headErr := svc.HeadBucket(ctx, &awss3.HeadBucketInput{
 			Bucket: aws.String(bucket),
 		})
 		if headErr != nil {
@@ -78,24 +78,24 @@ func TestS3_RealCloud(t *testing.T) {
 		t.Fatalf("Failed to create S3 storage: %v", err)
 	}
 
-	ctx := context.Background()
-
 	// Cleanup on exit
 	defer func() {
 		// Delete all test objects
-		listResp, _ := svc.ListObjectsV2(&awss3.ListObjectsV2Input{
+		listResp, listErr := svc.ListObjectsV2(ctx, &awss3.ListObjectsV2Input{
 			Bucket: aws.String(bucket),
 			Prefix: aws.String("test/"),
 		})
-		for _, obj := range listResp.Contents {
-			svc.DeleteObject(&awss3.DeleteObjectInput{
-				Bucket: aws.String(bucket),
-				Key:    obj.Key,
-			})
+		if listErr == nil {
+			for _, obj := range listResp.Contents {
+				svc.DeleteObject(ctx, &awss3.DeleteObjectInput{
+					Bucket: aws.String(bucket),
+					Key:    obj.Key,
+				})
+			}
 		}
 
 		// Delete the bucket
-		svc.DeleteBucket(&awss3.DeleteBucketInput{
+		svc.DeleteBucket(ctx, &awss3.DeleteBucketInput{
 			Bucket: aws.String(bucket),
 		})
 	}()
