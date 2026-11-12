@@ -12,7 +12,7 @@ make lib
 ### 2. Write Your Code
 
 ```c
-#include "objstore.h"
+#include "libobjstore.h"
 
 int main(void) {
     // Configure and create storage
@@ -25,7 +25,8 @@ int main(void) {
 
     // Get data
     char buf[256];
-    int len = ObjstoreGet(h, "file.txt", buf, 256);
+    int len = ObjstoreGet(h, "file.txt", buf, sizeof(buf) - 1);
+    if (len >= 0) buf[len] = '\0';  // ObjstoreGet does not NUL-terminate
 
     // Cleanup
     ObjstoreDelete(h, "file.txt");
@@ -36,7 +37,8 @@ int main(void) {
 ### 3. Compile
 
 ```bash
-gcc mycode.c /path/to/go-objstore/bin/objstore.so -lpthread -ldl -o myapp
+gcc -I/path/to/go-objstore/examples/c_client -o myapp mycode.c \
+    -L/path/to/go-objstore/bin -lobjstore -lpthread -ldl
 ```
 
 ### 4. Run
@@ -62,7 +64,7 @@ ObjstorePut(h, "key", data, data_len);  // Returns 0 or -1
 ### Get Data
 ```c
 char buf[1024];
-int n = ObjstoreGet(h, "key", buf, 1024);  // Returns bytes or -1
+int n = ObjstoreGet(h, "key", buf, sizeof(buf));  // Returns bytes or -1; not NUL-terminated
 ```
 
 ### Delete
@@ -110,8 +112,13 @@ char *k[] = {"accountName", "containerName"};
 char *v[] = {"myaccount", "mycontainer"};
 ```
 
-The C library cannot pass credentials: a credential key in the arrays is
-rejected (issue #16).
+A credential never goes in the arrays: a key such as `accessKey`, `secretKey`
+or `accountKey` is rejected. Pass it to `ObjstoreNewStorageWithCredentials`
+(S3: `key` and `secret`; Azure: account key as `secret`), then wipe your
+buffers with `explicit_bzero`. With none, S3 uses the AWS credential chain and
+GCS uses Application Default Credentials. `s3`, `gcs` and `azure` exist when the
+library is built with the `awss3`, `gcpstorage` and `azureblob` tags (the
+`make lib` default); `local` and `memory` always exist.
 
 ## Common Patterns
 
@@ -154,9 +161,8 @@ make run        # Full test suite
 
 ## Full Documentation
 
-- **API Reference**: `../../docs/c_api.md`
-- **Detailed Guide**: `README.md`
-- **Future Features**: `../../docs/c_api_improvements.md`
+- **API Reference**: [docs/c_client/README.md](../../docs/c_client/README.md)
+- **Detailed Guide**: [README.md](README.md)
 
 ## Troubleshooting
 
@@ -201,4 +207,4 @@ if (err) {
 1. Check `simple_example.c` for minimal working code
 2. Check `test_objstore.c` for comprehensive examples
 3. Read `README.md` for detailed guide
-4. Read `../../docs/c_api.md` for full API reference
+4. Read [docs/c_client/README.md](../../docs/c_client/README.md) for the full API reference

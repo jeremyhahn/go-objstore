@@ -1,6 +1,6 @@
 # StorageFS Implementation Summary
 
-> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-11-12
 > Conflicts with this document are defects. Fix them here first.
 
 ## Overview
@@ -18,16 +18,18 @@ Successfully implemented a complete filesystem abstraction layer (StorageFS) tha
 Created a complete filesystem abstraction with the following files:
 
 #### storagefs.go (482 lines)
-- Implements `fs.FS` interface
-- Core adapter sitting above Storage interface
-- Methods: Create, Open, OpenFile, Mkdir, MkdirAll, Remove, RemoveAll, Rename, Stat, Chmod, Chown, Chtimes
+- `*StorageFS` implements the package's own `storagefs.Fs` interface (`interfaces.go`), not `io/fs.FS`
+- Core adapter sitting above the `common.Storage` interface; `New(storage common.Storage) *StorageFS`
+- Methods: Name, Create, Open, OpenFile, Mkdir, MkdirAll, Remove, RemoveAll, Rename, Stat, Chmod, Chown, Chtimes
 - Path normalization and directory simulation
 - Metadata storage using `.meta/` prefix
+- Sentinel errors `ErrIsDirectory` and `ErrNotDirectory`
 
 #### file.go (482 lines)
-- Implements `fs.File` interface
-- Complete file operations: Read, Write, Seek, ReadAt, WriteAt, Truncate, Sync
-- Thread-safe using `sync.Mutex`
+- `*StorageFile` implements the package's `storagefs.File` interface; it also satisfies `io/fs.File` (it has `Read`, `Close` and a `Stat` returning `os.FileInfo`, an alias of `fs.FileInfo`)
+- Complete file operations: Close, Read, Write, WriteString, Seek, ReadAt, WriteAt, Name, Stat, Truncate, Sync
+- Each open file serialises its own operations with a `sync.Mutex` (`StorageFS` itself holds no lock)
+- Sentinel errors `ErrInvalidWhence` and `ErrNegativeOffset` (from `Seek`)
 - Lock-free closed state using `sync/atomic.Bool`
 - Supports all file modes: O_RDONLY, O_WRONLY, O_RDWR, O_CREATE, O_APPEND, O_TRUNC
 - Directory listing: Readdir, Readdirnames
@@ -99,28 +101,28 @@ Working examples demonstrating:
 StorageFS wraps the Storage interface without modifying it, keeping clean separation of concerns.
 
 ### 2. Metadata Storage
-File metadata (permissions, timestamps, size) stored as JSON in `.meta/` prefix:
+File and directory metadata is stored as JSON (fields `name`, `size`, `mode`, `modTime`, `isDir`) at the key `.meta/<path>`:
 ```
-File:     "docs/readme.txt"
-Metadata: ".meta/docs/readme.txt"
+File:      "docs/readme.txt"
+Metadata:  ".meta/docs/readme.txt"
+Directory: "docs/examples"
+Metadata:  ".meta/docs/examples"
 ```
 
 ### 3. Directory Simulation
-Directories represented as marker files with `.dir` suffix:
+A directory is the empty marker object at the key `<dir>/.dir`:
 ```
-Directory: "docs/examples/"
+Directory: "docs/examples"
 Marker:    "docs/examples/.dir"
 ```
 
 ### 4. Path Normalization
-All paths normalized to:
-- Forward slashes (/)
-- No leading slashes
-- No trailing slashes (except directories internally)
+`normalizePath` turns `""` and `"/"` into `"."`, converts backslashes to forward slashes, applies `path.Clean` (so no trailing slash), trims one leading slash, and turns an empty result into `"."`.
 
 ### 5. Thread Safety
-- StorageFile uses `sync.Mutex` for operation synchronization
+- Each StorageFile uses its own `sync.Mutex` for operation synchronization
 - Closed state uses `sync/atomic.Bool` for lock-free checks
+- `StorageFS` holds no lock; multi-step operations (Rename, RemoveAll, Mkdir) are not atomic across the backend
 - Underlying Storage backends handle their own concurrency
 
 ## Test Coverage Summary
@@ -157,8 +159,8 @@ Total: 23 passing, 5 skipped
 ### 1. Zero Pollution
 Added filesystem abstraction without modifying existing Storage interface (except adding List() method which was necessary for ReadDir).
 
-### 2. Full fs.FS Compatibility
-StorageFS implements the complete `fs.FS` interface, making it a drop-in replacement for os filesystem.
+### 2. os-like API
+StorageFS implements its own `storagefs.Fs` and `storagefs.File` interfaces, modelled on the `os` package; it does not implement `io/fs.FS`.
 
 ### 3. Backend Agnostic
 Same filesystem code works identically across Local, S3, Azure, and GCS backends.
@@ -174,38 +176,76 @@ Same filesystem code works identically across Local, S3, Azure, and GCS backends
 
 ### Basic Usage
 ```go
+// import "github.com/jeremyhahn/go-objstore/pkg/common", ".../pkg/factory", ".../pkg/storagefs"
+
 // Create storage backend
-storage, _ := factory.NewStorage("s3", map[string]string{
+storage, err := factory.NewStorage("s3", map[string]string{
     "bucket": "my-bucket",
     "region": "us-east-1",
 }, common.Credentials{})
+if err != nil {
+    log.Fatal(err)
+}
 
 // Wrap with filesystem interface
 fs := storagefs.New(storage)
 
 // Use standard filesystem operations
-fs.MkdirAll("docs/examples", 0755)
-file, _ := fs.Create("docs/examples/readme.txt")
-file.WriteString("Hello World!")
-file.Close()
+if err := fs.MkdirAll("docs/examples", 0755); err != nil {
+    log.Fatal(err)
+}
+file, err := fs.Create("docs/examples/readme.txt")
+if err != nil {
+    log.Fatal(err)
+}
+if _, err := file.WriteString("Hello World!"); err != nil {
+    log.Fatal(err)
+}
+if err := file.Close(); err != nil { // Close writes the content to the backend
+    log.Fatal(err)
+}
 
-// Use standard io/fs utilities
-content, _ := io.ReadAll(fs.Open("docs/examples/readme.txt"))
+// A storagefs.File is an io.Reader
+f, err := fs.Open("docs/examples/readme.txt")
+if err != nil {
+    log.Fatal(err)
+}
+defer f.Close()
+content, err := io.ReadAll(f)
 ```
 
 ### Switching Backends
 ```go
+// writeFile works on any storagefs.Fs
+writeFile := func(fsys storagefs.Fs, name string, data []byte) error {
+    f, err := fsys.Create(name)
+    if err != nil {
+        return err
+    }
+    if _, err := f.Write(data); err != nil {
+        f.Close()
+        return err
+    }
+    return f.Close()
+}
+
 // Local
-localStorage, _ := factory.NewStorage("local", map[string]string{"basePath": "/tmp"}, common.Credentials{})
+localStorage, err := factory.NewStorage("local", map[string]string{"path": "/tmp"}, common.Credentials{})
+if err != nil {
+    log.Fatal(err)
+}
 localFS := storagefs.New(localStorage)
 
 // S3 (identical API!)
-s3Storage, _ := factory.NewStorage("s3", map[string]string{"bucket": "my-bucket"}, common.Credentials{})
+s3Storage, err := factory.NewStorage("s3", map[string]string{"bucket": "my-bucket"}, common.Credentials{})
+if err != nil {
+    log.Fatal(err)
+}
 s3FS := storagefs.New(s3Storage)
 
 // Both use the same filesystem operations
-os.WriteFile(localFS, "test.txt", []byte("data"), 0644)
-os.WriteFile(s3FS, "test.txt", []byte("data"), 0644)
+_ = writeFile(localFS, "test.txt", []byte("data"))
+_ = writeFile(s3FS, "test.txt", []byte("data"))
 ```
 
 ## Files Created/Modified
@@ -241,7 +281,7 @@ pkg/gcs/gcs_test.go                (added List() tests)
 
 ### Not Supported
 1. Symbolic links (Symlink, Readlink)
-2. File ownership (Chown is no-op)
+2. File ownership (`Chown` always returns `os.ErrInvalid`)
 3. File locking
 4. Hard links
 5. Special files (devices, pipes, sockets)
