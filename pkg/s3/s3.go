@@ -64,6 +64,7 @@ type S3 struct {
 	transitionClass    string        // lifecycle "archive" target; empty means GLACIER
 	multipartThreshold int64         // Put above this size goes multipart; zero means DefaultMultipartThreshold
 	partSize           int64         // smallest part of an automatic multipart Put; zero means DefaultPartSize
+	abortTimeout       time.Duration // bound on the cleanup abort of a failed automatic multipart Put; zero means DefaultAbortTimeout
 	policiesMutex      sync.RWMutex
 	replicationManager common.ReplicationManager
 }

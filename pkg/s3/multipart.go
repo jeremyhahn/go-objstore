@@ -222,6 +222,11 @@ const (
 	DefaultPartSize = int64(64 << 20)
 	// MaxObjectSize is the largest object S3 stores: 5 TiB.
 	MaxObjectSize = int64(5 << 40)
+	// DefaultAbortTimeout bounds the abort that cleans up a failed automatic
+	// multipart Put. The abort runs detached from the caller's context, so it
+	// still runs after a cancel, and the client sets no request timeout of
+	// its own: without this bound a stalled endpoint would hold it forever.
+	DefaultAbortTimeout = 30 * time.Second
 )
 
 func (s *S3) threshold() int64 {
@@ -301,6 +306,15 @@ func (w *partWindow) Seek(offset int64, whence int) (int64, error) {
 	return target, nil
 }
 
+// abortTimeoutOrDefault is the bound on the cleanup abort of a failed
+// automatic multipart Put.
+func (s *S3) abortTimeoutOrDefault() time.Duration {
+	if s.abortTimeout > 0 {
+		return s.abortTimeout
+	}
+	return DefaultAbortTimeout
+}
+
 // putMultipart uploads the size bytes of rs from start as a multipart upload
 // carrying in's key, metadata and storage class. Parts are streamed from rs
 // one at a time, so no more than the SDK's signing buffer is held in memory.
@@ -323,7 +337,9 @@ func (s *S3) putMultipart(ctx context.Context, in *s3.PutObjectInput, rs io.Read
 	}
 	id := out.UploadId
 	fail := func(err error) error {
-		if _, aerr := s.svc.AbortMultipartUploadWithContext(context.WithoutCancel(ctx), &s3.AbortMultipartUploadInput{
+		actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.abortTimeoutOrDefault())
+		defer cancel()
+		if _, aerr := s.svc.AbortMultipartUploadWithContext(actx, &s3.AbortMultipartUploadInput{
 			Bucket: in.Bucket, Key: in.Key, UploadId: id,
 		}); aerr != nil {
 			return errors.Join(err, uploadError(aerr, aws.StringValue(id)))

@@ -39,6 +39,13 @@ type classRecorder struct {
 	createClasses []string
 	puts, aborts  int
 	lifecycle     *s3.BucketLifecycleConfiguration
+
+	// onUploadPart runs before each UploadPart is answered.
+	onUploadPart func(ctx context.Context)
+	// onAbort, when set, answers AbortMultipartUpload in place of the fake.
+	onAbort func(ctx context.Context) error
+	// abortCtx is the context the last AbortMultipartUpload was sent with.
+	abortCtx context.Context
 }
 
 func newClassRecorder() *classRecorder { return &classRecorder{fakeS3: newFakeS3("bucket-one")} }
@@ -62,7 +69,20 @@ func (r *classRecorder) CreateMultipartUploadWithContext(ctx context.Context, in
 
 func (r *classRecorder) AbortMultipartUploadWithContext(ctx context.Context, in *s3.AbortMultipartUploadInput, o ...request.Option) (*s3.AbortMultipartUploadOutput, error) {
 	r.aborts++
+	r.abortCtx = ctx
+	if r.onAbort != nil {
+		if err := r.onAbort(ctx); err != nil {
+			return nil, err
+		}
+	}
 	return r.fakeS3.AbortMultipartUploadWithContext(ctx, in, o...)
+}
+
+func (r *classRecorder) UploadPartWithContext(ctx context.Context, in *s3.UploadPartInput, o ...request.Option) (*s3.UploadPartOutput, error) {
+	if r.onUploadPart != nil {
+		r.onUploadPart(ctx)
+	}
+	return r.fakeS3.UploadPartWithContext(ctx, in, o...)
 }
 
 func (r *classRecorder) GetBucketLifecycleConfiguration(*s3.GetBucketLifecycleConfigurationInput) (*s3.GetBucketLifecycleConfigurationOutput, error) {
@@ -335,6 +355,38 @@ func TestS3_Put_AutoMultipart_Failures(t *testing.T) {
 	}
 	if r.puts != 0 || len(r.createClasses) != 0 {
 		t.Errorf("requests sent for an object over the maximum")
+	}
+}
+
+// The cleanup abort of a failed automatic multipart Put is bounded: an
+// endpoint that never answers it does not hold the Put forever.
+func TestS3_Put_AutoMultipart_AbortIsBounded(t *testing.T) {
+	boom := errors.New("boom")
+	r := newClassRecorder()
+	r.errs["UploadPart"] = boom
+	r.onAbort = func(ctx context.Context) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Second):
+			return errors.New("abort was not bounded")
+		}
+	}
+	s := &S3{svc: r, bucket: "bucket-one", multipartThreshold: 1, partSize: common.MinPartSize, abortTimeout: 20 * time.Millisecond}
+
+	start := time.Now()
+	err := s.PutWithMetadata(context.Background(), "big", bytes.NewReader(patterned(common.MinPartSize+1)), nil)
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Errorf("Put returned after %v, want about the 20ms abort bound", elapsed)
+	}
+	if !errors.Is(err, boom) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("err = %v, want the part failure joined with the abort's deadline", err)
+	}
+	if r.aborts != 1 {
+		t.Errorf("aborts = %d, want 1", r.aborts)
+	}
+	if got := (&S3{}).abortTimeoutOrDefault(); got != DefaultAbortTimeout {
+		t.Errorf("default abort timeout = %v", got)
 	}
 }
 
