@@ -22,7 +22,10 @@ cd /path/to/go-objstore
 make lib
 ```
 
-This creates `objstore.so` in `bin/` and `objstore.h` in `examples/c_client/`.
+This creates `bin/libobjstore.so` and generates `examples/c_client/libobjstore.h`.
+The header is generated on every `make lib` and is not committed
+(`.gitignore` in this directory ignores it). The full C API reference is
+[docs/c_client/README.md](../../docs/c_client/README.md).
 
 ## Building the Example
 
@@ -32,7 +35,20 @@ From this directory:
 make
 ```
 
-This compiles `test_objstore.c` and links it against the shared library.
+This compiles `test_objstore.c` and `simple_example.c`. Both include
+`"libobjstore.h"` from this directory and link `../../bin/libobjstore.so`; the
+Makefile's `check-lib` target stops with an error if either file is missing.
+
+## Compiling Your Own Program
+
+```bash
+GO_OBJSTORE=/path/to/go-objstore
+gcc -I"$GO_OBJSTORE/examples/c_client" -o myapp myapp.c \
+    -L"$GO_OBJSTORE/bin" -lobjstore -lpthread -ldl
+LD_LIBRARY_PATH="$GO_OBJSTORE/bin:$LD_LIBRARY_PATH" ./myapp
+```
+
+with `#include "libobjstore.h"` in `myapp.c`.
 
 ## Running the Example
 
@@ -77,10 +93,12 @@ int ObjstoreNewStorage(
 );
 ```
 
-Creates a new storage backend. Returns a handle (>= 0) on success, or -1 on error.
+Creates a new storage backend. Returns a positive handle on success, or -1 on error.
 
 Parameters:
-- `backendType`: Type of backend ("local", "s3", "gcs", "azure")
+- `backendType`: a registered storage backend ID: `local` and `memory` always;
+  `s3`, `gcs` and `azure` when built with the `awss3`, `gcpstorage` and
+  `azureblob` tags (the default `make lib` tags include all three)
 - `settingsKeys`: Array of setting key strings
 - `settingsValues`: Array of setting value strings
 - `settingsCount`: Number of settings in the arrays
@@ -91,6 +109,20 @@ char *keys[] = {"path"};
 char *values[] = {"/tmp/storage"};
 int handle = ObjstoreNewStorage("local", keys, values, 1);
 ```
+
+#### Create Storage Backend With a Credential
+
+```c
+int ObjstoreNewStorageWithCredentials(char* backendType, char** settingsKeys,
+                                      char** settingsValues, int settingsCount,
+                                      char* key, int keyLen,
+                                      char* secret, int secretLen);
+```
+
+As `ObjstoreNewStorage`, plus a credential as two length-delimited byte
+buffers: `key` is the S3 access key, `secret` the S3 secret key or the Azure
+account key; `NULL` with length `0` passes none. The library moves them into a
+protected-memory handle; wipe your buffers with `explicit_bzero` after the call.
 
 #### Put Data
 
@@ -120,7 +152,9 @@ Parameters:
 - `buffer`: Buffer to store retrieved data
 - `bufferSize`: Size of the buffer
 
-Note: If the buffer is too small, the function returns -1 and sets an error.
+Note: If the object is larger than `bufferSize`, the function copies nothing,
+returns -1 and sets the error `buffer too small: need N bytes, have M`. The
+buffer is not NUL-terminated.
 
 #### Delete Data
 
@@ -140,7 +174,9 @@ Parameters:
 void ObjstoreClose(int handle);
 ```
 
-Closes the storage backend and releases resources. Always call this when done.
+Removes the handle from the library's handle map, so later calls with it fail.
+The library drops its reference to the backend; it does not call a close
+method on it. Call this when done with a handle.
 
 Parameters:
 - `handle`: Storage handle to close
@@ -174,20 +210,25 @@ Settings:
 - `region`: AWS region (required)
 - `bucket`: S3 bucket name (required)
 - `endpoint`: Custom endpoint URL (optional, for S3-compatible services)
-- Credentials: not accepted here. The C library has no protected-memory credential channel (issue #16), so S3 uses the AWS credentials chain; a credential key in the arrays is rejected
+- Credentials: never in the settings arrays (a key such as `accessKey` or
+  `secretKey` is rejected). Pass them to `ObjstoreNewStorageWithCredentials`
+  (`key` = access key, `secret` = secret key), or pass none to use the AWS
+  credential chain.
 
 ### Google Cloud Storage
 
 Settings:
 - `bucket`: GCS bucket name (required)
-- `credentialsJSON`: Service account credentials as JSON string (optional)
+- Credentials: Google Application Default Credentials
+  (`GOOGLE_APPLICATION_CREDENTIALS`, gcloud, or the instance service account)
 
 ### Azure Blob Storage
 
 Settings:
 - `accountName`: Azure storage account name (required)
-- Account key: not accepted here (issue #16); the C library has no protected-memory credential channel yet
 - `containerName`: Blob container name (required)
+- Account key: never in the settings arrays (`accountKey` is rejected). Pass it
+  as the `secret` of `ObjstoreNewStorageWithCredentials`; `key` is ignored.
 
 ## Error Handling Pattern
 
@@ -231,6 +272,9 @@ The library uses internal locking to protect the storage handle registry. Multip
 - Perform operations on different handles
 
 However, concurrent operations on the same handle should be synchronized by the caller if the underlying backend requires it.
+
+The last error is one process-wide string: a call on another thread can
+replace it before you read it with `ObjstoreGetLastError()`.
 
 ## Testing
 
