@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/jeremyhahn/go-objstore/backup/pkg/chunker"
 	"github.com/jeremyhahn/go-objstore/backup/pkg/keyseam"
@@ -97,7 +98,10 @@ type Repository struct {
 	layout Layout
 	dk     *keyseam.DataKey
 	keys   *seal.Keys
-	cfg    Config
+	// mu serializes key changes for their whole read-modify-commit and
+	// guards cfg and slot, which a key change replaces.
+	mu  sync.Mutex
+	cfg Config
 	// slot is the ID of the key object that opened the repository.
 	slot seal.ID
 }
@@ -239,30 +243,45 @@ func openWith(ctx context.Context, st store.Store, layout Layout, dk *keyseam.Da
 	if err != nil {
 		return nil, errors.Join(err, r.Close())
 	}
-	// The latest key generation, if any, supersedes the config Init wrote.
-	gens, err := st.List(ctx, layout.prefix+keyringDir)
-	if err != nil {
-		return nil, errors.Join(fromStore(op, layout.prefix+keyringDir, err), r.Close())
-	}
-	if len(gens) > 0 {
-		name := gens[len(gens)-1]
-		sealed, err := st.Get(ctx, name)
-		if err != nil {
-			return nil, errors.Join(fromStore(op, name, err), r.Close())
-		}
-		gen, err := r.openConfig(name, sealed)
-		if err != nil {
-			// The data key opened the config, so a generation it cannot
-			// open is damage, not another repository's key.
-			return nil, errors.Join(newError(op, name, ErrCorrupt, nil), r.Close())
-		}
-		if gen.Version != formatVersion || gen.ID != cfg.ID || name != r.keyringName(gen.Generation) {
-			return nil, errors.Join(newError(op, name, ErrCorrupt, nil), r.Close())
-		}
-		cfg = gen
-	}
 	r.cfg = cfg
+	// The latest key generation, if any, supersedes the config Init wrote.
+	if err := r.refresh(ctx, op); err != nil {
+		return nil, errors.Join(err, r.Close())
+	}
 	return r, nil
+}
+
+// refresh loads the latest key generation into r.cfg if it is newer than the
+// one r.cfg holds, so a key change through another handle is not lost. The
+// caller holds r.mu, or owns r alone.
+func (r *Repository) refresh(ctx context.Context, op string) error {
+	dir := r.layout.prefix + keyringDir
+	gens, err := r.st.List(ctx, dir)
+	if err != nil {
+		return fromStore(op, dir, err)
+	}
+	if len(gens) == 0 {
+		return nil
+	}
+	name := gens[len(gens)-1]
+	if r.cfg.Version >= formatVersion && name == r.keyringName(r.cfg.Generation) {
+		return nil
+	}
+	sealed, err := r.st.Get(ctx, name)
+	if err != nil {
+		return fromStore(op, name, err)
+	}
+	gen, err := r.openConfig(name, sealed)
+	if err != nil {
+		// The data key opened the config, so a generation it cannot open
+		// is damage, not another repository's key.
+		return newError(op, name, ErrCorrupt, nil)
+	}
+	if gen.Version != formatVersion || gen.ID != r.cfg.ID || name != r.keyringName(gen.Generation) {
+		return newError(op, name, ErrCorrupt, nil)
+	}
+	r.cfg = gen
+	return nil
 }
 
 // openConfig opens and checks a sealed config stored under name.
@@ -306,12 +325,21 @@ func (r *Repository) keyringName(n uint64) string {
 
 // Slot returns the ID of the key slot that opened the repository.
 func (r *Repository) Slot() seal.ID {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	return r.slot
 }
 
 // Keys returns the IDs of the repository's key slots. On a format 1
 // repository every key object is a slot.
 func (r *Repository) Keys(ctx context.Context) ([]seal.ID, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.slots(ctx)
+}
+
+// slots lists the key slots. The caller holds r.mu.
+func (r *Repository) slots(ctx context.Context) ([]seal.ID, error) {
 	const op = "keys"
 	if r.cfg.Version >= formatVersion {
 		return slices.Clone(r.cfg.Keys), nil
@@ -336,7 +364,9 @@ func (r *Repository) Keys(ctx context.Context) ([]seal.ID, error) {
 // Snapshots are not touched: only a new wrap of the same data key is
 // written.
 func (r *Repository) AddKey(ctx context.Context, p keyseam.Provider) (seal.ID, error) {
-	keys, err := r.Keys(ctx)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	keys, err := r.current(ctx)
 	if err != nil {
 		return seal.ID{}, err
 	}
@@ -350,11 +380,22 @@ func (r *Repository) AddKey(ctx context.Context, p keyseam.Provider) (seal.ID, e
 	return id, r.writeKeys(ctx, append(keys, id))
 }
 
+// current re-reads the latest key generation and returns its slots, the
+// start of every key change. The caller holds r.mu.
+func (r *Repository) current(ctx context.Context) ([]seal.ID, error) {
+	if err := r.refresh(ctx, "key change"); err != nil {
+		return nil, err
+	}
+	return r.slots(ctx)
+}
+
 // RemoveKey drops the key slot id. It refuses to drop the last slot. The
 // key object stays in the write-once store, but Open no longer accepts it.
 func (r *Repository) RemoveKey(ctx context.Context, id seal.ID) error {
 	const op = "remove key"
-	keys, err := r.Keys(ctx)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	keys, err := r.current(ctx)
 	if err != nil {
 		return err
 	}
@@ -372,7 +413,9 @@ func (r *Repository) RemoveKey(ctx context.Context, id seal.ID) error {
 // that opened the repository, in one key generation. It returns the new
 // slot's ID.
 func (r *Repository) ChangeKey(ctx context.Context, p keyseam.Provider) (seal.ID, error) {
-	keys, err := r.Keys(ctx)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	keys, err := r.current(ctx)
 	if err != nil {
 		return seal.ID{}, err
 	}
@@ -470,7 +513,11 @@ func (r *Repository) Close() error {
 
 // Config returns the repository's settings.
 func (r *Repository) Config() Config {
-	return r.cfg
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cfg := r.cfg
+	cfg.Keys = slices.Clone(cfg.Keys)
+	return cfg
 }
 
 // Layout returns the repository's object layout.

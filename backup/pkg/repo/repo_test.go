@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	enclave "github.com/jeremyhahn/go-enclave"
@@ -111,6 +114,11 @@ func failOn(op, part string) func(string, string) error {
 		}
 		return nil
 	}
+}
+
+// withStore returns a copy of r over another store.
+func withStore(r *Repository, st store.Store) *Repository {
+	return &Repository{st: st, layout: r.layout, dk: r.dk, keys: r.keys, cfg: r.Config(), slot: r.Slot()}
 }
 
 // brokenProvider fails every key operation.
@@ -269,10 +277,74 @@ func TestKeySlots(t *testing.T) {
 		t.Fatalf("keys = %v", keys)
 	}
 
-	// A stale handle writing a generation that exists is a conflict.
-	r.cfg.Generation = 0
-	_, err = r.AddKey(ctx, passphrase(t, "late"))
+	// A stale handle re-reads the latest generation before it changes the
+	// keys, so the change made through o is not lost.
+	if _, err := o.AddKey(ctx, passphrase(t, "through o")); err != nil {
+		t.Fatalf("AddKey through o: %v", err)
+	}
+	if _, err := r.AddKey(ctx, passphrase(t, "through r")); err != nil {
+		t.Fatalf("AddKey through r: %v", err)
+	}
+	for _, pass := range []string{"new horse", "through o", "through r"} {
+		k, err := Open(ctx, st, testPrefix, passphrase(t, pass))
+		if err != nil {
+			t.Fatalf("Open %q after both changes: %v", pass, err)
+		}
+		_ = k.Close()
+	}
+
+	// Another writer committing the same generation first is a conflict.
+	racing := &faulty{Store: st, fail: func(op, name string) error {
+		if op == "put" && strings.Contains(name, keyringDir) {
+			return store.ErrExists
+		}
+		return nil
+	}}
+	l, err := Open(ctx, racing, testPrefix, passphrase(t, "new horse"))
+	if err != nil {
+		t.Fatalf("Open racing: %v", err)
+	}
+	defer func() { _ = l.Close() }()
+	_, err = l.AddKey(ctx, passphrase(t, "late"))
 	assertRepoError(t, err, ErrKeyConflict)
+}
+
+func TestConcurrentAddKey(t *testing.T) {
+	ctx := context.Background()
+	r, st := newRepo(t)
+	const n = 8
+	ids := make([]seal.ID, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ids[i], errs[i] = r.AddKey(ctx, passphrase(t, "key "+strconv.Itoa(i)))
+			_ = r.Config()
+			_ = r.Slot()
+		}()
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("AddKey %d: %v", i, err)
+		}
+	}
+	o, err := Open(ctx, st, testPrefix, passphrase(t, "correct horse"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = o.Close() }()
+	keys, err := o.Keys(ctx)
+	if err != nil || len(keys) != n+1 {
+		t.Fatalf("Keys = %d slots, %v; want %d", len(keys), err, n+1)
+	}
+	for i, id := range ids {
+		if !slices.Contains(keys, id) {
+			t.Fatalf("slot of key %d was lost", i)
+		}
+	}
 }
 
 func TestFormat1Upgrade(t *testing.T) {
