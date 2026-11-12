@@ -134,6 +134,19 @@ func (s *S3) UpdateMetadata(ctx context.Context, key string, metadata *common.Me
 		MetadataDirective: aws.String("REPLACE"),
 	}
 
+	// S3 gives a copy the STANDARD class unless the request names one, so a
+	// self-copy must carry the class the object already has.
+	head, err := s.svc.HeadObjectWithContext(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return objectError(err, key)
+	}
+	if head != nil && aws.StringValue(head.StorageClass) != "" {
+		input.StorageClass = head.StorageClass
+	}
+
 	if metadata != nil {
 		if metadata.ContentType != "" {
 			input.ContentType = aws.String(metadata.ContentType)
@@ -149,7 +162,7 @@ func (s *S3) UpdateMetadata(ctx context.Context, key string, metadata *common.Me
 		}
 	}
 
-	_, err := s.svc.CopyObjectWithContext(ctx, input)
+	_, err = s.svc.CopyObjectWithContext(ctx, input)
 	return objectError(err, key)
 }
 

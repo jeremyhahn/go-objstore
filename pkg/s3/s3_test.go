@@ -39,6 +39,7 @@ type mockS3Client struct {
 	listObjectsV2Output                   *s3.ListObjectsV2Output
 	headObjectOutput                      *s3.HeadObjectOutput
 	copyObjectOutput                      *s3.CopyObjectOutput
+	copyObjectInput                       *s3.CopyObjectInput
 	getBucketLifecycleConfigurationOutput *s3.GetBucketLifecycleConfigurationOutput
 	putBucketLifecycleConfigurationOutput *s3.PutBucketLifecycleConfigurationOutput
 	deleteBucketLifecycleOutput           *s3.DeleteBucketLifecycleOutput

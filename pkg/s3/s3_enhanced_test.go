@@ -60,6 +60,7 @@ func (m *mockS3Client) HeadObjectWithContext(ctx aws.Context, input *s3.HeadObje
 }
 
 func (m *mockS3Client) CopyObjectWithContext(ctx aws.Context, input *s3.CopyObjectInput, opts ...request.Option) (*s3.CopyObjectOutput, error) {
+	m.copyObjectInput = input
 	if m.copyObjectError != nil {
 		return nil, m.copyObjectError
 	}
@@ -375,6 +376,49 @@ func TestS3_UpdateMetadata_Error(t *testing.T) {
 	err := s.UpdateMetadata(ctx, "key", metadata)
 	if err == nil {
 		t.Fatal("expected error, got nil")
+	}
+}
+
+// UpdateMetadata copies the object onto itself; S3 resets the storage class
+// of such a copy to STANDARD unless the request names one, so the class the
+// object already has must ride along.
+func TestS3_UpdateMetadata_KeepsStorageClass(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		class *string
+		want  *string
+	}{
+		{"standard-ia", aws.String(s3.StorageClassStandardIa), aws.String(s3.StorageClassStandardIa)},
+		{"onezone-ia", aws.String(s3.StorageClassOnezoneIa), aws.String(s3.StorageClassOnezoneIa)},
+		{"unset", nil, nil},
+		{"empty", aws.String(""), nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			mockS3 := &mockS3Client{
+				headObjectOutput: &s3.HeadObjectOutput{StorageClass: tt.class},
+				copyObjectOutput: &s3.CopyObjectOutput{},
+			}
+			s := &S3{svc: mockS3, bucket: "test-bucket"}
+			if err := s.UpdateMetadata(context.Background(), "key", &common.Metadata{ContentType: "text/plain"}); err != nil {
+				t.Fatalf("UpdateMetadata: %v", err)
+			}
+			got := mockS3.copyObjectInput.StorageClass
+			if (got == nil) != (tt.want == nil) || (got != nil && *got != *tt.want) {
+				t.Errorf("copy StorageClass = %v, want %v", aws.StringValue(got), aws.StringValue(tt.want))
+			}
+		})
+	}
+}
+
+// A missing source object is reported before any copy is sent.
+func TestS3_UpdateMetadata_HeadError(t *testing.T) {
+	mockS3 := &mockS3Client{headObjectError: awsErr("NotFound")}
+	s := &S3{svc: mockS3, bucket: "test-bucket"}
+	if err := s.UpdateMetadata(context.Background(), "key", nil); !errors.Is(err, common.ErrKeyNotFound) {
+		t.Errorf("err = %v, want ErrKeyNotFound", err)
+	}
+	if mockS3.copyObjectInput != nil {
+		t.Error("copy sent for a missing object")
 	}
 }
 
