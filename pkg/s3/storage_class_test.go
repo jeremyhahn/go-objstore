@@ -198,7 +198,7 @@ func TestS3_AddPolicy_TransitionClass(t *testing.T) {
 			t.Fatal(err)
 		}
 		tr := r.lifecycle.Rules[0].Transitions
-		if len(tr) != 1 || aws.ToString(tr[0].StorageClass) != tt.want || aws.ToInt64(tr[0].Days) != 2 {
+		if len(tr) != 1 || string(tr[0].StorageClass) != tt.want || aws.ToInt32(tr[0].Days) != 2 {
 			t.Errorf("configured %q: transitions = %v", tt.configured, tr)
 		}
 	}

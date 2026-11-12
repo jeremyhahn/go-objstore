@@ -10,8 +10,6 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
-
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 // A failed auto-multipart put whose abort also fails reports both errors,

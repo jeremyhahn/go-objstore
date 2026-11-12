@@ -270,7 +270,7 @@ func TestS3_AddPolicy_Success(t *testing.T) {
 	}
 
 	// Verify rule status
-	if rule.Status == nil || *rule.Status != "Enabled" {
+	if rule.Status != types.ExpirationStatusEnabled {
 		t.Fatalf("expected rule status 'Enabled', got %v", rule.Status)
 	}
 
@@ -338,7 +338,7 @@ func TestS3_AddPolicy_Archive(t *testing.T) {
 	}
 
 	// Verify rule status
-	if rule.Status == nil || *rule.Status != "Enabled" {
+	if rule.Status != types.ExpirationStatusEnabled {
 		t.Fatalf("expected rule status 'Enabled', got %v", rule.Status)
 	}
 
@@ -360,7 +360,7 @@ func TestS3_AddPolicy_Archive(t *testing.T) {
 	}
 
 	// Verify storage class is GLACIER
-	if transition.StorageClass == nil || *transition.StorageClass != string(types.TransitionStorageClassGlacier) {
+	if transition.StorageClass != types.TransitionStorageClassGlacier {
 		t.Fatalf("expected storage class GLACIER, got %v", transition.StorageClass)
 	}
 

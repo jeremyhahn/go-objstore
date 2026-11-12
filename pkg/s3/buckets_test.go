@@ -354,7 +354,7 @@ func (f *fakeS3) CompleteMultipartUpload(ctx context.Context, in *s3.CompleteMul
 	}
 	listed := in.MultipartUpload.Parts
 	var data []byte
-	prev := int64(0)
+	prev := int32(0)
 	for i, p := range listed {
 		n := aws.ToInt32(p.PartNumber)
 		if n <= prev {
@@ -731,7 +731,7 @@ func TestS3_UploadPart_BodyIsWrapped(t *testing.T) {
 	if _, err := s.UploadPart(ctx, "k", id, 1, strings.NewReader("abc"), 3); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.bodyTypes) != 1 || f.bodyTypes[0] != "aws.ReaderSeekerCloser" {
+	if len(f.bodyTypes) != 1 || f.bodyTypes[0] != "*s3.sizedSeeker" {
 		t.Errorf("body types = %v, want a wrapped reader", f.bodyTypes)
 	}
 }
