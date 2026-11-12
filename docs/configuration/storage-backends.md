@@ -40,6 +40,17 @@ config:
 - `endpoint` - Custom endpoint URL (for S3-compatible services)
 - `forcePathStyle` - Use path-style addressing when `endpoint` is set (`"true"`/`"false"`)
 - `accessKey` / `secretKey` - Static credentials (otherwise the AWS credential chain is used)
+- `storage_class` - S3 storage class every object is written with, on single PUTs and on multipart uploads (`STANDARD`, `STANDARD_IA`, `ONEZONE_IA`, `INTELLIGENT_TIERING`, `GLACIER`, `GLACIER_IR`, `DEEP_ARCHIVE`, `REDUCED_REDUNDANCY`, ...; case-insensitive). Unset leaves the bucket default. An unknown class fails configuration with `ErrUnknownStorageClass`.
+- `transition_storage_class` - Class an `archive` lifecycle policy transitions objects to (`GLACIER` by default; any S3 transition class: `STANDARD_IA`, `ONEZONE_IA`, `INTELLIGENT_TIERING`, `GLACIER`, `GLACIER_IR`, `DEEP_ARCHIVE`).
+
+### Large objects
+A single S3 PUT carries at most 5 GiB. A `Put` whose body is seekable (a file,
+a `bytes.Reader`) and larger than 5 GiB is sent as a multipart upload
+automatically: parts are read from the body one at a time, at least 64 MiB
+each and larger when needed to keep the object within 10 000 parts (a 6 GiB
+object goes as 96 parts of 64 MiB). Objects over 5 TiB are refused with
+`ErrObjectTooLarge`. If any part fails the upload is aborted. A body that
+cannot seek has no known size and is always sent as a single PUT.
 
 ### Credentials
 Uses AWS SDK credential chain in order:

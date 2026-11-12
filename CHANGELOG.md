@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Added
 
 - server: an `auth` section turns on mutual TLS (client certificates verified against `auth.client_ca`) and role-based access control on gRPC, REST, QUIC, MCP HTTP, MCP stdio and the Unix socket; identities are the certificate common name or `uid:N` of the local user; invalid or incomplete settings refuse to start; without `auth` behaviour is unchanged and each listener logs a warning; `rest.tls_cert`/`rest.tls_key` and `mcp.tls_cert`/`mcp.tls_key` serve TLS. See `docs/configuration/auth.md` (#216)
+- s3: `storage_class` setting, sent as `StorageClass` on PutObject and multipart create; `transition_storage_class` lets `archive` lifecycle policies transition to any S3 class, not only GLACIER; an unknown class is a typed `*StorageClassError` (`ErrUnknownStorageClass`); a seekable `Put` over 5 GiB goes through a multipart upload automatically, parts sized to stay under 10 000 (#223)
 
 ### Changed
 
