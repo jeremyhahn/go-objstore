@@ -175,7 +175,11 @@ func (s *S3) put(ctx context.Context, input *s3.PutObjectInput, data io.Reader, 
 		input.StorageClass = aws.String(s.storageClass)
 	}
 	if rs, ok := data.(io.ReadSeeker); ok {
-		if start, end, ok := seekExtent(rs); ok && end-start > s.threshold() {
+		start, end, ok, err := seekExtent(rs)
+		if err != nil {
+			return err
+		}
+		if ok && end-start > s.threshold() {
 			return s.putMultipart(ctx, input, rs, start, end-start)
 		}
 	}

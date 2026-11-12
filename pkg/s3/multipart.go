@@ -165,7 +165,11 @@ func noContentMD5(r *request.Request) {
 // streamed with an unsigned payload.
 func partBody(data io.Reader, size int64) (io.Reader, *sizedReader, []request.Option, error) {
 	if rs, ok := data.(io.ReadSeeker); ok {
-		if start, end, ok := seekExtent(rs); ok {
+		start, end, ok, err := seekExtent(rs)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if ok {
 			// The signer only reads as many bytes as the request declares, so a
 			// reader of another length is caught here, before anything is sent.
 			if end-start != size {
@@ -180,19 +184,43 @@ func partBody(data io.Reader, size int64) (io.Reader, *sizedReader, []request.Op
 }
 
 // seekExtent reports the current offset of rs and the offset of its end, and
-// leaves rs where it was. It is false for a reader that implements io.Seeker
-// but cannot seek (os.Stdin, a pipe).
-func seekExtent(rs io.ReadSeeker) (start, end int64, ok bool) {
-	start, err := rs.Seek(0, io.SeekCurrent)
+// leaves rs where it was. ok is false, with a nil error, for a reader that
+// implements io.Seeker but cannot seek (os.Stdin, a pipe): the caller streams
+// it. The error is a *SeekRestoreError when rs moved and could not be put back:
+// the caller must send nothing.
+func seekExtent(rs io.ReadSeeker) (start, end int64, ok bool, err error) {
+	start, err = rs.Seek(0, io.SeekCurrent)
 	if err != nil {
-		return 0, 0, false
+		return 0, 0, false, nil
 	}
 	end, err = rs.Seek(0, io.SeekEnd)
-	if _, backErr := rs.Seek(start, io.SeekStart); err != nil || backErr != nil {
-		return 0, 0, false
+	if err != nil {
+		// A failed SeekEnd may still have moved the reader: put it back,
+		// and only stream it if it is back where it was.
+		if _, backErr := rs.Seek(start, io.SeekStart); backErr != nil {
+			return 0, 0, false, &SeekRestoreError{Offset: start, Err: backErr}
+		}
+		return 0, 0, false, nil
 	}
-	return start, end, true
+	if _, backErr := rs.Seek(start, io.SeekStart); backErr != nil {
+		return 0, 0, false, &SeekRestoreError{Offset: start, Err: backErr}
+	}
+	return start, end, true, nil
 }
+
+// SeekRestoreError reports that a reader was moved to measure its length and
+// could not be put back where it was. Nothing is sent: the body would start at
+// the wrong offset and could overwrite an object with truncated data.
+type SeekRestoreError struct {
+	Offset int64
+	Err    error
+}
+
+func (e *SeekRestoreError) Error() string {
+	return fmt.Sprintf("s3: restore reader to offset %d: %v", e.Offset, e.Err)
+}
+
+func (e *SeekRestoreError) Unwrap() error { return e.Err }
 
 // uploadError maps the service errors of a call on an upload.
 func uploadError(err error, uploadID string) error {
