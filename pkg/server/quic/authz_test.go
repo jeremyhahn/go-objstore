@@ -119,3 +119,58 @@ func TestQUICAuthorizationEnforced(t *testing.T) {
 		}
 	})
 }
+
+// TestQUICPutOverwriteAction verifies a put to an existing key needs the
+// overwrite action as well as write (#238), and that a denied overwrite
+// leaves the stored bytes unchanged.
+func TestQUICPutOverwriteAction(t *testing.T) {
+	put := func(t *testing.T, handler *Handler, key, body string) int {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPut, "/objects/"+key, strings.NewReader(body))
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		return w.Code
+	}
+	newHandler := func(t *testing.T, actions []string) (*Handler, *mockLifecycleStorage) {
+		t.Helper()
+		storage := newMockLifecycleStorage()
+		initTestFacade(t, storage)
+		authz := adapters.NewRBACAuthorizer(map[string][]string{"reader": actions})
+		handler, err := NewHandler("", 1024*1024, 30*time.Second, 30*time.Second, adapters.NewNoOpLogger(), readerAuthenticator{}, authz, nil)
+		if err != nil {
+			t.Fatalf("NewHandler failed: %v", err)
+		}
+		return handler, storage
+	}
+
+	t.Run("write only: new key stored, existing key forbidden", func(t *testing.T) {
+		handler, storage := newHandler(t, []string{adapters.ActionRead, adapters.ActionWrite})
+		if code := put(t, handler, "snap", "original"); code != http.StatusCreated {
+			t.Fatalf("first PUT = %d, want 201", code)
+		}
+		if code := put(t, handler, "snap", "replaced"); code != http.StatusForbidden {
+			t.Fatalf("overwrite PUT = %d, want 403", code)
+		}
+		if got := string(storage.data["snap"]); got != "original" {
+			t.Errorf("stored bytes = %q, want %q", got, "original")
+		}
+	})
+
+	for name, actions := range map[string][]string{
+		"overwrite granted": {adapters.ActionRead, adapters.ActionWrite, adapters.ActionOverwrite},
+		"wildcard":          {"*"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			handler, storage := newHandler(t, actions)
+			if code := put(t, handler, "snap", "original"); code != http.StatusCreated {
+				t.Fatalf("first PUT = %d, want 201", code)
+			}
+			if code := put(t, handler, "snap", "replaced"); code != http.StatusCreated {
+				t.Fatalf("overwrite PUT = %d, want 201", code)
+			}
+			if got := string(storage.data["snap"]); got != "replaced" {
+				t.Errorf("stored bytes = %q, want %q", got, "replaced")
+			}
+		})
+	}
+}

@@ -16,7 +16,9 @@ package mcp
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -168,4 +170,140 @@ func TestMCPStdioAuthzDenialUsesForbiddenCode(t *testing.T) {
 	if rpcErr.Code != ErrCodeForbidden {
 		t.Errorf("authz denial code = %d, want %d (ErrCodeForbidden)", rpcErr.Code, ErrCodeForbidden)
 	}
+}
+
+// rolesAuth authenticates every HTTP request as a principal holding roles.
+type rolesAuth struct{ roles []string }
+
+func (a rolesAuth) AuthenticateHTTP(_ context.Context, _ *http.Request) (*adapters.Principal, error) {
+	return &adapters.Principal{ID: "p-1", Roles: a.roles}, nil
+}
+
+func (a rolesAuth) AuthenticateGRPC(_ context.Context, _ metadata.MD) (*adapters.Principal, error) {
+	return &adapters.Principal{ID: "p-1", Roles: a.roles}, nil
+}
+
+func (a rolesAuth) AuthenticateMTLS(_ context.Context, _ *tls.ConnectionState) (*adapters.Principal, error) {
+	return &adapters.Principal{ID: "p-1", Roles: a.roles}, nil
+}
+
+func mcpPutCall(key, data string) string {
+	return `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"objstore_put","arguments":{"key":"` +
+		key + `","data":"` + base64.StdEncoding.EncodeToString([]byte(data)) + `"}}}`
+}
+
+func mcpStoredBytes(t *testing.T, storage *MockStorage, key string) string {
+	t.Helper()
+	rc, err := storage.GetWithContext(context.Background(), key)
+	if err != nil {
+		t.Fatalf("get %q: %v", key, err)
+	}
+	defer rc.Close()
+	b, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("read %q: %v", key, err)
+	}
+	return string(b)
+}
+
+// TestMCPPutOverwriteAction: over HTTP, objstore_put to an existing key needs
+// the overwrite action; a write-only role gets the forbidden JSON-RPC code and
+// the stored bytes stay unchanged.
+func TestMCPPutOverwriteAction(t *testing.T) {
+	cases := []struct {
+		name     string
+		perms    []string
+		wantCode int64 // 0 means the overwrite succeeds
+		want     string
+	}{
+		{"write only", []string{adapters.ActionRead, adapters.ActionWrite}, ErrCodeForbidden, "original"},
+		{"overwrite", []string{adapters.ActionRead, adapters.ActionWrite, adapters.ActionOverwrite}, 0, "replaced"},
+		{"wildcard", []string{"*"}, 0, "replaced"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			storage := NewMockStorage()
+			server := createTestServer(t, storage, ModeHTTP)
+			server.config.Authenticator = rolesAuth{roles: []string{"r"}}
+			server.config.Authorizer = adapters.NewRBACAuthorizer(map[string][]string{"r": tc.perms})
+			handler := server.authenticationMiddleware(NewHTTPHandler(server))
+
+			put := func(data string) (int, int64) {
+				req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(mcpPutCall("snap", data)))
+				w := httptest.NewRecorder()
+				handler.ServeHTTP(w, req)
+				var resp struct {
+					Error *struct {
+						Code int64 `json:"code"`
+					} `json:"error"`
+				}
+				_ = json.Unmarshal(w.Body.Bytes(), &resp)
+				if resp.Error == nil {
+					return w.Code, 0
+				}
+				return w.Code, resp.Error.Code
+			}
+
+			if status, code := put("original"); status != http.StatusOK || code != 0 {
+				t.Fatalf("put new key: status %d, rpc code %d", status, code)
+			}
+			if _, code := put("replaced"); code != tc.wantCode {
+				t.Fatalf("put existing key: rpc code %d, want %d", code, tc.wantCode)
+			}
+			if got := mcpStoredBytes(t, storage, "snap"); got != tc.want {
+				t.Fatalf("stored bytes = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestMCPStdioPutOverwrite: stdio with EnforceStdioAuthz denies the overwrite
+// with ErrCodeForbidden; without it, stdio skips the check as it skips the gate.
+func TestMCPStdioPutOverwrite(t *testing.T) {
+	for _, enforce := range []bool{true, false} {
+		t.Run(map[bool]string{true: "enforced", false: "not enforced"}[enforce], func(t *testing.T) {
+			storage := NewMockStorage()
+			server := createTestServer(t, storage, ModeStdio)
+			server.config.EnforceStdioAuthz = enforce
+			// The anonymous stdio principal has no roles, so an RBAC map cannot
+			// grant it write; use an authorizer that allows all but overwrite.
+			server.config.Authorizer = writeOnlyAuthorizer{}
+			handler := NewRPCHandler(server)
+
+			call := func(data string) error {
+				params := json.RawMessage(`{"name":"objstore_put","arguments":{"key":"snap","data":"` +
+					base64.StdEncoding.EncodeToString([]byte(data)) + `"}}`)
+				_, err := handler.Handle(context.Background(), nil, &jsonrpc2.Request{Method: methodToolsCall, Params: &params})
+				return err
+			}
+
+			if err := call("original"); err != nil {
+				t.Fatalf("put new key: %v", err)
+			}
+			err := call("replaced")
+			want := "replaced"
+			if enforce {
+				want = "original"
+				rpcErr, ok := err.(*jsonrpc2.Error)
+				if !ok || rpcErr.Code != ErrCodeForbidden {
+					t.Fatalf("put existing key = %v, want ErrCodeForbidden", err)
+				}
+			} else if err != nil {
+				t.Fatalf("put existing key without EnforceStdioAuthz: %v", err)
+			}
+			if got := mcpStoredBytes(t, storage, "snap"); got != want {
+				t.Fatalf("stored bytes = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// writeOnlyAuthorizer allows every action except overwrite.
+type writeOnlyAuthorizer struct{}
+
+func (writeOnlyAuthorizer) Authorize(_ context.Context, _ *adapters.Principal, action, _ string) error {
+	if action == adapters.ActionOverwrite {
+		return adapters.ErrInsufficientPermissions
+	}
+	return nil
 }

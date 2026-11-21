@@ -56,6 +56,12 @@ func (s *Server) PutStream(stream objstorepb.ObjectStore_PutStreamServer) error 
 	}
 	key := header.GetKey()
 
+	// A put to an existing key needs the overwrite action as well as write
+	// (the interceptor checked write). Decide before any chunk is received.
+	if err := s.authorizeOverwrite(ctx, key); err != nil {
+		return err
+	}
+
 	var metadata *common.Metadata
 	if header.GetMetadata() != nil {
 		metadata = protoToMetadata(header.GetMetadata())

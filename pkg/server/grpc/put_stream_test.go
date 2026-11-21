@@ -16,8 +16,10 @@ package grpc
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
+	"net/http"
 	"testing"
 	"time"
 
@@ -27,6 +29,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -52,11 +55,11 @@ func (s *signalStorage) PutWithMetadata(ctx context.Context, key string, data io
 
 const putStreamTestMaxRecv = 64 * 1024
 
-func startPutStreamServer(t *testing.T, storage common.Storage) objstorepb.ObjectStoreClient {
+func startPutStreamServer(t *testing.T, storage common.Storage, opts ...ServerOption) objstorepb.ObjectStoreClient {
 	t.Helper()
-	server, err := newTestServer(t, storage,
+	server, err := newTestServer(t, storage, append([]ServerOption{
 		WithAddress("127.0.0.1:0"),
-		WithMaxReceiveMessageSize(putStreamTestMaxRecv))
+		WithMaxReceiveMessageSize(putStreamTestMaxRecv)}, opts...)...)
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
@@ -264,5 +267,69 @@ func TestPutStream_AuthorizationMatchesPut(t *testing.T) {
 		if status.Code(streamErr) != want {
 			t.Errorf("%s: PutStream = %v, want %v", role, streamErr, want)
 		}
+	}
+}
+
+// rolesAuthenticator authenticates every gRPC call as a principal holding roles.
+type rolesAuthenticator struct{ roles []string }
+
+func (a rolesAuthenticator) AuthenticateHTTP(context.Context, *http.Request) (*adapters.Principal, error) {
+	return &adapters.Principal{ID: "client", Roles: a.roles}, nil
+}
+
+func (a rolesAuthenticator) AuthenticateGRPC(context.Context, metadata.MD) (*adapters.Principal, error) {
+	return &adapters.Principal{ID: "client", Roles: a.roles}, nil
+}
+
+func (a rolesAuthenticator) AuthenticateMTLS(context.Context, *tls.ConnectionState) (*adapters.Principal, error) {
+	return &adapters.Principal{ID: "client", Roles: a.roles}, nil
+}
+
+// TestPutStream_OverwriteNeedsOverwriteAction checks a PutStream to an
+// existing key needs the overwrite action: a [read, write] role stores a new
+// key but is refused with PermissionDenied on an existing one, whose bytes
+// stay; a role with overwrite, or "*", replaces them.
+func TestPutStream_OverwriteNeedsOverwriteAction(t *testing.T) {
+	putStream := func(client objstorepb.ObjectStoreClient, key string, data []byte) error {
+		stream, err := client.PutStream(context.Background())
+		if err != nil {
+			return err
+		}
+		if err := stream.Send(&objstorepb.PutStreamRequest{Payload: &objstorepb.PutStreamRequest_Header{
+			Header: &objstorepb.PutStreamHeader{Key: key},
+		}}); err != nil {
+			_, err = stream.CloseAndRecv()
+			return err
+		}
+		_ = stream.Send(&objstorepb.PutStreamRequest{Payload: &objstorepb.PutStreamRequest_Chunk{Chunk: data}})
+		_, err = stream.CloseAndRecv()
+		return err
+	}
+
+	cases := []struct {
+		name      string
+		perms     []string
+		overwrite codes.Code
+		want      string
+	}{
+		{"write only", []string{adapters.ActionRead, adapters.ActionWrite}, codes.PermissionDenied, "original"},
+		{"overwrite", []string{adapters.ActionRead, adapters.ActionWrite, adapters.ActionOverwrite}, codes.OK, "replaced"},
+		{"wildcard", []string{"*"}, codes.OK, "replaced"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := startPutStreamServer(t, newMockStorage(),
+				WithAuthenticator(rolesAuthenticator{roles: []string{"r"}}),
+				WithAuthorizer(adapters.NewRBACAuthorizer(map[string][]string{"r": tc.perms})))
+			if err := putStream(client, "snap", []byte("original")); err != nil {
+				t.Fatalf("PutStream new key: %v", err)
+			}
+			if err := putStream(client, "snap", []byte("replaced")); status.Code(err) != tc.overwrite {
+				t.Fatalf("PutStream existing key = %v, want %v", err, tc.overwrite)
+			}
+			if got := string(getAll(t, client, "snap")); got != tc.want {
+				t.Fatalf("stored bytes = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

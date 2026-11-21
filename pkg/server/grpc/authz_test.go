@@ -216,3 +216,37 @@ func TestIsPublicAuthzMethod_ExactServicePrefix(t *testing.T) {
 		}
 	}
 }
+
+// TestPut_OverwriteNeedsOverwriteAction: the single-request Put to an existing
+// key needs the overwrite action; a write-only role gets PermissionDenied and
+// the stored bytes stay unchanged.
+func TestPut_OverwriteNeedsOverwriteAction(t *testing.T) {
+	cases := []struct {
+		name      string
+		perms     []string
+		overwrite codes.Code
+		want      string
+	}{
+		{"write only", []string{adapters.ActionRead, adapters.ActionWrite}, codes.PermissionDenied, "original"},
+		{"overwrite", []string{adapters.ActionRead, adapters.ActionWrite, adapters.ActionOverwrite}, codes.OK, "replaced"},
+		{"wildcard", []string{"*"}, codes.OK, "replaced"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := startPutStreamServer(t, newMockStorage(),
+				WithAuthenticator(rolesAuthenticator{roles: []string{"r"}}),
+				WithAuthorizer(adapters.NewRBACAuthorizer(map[string][]string{"r": tc.perms})))
+			ctx := context.Background()
+			if _, err := client.Put(ctx, &objstorepb.PutRequest{Key: "snap", Data: []byte("original")}); err != nil {
+				t.Fatalf("Put new key: %v", err)
+			}
+			_, err := client.Put(ctx, &objstorepb.PutRequest{Key: "snap", Data: []byte("replaced")})
+			if status.Code(err) != tc.overwrite {
+				t.Fatalf("Put existing key = %v, want %v", err, tc.overwrite)
+			}
+			if got := string(getAll(t, client, "snap")); got != tc.want {
+				t.Fatalf("stored bytes = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
