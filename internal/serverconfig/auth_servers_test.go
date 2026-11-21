@@ -529,13 +529,42 @@ func TestServers_RESTActionFromRouteNotKey(t *testing.T) {
 
 	t.Run("backup-agent_admin_words_in_key", func(t *testing.T) {
 		for _, key := range []string{"/objects/a/archive/b", "/objects/a/policies/b", "/objects/a/replication/b",
-			"/api/v1/objects/a/archive/b", "/api/v1/objects/a/policies/b", "/api/v1/objects/a/replication/b"} {
+			"/api/v1/objects/a/archive/b2", "/api/v1/objects/a/policies/b2", "/api/v1/objects/a/replication/b2"} {
 			if code := restCall(t, s, "backup-agent", http.MethodPut, key, "payload"); code/100 != 2 {
 				t.Errorf("PUT %s as backup-agent = %d, want 2xx", key, code)
 			}
 			if code := restCall(t, s, "backup-agent", http.MethodGet, key, ""); code != http.StatusOK {
 				t.Errorf("GET %s as backup-agent = %d, want 200", key, code)
 			}
+		}
+	})
+
+	t.Run("backup-agent_overwrite_refused", func(t *testing.T) {
+		// /api/v1/objects/a/archive/b addresses the same key as
+		// /objects/a/archive/b: the second PUT overwrites, which backup
+		// does not hold.
+		for _, key := range []string{"/objects/a/archive/b", "/api/v1/objects/a/archive/b"} {
+			if code := restCall(t, s, "backup-agent", http.MethodPut, key, "replaced"); code != http.StatusForbidden {
+				t.Errorf("overwrite PUT %s as backup-agent = %d, want 403", key, code)
+			}
+		}
+		req, err := http.NewRequest(http.MethodGet, "https://"+s.rest+"/objects/a/archive/b", nil)
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		client := &http.Client{
+			Timeout:   5 * time.Second,
+			Transport: &http.Transport{TLSClientConfig: s.pki.clientTLS("backup-agent")},
+		}
+		defer client.CloseIdleConnections()
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("GET after refused overwrite: %v", err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		got, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK || string(got) != "payload" {
+			t.Errorf("GET after refused overwrite = %d %q, want 200 \"payload\"", resp.StatusCode, got)
 		}
 	})
 }
