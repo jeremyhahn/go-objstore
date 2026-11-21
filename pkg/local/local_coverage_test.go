@@ -421,8 +421,8 @@ func TestLocal_DeleteWithContext_NoMetadata(t *testing.T) {
 func TestLocal_Configure_RunLifecycle_PersistentManager(t *testing.T) {
 	dir := t.TempDir()
 	s := new(Local)
-	// runLifecycle with a persistent manager: the goroutine is NOT started
-	// (only the in-memory manager supports Run).  Must succeed without panic.
+	// runLifecycle with a persistent manager starts the scheduled pass,
+	// which Close stops.
 	err := s.Configure(map[string]string{
 		"path":                 dir,
 		"lifecycleManagerType": "persistent",
@@ -432,6 +432,9 @@ func TestLocal_Configure_RunLifecycle_PersistentManager(t *testing.T) {
 		t.Fatalf("Configure: %v", err)
 	}
 	defer s.Close()
+	if s.lifecycleCancel == nil {
+		t.Fatal("expected the scheduled lifecycle pass to start with the persistent manager")
+	}
 }
 
 // ---------------------------------------------------------------------------

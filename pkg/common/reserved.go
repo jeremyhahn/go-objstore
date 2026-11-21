@@ -15,6 +15,7 @@ package common
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
@@ -38,6 +39,16 @@ const (
 	// the replication policies.
 	ReplicationPolicyFile = ".replication-policies.json"
 )
+
+// PolicyStagingName returns the name a policy file is written under before it
+// is renamed over policyFile. The staging file sits beside the policy file
+// with TempFilePrefix in front of its base name, so it falls in the reserved
+// temp namespace for any policy file name: no object key can name it, and a
+// client with object write access cannot plant content to be renamed over the
+// policy file.
+func PolicyStagingName(policyFile string) string {
+	return filepath.Join(filepath.Dir(policyFile), TempFilePrefix+filepath.Base(policyFile))
+}
 
 // keySegments splits key into its path segments the way a filesystem would
 // resolve them: both separators count, and empty and "." segments vanish.

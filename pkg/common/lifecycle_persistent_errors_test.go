@@ -104,6 +104,9 @@ func (r *renameErrFS) OpenFile(name string, flag int, perm os.FileMode) (Lifecyc
 func (r *renameErrFS) Remove(name string) error { return r.inner.Remove(name) }
 func (r *renameErrFS) Rename(_, _ string) error { return errFS }
 
+// ReservesStagingNames makes save stage and rename, so Rename is reached.
+func (r *renameErrFS) ReservesStagingNames() bool { return true }
+
 // loadBadJSONFS wraps a mockFileSystem so that the load call opens a file
 // filled with invalid JSON.
 type loadBadJSONFS struct {

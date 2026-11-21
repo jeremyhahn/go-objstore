@@ -17,9 +17,12 @@ import (
 	"errors"
 	"math"
 	"net"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/jeremyhahn/go-objstore/pkg/common"
 	grpcserver "github.com/jeremyhahn/go-objstore/pkg/server/grpc"
 	mcpserver "github.com/jeremyhahn/go-objstore/pkg/server/mcp"
 	quicserver "github.com/jeremyhahn/go-objstore/pkg/server/quic"
@@ -45,6 +48,9 @@ type Config struct {
 	RateLimit RateLimitConfig `mapstructure:"rate_limit"`
 	Audit     AuditConfig     `mapstructure:"audit"`
 	Archive   ArchiveConfig   `mapstructure:"archive"`
+	// Lifecycle configures lifecycle policies on the local backend
+	// (objstore-server only).
+	Lifecycle LifecycleConfig `mapstructure:"lifecycle"`
 	// Auth, when set, makes every enabled listener authenticate and
 	// authorize its clients (see auth.go). Empty keeps NoOp auth.
 	Auth AuthConfig `mapstructure:"auth"`
@@ -132,6 +138,121 @@ type ArchiveConfig struct {
 	AllowClientLocalDestinations bool `mapstructure:"allow_client_local_destinations"`
 }
 
+// LifecycleConfig holds the lifecycle settings objstore-server passes to the
+// local backend. Other backends ignore them.
+type LifecycleConfig struct {
+	// Run starts a scheduled lifecycle pass that applies every policy.
+	Run bool `mapstructure:"run"`
+	// Manager is the lifecycle manager type: "persistent" keeps policies
+	// across restarts in PolicyFile; "memory" loses them on exit.
+	Manager string `mapstructure:"manager"`
+	// PolicyFile is the file, relative to path, that holds the persistent
+	// policies. Empty uses the backend's default (.lifecycle-policies.json).
+	PolicyFile string `mapstructure:"policy_file"`
+	// Interval is the time between scheduled lifecycle passes.
+	Interval time.Duration `mapstructure:"interval"`
+}
+
+// Lifecycle manager types accepted by lifecycle.manager.
+const (
+	LifecycleManagerPersistent = "persistent"
+	LifecycleManagerMemory     = "memory"
+)
+
+// DefaultLifecycleInterval is the default time between scheduled lifecycle
+// passes.
+const DefaultLifecycleInterval = time.Hour
+
+// StorageSettings returns the settings objstore-server passes to its storage
+// backend: path, and for the local backend the lifecycle settings.
+func (c *Config) StorageSettings() map[string]string {
+	settings := map[string]string{"path": c.Path}
+	if c.Backend != "local" {
+		return settings
+	}
+	if c.Lifecycle.Manager != "" {
+		settings["lifecycleManagerType"] = c.Lifecycle.Manager
+	}
+	if c.Lifecycle.PolicyFile != "" {
+		// The store reserves the policy file's name as a key, so it gets
+		// the canonical spelling: "./p" and "a/../p" reserve the key "p".
+		// Validate refuses a path that has none.
+		policyFile, err := CanonicalPolicyFile(c.Lifecycle.PolicyFile)
+		if err != nil {
+			policyFile = c.Lifecycle.PolicyFile
+		}
+		settings["lifecyclePolicyFile"] = policyFile
+	}
+	if c.Lifecycle.Interval > 0 {
+		settings["lifecycleInterval"] = c.Lifecycle.Interval.String()
+	}
+	settings["runLifecycle"] = strconv.FormatBool(c.Lifecycle.Run)
+	return settings
+}
+
+// validateLifecycle checks the lifecycle section when the local backend
+// uses it.
+func (c *Config) validateLifecycle() []error {
+	if c.Backend != "local" {
+		return nil
+	}
+	var errs []error
+	switch c.Lifecycle.Manager {
+	case "", LifecycleManagerPersistent, LifecycleManagerMemory:
+	default:
+		errs = append(errs, &InvalidSettingError{
+			Key: "lifecycle.manager", Value: c.Lifecycle.Manager, Reason: "must be persistent or memory",
+		})
+	}
+	if c.Lifecycle.PolicyFile != "" {
+		if _, err := CanonicalPolicyFile(c.Lifecycle.PolicyFile); err != nil {
+			errs = append(errs, &InvalidSettingError{
+				Key: "lifecycle.policy_file", Value: c.Lifecycle.PolicyFile, Reason: err.Error(),
+			})
+		}
+	}
+	if c.Lifecycle.Run && c.Lifecycle.Interval <= 0 {
+		errs = append(errs, &InvalidSettingError{
+			Key: "lifecycle.interval", Value: c.Lifecycle.Interval.String(), Reason: "must be a positive duration",
+		})
+	}
+	return errs
+}
+
+// CanonicalPolicyFile returns the canonical, slash-separated spelling of a
+// lifecycle policy file path relative to the storage path, the spelling the
+// store reserves as a key. A path that is empty once cleaned, absolute, or
+// that climbs out of the storage path with ".." is refused.
+// Errors CanonicalPolicyFile returns for a lifecycle policy file path it
+// refuses (#224).
+var (
+	// ErrPolicyPathNotRelative reports an absolute policy file path.
+	ErrPolicyPathNotRelative = errors.New("must be relative to the storage path")
+	// ErrPolicyPathNoFile reports a policy file path that names no file.
+	ErrPolicyPathNoFile = errors.New("must name a file")
+	// ErrPolicyPathEscapes reports a policy file path that leaves the storage path.
+	ErrPolicyPathEscapes = errors.New("must not leave the storage path")
+	// ErrPolicyPathSidecar reports a policy file path that names an object's
+	// metadata sidecar: a PUT of that object would overwrite the policies.
+	ErrPolicyPathSidecar = errors.New("must not name an object metadata sidecar (" + common.MetadataSuffix + ")")
+)
+
+func CanonicalPolicyFile(p string) (string, error) {
+	if filepath.IsAbs(p) || filepath.VolumeName(p) != "" || strings.HasPrefix(filepath.ToSlash(p), "/") {
+		return "", ErrPolicyPathNotRelative
+	}
+	clean := filepath.ToSlash(filepath.Clean(p))
+	switch {
+	case clean == "." || clean == "":
+		return "", ErrPolicyPathNoFile
+	case clean == ".." || strings.HasPrefix(clean, "../"):
+		return "", ErrPolicyPathEscapes
+	case strings.HasSuffix(strings.ToLower(clean), strings.ToLower(common.MetadataSuffix)):
+		return "", ErrPolicyPathSidecar
+	}
+	return clean, nil
+}
+
 // LoopbackHost is the host the server's listeners bind by default. Exposing
 // a listener beyond the machine takes an explicit address in the file, the
 // environment or a flag.
@@ -198,6 +319,11 @@ func Defaults() Config {
 			PerClient: false,
 		},
 		Audit: AuditConfig{Enabled: true},
+		Lifecycle: LifecycleConfig{
+			Run:      true,
+			Manager:  LifecycleManagerPersistent,
+			Interval: DefaultLifecycleInterval,
+		},
 	}
 }
 
@@ -289,6 +415,7 @@ func (c *Config) Validate() error {
 	if _, err := c.MCPMode(); err != nil {
 		errs = append(errs, err)
 	}
+	errs = append(errs, c.validateLifecycle()...)
 	errs = append(errs, c.validateAuth()...)
 	return errors.Join(errs...)
 }

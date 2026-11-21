@@ -21,7 +21,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
@@ -508,69 +507,15 @@ func (h *Handler) handleGetPolicies(ctx context.Context, req *Request) *Response
 
 // handleApplyPolicies handles the apply_policies method
 func (h *Handler) handleApplyPolicies(ctx context.Context, req *Request) *Response {
-	// Get policies
-	policies, err := objstore.GetPolicies(h.backend)
+	// The facade pages through the whole listing.
+	result, err := objstore.ApplyPolicies(ctx, h.backend, nil)
 	if err != nil {
 		return h.backendErrorResponse(req.ID, err)
-	}
-
-	if len(policies) == 0 {
-		return h.successResponse(req.ID, &ApplyPoliciesResult{
-			PoliciesCount:    0,
-			ObjectsProcessed: 0,
-		})
-	}
-
-	// Apply policies by listing objects and checking retention
-	objectsProcessed := 0
-	opts := &common.ListOptions{
-		Prefix: "",
-	}
-
-	listResult, err := objstore.ListWithOptions(ctx, h.backend, opts)
-	if err != nil {
-		return h.backendErrorResponse(req.ID, err)
-	}
-
-	for _, policy := range policies {
-		for _, obj := range listResult.Objects {
-			// Check if object matches policy prefix
-			if policy.Prefix != "" && !strings.HasPrefix(obj.Key, policy.Prefix) {
-				continue
-			}
-
-			// Get metadata to check last modified time
-			if obj.Metadata == nil {
-				continue
-			}
-
-			// Check if object is older than retention period
-			age := time.Since(obj.Metadata.LastModified)
-			if age <= policy.Retention {
-				continue
-			}
-
-			// Apply action
-			switch policy.Action {
-			case "delete":
-				if err := objstore.DeleteWithContext(ctx, h.keyRef(obj.Key)); err != nil {
-					continue
-				}
-				objectsProcessed++
-			case "archive":
-				if policy.Destination != nil {
-					if err := objstore.Archive(h.keyRef(obj.Key), policy.Destination); err != nil {
-						continue
-					}
-					objectsProcessed++
-				}
-			}
-		}
 	}
 
 	return h.successResponse(req.ID, &ApplyPoliciesResult{
-		PoliciesCount:    len(policies),
-		ObjectsProcessed: objectsProcessed,
+		PoliciesCount:    result.PoliciesCount,
+		ObjectsProcessed: result.ObjectsProcessed,
 	})
 }
 
