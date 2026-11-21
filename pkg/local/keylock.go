@@ -71,7 +71,11 @@ func keyLocksFor(path string) *keyLocks {
 		path = abs
 	}
 	k, _ := rootKeyLocks.LoadOrStore(filepath.Clean(path), &keyLocks{})
-	return k.(*keyLocks)
+	locks, ok := k.(*keyLocks)
+	if !ok { // rootKeyLocks only ever stores *keyLocks
+		locks = &keyLocks{}
+	}
+	return locks
 }
 
 // lockKey takes the lock of the root name key in the store's lock table and
