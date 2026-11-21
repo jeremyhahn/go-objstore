@@ -30,10 +30,9 @@ import (
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 
-	"github.com/aws/aws-sdk-go/aws"              //nolint:staticcheck // Using v1 SDK, migration to v2 planned
-	"github.com/aws/aws-sdk-go/aws/credentials"  //nolint:staticcheck // Using v1 SDK, migration to v2 planned
-	"github.com/aws/aws-sdk-go/aws/session"      //nolint:staticcheck // Using v1 SDK, migration to v2 planned
-	awss3 "github.com/aws/aws-sdk-go/service/s3" //nolint:staticcheck // Using v1 SDK, migration to v2 planned
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 // partRecord is what an UploadPart request looked like on the wire.
@@ -92,20 +91,17 @@ func newPartServer(t *testing.T, tls bool) *partServer {
 // pipeline as against the service.
 func signingS3(t *testing.T, srv *partServer) *S3 {
 	t.Helper()
-	cfg := aws.NewConfig().
-		WithRegion("us-east-1").
-		WithEndpoint(srv.URL).
-		WithS3ForcePathStyle(true).
-		WithMaxRetries(0).
-		WithCredentials(credentials.NewStaticCredentials("AKIDEXAMPLE", "example-secret-access-key", ""))
+	opts := s3.Options{
+		Region:           "us-east-1",
+		BaseEndpoint:     aws.String(srv.URL),
+		UsePathStyle:     true,
+		RetryMaxAttempts: 1,
+		Credentials:      credentials.NewStaticCredentialsProvider("AKIDEXAMPLE", "example-secret-access-key", ""),
+	}
 	if strings.HasPrefix(srv.URL, "https://") {
-		cfg = cfg.WithHTTPClient(srv.Client())
+		opts.HTTPClient = srv.Client()
 	}
-	sess, err := session.NewSession(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return &S3{svc: awss3.New(sess), bucket: "bucket-one"}
+	return &S3{svc: s3.New(opts), bucket: "bucket-one"}
 }
 
 func sha256Hex(b []byte) string {
