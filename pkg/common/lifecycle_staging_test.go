@@ -23,7 +23,16 @@ import (
 // staging file is one no object key can reach.
 type recordingFS struct {
 	*mockFileSystem
-	opened []string
+	opened  []string
+	renamed [][2]string
+}
+
+// ReservesStagingNames makes save take the staging path the test checks.
+func (r *recordingFS) ReservesStagingNames() bool { return true }
+
+func (r *recordingFS) Rename(src, dst string) error {
+	r.renamed = append(r.renamed, [2]string{src, dst})
+	return r.mockFileSystem.Rename(src, dst)
 }
 
 func (r *recordingFS) OpenFile(name string, flag int, perm os.FileMode) (LifecycleFile, error) {
@@ -42,23 +51,22 @@ func TestPersistentLifecycleManager_StagingNameIsReserved(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		fs.opened = nil
+		fs.opened, fs.renamed = nil, nil
 		if err := lm.AddPolicy(LifecyclePolicy{ID: "p", Action: "delete", Retention: time.Hour}); err != nil {
 			t.Fatal(err)
 		}
-		if len(fs.opened) == 0 {
-			t.Fatalf("policy file %q: save opened no file", policyFile)
+		staging := PolicyStagingName(lm.policyFile)
+		if ValidateKey(staging) == nil {
+			t.Errorf("policy file %q: staging file %q is a valid object key", policyFile, staging)
 		}
-		for _, name := range fs.opened {
-			if name == lm.policyFile {
-				continue
-			}
-			if ValidateKey(name) == nil {
-				t.Errorf("policy file %q: staging file %q is a valid object key", policyFile, name)
-			}
-			if name != PolicyStagingName(lm.policyFile) {
-				t.Errorf("policy file %q: staged as %q, want %q", policyFile, name, PolicyStagingName(lm.policyFile))
-			}
+		if len(fs.opened) != 1 || fs.opened[0] != staging {
+			t.Errorf("policy file %q: save opened %q, want only the staging file %q", policyFile, fs.opened, staging)
+		}
+		if len(fs.renamed) != 1 || fs.renamed[0] != [2]string{staging, lm.policyFile} {
+			t.Errorf("policy file %q: save renamed %q, want %q onto %q", policyFile, fs.renamed, staging, lm.policyFile)
+		}
+		if fs.getData(lm.policyFile) == nil {
+			t.Errorf("policy file %q: not written", policyFile)
 		}
 	}
 }
