@@ -77,6 +77,71 @@ func TestGCS_PutWithMetadata(t *testing.T) {
 	}
 }
 
+// An archived copy keeps its encryption metadata (#243): PutWithMetadata
+// stores the custom keys and content headers it is given.
+func TestGCS_PutWithMetadata_StoresMetadata(t *testing.T) {
+	fc := fakeClient{b: fakeBucket{objs: map[string]*fakeObj{}}}
+	g := &GCS{client: fc, bucket: "test-bucket"}
+	md := &common.Metadata{
+		ContentType: "application/octet-stream",
+		Custom:      map[string]string{"encryption_key_id": "k1", "encryption_algorithm": "AES-256-GCM"},
+	}
+	if err := g.PutWithMetadata(context.Background(), "key", bytes.NewReader([]byte("ct")), md); err != nil {
+		t.Fatalf("PutWithMetadata: %v", err)
+	}
+	up := fc.b.objs["key"].written
+	if up == nil {
+		t.Fatal("metadata was not stored")
+	}
+	if up.Metadata["encryption_key_id"] != "k1" || up.Metadata["encryption_algorithm"] != "AES-256-GCM" {
+		t.Fatalf("stored metadata = %v", up.Metadata)
+	}
+	if up.ContentType != "application/octet-stream" {
+		t.Fatalf("stored content type = %v", up.ContentType)
+	}
+}
+
+// TestGCS_PutWithMetadata_OneRequest: the metadata goes on the writer, so
+// the upload that creates the object also stores its metadata. No later
+// update can fail and leave the data without its encryption metadata, and no
+// unconditional delete can remove another writer's object (#243).
+func TestGCS_PutWithMetadata_OneRequest(t *testing.T) {
+	fc := fakeClient{b: fakeBucket{objs: map[string]*fakeObj{"key": {updateErr: true}}}}
+	g := &GCS{client: fc, bucket: "test-bucket"}
+	md := &common.Metadata{ContentEncoding: "gzip", Custom: map[string]string{"encryption_key_id": "k1"}}
+	if err := g.PutWithMetadata(context.Background(), "key", bytes.NewReader([]byte("ct")), md); err != nil {
+		t.Fatalf("PutWithMetadata: %v", err)
+	}
+	obj := fc.b.objs["key"]
+	if obj.updated != nil {
+		t.Fatal("metadata was applied by a separate update")
+	}
+	if string(obj.data) != "ct" || obj.written == nil {
+		t.Fatalf("data %q, attrs %v: the object was not created with its metadata", obj.data, obj.written)
+	}
+	if obj.written.Metadata["encryption_key_id"] != "k1" || obj.written.ContentEncoding != "gzip" {
+		t.Fatalf("created with %+v", obj.written)
+	}
+	md.Custom["encryption_key_id"] = "changed"
+	if obj.written.Metadata["encryption_key_id"] != "k1" {
+		t.Fatal("the writer shares the caller's metadata map")
+	}
+}
+
+// TestGCS_PutWithMetadata_CloseErrorStoresNothing: when the upload fails,
+// neither the data nor its metadata is stored, and nothing is deleted.
+func TestGCS_PutWithMetadata_CloseErrorStoresNothing(t *testing.T) {
+	fc := fakeClient{b: fakeBucket{objs: map[string]*fakeObj{"key": {closeErr: true, deleteErr: true}}}}
+	g := &GCS{client: fc, bucket: "test-bucket"}
+	md := &common.Metadata{Custom: map[string]string{"encryption_key_id": "k1"}}
+	if err := g.PutWithMetadata(context.Background(), "key", bytes.NewReader([]byte("ct")), md); err == nil {
+		t.Fatal("expected the upload error")
+	}
+	if obj := fc.b.objs["key"]; obj.written != nil || obj.updated != nil {
+		t.Fatalf("metadata stored by a failed upload: %v %v", obj.written, obj.updated)
+	}
+}
+
 func TestGCS_PutWithMetadata_NilMetadata(t *testing.T) {
 	fc := fakeClient{b: fakeBucket{objs: map[string]*fakeObj{}}}
 	g := &GCS{client: fc, bucket: "test-bucket"}

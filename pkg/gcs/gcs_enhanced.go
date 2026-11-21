@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 
@@ -37,7 +38,17 @@ func (g *GCS) PutWithMetadata(ctx context.Context, key string, data io.Reader, m
 	if err := common.ValidateKey(key); err != nil {
 		return err
 	}
-	w := g.client.Bucket(g.bucket).Object(key).NewWriter(ctx)
+	// The attributes travel with the upload, so the object and its metadata
+	// are created by one request: no reader sees the data without its
+	// encryption metadata (or with an earlier version's), and a failed upload
+	// leaves nothing behind (#243).
+	var attrs storage.ObjectAttrs
+	if metadata != nil {
+		attrs.ContentType = metadata.ContentType
+		attrs.ContentEncoding = metadata.ContentEncoding
+		attrs.Metadata = maps.Clone(metadata.Custom)
+	}
+	w := g.client.Bucket(g.bucket).Object(key).NewAttrsWriter(ctx, attrs)
 	if _, err := io.Copy(w, data); err != nil {
 		// Close to release the GCS write stream; ignore close error.
 		_ = w.Close()
@@ -68,26 +79,46 @@ func (g *GCS) GetMetadata(ctx context.Context, key string) (*common.Metadata, er
 	if err := common.ValidateKey(key); err != nil {
 		return nil, err
 	}
-	meta := &common.Metadata{}
+	meta, err := g.attrsMetadata(ctx, key)
+	if errors.Is(err, storage.ErrObjectNotExist) {
+		return nil, err
+	}
+	if err != nil {
+		// Return the empty struct rather than nil so callers never dereference nil.
+		return &common.Metadata{}, nil
+	}
+	return meta, nil
+}
+
+// attrsMetadata is GetMetadata without the fallback to empty metadata when
+// the attributes cannot be read: Archive must know whether the object
+// carries client-side encryption metadata (#243).
+func (g *GCS) attrsMetadata(ctx context.Context, key string) (*common.Metadata, error) {
+	if err := common.ValidateKey(key); err != nil {
+		return nil, err
+	}
 	obj := g.client.Bucket(g.bucket).Object(key)
 	attrs, err := obj.Attrs(ctx)
 	if errors.Is(err, storage.ErrObjectNotExist) {
 		return nil, objectError(err, key)
 	}
 	if err != nil {
-		// Return the empty struct rather than nil so callers never dereference nil.
-		return meta, nil
+		return nil, fmt.Errorf("failed to read object attributes for %s: %w", key, err)
 	}
-	meta.Size = attrs.Size
-	meta.ContentType = attrs.ContentType
-	meta.ContentEncoding = attrs.ContentEncoding
+	return metadataOf(attrs), nil
+}
+
+// metadataOf returns the metadata held in an object's attributes.
+func metadataOf(attrs *storage.ObjectAttrs) *common.Metadata {
+	meta := &common.Metadata{
+		Size:            attrs.Size,
+		ContentType:     attrs.ContentType,
+		ContentEncoding: attrs.ContentEncoding,
+	}
 	if len(attrs.Metadata) > 0 {
-		meta.Custom = make(map[string]string, len(attrs.Metadata))
-		for k, v := range attrs.Metadata {
-			meta.Custom[k] = v
-		}
+		meta.Custom = maps.Clone(attrs.Metadata)
 	}
-	return meta, nil
+	return meta
 }
 
 // UpdateMetadata updates the metadata for an existing object.

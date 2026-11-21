@@ -55,6 +55,23 @@ func (m *memBlob) UploadFromReader(_ context.Context, r io.Reader) error {
 	return nil
 }
 
+func (m *memBlob) UploadWithMetadata(ctx context.Context, r io.Reader, _ azblob.BlobHTTPHeaders, _ map[string]string) error {
+	return m.UploadFromReader(ctx, r)
+}
+
+func (m *memBlob) NewReaderWithProperties(ctx context.Context) (io.ReadCloser, *BlobProperties, error) {
+	rc, err := m.NewReader(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	props, err := m.GetProperties(ctx)
+	if err != nil {
+		_ = rc.Close()
+		return nil, nil, err
+	}
+	return rc, props, nil
+}
+
 func (m *memBlob) NewReader(_ context.Context) (io.ReadCloser, error) {
 	if m.rdErr != nil {
 		return nil, m.rdErr
@@ -531,6 +548,21 @@ func TestAzure_Archive_Success(t *testing.T) {
 
 	if string(archived) != "archive me" {
 		t.Fatalf("Archive() archived data = %q, want %q", string(archived), "archive me")
+	}
+}
+
+// TestAzure_Archive_MetadataError: Archive reads the object's metadata (to
+// keep client-side encryption metadata on the copy, #243) and fails when it
+// cannot, without writing to the destination.
+func TestAzure_Archive_MetadataError(t *testing.T) {
+	c := memContainer{blobs: map[string]*memBlob{
+		"test.txt": {data: []byte("x"), propErr: errors.New("props failed")},
+	}}
+	a := &Azure{container: c}
+	wrote := false
+	archiver := archiverFunc(func(string, io.Reader) error { wrote = true; return nil })
+	if err := a.Archive("test.txt", archiver); err == nil || wrote {
+		t.Fatalf("Archive err = %v, wrote = %v; want error and no write", err, wrote)
 	}
 }
 

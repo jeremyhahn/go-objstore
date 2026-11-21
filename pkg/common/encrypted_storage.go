@@ -17,6 +17,7 @@ import (
 	"context"
 	"io"
 	"strings"
+	"sync"
 )
 
 // readCloser combines an io.Reader with a list of Closers to be closed when Close is called.
@@ -43,6 +44,47 @@ type encryptedStorage struct {
 	underlying       Storage
 	encrypterFactory EncrypterFactory
 	defaultKeyID     string
+	// writes serializes, per key, the writes that set the encryption_*
+	// entries (putEncrypted) with UpdateMetadata's read-then-write (#243).
+	writes wrapperKeyLocks
+}
+
+// wrapperKeyLocks is a table of per-key mutexes; an entry lives only while a
+// caller holds or waits for it. The zero value is ready to use.
+type wrapperKeyLocks struct {
+	mu sync.Mutex
+	m  map[string]*wrapperKeyLock
+}
+
+type wrapperKeyLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+// lock takes the lock of key and returns the function that releases it.
+func (k *wrapperKeyLocks) lock(key string) func() {
+	k.mu.Lock()
+	if k.m == nil {
+		k.m = make(map[string]*wrapperKeyLock)
+	}
+	e := k.m[key]
+	if e == nil {
+		e = &wrapperKeyLock{}
+		k.m[key] = e
+	}
+	e.refs++
+	k.mu.Unlock()
+
+	e.mu.Lock()
+	return func() {
+		e.mu.Unlock()
+		k.mu.Lock()
+		e.refs--
+		if e.refs == 0 {
+			delete(k.m, key)
+		}
+		k.mu.Unlock()
+	}
 }
 
 // NewEncryptedStorage creates a new encrypted storage wrapper.
@@ -104,6 +146,7 @@ func (e *encryptedStorage) putEncrypted(ctx context.Context, key string, data io
 
 	recordEncryption(metadata, encrypter)
 
+	defer e.writes.lock(key)()
 	return e.underlying.PutWithMetadata(ctx, key, encryptedData, metadata)
 }
 
@@ -174,12 +217,21 @@ func (e *encryptedStorage) GetMetadata(ctx context.Context, key string) (*Metada
 // "encryption_*" entry of the stored metadata: backends replace the whole
 // record, so without this an update would drop encryption_key_id and the
 // object would no longer decrypt after the default key changes. Caller
-// supplied "encryption_*" entries are ignored. The caller's metadata is not
-// modified.
+// supplied "encryption_*" entries are ignored. A nil metadata is an empty
+// update: it too keeps the stored "encryption_*" entries. The caller's
+// metadata is not modified.
+//
+// The stored entries are read and then written back in two backend calls.
+// The wrapper holds the key's lock across both, and putEncrypted takes the
+// same lock, so a put through this wrapper cannot land in between and have
+// its new key ID replaced by the old one. The lock is per wrapper value:
+// writers through another wrapper or straight to the backend are not
+// serialized with this one (#243).
 func (e *encryptedStorage) UpdateMetadata(ctx context.Context, key string, metadata *Metadata) error {
 	if metadata == nil {
-		return e.underlying.UpdateMetadata(ctx, key, metadata)
+		metadata = &Metadata{}
 	}
+	defer e.writes.lock(key)()
 	existing, err := e.underlying.GetMetadata(ctx, key)
 	if err != nil {
 		return err

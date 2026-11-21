@@ -364,9 +364,10 @@ type svcObject struct {
 }
 
 type svcWriter struct {
-	ctx context.Context
-	o   *svcObject
-	buf bytes.Buffer
+	ctx   context.Context
+	o     *svcObject
+	buf   bytes.Buffer
+	attrs storage.ObjectAttrs // the attributes the object is created with
 }
 
 func (w *svcWriter) Write(p []byte) (int, error) { return w.buf.Write(p) }
@@ -388,13 +389,23 @@ func (w *svcWriter) Close() error {
 	}
 	body := append([]byte(nil), w.buf.Bytes()...)
 	sum := fakeDigest(body)
-	data.objects[w.o.name] = &svcObj{data: body, md5: sum[:], created: time.Now()}
+	data.objects[w.o.name] = &svcObj{
+		data: body, md5: sum[:], created: time.Now(),
+		ctype: w.attrs.ContentType, cenc: w.attrs.ContentEncoding, meta: w.attrs.Metadata,
+	}
 	return nil
 }
 
 func (o *svcObject) NewWriter(ctx context.Context) io.WriteCloser {
 	return &svcWriter{ctx: ctx, o: o}
 }
+
+func (o *svcObject) NewAttrsWriter(ctx context.Context, attrs storage.ObjectAttrs) io.WriteCloser {
+	return &svcWriter{ctx: ctx, o: o, attrs: attrs}
+}
+
+// Generation returns the object itself: the fake keeps one generation.
+func (o *svcObject) Generation(int64) gcsObject { return o }
 
 func (o *svcObject) get(ctx context.Context, op string) (*svcObj, error) {
 	if err := ctx.Err(); err != nil {

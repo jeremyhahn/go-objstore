@@ -93,34 +93,34 @@ func (s *S3) GetMetadata(ctx context.Context, key string) (*common.Metadata, err
 	if err != nil {
 		return nil, objectError(err, key)
 	}
+	return objectMetadata(result.ContentLength, result.LastModified, result.ETag,
+		result.ContentType, result.ContentEncoding, result.Metadata), nil
+}
 
+// objectMetadata builds a common.Metadata from the fields a HeadObject or
+// GetObject response carries.
+func objectMetadata(length *int64, modified *time.Time, etag, contentType, contentEncoding *string, user map[string]*string) *common.Metadata {
 	metadata := &common.Metadata{
-		Size:         aws.Int64Value(result.ContentLength),
-		LastModified: aws.TimeValue(result.LastModified),
-		ETag:         aws.StringValue(result.ETag),
-	}
-
-	if result.ContentType != nil {
-		metadata.ContentType = aws.StringValue(result.ContentType)
-	}
-	if result.ContentEncoding != nil {
-		metadata.ContentEncoding = aws.StringValue(result.ContentEncoding)
+		Size:            aws.Int64Value(length),
+		LastModified:    aws.TimeValue(modified),
+		ETag:            aws.StringValue(etag),
+		ContentType:     aws.StringValue(contentType),
+		ContentEncoding: aws.StringValue(contentEncoding),
 	}
 
 	// Convert S3 metadata to custom metadata. The SDK returns user metadata
 	// keys in canonical header case (x-amz-meta-encryption_key_id comes back
 	// as Encryption_key_id), and S3 stores them lowercased, so lowercasing
 	// gives callers the names that were written.
-	if len(result.Metadata) > 0 {
+	if len(user) > 0 {
 		metadata.Custom = make(map[string]string)
-		for k, v := range result.Metadata {
+		for k, v := range user {
 			if v != nil {
 				metadata.Custom[strings.ToLower(k)] = *v
 			}
 		}
 	}
-
-	return metadata, nil
+	return metadata
 }
 
 // UpdateMetadata updates the metadata for an existing object. A missing key

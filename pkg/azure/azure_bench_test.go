@@ -41,6 +41,16 @@ func (m *mockBlobAPI) UploadFromReader(ctx context.Context, r io.Reader) error {
 	return nil
 }
 
+func (m *mockBlobAPI) UploadWithMetadata(ctx context.Context, r io.Reader, _ azblob.BlobHTTPHeaders, _ map[string]string) error {
+	return m.UploadFromReader(ctx, r)
+}
+
+func (m *mockBlobAPI) NewReaderWithProperties(ctx context.Context) (io.ReadCloser, *BlobProperties, error) {
+	props, _ := m.GetProperties(ctx)
+	rc, err := m.NewReader(ctx)
+	return rc, props, err
+}
+
 func (m *mockBlobAPI) NewReader(ctx context.Context) (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader(m.data)), nil
 }

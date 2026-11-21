@@ -19,7 +19,9 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // Test error variables
@@ -800,6 +802,117 @@ func TestEncryptedStorage_UpdateMetadata_KeepsKeyIDAcrossKeyChange(t *testing.T)
 	readerB := NewEncryptedStorage(underlying, newKeyedFactory("keyB"))
 	if got := readAllString(t, readerB, "obj"); got != plaintext {
 		t.Errorf("read after update and key change = %q, want %q", got, plaintext)
+	}
+}
+
+// A nil UpdateMetadata through the wrapper is an empty update: it keeps the
+// stored encryption_* entries, so the object still decrypts with its key
+// after the default key changes (#243).
+func TestEncryptedStorage_UpdateMetadata_NilKeepsKeyID(t *testing.T) {
+	ctx := context.Background()
+	underlying := newMockUnderlyingStorage()
+	const plaintext = "secret written with key A"
+
+	writerA := NewEncryptedStorage(underlying, newKeyedFactory("keyA"))
+	if err := writerA.PutWithMetadata(ctx, "obj", bytes.NewReader([]byte(plaintext)), &Metadata{ContentType: "text/plain"}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := writerA.UpdateMetadata(ctx, "obj", nil); err != nil {
+		t.Fatalf("UpdateMetadata(nil): %v", err)
+	}
+
+	md, err := underlying.GetMetadata(ctx, "obj")
+	if err != nil {
+		t.Fatalf("GetMetadata: %v", err)
+	}
+	if md == nil {
+		t.Fatal("stored metadata is nil after a nil update")
+	}
+	if got := md.Custom["encryption_key_id"]; got != "keyA" {
+		t.Errorf("encryption_key_id = %q, want keyA", got)
+	}
+
+	// The default key changes to B.
+	readerB := NewEncryptedStorage(underlying, newKeyedFactory("keyB"))
+	if got := readAllString(t, readerB, "obj"); got != plaintext {
+		t.Errorf("read after nil update and key change = %q, want %q", got, plaintext)
+	}
+}
+
+// gatedMetadataStorage stops the first GetMetadata after arm until release
+// is closed, so a test can act inside UpdateMetadata's read-then-write.
+type gatedMetadataStorage struct {
+	*mockUnderlyingStorage
+	armed   atomic.Bool
+	inGet   chan struct{}
+	release chan struct{}
+}
+
+func (g *gatedMetadataStorage) GetMetadata(ctx context.Context, key string) (*Metadata, error) {
+	if g.armed.CompareAndSwap(true, false) {
+		close(g.inGet)
+		<-g.release
+	}
+	return g.mockUnderlyingStorage.GetMetadata(ctx, key)
+}
+
+// A put through the wrapper cannot land between UpdateMetadata's read of the
+// stored encryption_* entries and its write: the update would otherwise
+// write the old key ID over the new one (#243).
+func TestEncryptedStorage_UpdateMetadata_SerializedWithPut(t *testing.T) {
+	ctx := context.Background()
+	gated := &gatedMetadataStorage{
+		mockUnderlyingStorage: newMockUnderlyingStorage(),
+		inGet:                 make(chan struct{}),
+		release:               make(chan struct{}),
+	}
+	writerA := NewEncryptedStorage(gated, newKeyedFactory("keyA"))
+	if err := writerA.PutWithMetadata(ctx, "obj", bytes.NewReader([]byte("old")), &Metadata{}); err != nil {
+		t.Fatalf("write A: %v", err)
+	}
+
+	// The default key is now B; one wrapper serves both calls.
+	writerB := NewEncryptedStorage(gated, newKeyedFactory("keyB"))
+	gated.armed.Store(true)
+	updated := make(chan error, 1)
+	go func() {
+		updated <- writerB.UpdateMetadata(ctx, "obj", &Metadata{Custom: map[string]string{"owner": "alice"}})
+	}()
+	<-gated.inGet
+
+	const plaintext = "new, under key B"
+	put := make(chan error, 1)
+	go func() {
+		put <- writerB.PutWithMetadata(ctx, "obj", bytes.NewReader([]byte(plaintext)), &Metadata{})
+	}()
+	var putErr error
+	putDone := false
+	select {
+	case putErr = <-put:
+		putDone = true
+		t.Errorf("put finished inside UpdateMetadata's read-then-write")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(gated.release)
+	if err := <-updated; err != nil {
+		t.Fatalf("UpdateMetadata: %v", err)
+	}
+	if !putDone {
+		putErr = <-put
+	}
+	if putErr != nil {
+		t.Fatalf("put B: %v", putErr)
+	}
+
+	md, err := gated.GetMetadata(ctx, "obj")
+	if err != nil {
+		t.Fatalf("GetMetadata: %v", err)
+	}
+	if got := md.Custom["encryption_key_id"]; got != "keyB" {
+		t.Errorf("encryption_key_id = %q, want keyB", got)
+	}
+	if got := readAllString(t, writerA, "obj"); got != plaintext {
+		t.Errorf("read = %q, want %q", got, plaintext)
 	}
 }
 
