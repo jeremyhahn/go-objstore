@@ -174,6 +174,93 @@ func TestLifecycleFlags_EveryBinary(t *testing.T) {
 	}
 }
 
+// TestLifecycleLayers_EveryBinary pins #248: each single-transport binary
+// resolves the lifecycle section through the same defaults → file → env →
+// flags layering as objstore-server, so the local backend gets the same
+// StorageSettings() lifecycle keys whichever binary serves it.
+func TestLifecycleLayers_EveryBinary(t *testing.T) {
+	binaries := []struct {
+		binary   string
+		defaults Config
+		bind     BindFunc
+	}{
+		{"objstore-grpc-server", Defaults(), BindGRPCServerFlags},
+		{"objstore-rest-server", RESTServerDefaults(), BindRESTServerFlags},
+		{"objstore-quic-server", QUICServerDefaults(), BindQUICServerFlags},
+		{"objstore-mcp-server", Defaults(), BindMCPServerFlags},
+	}
+	layers := []struct {
+		name string
+		yaml string
+		env  map[string]string
+		args []string
+		want map[string]string
+	}{
+		{
+			name: "default",
+			want: map[string]string{"lifecycleManagerType": "persistent", "lifecycleInterval": "1h0m0s", "runLifecycle": "true"},
+		},
+		{
+			name: "file",
+			yaml: "backend: local\nlifecycle:\n  run: false\n  manager: memory\n  policy_file: policies/life.json\n  interval: 5m\n",
+			want: map[string]string{"lifecycleManagerType": "memory", "lifecyclePolicyFile": "policies/life.json",
+				"lifecycleInterval": "5m0s", "runLifecycle": "false"},
+		},
+		{
+			name: "env over file",
+			yaml: "lifecycle:\n  manager: memory\n  interval: 5m\n",
+			env:  map[string]string{"OBJSTORE_LIFECYCLE_INTERVAL": "30s", "OBJSTORE_LIFECYCLE_POLICY_FILE": "env.json"},
+			want: map[string]string{"lifecycleManagerType": "memory", "lifecyclePolicyFile": "env.json",
+				"lifecycleInterval": "30s", "runLifecycle": "true"},
+		},
+		{
+			name: "flags over env and file",
+			yaml: "lifecycle:\n  run: false\n  interval: 5m\n",
+			env:  map[string]string{"OBJSTORE_LIFECYCLE_MANAGER": "memory", "OBJSTORE_LIFECYCLE_INTERVAL": "30s"},
+			args: []string{"-lifecycle-run=true", "-lifecycle-interval", "2m"},
+			want: map[string]string{"lifecycleManagerType": "memory", "lifecycleInterval": "2m0s", "runLifecycle": "true"},
+		},
+	}
+	lifecycleKeys := func(settings map[string]string) map[string]string {
+		out := make(map[string]string)
+		for k, v := range settings {
+			if k != "path" {
+				out[k] = v
+			}
+		}
+		return out
+	}
+	for _, l := range layers {
+		t.Run(l.name, func(t *testing.T) {
+			for k, v := range l.env {
+				t.Setenv(k, v)
+			}
+			args := l.args
+			if l.yaml != "" {
+				args = append([]string{"-config", writeConfig(t, l.yaml)}, args...)
+			}
+			ref := mustLoad(t, args, Defaults(), BindServerFlags)
+			refKeys := lifecycleKeys(ref.StorageSettings())
+			if !reflect.DeepEqual(refKeys, l.want) {
+				t.Fatalf("objstore-server lifecycle settings = %v, want %v", refKeys, l.want)
+			}
+			for _, b := range binaries {
+				cfg := mustLoad(t, args, b.defaults, b.bind)
+				if cfg.Lifecycle != ref.Lifecycle {
+					t.Errorf("%s: Lifecycle = %+v, objstore-server has %+v", b.binary, cfg.Lifecycle, ref.Lifecycle)
+				}
+				got := cfg.StorageSettings()
+				if got["path"] != cfg.Path {
+					t.Errorf("%s: StorageSettings()[path] = %q, want %q", b.binary, got["path"], cfg.Path)
+				}
+				if keys := lifecycleKeys(got); !reflect.DeepEqual(keys, refKeys) {
+					t.Errorf("%s: lifecycle settings = %v, objstore-server has %v", b.binary, keys, refKeys)
+				}
+			}
+		})
+	}
+}
+
 // Two spellings of one policy file reserve the same key, and a path that
 // leaves the storage path is refused (#224).
 func TestConfig_PolicyFileCanonical(t *testing.T) {
