@@ -90,6 +90,13 @@ func (m *mockGCSObject) NewWriter(ctx context.Context) io.WriteCloser {
 	}
 }
 
+func (m *mockGCSObject) NewAttrsWriter(ctx context.Context, _ storage.ObjectAttrs) io.WriteCloser {
+	return m.NewWriter(ctx)
+}
+
+// Generation returns the object itself: the mock keeps one generation.
+func (m *mockGCSObject) Generation(int64) gcsObject { return m }
+
 func (m *mockGCSObject) NewReader(ctx context.Context) (io.ReadCloser, error) {
 	data, ok := m.bucket.objects[m.name]
 	if !ok {

@@ -43,7 +43,15 @@ const (
 // Small internal interfaces to enable unit tests without real GCS.
 type gcsObject interface {
 	NewWriter(ctx context.Context) io.WriteCloser
+	// NewAttrsWriter returns a writer whose object is created with the
+	// content type, content encoding and custom metadata of attrs, in the
+	// same request that uploads the data.
+	NewAttrsWriter(ctx context.Context, attrs storage.ObjectAttrs) io.WriteCloser
+	// NewReader returns a reader of the object. The reader reports the
+	// generation it reads (see readerGeneration).
 	NewReader(ctx context.Context) (io.ReadCloser, error)
+	// Generation returns the handle of one generation of the object.
+	Generation(gen int64) gcsObject
 	Delete(ctx context.Context) error
 	Attrs(ctx context.Context) (*storage.ObjectAttrs, error)
 	Update(ctx context.Context, uattrs storage.ObjectAttrsToUpdate) (*storage.ObjectAttrs, error)
@@ -88,7 +96,14 @@ func (i iteratorWrapper) Next() (*storage.ObjectAttrs, error) {
 
 // Function variables to enable unit testing without real network I/O.
 var (
-	gcsNewWriterFn    = func(o *storage.ObjectHandle, ctx context.Context) io.WriteCloser { w := o.NewWriter(ctx); return w }
+	gcsNewWriterFn      = func(o *storage.ObjectHandle, ctx context.Context) io.WriteCloser { w := o.NewWriter(ctx); return w }
+	gcsNewAttrsWriterFn = func(o *storage.ObjectHandle, ctx context.Context, attrs storage.ObjectAttrs) io.WriteCloser {
+		w := o.NewWriter(ctx)
+		w.ContentType = attrs.ContentType
+		w.ContentEncoding = attrs.ContentEncoding
+		w.Metadata = attrs.Metadata
+		return w
+	}
 	gcsNewReaderFn    = func(o *storage.ObjectHandle, ctx context.Context) (io.ReadCloser, error) { return o.NewReader(ctx) }
 	gcsDeleteFn       = func(o *storage.ObjectHandle, ctx context.Context) error { return o.Delete(ctx) }
 	gcsAttrsFn        = func(o *storage.ObjectHandle, ctx context.Context) (*storage.ObjectAttrs, error) { return o.Attrs(ctx) }
@@ -104,8 +119,14 @@ var (
 func (o objectWrapper) NewWriter(ctx context.Context) io.WriteCloser {
 	return gcsNewWriterFn(o.ObjectHandle, ctx)
 }
+func (o objectWrapper) NewAttrsWriter(ctx context.Context, attrs storage.ObjectAttrs) io.WriteCloser {
+	return gcsNewAttrsWriterFn(o.ObjectHandle, ctx, attrs)
+}
 func (o objectWrapper) NewReader(ctx context.Context) (io.ReadCloser, error) {
 	return gcsNewReaderFn(o.ObjectHandle, ctx)
+}
+func (o objectWrapper) Generation(gen int64) gcsObject {
+	return objectWrapper{o.ObjectHandle.Generation(gen)}
 }
 func (o objectWrapper) Delete(ctx context.Context) error { return gcsDeleteFn(o.ObjectHandle, ctx) }
 func (o objectWrapper) Attrs(ctx context.Context) (*storage.ObjectAttrs, error) {

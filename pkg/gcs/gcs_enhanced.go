@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 
@@ -37,31 +38,24 @@ func (g *GCS) PutWithMetadata(ctx context.Context, key string, data io.Reader, m
 	if err := common.ValidateKey(key); err != nil {
 		return err
 	}
-	obj := g.client.Bucket(g.bucket).Object(key)
-	w := obj.NewWriter(ctx)
+	// The attributes travel with the upload, so the object and its metadata
+	// are created by one request: no reader sees the data without its
+	// encryption metadata (or with an earlier version's), and a failed upload
+	// leaves nothing behind (#243).
+	var attrs storage.ObjectAttrs
+	if metadata != nil {
+		attrs.ContentType = metadata.ContentType
+		attrs.ContentEncoding = metadata.ContentEncoding
+		attrs.Metadata = maps.Clone(metadata.Custom)
+	}
+	w := g.client.Bucket(g.bucket).Object(key).NewAttrsWriter(ctx, attrs)
 	if _, err := io.Copy(w, data); err != nil {
 		// Close to release the GCS write stream; ignore close error.
 		_ = w.Close()
 		return err
 	}
 	// Close finalizes the GCS upload; capture its error.
-	if err := w.Close(); err != nil {
-		return err
-	}
-	if !common.HasMetadataFields(metadata) {
-		return nil
-	}
-	// The writer interface cannot carry object attributes, so the metadata
-	// is applied right after the upload. An object that cannot get its
-	// metadata is removed: an archived copy without its encryption metadata
-	// cannot be decrypted (#243).
-	if err := g.UpdateMetadata(ctx, key, metadata); err != nil {
-		if delErr := obj.Delete(ctx); delErr != nil {
-			return errors.Join(err, fmt.Errorf("remove %s without its metadata: %w", key, delErr))
-		}
-		return err
-	}
-	return nil
+	return w.Close()
 }
 
 // GetWithContext retrieves an object from the backend with context support.
