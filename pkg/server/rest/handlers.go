@@ -208,8 +208,8 @@ func (h *Handler) authorizeOverwrite(c *gin.Context, key string) bool {
 		if h.logger != nil {
 			h.logger.Warn(ctx, "Authorization denied",
 				adapters.Field{Key: "error", Value: err.Error()},
-				adapters.Field{Key: "path", Value: c.Request.URL.Path},
-				adapters.Field{Key: "method", Value: c.Request.Method},
+				adapters.Field{Key: logKeyPath, Value: c.Request.URL.Path},
+				adapters.Field{Key: logKeyMethod, Value: c.Request.Method},
 				adapters.Field{Key: "action", Value: adapters.ActionOverwrite},
 				adapters.Field{Key: "resource", Value: key},
 				adapters.Field{Key: "principal_id", Value: principalID},

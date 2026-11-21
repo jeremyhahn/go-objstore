@@ -30,6 +30,12 @@ import (
 // MetricsMiddleware records each request into the shared metrics registry,
 // labeled by the "rest" transport and the response status code. The /metrics
 // endpoint itself is not recorded so scrapes do not inflate the counters.
+// Log field keys shared by the request logging helpers.
+const (
+	logKeyPath   = "path"
+	logKeyMethod = "method"
+)
+
 func MetricsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.Request.URL.Path == "/metrics" {
@@ -126,8 +132,8 @@ func LoggingMiddleware(logger adapters.Logger) gin.HandlerFunc {
 
 		// Use the logger adapter
 		fields := []adapters.Field{
-			{Key: "method", Value: method},
-			{Key: "path", Value: path},
+			{Key: logKeyMethod, Value: method},
+			{Key: logKeyPath, Value: path},
 			{Key: "status", Value: statusCode},
 			{Key: "latency", Value: latency.String()},
 			{Key: "client_ip", Value: clientIP},
@@ -200,8 +206,8 @@ func AuthenticationMiddleware(authenticator adapters.Authenticator, logger adapt
 		if err != nil {
 			logger.Warn(c.Request.Context(), "Authentication failed",
 				adapters.Field{Key: "error", Value: err.Error()},
-				adapters.Field{Key: "path", Value: c.Request.URL.Path},
-				adapters.Field{Key: "method", Value: c.Request.Method},
+				adapters.Field{Key: logKeyPath, Value: c.Request.URL.Path},
+				adapters.Field{Key: logKeyMethod, Value: c.Request.Method},
 			)
 
 			// Audit log authentication failure
@@ -254,8 +260,8 @@ func AuthorizationMiddleware(authorizer adapters.Authorizer, logger adapters.Log
 		if !ok {
 			// No matched route, or a route with no action: refuse.
 			logger.Warn(c.Request.Context(), "Authorization denied: no action for route",
-				adapters.Field{Key: "path", Value: c.Request.URL.Path},
-				adapters.Field{Key: "method", Value: c.Request.Method},
+				adapters.Field{Key: logKeyPath, Value: c.Request.URL.Path},
+				adapters.Field{Key: logKeyMethod, Value: c.Request.Method},
 				adapters.Field{Key: "principal_id", Value: principal.ID},
 			)
 			RespondWithError(c, http.StatusForbidden, "Forbidden")
@@ -266,8 +272,8 @@ func AuthorizationMiddleware(authorizer adapters.Authorizer, logger adapters.Log
 		if err := authorizer.Authorize(c.Request.Context(), principal, action, resource); err != nil {
 			logger.Warn(c.Request.Context(), "Authorization denied",
 				adapters.Field{Key: "error", Value: err.Error()},
-				adapters.Field{Key: "path", Value: c.Request.URL.Path},
-				adapters.Field{Key: "method", Value: c.Request.Method},
+				adapters.Field{Key: logKeyPath, Value: c.Request.URL.Path},
+				adapters.Field{Key: logKeyMethod, Value: c.Request.Method},
 				adapters.Field{Key: "action", Value: action},
 				adapters.Field{Key: "resource", Value: resource},
 				adapters.Field{Key: "principal_id", Value: principal.ID},
