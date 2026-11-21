@@ -14,6 +14,7 @@
 package local
 
 import (
+	"context"
 	"strings"
 	"sync"
 )
@@ -27,8 +28,10 @@ type keyLocks struct {
 	locks map[string]*keyLock
 }
 
+// keyLock is held while its one-slot channel is full: a channel rather than
+// a mutex, so lockCtx can stop waiting when its context ends.
 type keyLock struct {
-	mu   sync.Mutex
+	held chan struct{}
 	refs int
 }
 
@@ -45,7 +48,7 @@ func (k *keyLocks) acquire(name string) *keyLock {
 	}
 	e := k.locks[name]
 	if e == nil {
-		e = &keyLock{}
+		e = &keyLock{held: make(chan struct{}, 1)}
 		k.locks[name] = e
 	}
 	e.refs++
@@ -67,9 +70,35 @@ func (k *keyLocks) release(name string, e *keyLock) {
 func (k *keyLocks) lock(key string) (unlock func()) {
 	name := lockName(key)
 	e := k.acquire(name)
-	e.mu.Lock()
+	e.held <- struct{}{}
+	return k.unlocker(name, e)
+}
+
+// lockCtx locks key as lock does, but stops waiting and returns ctx.Err()
+// when ctx ends first. It checks ctx again once the lock is held, so a
+// caller whose context ended while it waited does not go on to write; in
+// both cases the lock is not held and unlock is nil.
+func (k *keyLocks) lockCtx(ctx context.Context, key string) (unlock func(), err error) {
+	name := lockName(key)
+	e := k.acquire(name)
+	select {
+	case e.held <- struct{}{}:
+	case <-ctx.Done():
+		k.release(name, e)
+		return nil, ctx.Err()
+	}
+	unlock = k.unlocker(name, e)
+	if err := ctx.Err(); err != nil {
+		unlock()
+		return nil, err
+	}
+	return unlock, nil
+}
+
+// unlocker returns the function that unlocks the held entry e for name.
+func (k *keyLocks) unlocker(name string, e *keyLock) func() {
 	return func() {
-		e.mu.Unlock()
+		<-e.held
 		k.release(name, e)
 	}
 }

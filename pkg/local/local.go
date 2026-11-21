@@ -400,7 +400,10 @@ func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 
 	// The key stays locked until the metadata is saved, so lifecycle
 	// expiry never sees the new data with the old age.
-	unlock := l.keyMu.lock(key)
+	unlock, err := l.keyMu.lockCtx(ctx, key)
+	if err != nil {
+		return err
+	}
 	defer unlock()
 
 	var size int64
@@ -576,7 +579,10 @@ func (l *Local) UpdateMetadata(ctx context.Context, key string, metadata *common
 	// sidecar, as the expiry pass does from its re-read through Delete: a
 	// refreshed LastModified is published either before expiry judges the
 	// object (which then keeps it) or after expiry has finished.
-	unlock := l.keyMu.lock(key)
+	unlock, err := l.keyMu.lockCtx(ctx, key)
+	if err != nil {
+		return err
+	}
 	defer unlock()
 
 	// Verify object exists
@@ -620,7 +626,10 @@ func (l *Local) DeleteWithContext(ctx context.Context, key string) error {
 	default:
 	}
 
-	unlock := l.keyMu.lock(key)
+	unlock, err := l.keyMu.lockCtx(ctx, key)
+	if err != nil {
+		return err
+	}
 	defer unlock()
 	return l.deleteLocked(key)
 }
@@ -636,7 +645,10 @@ func (l *Local) DeleteIfUnmodified(ctx context.Context, key string, lastModified
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	unlock := l.keyMu.lock(key)
+	unlock, err := l.keyMu.lockCtx(ctx, key)
+	if err != nil {
+		return err
+	}
 	defer unlock()
 
 	root, err := l.fsRoot()
