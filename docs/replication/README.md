@@ -200,6 +200,18 @@ policy := common.ReplicationPolicy{
 
 ---
 
+## Change Detection and Schedule
+
+ETags are not comparable across backends: a local ETag is built from modification time and size, an S3 ETag is an MD5. Comparing them directly would report every object as changed. Instead, each copy records the source fingerprint it was made from (source ETag, size, modification time and a digest of the source metadata) in the destination object's metadata, together with the destination size and ETag the copy produced. On the next sync an object counts as unchanged when the recorded fingerprint still matches the source and the destination still matches what the copy produced. A rewrite of the source, even within the same second, changes the source ETag and so is copied again. A destination copy with no fingerprint (an older copy) counts as changed and is copied once. Without a source ETag, the check falls back to comparing size and modification time.
+
+A second sync with no changes therefore copies 0 objects.
+
+A sync copies new and changed objects; it does not copy deletes.
+
+The server can run replication on a schedule: set `replication.interval` (`-replication-interval`, `OBJSTORE_REPLICATION_INTERVAL`). The default `0` leaves replication trigger-only, a negative value refuses to start, and the schedule stops when the server shuts down. See [server configuration](../configuration/servers.md).
+
+---
+
 ## Encryption Layers
 
 The replication system supports three independent encryption layers:
