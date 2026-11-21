@@ -41,6 +41,7 @@ config:
 - `forcePathStyle` - Use path-style addressing when `endpoint` is set (`"true"`/`"false"`)
 - `accessKey` / `secretKey` - Static credentials (otherwise the AWS credential chain is used)
 - `storage_class` - S3 storage class every object is written with, on single PUTs and on multipart uploads (`STANDARD`, `STANDARD_IA`, `ONEZONE_IA`, `INTELLIGENT_TIERING`, `GLACIER`, `GLACIER_IR`, `DEEP_ARCHIVE`, `REDUCED_REDUNDANCY`, ...; case-insensitive). Unset leaves the bucket default. An unknown class fails configuration with `ErrUnknownStorageClass`.
+  **`GLACIER` and `DEEP_ARCHIVE` are archive classes:** an object written in either cannot be read (`Get`, `GetWithContext`) or have its metadata updated (`UpdateMetadata` self-copies the object, which needs a readable source) until it is restored with an S3 `RestoreObject` request made outside go-objstore, which has no restore call; a restore takes minutes to hours for `GLACIER` and up to 48 hours for `DEEP_ARCHIVE`. `GLACIER_IR` is read immediately like the other classes. The archive classes therefore do not suit a primary store the application reads from; an `archive` lifecycle policy that transitions objects to them (`transition_storage_class`) leaves those objects under the same restore requirement.
 - `transition_storage_class` - Class an `archive` lifecycle policy transitions objects to (`GLACIER` by default; any S3 transition class: `STANDARD_IA`, `ONEZONE_IA`, `INTELLIGENT_TIERING`, `GLACIER`, `GLACIER_IR`, `DEEP_ARCHIVE`).
 
 ### Large objects
