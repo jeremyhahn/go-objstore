@@ -76,7 +76,7 @@ type Config struct {
 	// PackSize is the size packs are filled to.
 	PackSize int `json:"pack_size"`
 	// Generation counts key changes: 0 is the config Init wrote, n the
-	// config at keyring/<n>.
+	// highest generation under keyring/ (keyring/<n>-<nonce>).
 	Generation uint64 `json:"generation,omitempty"`
 	// Keys lists the IDs of the key objects (key slots) that open the
 	// repository. A format 1 config lists none.
@@ -461,6 +461,12 @@ func (r *Repository) slots() []seal.ID {
 // AddKey wraps the data key under p in a new key slot and returns its ID.
 // Snapshots are not touched: only a new wrap of the same data key is
 // written.
+//
+// The change is a new key generation recording the added slot. A slot
+// another client removes concurrently stays removed, and the added slot
+// stays until a later change removes it. AddKey re-reads after its commit
+// and fails with ErrKeyConflict if its slot is not in the set it then sees,
+// or if concurrent removals left no slot (see RemoveKey).
 func (r *Repository) AddKey(ctx context.Context, p keyseam.Provider) (seal.ID, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -489,6 +495,15 @@ func (r *Repository) current(ctx context.Context) ([]seal.ID, error) {
 
 // RemoveKey drops the key slot id. It refuses to drop the last slot. The
 // key object stays in the write-once store, but Open no longer accepts it.
+// No later key change, from this or another client, brings the slot back.
+//
+// The last-slot guard sees only the slots committed when RemoveKey reads
+// them: two clients removing the last two slots at the same time both pass
+// it and leave no slot. RemoveKey re-reads after its commit and fails with
+// ErrKeyConflict (wrapping ErrNoKey) when no slot is left, and Open then
+// fails the same way. The key objects stay in the store: deleting the
+// generation that removed a slot, with a delete-capable identity, restores
+// that slot.
 func (r *Repository) RemoveKey(ctx context.Context, id seal.ID) error {
 	const op = "remove key"
 	r.mu.Lock()
@@ -510,6 +525,12 @@ func (r *Repository) RemoveKey(ctx context.Context, id seal.ID) error {
 // ChangeKey wraps the data key under p in a new slot and drops the slot
 // that opened the repository, in one key generation. It returns the new
 // slot's ID.
+//
+// It is an add of the new slot plus a removal of the old one, so two
+// concurrent ChangeKey calls on one slot keep both new slots and drop the
+// old. Like AddKey, it fails with ErrKeyConflict when its new slot is not
+// in the set it re-reads after the commit or no slot is left (see
+// RemoveKey); the handle then keeps its old slot.
 func (r *Repository) ChangeKey(ctx context.Context, p keyseam.Provider) (seal.ID, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
