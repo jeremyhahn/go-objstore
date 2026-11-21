@@ -72,7 +72,7 @@ name: Scheduled Scans
 
 on:
   schedule:
-    - cron: '23 6 * * *'   # CUSTOMIZE: the minute, per repository
+    - cron: '17 6 * * *'   # CUSTOMIZE (go-objstore): the minute, per repository
   workflow_dispatch:
 
 permissions:

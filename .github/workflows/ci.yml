@@ -512,9 +512,17 @@
 # edited run would join the PR's group and cancel a run in flight): the
 # PR's own lane pushes an empty commit when the PR leaves draft.
 # >>> CUSTOMIZE (go-objstore)
-# go-objstore: nested-module-build, nested-module-test, fips and sdk-tests
-# need no skipped job, so each carries the draft guard itself, as integration
-# does.
+# go-objstore's own jobs, on the v1.49 layout: each needs preflight, so it
+# skips with preflight on a draft PR, and each runs only on preflight's `run`
+# verdict, as the template's jobs do. Their CI Gate tiers:
+#   nested-module-build  pr      every event (lint class)
+#   nested-module-test   pr      every event (unit class; a docs-only PR
+#                                skips its steps, not the job)
+#   fips                 fips    push, workflow_dispatch and a ci:full PR;
+#                                nightly.yml runs it on schedule
+#   sdk-tests            cifull  every event but a PR, and a ci:full PR (not
+#                                `full`: v1.41 put the full tier on every PR)
+# The architecture gate (OBJSTORE_SEAMS) is a preflight step.
 # <<< CUSTOMIZE
 # v1.25.4 (2026-10-21, from a Codex review): `pull_request` lists its types,
 # [opened, synchronize, reopened], with no `labeled`, as several repositories'
@@ -1020,7 +1028,7 @@ jobs:
       actions: read
       contents: read
     env:
-      OBJSTORE_SEAMS: ''      # CUSTOMIZE
+      OBJSTORE_SEAMS: ''      # CUSTOMIZE (go-objstore): unread, the step passes go-objstore itself
     outputs:
       docs_only: ${{ steps.diff.outputs.docs_only }}
       lint_gates: ${{ steps.diff.outputs.lint_gates }}   # v1.30
@@ -2609,10 +2617,15 @@ jobs:
     # it skips build and make coverage, and CI Gate reads it as `code`.
     if: ${{ (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ci/deps-bump') && !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' && needs.preflight.outputs.docs_only != 'true' }}
     runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_docker) || 'bigdisk' }}   # v1.48
-    timeout-minutes: 60       # CUSTOMIZE: ceil(1.5 x this job's 72-hour p95), ci-standard.md §12
+    timeout-minutes: 120      # CUSTOMIZE (go-objstore): the seven compose suites, each built and run in turn
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       IT_PROJECT: ${{ github.event.repository.name }}-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      # >>> CUSTOMIZE (go-objstore)
+      # The compose secrets: read the module-auth file from RUNNER_TEMP, outside the checkout, and bake refuses
+      # that read without the fs entitlement; the grant is scoped to these jobs, not the Makefiles.
+      BUILDX_BAKE_ENTITLEMENTS_FS: "0"
+      # <<< CUSTOMIZE
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
@@ -2758,6 +2771,16 @@ jobs:
           rm -f "$RUNNER_TEMP/gomodauth.env"
           IT_IMAGE="$IT_IMAGE" docker compose -f build/docker/devcontainer/compose.yaml -p "$IT_PROJECT" down --volumes || true
           [ -z "${IT_LEASE:-}" ] || docker rm "$IT_LEASE" >/dev/null || true
+      # >>> CUSTOMIZE (go-objstore)
+      # The suites' stacks are <IT_PROJECT>-<suite> compose projects;
+      # clean-test-containers removes them. clean-gomodauth removes the
+      # bare-key secret make staged for the suites' image builds.
+      - name: Tear down the integration stacks
+        if: always()
+        run: |
+          make clean-test-containers IT_PROJECT="$IT_PROJECT"
+          make clean-gomodauth
+      # <<< CUSTOMIZE
 
   # Soak (v1.23, owner item 101): the integration suite looped in the
   # integration image until SOAK_MINUTES have passed, each iteration its own
@@ -2772,7 +2795,7 @@ jobs:
     # v1.30: a dispatch off main is refused, so soak runs only on `run`.
     if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.preflight.outputs.verdict == 'run' }}
     runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_docker) || 'bigdisk' }}   # v1.48
-    timeout-minutes: 90       # CUSTOMIZE: SOAK_MINUTES plus one iteration, at least ceil(1.5 x the 72-hour p95)
+    timeout-minutes: 150      # CUSTOMIZE (go-objstore): SOAK_MINUTES (30) plus one 120-minute iteration
     env:
       SOAK_MINUTES: 30        # CUSTOMIZE
       SOAK_TARGET: integration-test   # CUSTOMIZE: a make target of the integration image
@@ -2927,6 +2950,20 @@ jobs:
             fi
           done
           echo "soak: $i iterations in $SOAK_MINUTES min, all green"
+      # >>> CUSTOMIZE (go-objstore)
+      # Every iteration's <project>-<suite> stacks (see the integration job),
+      # and the staged secret. Runs before Tear down, which removes
+      # soak-project.
+      - name: Tear down the soak stacks
+        if: always()
+        run: |
+          make clean-gomodauth || true
+          [ -s "$RUNNER_TEMP/soak-project" ] || exit 0
+          last=$(cat "$RUNNER_TEMP/soak-project")
+          for i in $(seq 1 "${last##*-}"); do
+            make clean-test-containers IT_PROJECT="$IT_PROJECT-$i" || true
+          done
+      # <<< CUSTOMIZE
 
       - name: Tear down
         if: always()
@@ -2965,6 +3002,302 @@ jobs:
   # reads a proven skip as passed. Its timeout-minutes is ceil(1.5 x its
   # 72-hour p95) (ci-standard.md §12).
 
+  # >>> CUSTOMIZE (go-objstore)
+  # The go-objstore suites the image job's make targets do not reach: the
+  # nested modules (backup, api/sdks/go, examples/encryption), the FIPS 140-3
+  # run and the SDK suites. make build compiles every nested module and the
+  # FIPS variant; these jobs lint and test them. Every Go job pulls the
+  # toolchain image from the registry cache or builds it at this commit (as
+  # the lint-gates job does) and runs its make targets in it, with no network
+  # (the image's module cache holds every nested module's dependencies).
+  # v1.49 layout: each needs preflight and runs only on its `run` verdict, so
+  # it skips with the template's jobs on a proven main push, a refused run
+  # and a busy schedule; CI Gate reads a proven skip as passed.
+
+  # nested-module-build: the backup module's lint gate (go vet, gofmt and
+  # golangci-lint), and go vet over the Go SDK, its conformance-tagged files
+  # included, and the encryption example. Lint class: the PR tier.
+  nested-module-build:
+    name: Nested Module Build (backup, api/sdks/go, examples/encryption)
+    runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_docker) || 'bigdisk' }}   # v1.48
+    needs: preflight
+    if: ${{ !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' }}
+    timeout-minutes: 30
+    env:
+      CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
+      CI_IMAGE_NAMESPACE: ${{ vars.CI_IMAGE_NAMESPACE }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Mask the forge credentials
+        run: |
+          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            val=${!v:-}
+            [ -n "$val" ] || continue
+            echo "::add-mask::$val"
+            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          done
+
+      - name: Mask the LAN addresses
+        run: scripts/ci-mask-lan.sh
+
+      - name: Reap stale CI stacks
+        run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
+
+      - name: Pull the toolchain image from the registry cache
+        run: scripts/ci-image-cache.sh pull || true
+
+      - name: Build the toolchain image
+        run: |
+          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env"
+            for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+              if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
+            done )
+          bp=
+          if [ -n "${DEVCACHE_GOPROXY:-}" ] && curl -s -o /dev/null --max-time 5 "$DEVCACHE_GOPROXY/"; then
+            bp="GO_BUILD_PROXY=$DEVCACHE_GOPROXY|https://proxy.golang.org"
+          fi
+          make docker-build-toolchain ${bp:+"$bp"} MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
+          rm -f "$RUNNER_TEMP/gomodauth.env"
+          echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
+
+      - name: Check the images carry no private address
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && runner.environment != 'github-hosted' }}
+        run: scripts/ci-image-history.sh "$TOOLCHAIN_IMAGE"
+
+      - name: make backup-lint (toolchain image)
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
+        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" 'make backup-lint'
+
+      - name: Vet api/sdks/go and examples/encryption (toolchain image)
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
+        run: |
+          scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" '
+            set -e
+            (cd api/sdks/go && go vet ./... && go vet -tags conformance ./...)
+            (cd examples/encryption && go vet ./...)
+          '
+
+      - name: Tear down
+        if: always()
+        run: rm -f "$RUNNER_TEMP/gomodauth.env"
+
+  # nested-module-test: the backup module's race suite and its per-package
+  # coverage gate, the Go SDK's race suite, and the cross-protocol
+  # conformance suite, which drives every server protocol through the Go SDK.
+  # Unit class: the PR tier. A docs-only PR skips the steps, not the job.
+  nested-module-test:
+    name: Nested Module Tests (backup, api/sdks/go, conformance)
+    runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_docker) || 'bigdisk' }}   # v1.48
+    needs: preflight
+    if: ${{ !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' }}
+    timeout-minutes: 45
+    env:
+      CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
+      CI_IMAGE_NAMESPACE: ${{ vars.CI_IMAGE_NAMESPACE }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Mask the forge credentials
+        run: |
+          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            val=${!v:-}
+            [ -n "$val" ] || continue
+            echo "::add-mask::$val"
+            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          done
+
+      - name: Mask the LAN addresses
+        run: scripts/ci-mask-lan.sh
+
+      - name: Reap stale CI stacks
+        run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
+
+      - name: Pull the toolchain image from the registry cache
+        if: needs.preflight.outputs.docs_only != 'true'
+        run: scripts/ci-image-cache.sh pull || true
+
+      - name: Build the toolchain image
+        if: needs.preflight.outputs.docs_only != 'true'
+        run: |
+          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env"
+            for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+              if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
+            done )
+          bp=
+          if [ -n "${DEVCACHE_GOPROXY:-}" ] && curl -s -o /dev/null --max-time 5 "$DEVCACHE_GOPROXY/"; then
+            bp="GO_BUILD_PROXY=$DEVCACHE_GOPROXY|https://proxy.golang.org"
+          fi
+          make docker-build-toolchain ${bp:+"$bp"} MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
+          rm -f "$RUNNER_TEMP/gomodauth.env"
+          echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
+
+      - name: Check the images carry no private address
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && runner.environment != 'github-hosted' }}
+        run: scripts/ci-image-history.sh "$TOOLCHAIN_IMAGE"
+
+      - name: make backup-test (toolchain image)
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
+        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make backup-test COVERAGE_THRESHOLD=$COVERAGE_THRESHOLD"
+
+      - name: Go SDK race suite (toolchain image)
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
+        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" 'cd api/sdks/go && go test -race -count=1 ./...'
+
+      - name: make conformance-test (toolchain image)
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
+        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" 'make conformance-test'
+
+      - name: Tear down
+        if: always()
+        run: rm -f "$RUNNER_TEMP/gomodauth.env"
+
+  # fips: the root module's unit suite and the backup suite with the Go
+  # Cryptographic Module in FIPS 140-3 only mode (GOFIPS140=latest
+  # GODEBUG=fips140=only), the coverage threshold included: a code path that
+  # reaches a non-approved algorithm fails here, not in a FIPS deployment.
+  # Off the plain PR tier (Software on #122): it runs on every push to main,
+  # on a PR labelled ci:full, and on a workflow_dispatch of this workflow (the
+  # retry for a main push run that was never created). The schedule run skips
+  # it: nightly.yml's fips job runs the same target on schedule and dispatch.
+  # A plain PR keeps the fast guard: the image job's make build compiles every
+  # package with GOFIPS140=latest. CI Gate marks it `fips`: a skip passes only
+  # where this `if:` deselects it. A docs-only main push skips the steps, not
+  # the job.
+  fips:
+    name: FIPS 140-3 Tests
+    runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_docker) || 'bigdisk' }}   # v1.48
+    needs: preflight
+    # Keep the event test equal to CI Gate's FIPS_TIER.
+    if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' }}
+    timeout-minutes: 60
+    env:
+      CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
+      CI_IMAGE_NAMESPACE: ${{ vars.CI_IMAGE_NAMESPACE }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Mask the forge credentials
+        run: |
+          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            val=${!v:-}
+            [ -n "$val" ] || continue
+            echo "::add-mask::$val"
+            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          done
+
+      - name: Mask the LAN addresses
+        run: scripts/ci-mask-lan.sh
+
+      - name: Reap stale CI stacks
+        run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
+
+      - name: Pull the toolchain image from the registry cache
+        if: needs.preflight.outputs.docs_only != 'true'
+        run: scripts/ci-image-cache.sh pull || true
+
+      - name: Build the toolchain image
+        if: needs.preflight.outputs.docs_only != 'true'
+        run: |
+          ( umask 077; : > "$RUNNER_TEMP/gomodauth.env"
+            for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+              if [ -n "${!v:-}" ]; then printf '%s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
+            done )
+          bp=
+          if [ -n "${DEVCACHE_GOPROXY:-}" ] && curl -s -o /dev/null --max-time 5 "$DEVCACHE_GOPROXY/"; then
+            bp="GO_BUILD_PROXY=$DEVCACHE_GOPROXY|https://proxy.golang.org"
+          fi
+          make docker-build-toolchain ${bp:+"$bp"} MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
+          rm -f "$RUNNER_TEMP/gomodauth.env"
+          echo "TOOLCHAIN_IMAGE=$(make -s toolchain-image)" >> "$GITHUB_ENV"
+
+      - name: Check the images carry no private address
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' && runner.environment != 'github-hosted' }}
+        run: scripts/ci-image-history.sh "$TOOLCHAIN_IMAGE"
+
+      - name: make test-fips (toolchain image)
+        if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
+        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make test-fips GO_BUILD_TAGS='$GO_BUILD_TAGS' COVERAGE_THRESHOLD=$COVERAGE_THRESHOLD"
+
+      - name: Tear down
+        if: always()
+        run: rm -f "$RUNNER_TEMP/gomodauth.env"
+
+  # sdk-tests: each language SDK's unit suite, a docker compose stack the
+  # SDK's Makefile builds, server included, from the root Dockerfile. Not a
+  # Go gate, so not the toolchain image: the stacks carry their own
+  # toolchains. Every event but a PR, and a PR labelled ci:full: v1.41 put
+  # the template's full tier on every PR, so CI Gate marks this job `cifull`
+  # (a skip passes only where this `if:` deselects it), not `full`. Each
+  # matrix leg names its compose project under CI_STACK_PREFIX, so concurrent
+  # runs on one host never share a stack and the reap step can find a dead one.
+  sdk-tests:
+    name: SDK Tests (${{ matrix.sdk }})
+    needs: preflight
+    # Keep the event test equal to CI Gate's CIFULL_TIER.
+    if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' }}
+    runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_docker) || 'bigdisk' }}   # v1.48
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        sdk: [go, typescript, python, ruby, rust, csharp]
+    env:
+      CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
+      COMPOSE_PROJECT_NAME: ${{ github.event.repository.name }}-ci-${{ github.run_id }}-${{ github.run_attempt }}-sdk-${{ matrix.sdk }}
+      # The compose secrets: read the module-auth file from RUNNER_TEMP, outside the checkout, and bake refuses
+      # that read without the fs entitlement; the grant is scoped to these jobs, not the Makefiles.
+      BUILDX_BAKE_ENTITLEMENTS_FS: "0"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Mask the forge credentials
+        run: |
+          for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            val=${!v:-}
+            [ -n "$val" ] || continue
+            echo "::add-mask::$val"
+            case $val in *://*:*@*) t=${val#*://}; t=${t%%@*}; echo "::add-mask::${t#*:}" ;; esac
+          done
+
+      - name: Mask the LAN addresses
+        run: scripts/ci-mask-lan.sh
+
+      - name: Reap stale CI stacks
+        run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
+
+      - name: Write the module credential file
+        run: |
+          umask 077
+          : > "$RUNNER_TEMP/gomodauth.env"
+          for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+            if [ -n "${!v:-}" ]; then printf 'export %s=%s\n' "$v" "${!v}" >> "$RUNNER_TEMP/gomodauth.env"; fi
+          done
+
+      - name: make test-sdk-${{ matrix.sdk }}
+        run: make "test-sdk-$SDK" MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env"
+        env:
+          SDK: ${{ matrix.sdk }}
+
+      - name: Tear down
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/gomodauth.env"
+          make clean-gomodauth || true
+          docker compose -p "$COMPOSE_PROJECT_NAME" down --volumes --rmi local || true
+  # <<< CUSTOMIZE
+
   # v1.35.2 (Tenant Agent m2577): the commit signature gate is not a job of
   # this workflow. It is signatures.yml, on pull_request_target, so it runs
   # from the base branch and a pull request cannot edit the script that
@@ -2990,7 +3323,7 @@ jobs:
     # CUSTOMIZE: the repo's job list. Add every CUSTOMIZE job here AND as a
     # check line below; remove none of the template's jobs. v1.30: lint
     # joins; publish-images is the one job outside the gate (see its comment).
-    needs: [preflight, lint, image, lint-gates, integration, soak]   # v1.34; v1.35.2 signatures.yml
+    needs: [preflight, lint, image, lint-gates, integration, soak, nested-module-build, nested-module-test, fips, sdk-tests]   # v1.34; v1.35.2 signatures.yml
     steps:
       - name: Fail closed on any non-success
         env:
@@ -3011,6 +3344,14 @@ jobs:
           PROOF: ${{ needs.preflight.outputs.proof }}
           DOCS_ONLY: ${{ needs.preflight.outputs.docs_only == 'true' }}
           LINT_GATES_SEL: ${{ needs.preflight.outputs.lint_gates != 'false' }}
+          # >>> CUSTOMIZE (go-objstore)
+          # A `fips` job runs on push, workflow_dispatch and a ci:full PR (the
+          # fips job's `if:`; keep them equal); nightly.yml runs it on schedule.
+          FIPS_TIER: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'ci:full') }}
+          # A `cifull` job runs on every event but a PR, and on a ci:full PR
+          # (the sdk-tests job's `if:`; keep them equal).
+          CIFULL_TIER: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full') }}
+          # <<< CUSTOMIZE
         run: |
           if [ "${DRAFT}" = true ]; then
             echo "FAIL draft pull request: no CI runs on a draft. Mark it ready, then push an empty commit to start its run."
@@ -3018,7 +3359,7 @@ jobs:
           fi
           BAD=0
           echo "full tier selected: ${FULL_TIER}; nightly selected: ${NIGHTLY}"
-          check() { # <job> <result> <pr|code|scoped|full|nightly>
+          check() { # <job> <result> <pr|code|scoped|full|nightly|fips|cifull>
             case "$2" in
               success) echo "OK   $1";;
               skipped)
@@ -3032,6 +3373,12 @@ jobs:
                   echo "SKIP $1 (full tier not selected)"
                 elif [ "$3" = nightly ] && [ "${NIGHTLY}" != true ]; then
                   echo "SKIP $1 (nightly and dispatch only)"
+                # >>> CUSTOMIZE (go-objstore)
+                elif [ "$3" = fips ] && [ "${FIPS_TIER}" != true ]; then
+                  echo "SKIP $1 (push, dispatch and ci:full only; nightly.yml on schedule)"
+                elif [ "$3" = cifull ] && [ "${CIFULL_TIER}" != true ]; then
+                  echo "SKIP $1 (every event but a PR, and a ci:full PR, only)"
+                # <<< CUSTOMIZE
                 else
                   echo "FAIL $1 (skipped)"; BAD=1
                 fi;;
@@ -3058,4 +3405,10 @@ jobs:
           check lint-gates  "${{ needs.lint-gates.result }}" scoped
           check integration "${{ needs.integration.result }}" code
           check soak        "${{ needs.soak.result }}" nightly
+          # >>> CUSTOMIZE (go-objstore)
+          check nested-module-build "${{ needs.nested-module-build.result }}" pr
+          check nested-module-test  "${{ needs.nested-module-test.result }}" pr
+          check fips                "${{ needs.fips.result }}" fips
+          check sdk-tests           "${{ needs.sdk-tests.result }}" cifull
+          # <<< CUSTOMIZE
           exit $BAD
