@@ -652,3 +652,230 @@ func TestFileAdapter_Errors(t *testing.T) {
 		t.Error("Expected error for unsupported Sync")
 	}
 }
+
+// storeFS is an in-memory FileSystem whose files buffer their writes and
+// store them on Sync and on Close, as a StorageFS does. failWrite and
+// failClose make the next that many writes, or closes, of a file opened for
+// writing fail: a failing Write keeps half its bytes, a failing Close stores
+// the buffer first (as a StorageFS whose metadata write fails after the Put).
+type storeFS struct {
+	mu        sync.Mutex
+	files     map[string][]byte
+	stores    map[string]int
+	inPlace   bool
+	failWrite int
+	failClose int
+}
+
+func newStoreFS(inPlace bool) *storeFS {
+	return &storeFS{files: map[string][]byte{}, stores: map[string]int{}, inPlace: inPlace}
+}
+
+func (s *storeFS) ReplacesInPlace() bool { return s.inPlace }
+
+func (s *storeFS) OpenFile(name string, flag int, _ os.FileMode) (LifecycleFile, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if flag&(os.O_WRONLY|os.O_RDWR) == 0 {
+		data, ok := s.files[name]
+		if !ok {
+			return nil, os.ErrNotExist
+		}
+		return &storeFile{fs: s, name: name, data: append([]byte(nil), data...)}, nil
+	}
+	f := &storeFile{fs: s, name: name, writable: true}
+	if flag&os.O_TRUNC == 0 {
+		f.data = append([]byte(nil), s.files[name]...)
+	}
+	return f, nil
+}
+
+func (s *storeFS) Remove(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.files[name]; !ok {
+		return os.ErrNotExist
+	}
+	delete(s.files, name)
+	return nil
+}
+
+func (s *storeFS) Rename(src, dst string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, ok := s.files[src]
+	if !ok {
+		return os.ErrNotExist
+	}
+	s.files[dst] = data
+	delete(s.files, src)
+	return nil
+}
+
+func (s *storeFS) stored(name string) ([]byte, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, ok := s.files[name]
+	return data, ok
+}
+
+type storeFile struct {
+	fs       *storeFS
+	name     string
+	data     []byte
+	off      int
+	writable bool
+}
+
+func (f *storeFile) Read(p []byte) (int, error) {
+	if f.off >= len(f.data) {
+		return 0, io.EOF
+	}
+	n := copy(p, f.data[f.off:])
+	f.off += n
+	return n, nil
+}
+
+func (f *storeFile) Write(p []byte) (int, error) {
+	f.fs.mu.Lock()
+	fail := f.fs.failWrite > 0
+	if fail {
+		f.fs.failWrite--
+	}
+	f.fs.mu.Unlock()
+	if fail {
+		f.data = append(f.data, p[:len(p)/2]...)
+		return len(p) / 2, errFS
+	}
+	f.data = append(f.data, p...)
+	return len(p), nil
+}
+
+func (f *storeFile) store() {
+	f.fs.mu.Lock()
+	defer f.fs.mu.Unlock()
+	f.fs.files[f.name] = append([]byte(nil), f.data...)
+	f.fs.stores[f.name]++
+}
+
+func (f *storeFile) Sync() error {
+	if f.writable {
+		f.store()
+	}
+	return nil
+}
+
+func (f *storeFile) Close() error {
+	if !f.writable {
+		return nil
+	}
+	f.store()
+	f.fs.mu.Lock()
+	defer f.fs.mu.Unlock()
+	if f.fs.failClose > 0 {
+		f.fs.failClose--
+		return errFS
+	}
+	return nil
+}
+
+func (f *storeFile) Seek(int64, int) (int64, error) { return 0, ErrNoSeek }
+func (f *storeFile) Truncate(int64) error           { return ErrNoTruncate }
+
+// TestPersistentLifecycleManager_FailedSaveKeepsPreviousPolicies: a save
+// whose Write or Close fails returns the error and leaves the stored policy
+// document as it was, whether the policy file is staged and renamed or (on an
+// InPlaceFileSystem) written in place, and a successful in-place save stores
+// the policy file once.
+func TestPersistentLifecycleManager_FailedSaveKeepsPreviousPolicies(t *testing.T) {
+	const policyFile = "policies.json"
+	for _, inPlace := range []bool{false, true} {
+		for _, failure := range []string{"write", "close"} {
+			name := failure
+			if inPlace {
+				name = "in-place/" + name
+			} else {
+				name = "staged/" + name
+			}
+			t.Run(name, func(t *testing.T) {
+				fsys := newStoreFS(inPlace)
+				arm := func() {
+					fsys.mu.Lock()
+					defer fsys.mu.Unlock()
+					if failure == "write" {
+						fsys.failWrite = 1
+					} else {
+						fsys.failClose = 1
+					}
+				}
+				lm, err := NewPersistentLifecycleManager(fsys, policyFile)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				// A first save that fails leaves no policy file.
+				arm()
+				if err := lm.AddPolicy(LifecyclePolicy{ID: "first", Action: "delete", Retention: time.Hour}); !errors.Is(err, errFS) {
+					t.Fatalf("failing first AddPolicy() error = %v, want errFS", err)
+				}
+				if data, ok := fsys.stored(policyFile); ok {
+					t.Fatalf("policy file after a failed first save = %q, want none", data)
+				}
+
+				fsys.stores = map[string]int{}
+				if err := lm.AddPolicy(LifecyclePolicy{ID: "keep", Action: "delete", Retention: time.Hour}); err != nil {
+					t.Fatal(err)
+				}
+				if inPlace && fsys.stores[policyFile] != 1 {
+					t.Errorf("in-place save stored the policy file %d times, want 1", fsys.stores[policyFile])
+				}
+				before, ok := fsys.stored(policyFile)
+				if !ok {
+					t.Fatal("no policy file after a successful save")
+				}
+
+				arm()
+				if err := lm.AddPolicy(LifecyclePolicy{ID: "rejected", Action: "delete", Retention: time.Hour}); !errors.Is(err, errFS) {
+					t.Fatalf("failing AddPolicy() error = %v, want errFS", err)
+				}
+				if after, _ := fsys.stored(policyFile); string(after) != string(before) {
+					t.Errorf("policy file after a failed save = %q, want the previous %q", after, before)
+				}
+				for name := range fsys.files {
+					if name != policyFile {
+						t.Errorf("failed save left %q behind", name)
+					}
+				}
+
+				reloaded, err := NewPersistentLifecycleManager(fsys, policyFile)
+				if err != nil {
+					t.Fatal(err)
+				}
+				policies, err := reloaded.GetPolicies()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(policies) != 1 || policies[0].ID != "keep" {
+					t.Errorf("policies after reload = %+v, want only keep", policies)
+				}
+			})
+		}
+	}
+}
+
+// TestNewFileSystemAdapter_ForwardsReplacesInPlace: the adapter keeps the
+// wrapped filesystem's in-place declaration, and makes none of its own.
+func TestNewFileSystemAdapter_ForwardsReplacesInPlace(t *testing.T) {
+	inPlace := NewFileSystemAdapter(inPlaceAdaptableFS{&mockAdaptableFS{mockFileSystem: newMockFileSystem()}})
+	if ifs, ok := inPlace.(InPlaceFileSystem); !ok || !ifs.ReplacesInPlace() {
+		t.Error("adapter over an in-place filesystem does not declare ReplacesInPlace")
+	}
+	plain := NewFileSystemAdapter(&mockAdaptableFS{mockFileSystem: newMockFileSystem()})
+	if ifs, ok := plain.(InPlaceFileSystem); ok && ifs.ReplacesInPlace() {
+		t.Error("adapter over a plain filesystem declares ReplacesInPlace")
+	}
+}
+
+type inPlaceAdaptableFS struct{ *mockAdaptableFS }
+
+func (inPlaceAdaptableFS) ReplacesInPlace() bool { return true }

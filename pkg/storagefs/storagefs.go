@@ -206,6 +206,12 @@ func (fs *StorageFS) RemoveAll(name string) error {
 	return nil
 }
 
+// ReplacesInPlace reports that a written file replaces its object whole, in a
+// single Put, when it is closed: the persistent lifecycle manager writes its
+// policy file in place on a StorageFS (common.InPlaceFileSystem) instead of
+// staging it under a reserved name the providers refuse.
+func (fs *StorageFS) ReplacesInPlace() bool { return true }
+
 // Rename renames (moves) oldpath to newpath.
 func (fs *StorageFS) Rename(oldpath, newpath string) error {
 	oldpath = normalizePath(oldpath)

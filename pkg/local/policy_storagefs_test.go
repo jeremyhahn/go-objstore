@@ -27,6 +27,9 @@ import (
 // common.NewFileSystemAdapter takes.
 type storageFSAdaptable struct{ fs *storagefs.StorageFS }
 
+// ReplacesInPlace forwards the StorageFS declaration through the adapter.
+func (s storageFSAdaptable) ReplacesInPlace() bool { return s.fs.ReplacesInPlace() }
+
 func (s storageFSAdaptable) OpenFile(name string, flag int, perm os.FileMode) (any, error) {
 	return s.fs.OpenFile(name, flag, perm)
 }
