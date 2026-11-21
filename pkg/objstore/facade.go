@@ -770,16 +770,48 @@ func deleteIfUnmodified(ctx context.Context, keyRef string, seen *common.Metadat
 // checkUnmodified returns common.ErrObjectChanged when keyRef's current
 // LastModified or ETag differs from the revision seen.
 func checkUnmodified(ctx context.Context, keyRef string, seen *common.Metadata) error {
-	current, err := GetMetadata(ctx, keyRef)
+	if err := validation.ValidateKeyReference(keyRef); err != nil {
+		return fmt.Errorf("invalid key reference: %w", err)
+	}
+	storage, key, err := getStorageForKey(keyRef)
 	if err != nil {
 		return err
 	}
-	if current == nil ||
-		(!seen.LastModified.IsZero() && !current.LastModified.Equal(seen.LastModified)) ||
-		(seen.ETag != "" && current.ETag != seen.ETag) {
+	// A backend that lists objects without a metadata sidecar (local
+	// storage, from their size and modification time) rechecks them the
+	// same way: GetMetadata would fail for them, and the action with it.
+	if o, ok := storage.(observedMetadataReader); ok {
+		current, err := o.ObservedMetadata(ctx, key)
+		if err != nil {
+			return err
+		}
+		if !sameRevision(seen, current) || current.Size != seen.Size {
+			return fmt.Errorf("%w: %s", common.ErrObjectChanged, keyRef)
+		}
+		return nil
+	}
+	current, err := storage.GetMetadata(ctx, key)
+	if err != nil {
+		return err
+	}
+	if !sameRevision(seen, current) {
 		return fmt.Errorf("%w: %s", common.ErrObjectChanged, keyRef)
 	}
 	return nil
+}
+
+// observedMetadataReader is a backend that reports an object's metadata as
+// its listing does, including objects stored without a metadata sidecar.
+type observedMetadataReader interface {
+	ObservedMetadata(ctx context.Context, key string) (*common.Metadata, error)
+}
+
+// sameRevision reports whether current is still the revision seen in a
+// listing, by its LastModified and ETag where the listing reported them.
+func sameRevision(seen, current *common.Metadata) bool {
+	return current != nil &&
+		(seen.LastModified.IsZero() || current.LastModified.Equal(seen.LastModified)) &&
+		(seen.ETag == "" || current.ETag == seen.ETag)
 }
 
 // GetReplicationManager returns the replication manager for a backend if supported

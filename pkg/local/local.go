@@ -675,6 +675,42 @@ func (l *Local) DeleteIfUnmodified(ctx context.Context, key string, lastModified
 	return l.deleteLocked(key)
 }
 
+// ObservedMetadata returns key's metadata as a listing reports it: the
+// sidecar when there is one, otherwise the file's size and modification
+// time. Lifecycle passes that decide from a listing use it to recheck an
+// object before acting, which GetMetadata cannot do for an object written
+// without a sidecar. It returns ErrKeyNotFound when the object is gone.
+func (l *Local) ObservedMetadata(ctx context.Context, key string) (*common.Metadata, error) {
+	if err := l.validateKey(key); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	root, err := l.fsRoot()
+	if err != nil {
+		return nil, err
+	}
+	info, err := root.Stat(rootName(key))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("%w: %s", common.ErrKeyNotFound, key)
+		}
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w: %s", common.ErrKeyNotFound, key)
+	}
+	current, err := l.objectMetadata(filepath.FromSlash(key), fs.FileInfoToDirEntry(info))
+	if err != nil {
+		return nil, err
+	}
+	if current == nil {
+		return nil, fmt.Errorf("%w: %s", common.ErrKeyNotFound, key)
+	}
+	return current, nil
+}
+
 // deleteLocked removes key and its metadata sidecar. The caller holds the
 // key's lock.
 func (l *Local) deleteLocked(key string) error {
