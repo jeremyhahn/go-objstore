@@ -28,7 +28,6 @@ test/integration/
 └── server/          # Server integration tests
     ├── docker-compose.yml
     ├── Dockerfile.*  # Separate Dockerfiles for each server
-    ├── generate-certs.sh
     ├── grpc_test.go  # gRPC server tests (15+ scenarios)
     ├── rest_test.go  # REST API tests (20+ scenarios)
     ├── quic_test.go  # QUIC/HTTP3 tests (8+ scenarios)
@@ -227,7 +226,9 @@ If tests timeout, check:
 3. Server startup time (check health checks)
 
 ```bash
-# Check container logs
+# Check container logs (the server compose file requires CERT_DIR,
+# see "Certificate Issues"; export it in the same shell first)
+cd test/integration/server
 docker-compose logs grpc-server
 docker-compose logs rest-server
 docker-compose logs quic-server
@@ -236,12 +237,13 @@ docker-compose logs mcp-server
 
 ### Certificate Issues
 
-If TLS/QUIC tests fail:
+The server test TLS material is generated at test time (`make test-servers`
+does it in a temporary directory). For manual `docker-compose` commands in
+`test/integration/server`, `CERT_DIR` must be exported in the same shell:
 ```bash
-cd test/integration/server
-rm -rf certs
-bash generate-certs.sh
+export CERT_DIR=$(mktemp -d) && go run ./internal/testutil/testcerts/cmd/gencerts "$CERT_DIR" && chmod 755 "$CERT_DIR" && chmod 644 "$CERT_DIR"/*
 ```
+Run it from the repository root, then `cd test/integration/server`.
 
 ### Port Conflicts
 
@@ -262,7 +264,7 @@ cd test/integration/cli
 docker-compose down -v
 
 cd test/integration/server
-docker-compose down -v
+docker-compose down -v   # needs CERT_DIR exported (see "Certificate Issues"); any existing directory works
 ```
 
 ## Debugging Tests
