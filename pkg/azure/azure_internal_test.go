@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Azure/azure-storage-blob-go/azblob"
 )
@@ -27,6 +28,16 @@ import (
 // TestAzure_FunctionVariables tests the internal function variables
 // These are normally only called through wrappers, but we test them directly
 // to achieve better coverage
+// offlineCtx bounds a call that dials a real Azure host. Without a network
+// the pipeline retries DNS failures for minutes, so the deadline keeps the
+// test from hanging the package (#243).
+func offlineCtx(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	t.Cleanup(cancel)
+	return ctx
+}
+
 func TestAzure_FunctionVariables(t *testing.T) {
 	t.Run("azureUploadFn", func(t *testing.T) {
 		// Create a minimal BlockBlobURL for testing
@@ -43,7 +54,7 @@ func TestAzure_FunctionVariables(t *testing.T) {
 
 		// Call the function variable
 		// This will likely fail with network error, but that's okay - we're just covering the code
-		_ = azureUploadFn(context.Background(), strings.NewReader("test"), blobURL)
+		_ = azureUploadFn(offlineCtx(t), strings.NewReader("test"), blobURL)
 	})
 
 	t.Run("azureDownloadFn", func(t *testing.T) {
@@ -57,7 +68,7 @@ func TestAzure_FunctionVariables(t *testing.T) {
 		blobURL := azblob.NewBlockBlobURL(*u, pipeline)
 
 		// Call the function variable - covers error path
-		_, _ = azureDownloadFn(context.Background(), blobURL)
+		_, _ = azureDownloadFn(offlineCtx(t), blobURL)
 	})
 
 	t.Run("azureDeleteFn", func(t *testing.T) {
@@ -71,7 +82,7 @@ func TestAzure_FunctionVariables(t *testing.T) {
 		blobURL := azblob.NewBlockBlobURL(*u, pipeline)
 
 		// Call the function variable
-		_ = azureDeleteFn(context.Background(), blobURL)
+		_ = azureDeleteFn(offlineCtx(t), blobURL)
 	})
 
 	t.Run("azureListFn", func(t *testing.T) {
@@ -85,7 +96,7 @@ func TestAzure_FunctionVariables(t *testing.T) {
 		containerURL := azblob.NewContainerURL(*u, pipeline)
 
 		// Call the function variable - covers the loop and error handling
-		_, _ = azureListFn(context.Background(), containerURL, "prefix")
+		_, _ = azureListFn(offlineCtx(t), containerURL, "prefix")
 	})
 }
 
@@ -110,7 +121,7 @@ func TestAzure_WrapperMethods(t *testing.T) {
 	}
 
 	// Test ListBlobsFlat - this will call azureListFn
-	_, _ = wrapper.ListBlobsFlat(context.Background(), "prefix")
+	_, _ = wrapper.ListBlobsFlat(offlineCtx(t), "prefix")
 
 	// Test blobWrapper methods
 	u2, _ := url.Parse("https://account.blob.core.windows.net/container/blob")
@@ -118,9 +129,9 @@ func TestAzure_WrapperMethods(t *testing.T) {
 	blobWrap := blobWrapper{blobURL}
 
 	// These will all fail with network errors, but cover the code paths
-	_ = blobWrap.UploadFromReader(context.Background(), strings.NewReader("test"))
-	_, _ = blobWrap.NewReader(context.Background())
-	_ = blobWrap.Delete(context.Background())
+	_ = blobWrap.UploadFromReader(offlineCtx(t), strings.NewReader("test"))
+	_, _ = blobWrap.NewReader(offlineCtx(t))
+	_ = blobWrap.Delete(offlineCtx(t))
 }
 
 // TestAzure_DownloadErrorPath specifically tests the error return in azureDownloadFn
@@ -138,7 +149,7 @@ func TestAzure_DownloadErrorPath(t *testing.T) {
 	blobURL := azblob.NewBlockBlobURL(*u, pipeline)
 
 	// This should hit the error path
-	_, err = azureDownloadFn(context.Background(), blobURL)
+	_, err = azureDownloadFn(offlineCtx(t), blobURL)
 	// We expect an error here (network/auth error)
 	if err == nil {
 		t.Log("Expected error but got nil - network might be mocked")
@@ -158,7 +169,7 @@ func TestAzure_ListErrorPath(t *testing.T) {
 	containerURL := azblob.NewContainerURL(*u, pipeline)
 
 	// This should hit the error path when ListBlobsFlatSegment fails
-	_, err = azureListFn(context.Background(), containerURL, "")
+	_, err = azureListFn(offlineCtx(t), containerURL, "")
 	// We expect an error here (network/auth error)
 	if err == nil {
 		t.Log("Expected error but got nil - network might be mocked")
