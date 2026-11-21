@@ -10,11 +10,12 @@ Comprehensive guide to replicating and synchronizing data between storage backen
 1. [Overview](#overview)
 2. [Quick Start](#quick-start)
 3. [Replication Modes](#replication-modes)
-4. [Encryption Layers](#encryption-layers)
-5. [Configuration](#configuration)
-6. [API Usage](#api-usage)
-7. [Best Practices](#best-practices)
-8. [Technical Details](#technical-details)
+4. [Change Detection and Schedule](#change-detection-and-schedule)
+5. [Encryption Layers](#encryption-layers)
+6. [Configuration](#configuration)
+7. [API Usage](#api-usage)
+8. [Best Practices](#best-practices)
+9. [Technical Details](#technical-details)
 
 ---
 
