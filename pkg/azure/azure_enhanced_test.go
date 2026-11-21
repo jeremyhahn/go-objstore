@@ -75,6 +75,26 @@ func (m *mockBlob) UploadFromReader(ctx context.Context, r io.Reader) error {
 	return nil
 }
 
+func (m *mockBlob) UploadWithMetadata(ctx context.Context, r io.Reader, headers azblob.BlobHTTPHeaders, metadata map[string]string) error {
+	if err := m.UploadFromReader(ctx, r); err != nil {
+		return err
+	}
+	// The fake records what the upload carried through the metadata hooks.
+	if err := m.SetMetadata(ctx, metadata); err != nil {
+		return err
+	}
+	return m.SetHTTPHeaders(ctx, headers)
+}
+
+func (m *mockBlob) NewReaderWithProperties(ctx context.Context) (io.ReadCloser, *BlobProperties, error) {
+	props, err := m.GetProperties(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	rc, err := m.NewReader(ctx)
+	return rc, props, err
+}
+
 func (m *mockBlob) NewReader(ctx context.Context) (io.ReadCloser, error) {
 	if m.readFn != nil {
 		return m.readFn(ctx)

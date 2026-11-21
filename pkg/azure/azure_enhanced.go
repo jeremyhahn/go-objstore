@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 
@@ -46,23 +47,18 @@ func (a *Azure) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 	if err := common.ValidateKey(key); err != nil {
 		return err
 	}
-	blob := a.container.NewBlockBlob(key)
-	if err := blob.UploadFromReader(ctx, data); err != nil {
-		return err
+	// The headers and metadata travel in the upload options, so the commit
+	// that creates the blob also stores them: no reader sees the data
+	// without its encryption metadata (or with an earlier version's), and a
+	// failed upload leaves nothing behind (#243).
+	var headers azblob.BlobHTTPHeaders
+	var custom map[string]string
+	if metadata != nil {
+		headers.ContentType = metadata.ContentType
+		headers.ContentEncoding = metadata.ContentEncoding
+		custom = maps.Clone(metadata.Custom)
 	}
-	if !common.HasMetadataFields(metadata) {
-		return nil
-	}
-	// The upload interface cannot carry blob metadata, so it is applied right
-	// after the upload. A blob that cannot get its metadata is removed: an
-	// archived copy without its encryption metadata cannot be decrypted (#243).
-	if err := a.UpdateMetadata(ctx, key, metadata); err != nil {
-		if delErr := blob.Delete(ctx); delErr != nil {
-			return errors.Join(err, fmt.Errorf("remove %s without its metadata: %w", key, delErr))
-		}
-		return err
-	}
-	return nil
+	return a.container.NewBlockBlob(key).UploadWithMetadata(ctx, data, headers, custom)
 }
 
 // GetWithContext retrieves an object from the backend with context support.

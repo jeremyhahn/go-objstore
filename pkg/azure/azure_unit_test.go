@@ -55,6 +55,23 @@ func (m *memBlob) UploadFromReader(_ context.Context, r io.Reader) error {
 	return nil
 }
 
+func (m *memBlob) UploadWithMetadata(ctx context.Context, r io.Reader, _ azblob.BlobHTTPHeaders, _ map[string]string) error {
+	return m.UploadFromReader(ctx, r)
+}
+
+func (m *memBlob) NewReaderWithProperties(ctx context.Context) (io.ReadCloser, *BlobProperties, error) {
+	rc, err := m.NewReader(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	props, err := m.GetProperties(ctx)
+	if err != nil {
+		_ = rc.Close()
+		return nil, nil, err
+	}
+	return rc, props, nil
+}
+
 func (m *memBlob) NewReader(_ context.Context) (io.ReadCloser, error) {
 	if m.rdErr != nil {
 		return nil, m.rdErr

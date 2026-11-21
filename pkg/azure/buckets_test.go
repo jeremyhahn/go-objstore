@@ -247,6 +247,30 @@ func (b *svcBlob) UploadFromReader(_ context.Context, r io.Reader) error {
 	})
 }
 
+func (b *svcBlob) UploadWithMetadata(_ context.Context, r io.Reader, headers azblob.BlobHTTPHeaders, metadata map[string]string) error {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
+	return b.locked("upload", func(bk *svcBucket) error {
+		bk.objects[b.name] = &svcObject{data: data, modified: time.Now(), headers: headers, metadata: metadata}
+		return nil
+	})
+}
+
+func (b *svcBlob) NewReaderWithProperties(ctx context.Context) (io.ReadCloser, *BlobProperties, error) {
+	rc, err := b.NewReader(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	props, err := b.GetProperties(ctx)
+	if err != nil {
+		_ = rc.Close()
+		return nil, nil, err
+	}
+	return rc, props, nil
+}
+
 func (b *svcBlob) NewReader(_ context.Context) (io.ReadCloser, error) {
 	var data []byte
 	err := b.locked("read", func(bk *svcBucket) error {
