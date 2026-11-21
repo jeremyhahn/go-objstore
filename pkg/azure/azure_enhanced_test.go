@@ -60,6 +60,7 @@ func (m *mockContainerEnhanced) ListBlobsFlat(ctx context.Context, prefix string
 
 // mockBlob for enhanced testing
 type mockBlob struct {
+	readWithPropsFn      func(context.Context) (io.ReadCloser, *BlobProperties, error)
 	uploadWithMetadataFn func(context.Context, io.Reader, azblob.BlobHTTPHeaders, map[string]string) error
 	uploadFn             func(ctx context.Context, r io.Reader) error
 	readFn               func(ctx context.Context) (io.ReadCloser, error)
@@ -87,6 +88,9 @@ func (m *mockBlob) UploadWithMetadata(ctx context.Context, r io.Reader, headers 
 }
 
 func (m *mockBlob) NewReaderWithProperties(ctx context.Context) (io.ReadCloser, *BlobProperties, error) {
+	if m.readWithPropsFn != nil {
+		return m.readWithPropsFn(ctx)
+	}
 	props, err := m.GetProperties(ctx)
 	if err != nil {
 		return nil, nil, err
@@ -815,5 +819,75 @@ func TestAzure_Exists_NonStorageErrorPropagates(t *testing.T) {
 	}
 	if exists {
 		t.Error("expected exists=false on error")
+	}
+}
+
+// recordingArchiver records what Archive hands to a destination that stores
+// metadata.
+type recordingArchiver struct {
+	data []byte
+	md   *common.Metadata
+}
+
+func (r *recordingArchiver) Put(_ string, data io.Reader) error {
+	var err error
+	r.data, err = io.ReadAll(data)
+	return err
+}
+
+func (r *recordingArchiver) PutWithMetadata(_ context.Context, _ string, data io.Reader, md *common.Metadata) error {
+	r.md = md
+	return r.Put("", data)
+}
+
+// TestAzure_Archive_DataAndMetadataFromOneResponse is the Finding 2
+// regression test (#243): the data and its metadata come from one Download
+// response. A separate read and properties request would be two moments, and
+// an overwrite between them would pair the old data with the new key ID.
+func TestAzure_Archive_DataAndMetadataFromOneResponse(t *testing.T) {
+	blob := &mockBlob{
+		readWithPropsFn: func(context.Context) (io.ReadCloser, *BlobProperties, error) {
+			return io.NopCloser(bytes.NewReader([]byte("new"))), &BlobProperties{
+				ContentType: "application/octet-stream",
+				Metadata:    map[string]string{"encryption_key_id": "k2"},
+			}, nil
+		},
+		readFn: func(context.Context) (io.ReadCloser, error) {
+			t.Error("data read in a request of its own")
+			return io.NopCloser(bytes.NewReader([]byte("old"))), nil
+		},
+		getPropertiesFn: func(context.Context) (*BlobProperties, error) {
+			t.Error("metadata read in a request of its own")
+			return &BlobProperties{Metadata: map[string]string{"encryption_key_id": "k1"}}, nil
+		},
+	}
+	a := &Azure{container: &mockContainerEnhanced{newBlockBlobFn: func(string) BlobAPI { return blob }}}
+	dest := &recordingArchiver{}
+	if err := a.Archive("k", dest); err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+	if dest.md == nil {
+		t.Fatal("archived without metadata")
+	}
+	if got := string(dest.data) + "/" + dest.md.Custom["encryption_key_id"]; got != "new/k2" {
+		t.Fatalf("archived data/key ID = %s, want new/k2", got)
+	}
+	if dest.md.ContentType != "application/octet-stream" {
+		t.Fatalf("archived content type = %q", dest.md.ContentType)
+	}
+}
+
+// TestAzure_Archive_NotFound: a missing blob maps to common.ErrKeyNotFound
+// and nothing is written.
+func TestAzure_Archive_NotFound(t *testing.T) {
+	blob := &mockBlob{
+		readWithPropsFn: func(context.Context) (io.ReadCloser, *BlobProperties, error) {
+			return nil, nil, errTestBlobNotFound
+		},
+	}
+	a := &Azure{container: &mockContainerEnhanced{newBlockBlobFn: func(string) BlobAPI { return blob }}}
+	dest := &recordingArchiver{}
+	if err := a.Archive("k", dest); err == nil || dest.data != nil {
+		t.Fatalf("Archive err = %v, data = %q; want error and no write", err, dest.data)
 	}
 }

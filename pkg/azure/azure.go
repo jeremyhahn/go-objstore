@@ -396,20 +396,24 @@ func (a *Azure) Archive(key string, destination common.Archiver) error {
 	if destination == nil {
 		return common.ErrArchiveDestinationNil
 	}
-	// The archived copy keeps the object's client-side encryption metadata
-	// (or the archive is refused when the destination cannot store it).
-	ctx := context.TODO()
-	rc, err := a.Get(key)
-	if err != nil {
+	if a.container == nil {
+		return common.ErrNotConfigured
+	}
+	if err := common.ValidateKey(key); err != nil {
 		return err
+	}
+	// The archived copy keeps the object's client-side encryption metadata
+	// (or the archive is refused when the destination cannot store it). The
+	// data and its metadata come from one Download response, so a concurrent
+	// overwrite cannot pair one version's data with another's key ID (#243).
+	ctx := context.TODO()
+	rc, props, err := a.container.NewBlockBlob(key).NewReaderWithProperties(ctx)
+	if err != nil {
+		return mapNotFound(err, key)
 	}
 	defer func() { _ = rc.Close() }()
-	md, err := a.GetMetadata(ctx, key)
-	if err != nil {
-		return err
-	}
 
-	return common.ArchiveCopy(ctx, key, rc, md, destination)
+	return common.ArchiveCopy(ctx, key, rc, metadataFromProperties(props), destination)
 }
 
 // AddPolicy adds a new lifecycle policy by configuring Azure Blob lifecycle management.

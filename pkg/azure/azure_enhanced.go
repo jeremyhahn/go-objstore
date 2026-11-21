@@ -86,6 +86,11 @@ func (a *Azure) GetMetadata(ctx context.Context, key string) (*common.Metadata, 
 	if err != nil {
 		return nil, mapNotFound(err, key)
 	}
+	return metadataFromProperties(props), nil
+}
+
+// metadataFromProperties converts a blob's properties to common.Metadata.
+func metadataFromProperties(props *BlobProperties) *common.Metadata {
 	metadata := &common.Metadata{
 		ContentType:     props.ContentType,
 		ContentEncoding: props.ContentEncoding,
@@ -99,7 +104,7 @@ func (a *Azure) GetMetadata(ctx context.Context, key string) (*common.Metadata, 
 			metadata.Custom[k] = v
 		}
 	}
-	return metadata, nil
+	return metadata
 }
 
 // UpdateMetadata updates the metadata for an existing object.
