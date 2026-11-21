@@ -10,7 +10,7 @@ no flag.
 auth:
   client_ca: /etc/objstore/client-ca.pem
   roles:
-    backup: [read, write, list]
+    backup: [read, write, list]   # no overwrite, no delete: cannot replace or remove a snapshot
     prune: [delete]
   identities:
     - subject: backup-agent        # client certificate common name
@@ -35,7 +35,7 @@ Setting any of `client_ca`, `roles` or `identities` turns `auth` on.
 | Key | Meaning |
 |-----|---------|
 | `auth.client_ca` | PEM file of the CA that signs client certificates. The gRPC, REST, QUIC and MCP HTTP listeners require a client certificate and verify it against this CA. One CA serves all listeners. |
-| `auth.roles` | Map of a role name to the actions it permits: `read`, `write`, `delete`, `list`, `admin`, or `*` for all. |
+| `auth.roles` | Map of a role name to the actions it permits: `read`, `write`, `overwrite`, `delete`, `list`, `admin`, or `*` for all. |
 | `auth.identities` | List of `{subject, roles}`. `subject` is a client certificate common name, or `uid:N` for a local user; `roles` names roles defined in `auth.roles`. |
 
 `identities` is a list, not a map, because configuration keys are case-folded
@@ -61,8 +61,14 @@ only matches a local user, never a certificate.
 
 A role grants actions only. It has no bucket, prefix or key scope: an
 identity with `write` may write any key, and one with `delete` may delete
-any key. `write` covers both creating an object and overwriting an existing
-one, and updating its metadata.
+any key. `write` creates an object and updates an object's metadata. A put to a key
+that already exists needs `overwrite` as well as `write`, so a role without
+`overwrite` cannot replace an object's bytes. The server checks whether the
+key exists just before the write; a key that another client creates between
+that check and the write can still be overwritten. `*` includes `overwrite`.
+
+`UpdateMetadata` still needs only `write`. MCP over stdio without
+`EnforceStdioAuthz` skips the overwrite check, as it skips the gate.
 
 On REST the action comes from the matched route and the HTTP method, never
 from the request path, so an object key such as `a/metadata/b` or
@@ -74,7 +80,7 @@ need the same actions:
 |---------------|--------|
 | `GET /objects` | `list` |
 | `GET`, `HEAD /objects/*key` | `read` |
-| `PUT /objects/*key` | `write` |
+| `PUT /objects/*key` | `write`; also `overwrite` when the key exists |
 | `DELETE /objects/*key` | `delete` |
 | `HEAD /exists/*key` | `read` |
 | `GET /metadata/*key` | `read` |
@@ -87,8 +93,8 @@ need the same actions:
 | `GET /swagger/*any` | none (authentication only) |
 
 gRPC maps each method by name: `Get`, `GetMetadata` and `Exists` need
-`read`; `Put`, `PutStream` and `UpdateMetadata` `write`; `Delete` `delete`;
-`List` `list`; `Archive` and every lifecycle and replication policy method
+`read`; `Put` and `PutStream` `write`, and `overwrite` when the key exists;
+`UpdateMetadata` `write`; `Delete` `delete`; `List` `list`; `Archive` and every lifecycle and replication policy method
 `admin`. `Health` needs no action: any authenticated identity may call it,
 whatever its roles. A method not in that list needs `admin`. The standard
 `grpc.health.v1.Health` service and the server reflection services
@@ -97,6 +103,10 @@ whatever its roles. A method not in that list needs `admin`. The standard
 role check, but a client still needs a certificate signed by
 `auth.client_ca` to reach them. Reflection is off by default; it is served
 only when the server is built with reflection enabled.
+
+The other transports follow the same rule for a put: QUIC `PUT`, the MCP
+`objstore_put` tool and the Unix socket `Put` need `write`, and `overwrite`
+when the key exists.
 
 | gRPC method | Action |
 |-------------|--------|
