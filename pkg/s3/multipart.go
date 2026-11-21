@@ -292,6 +292,15 @@ func autoPartSize(size, floor int64) (int64, error) {
 	return min(max(floor, need), int64(common.MaxPartSize)), nil
 }
 
+// partNumber32 converts a part number to the SDK's int32, refusing one
+// outside 1..common.MaxParts so the conversion cannot overflow.
+func partNumber32(n int) (int32, error) {
+	if n < 1 || n > common.MaxParts {
+		return 0, fmt.Errorf("%w: part number %d, must be 1..%d", common.ErrInvalidArgument, n, common.MaxParts)
+	}
+	return int32(n), nil
+}
+
 // partWindow is the [start, start+size) window of a seekable source, read as
 // one part's body. Unlike sizedSeeker it stops at the window's end without
 // probing the bytes that belong to the next part; a source that ends early
@@ -559,6 +568,10 @@ func (s *S3) UploadPart(ctx context.Context, key, uploadID string, partNumber in
 		return common.PartInfo{}, err
 	}
 
+	pn, err := partNumber32(partNumber)
+	if err != nil {
+		return common.PartInfo{}, err
+	}
 	body, sized, opts, err := partBody(data, size)
 	if err != nil {
 		return common.PartInfo{}, err
@@ -567,7 +580,7 @@ func (s *S3) UploadPart(ctx context.Context, key, uploadID string, partNumber in
 		Bucket:        aws.String(s.bucket),
 		Key:           aws.String(key),
 		UploadId:      aws.String(uploadID),
-		PartNumber:    aws.Int32(int32(partNumber)), //nolint:gosec // ValidatePartNumber bounds it to 1..10000
+		PartNumber:    aws.Int32(pn),
 		ContentLength: aws.Int64(size),
 		Body:          body,
 	}, opts...)
@@ -622,9 +635,13 @@ func (s *S3) CompleteMultipartUpload(ctx context.Context, key, uploadID string, 
 
 	completed := make([]types.CompletedPart, 0, len(parts))
 	for _, p := range parts {
+		pn, err := partNumber32(p.PartNumber)
+		if err != nil {
+			return err
+		}
 		completed = append(completed, types.CompletedPart{
 			ETag:       aws.String(p.ETag),
-			PartNumber: aws.Int32(int32(p.PartNumber)), //nolint:gosec // CheckComplete bounds part numbers to 1..10000
+			PartNumber: aws.Int32(pn),
 		})
 	}
 	_, err = s.svc.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
