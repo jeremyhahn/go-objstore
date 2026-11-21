@@ -39,6 +39,7 @@ Commands:
   restore     Restore a snapshot into a directory
   verify      Check the repository's data
   prune       Forget snapshots by a retention policy and remove unused data
+  key         List, add, remove or change the repository's passphrases
   service     Back up on a schedule from a configuration file
   help        Show this help, or a command's
 
@@ -88,6 +89,7 @@ var commands = map[string]command{
 	"restore":   {cmdRestore, restoreHelp},
 	"verify":    {cmdVerify, verifyHelp},
 	"prune":     {cmdPrune, pruneHelp},
+	"key":       {cmdKey, keyHelp},
 	"service":   {cmdService, serviceHelp},
 }
 

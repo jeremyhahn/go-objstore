@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 
+- backup: key slots: `objstore-backup key list`, `key add`, `key remove <slot>` (refuses the last slot) and `key passwd` change only the data-key wrap, never the snapshots; `--key-provider` (default `passphrase`) picks the `keyseam` provider by name. Repository format 2 writes key lists under `keyring/`; a format 1 repository opens as before and upgrades on its first key change. A removed slot's key object stays in the store, and a pre-format-2 binary ignores `keyring/` (see docs/backup-agent) (#221)
 - server: an `auth` section turns on mutual TLS (client certificates verified against `auth.client_ca`) and role-based access control on gRPC, REST, QUIC, MCP HTTP, MCP stdio and the Unix socket; identities are the certificate common name or `uid:N` of the local user; invalid or incomplete settings refuse to start; without `auth` behaviour is unchanged and each listener logs a warning; `rest.tls_cert`/`rest.tls_key` and `mcp.tls_cert`/`mcp.tls_key` serve TLS. See `docs/configuration/auth.md` (#216)
 
 ### Changed

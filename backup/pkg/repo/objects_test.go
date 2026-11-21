@@ -200,8 +200,7 @@ func TestPackerFailures(t *testing.T) {
 	ctx := context.Background()
 	r, st := newRepo(t)
 	data, ids := chunks(t, r, 1, 500)
-	fr := *r
-	fr.st = &faulty{Store: st, fail: failOn("put", "/packs/")}
+	fr := withStore(r, &faulty{Store: st, fail: failOn("put", "/packs/")})
 	p := fr.NewPacker()
 	_ = p.Add(ctx, ids[0], data[0])
 	assertRepoError(t, p.Flush(ctx), ErrStorage, errDown)
@@ -294,8 +293,7 @@ func TestIndex(t *testing.T) {
 	_, err = r.LoadIndex(ctx)
 	assertRepoError(t, err, ErrMalformedName)
 
-	fr := *r
-	fr.st = &faulty{Store: st, fail: failOn("list", "/index/")}
+	fr := withStore(r, &faulty{Store: st, fail: failOn("list", "/index/")})
 	_, err = fr.LoadIndex(ctx)
 	assertRepoError(t, err, ErrStorage)
 	fr.st = &faulty{Store: st, fail: failOn("put", "/index/")}

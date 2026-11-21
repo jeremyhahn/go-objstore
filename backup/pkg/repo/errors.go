@@ -35,6 +35,16 @@ var (
 	// ErrKeys means a key operation failed, for example after Close; the
 	// cause is the seal or key seam error.
 	ErrKeys = errors.New("repo: key failure")
+	// ErrKeyRemoved means a key object unwraps the data key but its slot
+	// was removed from the repository's key list.
+	ErrKeyRemoved = errors.New("repo: key slot removed")
+	// ErrUnknownKey means no key slot has the given ID.
+	ErrUnknownKey = errors.New("repo: no such key slot")
+	// ErrLastKey means a change would leave the repository with no key slot.
+	ErrLastKey = errors.New("repo: cannot remove the last key slot")
+	// ErrKeyConflict means another client changed the key slots at the same
+	// time; open the repository again and retry.
+	ErrKeyConflict = errors.New("repo: concurrent key change")
 )
 
 // Error is a failed repository operation. It matches its sentinel and its
