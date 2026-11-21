@@ -65,8 +65,9 @@ type Local struct {
 	root   *os.Root
 
 	// keyLocks keeps a key's data and its at-rest metadata from two writers
-	// apart (see keyLocks).
-	keyLocks keyLocks
+	// apart (see keyLocks). It is shared by every handle on the directory
+	// (see keyLocksFor).
+	keyLocks *keyLocks
 }
 
 // fsRoot returns the store's root, opening it on first use for a Local built
@@ -164,6 +165,7 @@ func (l *Local) configure(settings map[string]string, root *os.Root) error {
 		}
 	}
 	l.setRoot(root)
+	l.keyLocks = keyLocksFor(l.path)
 
 	l.buckets = nil
 	if settings[settingBucketRoot] != "" {
@@ -354,7 +356,7 @@ func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 	// Hold the key from the data write until its metadata is saved, so a
 	// concurrent put or UpdateMetadata cannot pair these bytes with another
 	// write's at-rest key ID (#243).
-	defer l.keyLocks.lock(name)()
+	defer l.lockKey(name)()
 
 	var size int64
 	if err := writeObjectAtomic(root, &l.pruneMu, name, 0644, func(w io.Writer) error {
@@ -557,7 +559,7 @@ func (l *Local) UpdateMetadata(ctx context.Context, key string, metadata *common
 	}
 	// Hold the key from reading the stored at-rest fields until the save, so
 	// a put in between cannot have its key ID replaced by the old one (#243).
-	defer l.keyLocks.lock(rootName(key))()
+	defer l.lockKey(rootName(key))()
 	info, err := root.Stat(rootName(key))
 	if err != nil {
 		if os.IsNotExist(err) {

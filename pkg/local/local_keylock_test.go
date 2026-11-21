@@ -118,3 +118,56 @@ func TestKeyLocksReleaseEntries(t *testing.T) {
 		t.Fatalf("entries left after release: %d", len(k.m))
 	}
 }
+
+// Two handles on one bucket, each from its own Buckets.Bucket call, share
+// the key locks: overlapping puts through them across a key rotation must
+// not leave the bytes of one and the at-rest key ID of the other (#243).
+func TestAtRestPutsThroughTwoBucketHandlesKeepKeyIDWithData(t *testing.T) {
+	a := &pausingEncrypter{keyedEncrypter: keyedEncrypter{id: "A"}, entered: make(chan struct{}), release: make(chan struct{})}
+	b := &keyedEncrypter{id: "B"}
+	f := &sequenceFactory{next: []common.Encrypter{a, b}, byID: map[string]common.Encrypter{"A": a, "B": b}}
+	ctx := context.Background()
+	buckets, err := NewBuckets(map[string]string{settingBucketRoot: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewBuckets: %v", err)
+	}
+	buckets.SetAtRestEncrypterFactory(f)
+	if err := buckets.CreateBucket(ctx, "bkt"); err != nil {
+		t.Fatalf("CreateBucket: %v", err)
+	}
+	handle := func() *Local {
+		s, err := buckets.Bucket(ctx, "bkt")
+		if err != nil {
+			t.Fatalf("Bucket: %v", err)
+		}
+		l := s.(*Local)
+		t.Cleanup(l.Close)
+		return l
+	}
+	h1, h2 := handle(), handle()
+
+	errs := make(chan error, 2)
+	go func() { errs <- h1.PutWithMetadata(ctx, "obj", bytes.NewReader([]byte("one")), nil) }()
+	<-a.entered // the first put has written its data, not yet its metadata
+
+	second := make(chan struct{})
+	go func() { errs <- h2.PutWithMetadata(ctx, "obj", bytes.NewReader([]byte("two")), nil); close(second) }()
+	select {
+	case <-second: // separate lock tables: the second put overtook the first
+	case <-time.After(200 * time.Millisecond): // the second put waits for the first
+	}
+	close(a.release)
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatalf("put: %v", err)
+		}
+	}
+
+	got, err := readAll(t, handle(), "obj")
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if got != "two" {
+		t.Fatalf("read %q, want the later put %q", got, "two")
+	}
+}

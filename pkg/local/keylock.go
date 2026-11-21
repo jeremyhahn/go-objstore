@@ -13,13 +13,17 @@
 
 package local
 
-import "sync"
+import (
+	"path/filepath"
+	"sync"
+)
 
 // keyLocks serializes the writers of one key. A put holds the key's lock
 // from the data write until its metadata is saved, and UpdateMetadata holds
 // it from reading the stored at-rest fields until it saves; so the stored
-// at-rest key ID always belongs to the bytes on disk (#243). The zero value
-// is ready to use; an entry lives only while someone holds or waits for it.
+// at-rest key ID always belongs to the bytes on disk (#243). A read holds it
+// while it opens the data and loads the key ID. The zero value is ready to
+// use; an entry lives only while someone holds or waits for it.
 type keyLocks struct {
 	mu sync.Mutex
 	m  map[string]*keyLock
@@ -54,4 +58,28 @@ func (k *keyLocks) lock(key string) func() {
 		}
 		k.mu.Unlock()
 	}
+}
+
+// rootKeyLocks holds one lock table per store directory, keyed by its
+// absolute path, so every handle on one directory (a Buckets.Bucket call
+// builds a new Local each time) serializes on the same locks (#243).
+var rootKeyLocks sync.Map
+
+// keyLocksFor returns the lock table of the store directory path.
+func keyLocksFor(path string) *keyLocks {
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	k, _ := rootKeyLocks.LoadOrStore(filepath.Clean(path), &keyLocks{})
+	return k.(*keyLocks)
+}
+
+// lockKey takes the lock of the root name key in the store's lock table and
+// returns the function that releases it.
+func (l *Local) lockKey(name string) func() {
+	k := l.keyLocks
+	if k == nil { // a store built without configure
+		k = keyLocksFor(l.path)
+	}
+	return k.lock(name)
 }

@@ -438,7 +438,7 @@ func (l *Local) CompleteMultipartUpload(ctx context.Context, key, uploadID strin
 	name := rootName(key)
 	// Same per-key hold as PutWithMetadata: the data and its at-rest key ID
 	// are saved together (#243).
-	defer l.keyLocks.lock(name)()
+	defer l.lockKey(name)()
 	var size int64
 	if err := writeObjectAtomic(root, &l.pruneMu, name, 0644, func(w io.Writer) error {
 		n, werr := io.Copy(w, in)
