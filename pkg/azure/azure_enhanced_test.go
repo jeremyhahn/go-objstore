@@ -60,12 +60,13 @@ func (m *mockContainerEnhanced) ListBlobsFlat(ctx context.Context, prefix string
 
 // mockBlob for enhanced testing
 type mockBlob struct {
-	uploadFn         func(ctx context.Context, r io.Reader) error
-	readFn           func(ctx context.Context) (io.ReadCloser, error)
-	deleteFn         func(ctx context.Context) error
-	getPropertiesFn  func(ctx context.Context) (*BlobProperties, error)
-	setMetadataFn    func(ctx context.Context, metadata map[string]string) error
-	setHTTPHeadersFn func(ctx context.Context, headers azblob.BlobHTTPHeaders) error
+	uploadWithMetadataFn func(context.Context, io.Reader, azblob.BlobHTTPHeaders, map[string]string) error
+	uploadFn             func(ctx context.Context, r io.Reader) error
+	readFn               func(ctx context.Context) (io.ReadCloser, error)
+	deleteFn             func(ctx context.Context) error
+	getPropertiesFn      func(ctx context.Context) (*BlobProperties, error)
+	setMetadataFn        func(ctx context.Context, metadata map[string]string) error
+	setHTTPHeadersFn     func(ctx context.Context, headers azblob.BlobHTTPHeaders) error
 }
 
 func (m *mockBlob) UploadFromReader(ctx context.Context, r io.Reader) error {
@@ -76,14 +77,13 @@ func (m *mockBlob) UploadFromReader(ctx context.Context, r io.Reader) error {
 }
 
 func (m *mockBlob) UploadWithMetadata(ctx context.Context, r io.Reader, headers azblob.BlobHTTPHeaders, metadata map[string]string) error {
-	if err := m.UploadFromReader(ctx, r); err != nil {
-		return err
+	// One call: the fake never routes through the SetMetadata or
+	// SetHTTPHeaders hooks, so a test can tell an upload that carries its
+	// metadata from an upload followed by an update (#243).
+	if m.uploadWithMetadataFn != nil {
+		return m.uploadWithMetadataFn(ctx, r, headers, metadata)
 	}
-	// The fake records what the upload carried through the metadata hooks.
-	if err := m.SetMetadata(ctx, metadata); err != nil {
-		return err
-	}
-	return m.SetHTTPHeaders(ctx, headers)
+	return m.UploadFromReader(ctx, r)
 }
 
 func (m *mockBlob) NewReaderWithProperties(ctx context.Context) (io.ReadCloser, *BlobProperties, error) {
@@ -186,9 +186,14 @@ func TestAzure_PutWithMetadata(t *testing.T) {
 func TestAzure_PutWithMetadata_StoresMetadata(t *testing.T) {
 	var stored map[string]string
 	var headers azblob.BlobHTTPHeaders
+	var data []byte
 	blob := &mockBlob{
-		setMetadataFn:    func(_ context.Context, md map[string]string) error { stored = md; return nil },
-		setHTTPHeadersFn: func(_ context.Context, h azblob.BlobHTTPHeaders) error { headers = h; return nil },
+		uploadWithMetadataFn: func(_ context.Context, r io.Reader, h azblob.BlobHTTPHeaders, md map[string]string) error {
+			var err error
+			data, err = io.ReadAll(r)
+			headers, stored = h, md
+			return err
+		},
 	}
 	a := &Azure{container: &mockContainerEnhanced{newBlockBlobFn: func(string) BlobAPI { return blob }}}
 	md := &common.Metadata{
@@ -197,6 +202,9 @@ func TestAzure_PutWithMetadata_StoresMetadata(t *testing.T) {
 	}
 	if err := a.PutWithMetadata(context.Background(), "key", bytes.NewReader([]byte("ct")), md); err != nil {
 		t.Fatalf("PutWithMetadata: %v", err)
+	}
+	if string(data) != "ct" {
+		t.Fatalf("uploaded data = %q", data)
 	}
 	if stored["encryption_key_id"] != "k1" || stored["encryption_algorithm"] != "AES-256-GCM" {
 		t.Fatalf("stored metadata = %v", stored)
@@ -207,19 +215,49 @@ func TestAzure_PutWithMetadata_StoresMetadata(t *testing.T) {
 }
 
 // A blob whose metadata cannot be stored is removed and the error returned.
-func TestAzure_PutWithMetadata_SetMetadataErrorRemovesBlob(t *testing.T) {
-	deleted := false
-	blob := &mockBlob{
-		setMetadataFn: func(context.Context, map[string]string) error { return errors.New("metadata refused") },
-		deleteFn:      func(context.Context) error { deleted = true; return nil },
-	}
-	a := &Azure{container: &mockContainerEnhanced{newBlockBlobFn: func(string) BlobAPI { return blob }}}
-	md := &common.Metadata{Custom: map[string]string{"encryption_key_id": "k1"}}
-	if err := a.PutWithMetadata(context.Background(), "key", bytes.NewReader([]byte("ct")), md); err == nil {
-		t.Fatal("expected an error when the metadata cannot be stored")
-	}
-	if !deleted {
-		t.Fatal("blob without its metadata was left behind")
+// TestAzure_PutWithMetadata_OneUploadNoUpdateNoDelete is the Finding 1
+// regression test (#243): the metadata travels in the one upload that
+// creates the blob. A separate update would leave a window in which a reader
+// sees the new data with no (or the previous version's) encryption metadata,
+// and a compensating delete on failure would remove a concurrent writer's
+// blob. A failed upload is returned as is, with nothing to clean up.
+func TestAzure_PutWithMetadata_OneUploadNoUpdateNoDelete(t *testing.T) {
+	for _, uploadErr := range []error{nil, errTestPutError} {
+		uploads := 0
+		blob := &mockBlob{
+			uploadWithMetadataFn: func(_ context.Context, _ io.Reader, _ azblob.BlobHTTPHeaders, md map[string]string) error {
+				uploads++
+				if md["encryption_key_id"] != "k1" {
+					t.Errorf("upload metadata = %v", md)
+				}
+				return uploadErr
+			},
+			uploadFn: func(context.Context, io.Reader) error {
+				t.Error("plain upload without metadata")
+				return nil
+			},
+			setMetadataFn: func(context.Context, map[string]string) error {
+				t.Error("metadata updated after the upload")
+				return nil
+			},
+			setHTTPHeadersFn: func(context.Context, azblob.BlobHTTPHeaders) error {
+				t.Error("headers updated after the upload")
+				return nil
+			},
+			deleteFn: func(context.Context) error {
+				t.Error("blob deleted")
+				return nil
+			},
+		}
+		a := &Azure{container: &mockContainerEnhanced{newBlockBlobFn: func(string) BlobAPI { return blob }}}
+		md := &common.Metadata{Custom: map[string]string{"encryption_key_id": "k1"}}
+		err := a.PutWithMetadata(context.Background(), "key", bytes.NewReader([]byte("ct")), md)
+		if !errors.Is(err, uploadErr) {
+			t.Fatalf("PutWithMetadata error = %v, want %v", err, uploadErr)
+		}
+		if uploads != 1 {
+			t.Fatalf("uploads = %d, want 1", uploads)
+		}
 	}
 }
 
