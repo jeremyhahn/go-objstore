@@ -59,9 +59,14 @@ const (
 	// (get, head, exists, getmetadata).
 	ActionRead = "read"
 
-	// ActionWrite covers operations that create or mutate objects or their
-	// metadata (put, updatemetadata).
+	// ActionWrite covers operations that create objects or update an
+	// object's metadata (put, updatemetadata). Replacing an existing
+	// object's bytes needs ActionOverwrite as well.
 	ActionWrite = "write"
+
+	// ActionOverwrite covers replacing an existing object's bytes; a put to
+	// an existing key needs it in addition to ActionWrite.
+	ActionOverwrite = "overwrite"
 
 	// ActionDelete covers operations that remove objects (delete).
 	ActionDelete = "delete"
@@ -414,6 +419,36 @@ func NewRBACAuthorizer(rolePermissions map[string][]string) *RBACAuthorizer {
 		permissions[role] = set
 	}
 	return &RBACAuthorizer{rolePermissions: permissions}
+}
+
+// AuthorizeOverwrite decides whether a put to resource may proceed with
+// respect to ActionOverwrite. The caller must already have authorized
+// ActionWrite (the transport gate does that).
+//
+// It authorizes ActionOverwrite first, so a principal allowed to overwrite
+// costs no existence lookup. Otherwise it calls exists: when the key exists
+// it returns ErrInsufficientPermissions; when it does not, nil (the put
+// creates a new object). A lookup error is returned wrapped, so the caller
+// fails closed and writes nothing. A nil authorizer allows everything,
+// matching the servers' NoOpAuthorizer default.
+//
+// The lookup and the write are two steps: a key created by another client
+// between them can still be overwritten.
+func AuthorizeOverwrite(ctx context.Context, authz Authorizer, principal *Principal, resource string, exists func(context.Context) (bool, error)) error {
+	if authz == nil {
+		return nil
+	}
+	if err := authz.Authorize(ctx, principal, ActionOverwrite, resource); err == nil {
+		return nil
+	}
+	found, err := exists(ctx)
+	if err != nil {
+		return fmt.Errorf("overwrite check: existence lookup for %q: %w", resource, err)
+	}
+	if found {
+		return ErrInsufficientPermissions
+	}
+	return nil
 }
 
 // Authorize permits the action when any role held by the principal grants the
