@@ -18,6 +18,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
@@ -70,5 +71,85 @@ func TestArchiveEncryptedRefusesMetadataLessDestination(t *testing.T) {
 	}
 	if dst.puts != 0 {
 		t.Fatalf("refused archive wrote %d objects", dst.puts)
+	}
+}
+
+// recordingArchiver records each archived copy's data and key ID.
+type recordingArchiver struct {
+	mu     sync.Mutex
+	copies []string // "<data>/<encryption_key_id>"
+}
+
+func (r *recordingArchiver) Put(key string, data io.Reader) error {
+	return r.PutWithMetadata(context.Background(), key, data, nil)
+}
+
+func (r *recordingArchiver) PutWithMetadata(_ context.Context, _ string, data io.Reader, md *common.Metadata) error {
+	b, err := io.ReadAll(data)
+	if err != nil {
+		return err
+	}
+	var id string
+	if md != nil {
+		id = md.Custom["encryption_key_id"]
+	}
+	r.mu.Lock()
+	r.copies = append(r.copies, string(b)+"/"+id)
+	r.mu.Unlock()
+	return nil
+}
+
+// An archive racing puts of one key copies the bytes and the key ID of one
+// put, never the ciphertext of one with the key ID of another (#243).
+func TestArchiveRacingPutsKeepsKeyIDWithData(t *testing.T) {
+	src := New()
+	_ = src.Configure(nil, noCreds)
+	ctx := context.Background()
+	put := func(id string) error {
+		md := &common.Metadata{Custom: map[string]string{
+			"encryption_algorithm": "AES-256-GCM",
+			"encryption_key_id":    id,
+		}}
+		return src.PutWithMetadata(ctx, "obj", strings.NewReader(id), md)
+	}
+	if err := put("dek-a"); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+
+	stop := make(chan struct{})
+	putErr := make(chan error, 1)
+	go func() {
+		defer close(putErr)
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			id := "dek-a"
+			if i%2 == 1 {
+				id = "dek-b"
+			}
+			if err := put(id); err != nil {
+				putErr <- err
+				return
+			}
+		}
+	}()
+	dst := &recordingArchiver{}
+	for range 2000 {
+		if err := src.Archive("obj", dst); err != nil {
+			t.Fatalf("Archive: %v", err)
+		}
+	}
+	close(stop)
+	if err := <-putErr; err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	for _, c := range dst.copies {
+		data, id, _ := strings.Cut(c, "/")
+		if data != id {
+			t.Fatalf("archived the ciphertext of %q with key ID %q", data, id)
+		}
 	}
 }

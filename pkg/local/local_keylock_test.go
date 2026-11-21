@@ -16,6 +16,7 @@ package local
 import (
 	"bytes"
 	"context"
+	"io"
 	"sync"
 	"testing"
 	"time"
@@ -215,5 +216,53 @@ func TestAtRestReadDuringPutAfterKeyChangeKeepsKeyIDWithData(t *testing.T) {
 	}
 	if r.data != "two" {
 		t.Fatalf("read %q, want %q", r.data, "two")
+	}
+}
+
+// bufArchiver keeps the data of the last archived copy.
+type bufArchiver struct{ data string }
+
+func (b *bufArchiver) Put(_ string, r io.Reader) error {
+	d, err := io.ReadAll(r)
+	b.data = string(d)
+	return err
+}
+
+// An archive that runs while a put under a new default key has renamed its
+// data into place but not yet saved its metadata takes the data and the key
+// ID of one put (#243).
+func TestAtRestArchiveDuringPutAfterKeyChangeKeepsKeyIDWithData(t *testing.T) {
+	a := &keyedEncrypter{id: "A"}
+	b := &pausingEncrypter{keyedEncrypter: keyedEncrypter{id: "B"}, entered: make(chan struct{}), release: make(chan struct{})}
+	f := &sequenceFactory{next: []common.Encrypter{a, b}, byID: map[string]common.Encrypter{"A": a, "B": b}}
+	l := newAtRestLocal(t, f)
+	ctx := context.Background()
+	if err := l.PutWithMetadata(ctx, "obj", bytes.NewReader([]byte("one")), nil); err != nil {
+		t.Fatalf("put under key A: %v", err)
+	}
+
+	putErr := make(chan error, 1)
+	go func() { putErr <- l.PutWithMetadata(ctx, "obj", bytes.NewReader([]byte("two")), nil) }()
+	<-b.entered // the put has renamed its data into place, its metadata still names A
+
+	dst := &bufArchiver{}
+	archived := make(chan error, 1)
+	go func() { archived <- l.Archive("obj", dst) }()
+	select {
+	case err := <-archived: // the archive did not wait for the put
+		close(b.release)
+		<-putErr
+		t.Fatalf("archive during the put returned %v; want it to wait for the put", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(b.release)
+	if err := <-putErr; err != nil {
+		t.Fatalf("put under key B: %v", err)
+	}
+	if err := <-archived; err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+	if dst.data != "two" {
+		t.Fatalf("archived %q, want %q", dst.data, "two")
 	}
 }

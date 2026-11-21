@@ -417,20 +417,32 @@ func (m *Memory) Archive(key string, destination common.Archiver) error {
 	}
 
 	// The archived copy keeps the object's client-side encryption metadata
-	// (or the archive is refused when the destination cannot store it).
-	ctx := context.TODO()
-	md, err := m.GetMetadata(ctx, key)
-	if err != nil {
-		return err
+	// (or the archive is refused when the destination cannot store it). The
+	// data and the metadata are copied under one lock acquisition, so both
+	// belong to one put (#243).
+	m.mu.RLock()
+	obj, exists := m.objects[key]
+	var data []byte
+	var md *common.Metadata
+	if exists {
+		data = bytes.Clone(obj.data)
+		if obj.metadata != nil {
+			mdCopy := *obj.metadata
+			if obj.metadata.Custom != nil {
+				mdCopy.Custom = make(map[string]string, len(obj.metadata.Custom))
+				for k, v := range obj.metadata.Custom {
+					mdCopy.Custom[k] = v
+				}
+			}
+			md = &mdCopy
+		}
+	}
+	m.mu.RUnlock()
+	if !exists {
+		return fmt.Errorf("%w: %s", common.ErrKeyNotFound, key)
 	}
 
-	reader, err := m.Get(key)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = reader.Close() }()
-
-	return common.ArchiveCopy(ctx, key, reader, md, destination)
+	return common.ArchiveCopy(context.TODO(), key, bytes.NewReader(data), md, destination)
 }
 
 // AddPolicy adds a new lifecycle policy.
