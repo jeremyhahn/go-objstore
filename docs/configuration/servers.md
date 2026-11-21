@@ -112,9 +112,10 @@ standalone or combined, with one audit logger per process. Audit records go to
 standard output, or to standard error when `mcp.mode` is `stdio`, where standard
 output carries the JSON-RPC stream.
 
-The `lifecycle` section applies to `objstore-server` with the `local` backend;
-other backends ignore it (one info line at startup), and the single-transport
-binaries do not read it. With `lifecycle.run: true` the server applies every
+The `lifecycle` section applies to every server binary (`objstore-server` and
+the `objstore-grpc-server`, `objstore-rest-server`, `objstore-quic-server` and
+`objstore-mcp-server` single-transport servers) with the `local` backend; other
+backends ignore it (one info line at startup). With `lifecycle.run: true` the server applies every
 lifecycle policy once each `lifecycle.interval`; with `false` it starts no
 scheduled pass (`ApplyPolicies` still runs one on request). The `persistent`
 manager keeps policies across restarts in `lifecycle.policy_file`, relative to
