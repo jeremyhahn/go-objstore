@@ -107,6 +107,9 @@ func TestGCS_Delete_ValidateKeyError(t *testing.T) {
 // propagates the error.
 type failingReader struct{ count int }
 
+// Generation reports the generation of the fakeObj it stands in for.
+func (*failingReader) Generation() int64 { return 0 }
+
 func (f *failingReader) Read(p []byte) (int, error) {
 	if f.count > 0 {
 		return 0, errors.New("read failed mid-stream")
@@ -143,7 +146,7 @@ func (c injectableClient) Bucket(_ string) gcsBucket { return c.b }
 func TestGCS_Archive_ReadAllError(t *testing.T) {
 	ic := injectableClient{b: injectableBucket{
 		fakeBucket: fakeBucket{objs: map[string]*fakeObj{}},
-		injected:   map[string]gcsObject{"k": &failAfterOpenObj{}},
+		injected:   map[string]gcsObject{"k": &failAfterOpenObj{fakeObj{data: []byte("x")}}},
 	}}
 	g := &GCS{client: ic, bucket: "b"}
 

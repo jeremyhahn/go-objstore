@@ -105,18 +105,20 @@ func (g *GCS) attrsMetadata(ctx context.Context, key string) (*common.Metadata, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to read object attributes for %s: %w", key, err)
 	}
+	return metadataOf(attrs), nil
+}
+
+// metadataOf returns the metadata held in an object's attributes.
+func metadataOf(attrs *storage.ObjectAttrs) *common.Metadata {
 	meta := &common.Metadata{
 		Size:            attrs.Size,
 		ContentType:     attrs.ContentType,
 		ContentEncoding: attrs.ContentEncoding,
 	}
 	if len(attrs.Metadata) > 0 {
-		meta.Custom = make(map[string]string, len(attrs.Metadata))
-		for k, v := range attrs.Metadata {
-			meta.Custom[k] = v
-		}
+		meta.Custom = maps.Clone(attrs.Metadata)
 	}
-	return meta, nil
+	return meta
 }
 
 // UpdateMetadata updates the metadata for an existing object.

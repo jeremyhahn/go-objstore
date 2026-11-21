@@ -785,6 +785,86 @@ func TestGCS_Archive_PutError(t *testing.T) {
 	}
 }
 
+// recordingArchiver is an archive destination that stores metadata.
+type recordingArchiver struct {
+	data []byte
+	md   *common.Metadata
+}
+
+func (r *recordingArchiver) Put(_ string, data io.Reader) error {
+	var err error
+	r.data, err = io.ReadAll(data)
+	return err
+}
+
+func (r *recordingArchiver) PutWithMetadata(_ context.Context, _ string, data io.Reader, md *common.Metadata) error {
+	r.md = md
+	return r.Put("", data)
+}
+
+// TestGCS_Archive_PairsDataWithItsGeneration: the object is replaced right
+// after Archive opens its data. The metadata read pinned to the opened
+// generation is not found, so Archive starts over and archives the new
+// data with the new key ID, never the old data with the new key ID (#243).
+func TestGCS_Archive_PairsDataWithItsGeneration(t *testing.T) {
+	obj := &fakeObj{data: []byte("old"), gen: 1, meta: map[string]string{"encryption_key_id": "k1"}}
+	obj.onRead = func(f *fakeObj) {
+		f.data, f.gen, f.meta = []byte("new"), 2, map[string]string{"encryption_key_id": "k2"}
+	}
+	fc := fakeClient{b: fakeBucket{objs: map[string]*fakeObj{"k": obj}}}
+	g := &GCS{client: fc, bucket: "b"}
+	dest := &recordingArchiver{}
+	if err := g.Archive("k", dest); err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+	if dest.md == nil {
+		t.Fatal("archived without metadata")
+	}
+	if got := string(dest.data) + "/" + dest.md.Custom["encryption_key_id"]; got != "new/k2" {
+		t.Fatalf("archived data/key ID = %s, want new/k2", got)
+	}
+}
+
+// TestGCS_Archive_GivesUpWhenAlwaysReplaced: an object replaced on every
+// read is not archived; the error says why.
+func TestGCS_Archive_GivesUpWhenAlwaysReplaced(t *testing.T) {
+	obj := &fakeObj{data: []byte("d"), meta: map[string]string{"encryption_key_id": "k1"}}
+	reads := 0
+	var replace func(f *fakeObj)
+	replace = func(f *fakeObj) {
+		reads++
+		f.gen++
+		f.onRead = replace
+	}
+	obj.onRead = replace
+	fc := fakeClient{b: fakeBucket{objs: map[string]*fakeObj{"k": obj}}}
+	g := &GCS{client: fc, bucket: "b"}
+	dest := &recordingArchiver{}
+	err := g.Archive("k", dest)
+	if !errors.Is(err, errGenerationReplaced) {
+		t.Fatalf("Archive err = %v, want errGenerationReplaced", err)
+	}
+	if reads != archiveSnapshotAttempts || dest.data != nil {
+		t.Fatalf("reads = %d, archived %q", reads, dest.data)
+	}
+}
+
+func TestReaderGeneration(t *testing.T) {
+	if gen, err := readerGeneration(&storage.Reader{Attrs: storage.ReaderObjectAttrs{Generation: 7}}); err != nil || gen != 7 {
+		t.Fatalf("storage.Reader: gen %d, err %v", gen, err)
+	}
+	if _, err := readerGeneration(bytes.NewReader(nil)); !errors.Is(err, errNoReaderGeneration) {
+		t.Fatalf("plain reader: err %v", err)
+	}
+}
+
+func TestGCS_Archive_InvalidKey(t *testing.T) {
+	g := &GCS{client: fakeClient{b: fakeBucket{objs: map[string]*fakeObj{}}}, bucket: "b"}
+	if err := g.Archive("", &recordingArchiver{}); err == nil {
+		t.Fatal("expected an invalid key error")
+	}
+}
+
 // TestObjectWrapper_NewAttrsWriter: the SDK writer carries the content type,
 // content encoding and custom metadata, so the upload request creates the
 // object with them (#243). Nothing is written, so no request is sent.

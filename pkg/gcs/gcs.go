@@ -285,26 +285,80 @@ func (g *GCS) Archive(key string, destination common.Archiver) error {
 	if destination == nil {
 		return common.ErrArchiveDestinationNil
 	}
+	if err := common.ValidateKey(key); err != nil {
+		return err
+	}
 	// The archived copy keeps the object's client-side encryption metadata
 	// (or the archive is refused when the destination cannot store it).
 	ctx := context.TODO()
-	rc, err := g.Get(key)
+	obj := g.client.Bucket(g.bucket).Object(key)
+	for attempt := 1; ; attempt++ {
+		data, md, err := readGeneration(ctx, obj, key)
+		if errors.Is(err, errGenerationReplaced) && attempt < archiveSnapshotAttempts {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		return common.ArchiveCopy(ctx, key, bytes.NewReader(data), md, destination)
+	}
+}
+
+// archiveSnapshotAttempts bounds how often Archive starts over when the
+// object is replaced between opening its data and reading its metadata.
+const archiveSnapshotAttempts = 5
+
+// errGenerationReplaced reports that the generation a reader opened was
+// replaced or removed before its metadata could be read.
+var errGenerationReplaced = errors.New("object generation replaced while it was read")
+
+// errNoReaderGeneration reports a reader that does not say which generation
+// of the object it reads.
+var errNoReaderGeneration = errors.New("reader reports no object generation")
+
+// generationReader is a reader that reports the object generation it reads.
+type generationReader interface{ Generation() int64 }
+
+// readerGeneration returns the generation of the object that r reads.
+func readerGeneration(r io.Reader) (int64, error) {
+	switch r := r.(type) {
+	case *storage.Reader:
+		return r.Attrs.Generation, nil
+	case generationReader:
+		return r.Generation(), nil
+	}
+	return 0, fmt.Errorf("%w: %T", errNoReaderGeneration, r)
+}
+
+// readGeneration reads one generation of key: its data and the metadata
+// stored with that generation, so an archived copy never pairs one version's
+// ciphertext with another version's key ID (#243). The metadata is read
+// pinned to the generation the reader opened (ReaderObjectAttrs carries no
+// custom metadata); when that generation is gone, the error wraps
+// errGenerationReplaced and the caller starts over.
+func readGeneration(ctx context.Context, obj gcsObject, key string) ([]byte, *common.Metadata, error) {
+	rc, err := obj.NewReader(ctx)
 	if err != nil {
-		return err
+		return nil, nil, objectError(err, key)
 	}
 	defer func() { _ = rc.Close() }()
-	md, err := g.attrsMetadata(ctx, key)
+	gen, err := readerGeneration(rc)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-
+	attrs, err := obj.Generation(gen).Attrs(ctx)
+	if errors.Is(err, storage.ErrObjectNotExist) {
+		return nil, nil, fmt.Errorf("%w: %s generation %d: %w", errGenerationReplaced, key, gen, err)
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read object attributes for %s: %w", key, err)
+	}
 	// Buffer the data to ensure compatibility with destinations that require Content-Length
 	data, err := io.ReadAll(rc)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-
-	return common.ArchiveCopy(ctx, key, bytes.NewReader(data), md, destination)
+	return data, metadataOf(attrs), nil
 }
 
 // AddPolicy adds a new lifecycle policy by configuring GCS bucket lifecycle rules.
