@@ -11,6 +11,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"slices"
@@ -47,6 +48,10 @@ const formatVersionV1 = 1
 
 // keyringDir holds the config generations key changes write.
 const keyringDir = "keyring/"
+
+// keyringNonce is the size of the random part of a key generation name, so
+// two writers of one generation never pick the same name.
+const keyringNonce = 16
 
 // configID is the config's ID in its additional data.
 var configID = []byte("config")
@@ -99,11 +104,28 @@ type Repository struct {
 	dk     *keyseam.DataKey
 	keys   *seal.Keys
 	// mu serializes key changes for their whole read-modify-commit and
-	// guards cfg and slot, which a key change replaces.
-	mu  sync.Mutex
+	// guards base, gens, cfg and slot, which a key change replaces.
+	mu sync.Mutex
+	// base is the config Init (or a format 1 Init) wrote.
+	base Config
+	// gens holds every key generation read or written, by object name.
+	gens map[string]generation
+	// cfg is base with the key slots every generation in gens yields.
 	cfg Config
 	// slot is the ID of the key object that opened the repository.
 	slot seal.ID
+}
+
+// generation is a key generation object, keyring/<generation>-<nonce>. Its
+// delta, Added and Removed, is authoritative: the key slots are the base
+// config's slots plus every generation's Added minus every generation's
+// Removed. Config.Keys is the slot set its writer saw after the change.
+type generation struct {
+	Config
+	// Added lists the slots the change added.
+	Added []seal.ID `json:"added,omitempty"`
+	// Removed lists the slots the change removed.
+	Removed []seal.ID `json:"removed,omitempty"`
 }
 
 // Init creates a repository under prefix in st: it generates a data key,
@@ -144,6 +166,7 @@ func Init(ctx context.Context, st store.Store, prefix string, p keyseam.Provider
 	}
 	r.slot = sha256.Sum256(wrapped)
 	r.cfg.Keys = []seal.ID{r.slot}
+	r.base = r.cfg
 	cfg = r.cfg
 	keyName := layout.Name(KindKey, r.slot)
 	if err := st.Put(ctx, keyName, wrapped); err != nil {
@@ -239,12 +262,15 @@ func openWith(ctx context.Context, st store.Store, layout Layout, dk *keyseam.Da
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := r.openConfig(layout.Config(), sealedCfg)
+	g, err := r.openConfig(layout.Config(), sealedCfg)
+	if err == nil && (g.Generation != 0 || len(g.Added) > 0 || len(g.Removed) > 0) {
+		err = newError(op, layout.Config(), ErrCorrupt, nil)
+	}
 	if err != nil {
 		return nil, errors.Join(err, r.Close())
 	}
-	r.cfg = cfg
-	// The latest key generation, if any, supersedes the config Init wrote.
+	r.base, r.cfg = g.Config, g.Config
+	// The key generations, if any, change the slots the config Init wrote.
 	if err := r.refresh(ctx, op); err != nil {
 		return nil, errors.Join(err, r.Close())
 	}
@@ -256,55 +282,116 @@ func openWith(ctx context.Context, st store.Store, layout Layout, dk *keyseam.Da
 // caller holds r.mu, or owns r alone.
 func (r *Repository) refresh(ctx context.Context, op string) error {
 	dir := r.layout.prefix + keyringDir
-	gens, err := r.st.List(ctx, dir)
+	names, err := r.st.List(ctx, dir)
 	if err != nil {
 		return fromStore(op, dir, err)
 	}
-	if len(gens) == 0 {
-		return nil
+	if r.gens == nil {
+		r.gens = make(map[string]generation)
 	}
-	name := gens[len(gens)-1]
-	if r.cfg.Version >= formatVersion && name == r.keyringName(r.cfg.Generation) {
-		return nil
+	for _, name := range names {
+		if _, ok := r.gens[name]; ok {
+			// Generations are write-once under names no other writer picks.
+			continue
+		}
+		g, err := r.readGeneration(ctx, op, name)
+		if err != nil {
+			return err
+		}
+		r.gens[name] = g
 	}
-	sealed, err := r.st.Get(ctx, name)
+	cfg, err := r.effective(op)
 	if err != nil {
-		return fromStore(op, name, err)
+		return err
 	}
-	gen, err := r.openConfig(name, sealed)
-	if err != nil {
-		// The data key opened the config, so a generation it cannot open
-		// is damage, not another repository's key.
-		return newError(op, name, ErrCorrupt, nil)
-	}
-	if gen.Version != formatVersion || gen.ID != r.cfg.ID || name != r.keyringName(gen.Generation) {
-		return newError(op, name, ErrCorrupt, nil)
-	}
-	r.cfg = gen
+	r.cfg = cfg
 	return nil
 }
 
+// readGeneration reads and authenticates the key generation at name.
+func (r *Repository) readGeneration(ctx context.Context, op, name string) (generation, error) {
+	n, ok := r.parseKeyring(name)
+	if !ok {
+		return generation{}, newError(op, name, ErrCorrupt, nil)
+	}
+	sealed, err := r.st.Get(ctx, name)
+	if err != nil {
+		return generation{}, fromStore(op, name, err)
+	}
+	g, err := r.openConfig(name, sealed)
+	if err != nil {
+		// The data key opened the config, so a generation it cannot open
+		// is damage, not another repository's key.
+		return generation{}, newError(op, name, ErrCorrupt, nil)
+	}
+	if g.Version != formatVersion || g.ID != r.base.ID || g.Generation != n ||
+		g.Chunker != r.base.Chunker || g.PackSize != r.base.PackSize ||
+		len(g.Added)+len(g.Removed) == 0 {
+		return generation{}, newError(op, name, ErrCorrupt, nil)
+	}
+	return g, nil
+}
+
+// effective is the base config with the key slots of every generation in
+// r.gens: the base slots plus every added slot, minus every removed slot.
+// A removed slot never comes back, and the result depends neither on the
+// order of the generations nor on which of two concurrent writers won.
+func (r *Repository) effective(op string) (Config, error) {
+	cfg := r.base
+	if len(r.gens) == 0 {
+		return cfg, nil
+	}
+	names := make([]string, 0, len(r.gens))
+	for name := range r.gens {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	removed := make(map[seal.ID]bool)
+	keys := slices.Clone(r.base.Keys)
+	for _, name := range names {
+		g := r.gens[name]
+		cfg.Generation = max(cfg.Generation, g.Generation)
+		keys = append(keys, g.Added...)
+		for _, id := range g.Removed {
+			removed[id] = true
+		}
+	}
+	seen := make(map[seal.ID]bool)
+	cfg.Keys = slices.DeleteFunc(keys, func(id seal.ID) bool {
+		drop := removed[id] || seen[id]
+		seen[id] = true
+		return drop
+	})
+	cfg.Version = formatVersion
+	if len(cfg.Keys) == 0 {
+		// Concurrent removals took every slot. The key objects stay in the
+		// store; see RemoveKey.
+		return Config{}, newError(op, r.layout.prefix+keyringDir, ErrKeyConflict, ErrNoKey)
+	}
+	return cfg, nil
+}
+
 // openConfig opens and checks a sealed config stored under name.
-func (r *Repository) openConfig(name string, sealed []byte) (Config, error) {
+func (r *Repository) openConfig(name string, sealed []byte) (generation, error) {
 	const op = "open"
 	plain, err := r.keys.Open(seal.TypeConfig, configSealID(r.layout, name), sealed)
 	if err != nil {
-		return Config{}, fromSeal(op, name, err)
+		return generation{}, fromSeal(op, name, err)
 	}
-	var cfg Config
-	if err := json.Unmarshal(plain, &cfg); err != nil {
-		return Config{}, newError(op, name, ErrCorrupt, err)
+	var g generation
+	if err := json.Unmarshal(plain, &g); err != nil {
+		return generation{}, newError(op, name, ErrCorrupt, err)
 	}
-	switch {
+	switch cfg := g.Config; {
 	case cfg.Version == formatVersionV1 && len(cfg.Keys) == 0 && cfg.Generation == 0:
 	case cfg.Version == formatVersion && len(cfg.Keys) > 0:
 	default:
-		return Config{}, newError(op, name, ErrCorrupt, nil)
+		return generation{}, newError(op, name, ErrCorrupt, nil)
 	}
-	if err := cfg.validate(); err != nil {
-		return Config{}, newError(op, name, ErrCorrupt, err)
+	if err := g.validate(); err != nil {
+		return generation{}, newError(op, name, ErrCorrupt, err)
 	}
-	return cfg, nil
+	return g, nil
 }
 
 // configSealID is the ID a config's seal binds: the original config keeps
@@ -318,9 +405,28 @@ func configSealID(l Layout, name string) []byte {
 
 // keyringName names key generation n; the hex width keeps List order
 // numeric.
-func (r *Repository) keyringName(n uint64) string {
+func (r *Repository) keyringName(n uint64, nonce string) string {
 	s := strconv.FormatUint(n, 16)
-	return r.layout.prefix + keyringDir + strings.Repeat("0", 16-len(s)) + s
+	return r.layout.prefix + keyringDir + strings.Repeat("0", 16-len(s)) + s + "-" + nonce
+}
+
+// parseKeyring returns the generation number of a key generation name, and
+// false when name is not keyring/<16 hex>-<32 hex>.
+func (r *Repository) parseKeyring(name string) (uint64, bool) {
+	rest, ok := strings.CutPrefix(name, r.layout.prefix+keyringDir)
+	if !ok {
+		return 0, false
+	}
+	num, nonce, ok := strings.Cut(rest, "-")
+	if !ok || len(num) != 16 || len(nonce) != 2*keyringNonce {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(num, 16, 64)
+	b, herr := hex.DecodeString(nonce)
+	if err != nil || herr != nil || name != r.keyringName(n, hex.EncodeToString(b)) {
+		return 0, false
+	}
+	return n, true
 }
 
 // Slot returns the ID of the key slot that opened the repository.
@@ -333,10 +439,10 @@ func (r *Repository) Slot() seal.ID {
 // Keys returns the IDs of the repository's key slots. On a format 1
 // repository the only slot is the key that opened it. The error is reserved
 // for providers of a key list that must be read.
-func (r *Repository) Keys(_ context.Context) ([]seal.ID, error) {
+func (r *Repository) Keys(ctx context.Context) ([]seal.ID, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.slots(), nil
+	return r.current(ctx)
 }
 
 // slots lists the key slots. The caller holds r.mu.
@@ -369,7 +475,7 @@ func (r *Repository) AddKey(ctx context.Context, p keyseam.Provider) (seal.ID, e
 	if slices.Contains(keys, id) {
 		return id, nil
 	}
-	return id, r.writeKeys(ctx, append(keys, id))
+	return id, r.writeKeys(ctx, []seal.ID{id}, nil)
 }
 
 // current re-reads the latest key generation and returns its slots, the
@@ -398,7 +504,7 @@ func (r *Repository) RemoveKey(ctx context.Context, id seal.ID) error {
 	case len(keys) == 1:
 		return newError(op, r.layout.Name(KindKey, id), ErrLastKey, nil)
 	}
-	return r.writeKeys(ctx, slices.Delete(keys, i, i+1))
+	return r.writeKeys(ctx, nil, []seal.ID{id})
 }
 
 // ChangeKey wraps the data key under p in a new slot and drops the slot
@@ -415,8 +521,11 @@ func (r *Repository) ChangeKey(ctx context.Context, p keyseam.Provider) (seal.ID
 	if err != nil {
 		return seal.ID{}, err
 	}
-	keys = slices.DeleteFunc(keys, func(k seal.ID) bool { return k == r.slot || k == id })
-	if err := r.writeKeys(ctx, append(keys, id)); err != nil {
+	if slices.Contains(keys, id) {
+		// The same wrapped key again cannot replace the opening slot.
+		return seal.ID{}, newError("change key", r.layout.Name(KindKey, id), ErrKeyConflict, nil)
+	}
+	if err := r.writeKeys(ctx, []seal.ID{id}, []seal.ID{r.slot}); err != nil {
 		return seal.ID{}, err
 	}
 	r.slot = id
@@ -440,14 +549,26 @@ func (r *Repository) putKey(ctx context.Context, p keyseam.Provider) (seal.ID, e
 
 // writeKeys writes the next key generation, listing keys. A generation
 // that already exists means another client changed the keys meanwhile.
-func (r *Repository) writeKeys(ctx context.Context, keys []seal.ID) error {
+func (r *Repository) writeKeys(ctx context.Context, add, remove []seal.ID) error {
 	const op = "write keys"
-	cfg := r.cfg
-	cfg.Version = formatVersion
-	cfg.Generation++
-	cfg.Keys = keys
-	name := r.keyringName(cfg.Generation)
-	plain, err := json.Marshal(cfg)
+	if r.cfg.Version < formatVersion {
+		// No generation yet on a format 1 repository: the first one adds
+		// the slot that opened it, its only slot.
+		add = append([]seal.ID{r.slot}, add...)
+	}
+	g := generation{Config: r.cfg, Added: add, Removed: remove}
+	g.Version = formatVersion
+	g.Generation++
+	g.Keys = slices.DeleteFunc(append(slices.Clone(r.slots()), add...), func(id seal.ID) bool {
+		return slices.Contains(remove, id)
+	})
+	g.Keys = slices.Compact(g.Keys)
+	var nonce [keyringNonce]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return newError(op, "", ErrKeys, err)
+	}
+	name := r.keyringName(g.Generation, hex.EncodeToString(nonce[:]))
+	plain, err := json.Marshal(g)
 	if err != nil {
 		return newError(op, name, ErrCorrupt, err)
 	}
@@ -461,7 +582,19 @@ func (r *Repository) writeKeys(ctx context.Context, keys []seal.ID) error {
 		}
 		return fromStore(op, name, err)
 	}
-	r.cfg = cfg
+	if r.gens == nil {
+		r.gens = make(map[string]generation)
+	}
+	r.gens[name] = g
+	// Re-read: a concurrent change by another client may have committed.
+	if err := r.refresh(ctx, op); err != nil {
+		return err
+	}
+	for _, id := range add {
+		if !slices.Contains(r.cfg.Keys, id) {
+			return newError(op, r.layout.Name(KindKey, id), ErrKeyConflict, ErrKeyRemoved)
+		}
+	}
 	return nil
 }
 

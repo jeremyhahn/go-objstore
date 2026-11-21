@@ -119,7 +119,7 @@ func failOn(op, part string) func(string, string) error {
 
 // withStore returns a copy of r over another store.
 func withStore(r *Repository, st store.Store) *Repository {
-	return &Repository{st: st, layout: r.layout, dk: r.dk, keys: r.keys, cfg: r.Config(), slot: r.Slot()}
+	return &Repository{st: st, layout: r.layout, dk: r.dk, keys: r.keys, base: r.base, cfg: r.Config(), slot: r.Slot()}
 }
 
 // brokenProvider fails every key operation.
