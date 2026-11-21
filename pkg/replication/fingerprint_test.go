@@ -143,30 +143,25 @@ func readDest(t *testing.T, s *Syncer, key string) string {
 // rewrite must still be replicated (#222).
 func TestSync_SameSecondSameSizeRewriteReplicated(t *testing.T) {
 	ctx := context.Background()
-	for attempt := 0; ; attempt++ {
-		s, source := newFingerprintSyncer(t)
-		require.NoError(t, source.PutWithContext(ctx, "k", bytes.NewReader([]byte("aaaa"))))
-		before, err := source.GetMetadata(ctx, "k")
-		require.NoError(t, err)
-		r, err := s.SyncAll(ctx)
-		require.NoError(t, err)
-		require.Equal(t, 1, r.Synced)
+	s, source := newFingerprintSyncer(t)
+	require.NoError(t, source.PutWithContext(ctx, "k", bytes.NewReader([]byte("aaaa"))))
+	before, err := source.GetMetadata(ctx, "k")
+	require.NoError(t, err)
+	r, err := s.SyncAll(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, r.Synced)
 
-		require.NoError(t, source.PutWithContext(ctx, "k", bytes.NewReader([]byte("bbbb"))))
-		after, err := source.GetMetadata(ctx, "k")
-		require.NoError(t, err)
-		if before.ETag != after.ETag {
-			// Crossed a second boundary; the case needs one second.
-			require.Less(t, attempt, 5, "could not write twice within one second")
-			continue
-		}
+	// No sleep: the rewrite follows at once, almost always in the same second,
+	// and still gets a new ETag.
+	require.NoError(t, source.PutWithContext(ctx, "k", bytes.NewReader([]byte("bbbb"))))
+	after, err := source.GetMetadata(ctx, "k")
+	require.NoError(t, err)
+	require.NotEqual(t, before.ETag, after.ETag, "a rewrite keeps the ETag")
 
-		r, err = s.SyncAll(ctx)
-		require.NoError(t, err)
-		require.Equal(t, 1, r.Synced, "same-size rewrite in the same second")
-		require.Equal(t, "bbbb", readDest(t, s, "k"))
-		return
-	}
+	r, err = s.SyncAll(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, r.Synced, "same-size rewrite in the same second")
+	require.Equal(t, "bbbb", readDest(t, s, "k"))
 }
 
 // TestSync_MetadataOnlyUpdateReplicated: a source update that changes only

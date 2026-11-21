@@ -123,7 +123,7 @@ func (m *Memory) PutWithMetadataResult(ctx context.Context, key string, data io.
 	}
 	metadata.Size = int64(len(dataBytes))
 	metadata.LastModified = time.Now()
-	metadata.ETag = fmt.Sprintf("%d-%d", metadata.LastModified.Unix(), metadata.Size)
+	metadata.ETag = fmt.Sprintf("%d-%d", metadata.LastModified.UnixNano(), metadata.Size)
 	stored := &common.Metadata{ETag: metadata.ETag, Size: metadata.Size, LastModified: metadata.LastModified}
 
 	m.mu.Lock()
@@ -226,7 +226,11 @@ func (m *Memory) UpdateMetadata(ctx context.Context, key string, metadata *commo
 	}
 	metadata.Size = int64(len(obj.data))
 	metadata.LastModified = time.Now()
-	metadata.ETag = fmt.Sprintf("%d-%d", metadata.LastModified.Unix(), metadata.Size)
+	// The ETag names the content, which a metadata write leaves alone.
+	metadata.ETag = obj.metadata.ETag
+	if metadata.ETag == "" {
+		metadata.ETag = fmt.Sprintf("%d-%d", metadata.LastModified.UnixNano(), metadata.Size)
+	}
 
 	obj.metadata = metadata
 	return nil

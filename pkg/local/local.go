@@ -389,7 +389,7 @@ func (l *Local) PutWithMetadataResult(ctx context.Context, key string, data io.R
 	// ETag from the written file's modification time and size.
 	if written != nil {
 		metadata.LastModified = written.ModTime()
-		metadata.ETag = fmt.Sprintf("%d-%d", written.ModTime().Unix(), size)
+		metadata.ETag = fmt.Sprintf("%d-%d", written.ModTime().UnixNano(), size)
 	}
 
 	// Add at-rest encryption metadata if encrypted
@@ -558,7 +558,7 @@ func (l *Local) UpdateMetadata(ctx context.Context, key string, metadata *common
 	}
 	metadata.Size = info.Size()
 	metadata.LastModified = time.Now()
-	metadata.ETag = fmt.Sprintf("%d-%d", info.ModTime().Unix(), info.Size())
+	metadata.ETag = fmt.Sprintf("%d-%d", info.ModTime().UnixNano(), info.Size())
 
 	return l.saveMetadata(key, metadata)
 }
@@ -805,7 +805,7 @@ func (l *Local) ListWithOptions(ctx context.Context, opts *common.ListOptions) (
 			metadata = &common.Metadata{
 				Size:         info.Size(),
 				LastModified: info.ModTime(),
-				ETag:         fmt.Sprintf("%d-%d", info.ModTime().Unix(), info.Size()),
+				ETag:         fmt.Sprintf("%d-%d", info.ModTime().UnixNano(), info.Size()),
 			}
 		}
 

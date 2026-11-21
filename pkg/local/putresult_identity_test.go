@@ -35,7 +35,7 @@ func TestPutWithMetadataResult_IdentityFromWrittenFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	replacement := fmt.Sprintf("%d-%d", replaced.Unix(), 4)
+	replacement := fmt.Sprintf("%d-%d", replaced.UnixNano(), 4)
 	if got == nil || got.ETag == "" || got.Size != 4 {
 		t.Fatalf("result = %+v, want the upload's identity", got)
 	}
