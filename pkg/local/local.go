@@ -444,28 +444,60 @@ func (l *Local) GetWithContext(ctx context.Context, key string) (io.ReadCloser, 
 	if err != nil {
 		return nil, err
 	}
+	file, md, err := l.openObject(root, key, l.atRestEncrypterFactory != nil)
+	if err != nil {
+		return nil, err
+	}
+	return l.readObject(ctx, key, file, md)
+}
+
+// openObject opens the data file of key and, when withMetadata is set,
+// loads its metadata (nil when the key has none). It holds the key's lock
+// while it does both, so the descriptor and the at-rest key ID come from one
+// put: a put renames its data into place and saves its metadata under the
+// same lock (#243).
+func (l *Local) openObject(root *os.Root, key string, withMetadata bool) (*os.File, *common.Metadata, error) {
 	name := rootName(key)
-	path := filepath.Join(l.path, name)
+	defer l.lockKey(name)()
 	file, err := root.Open(name)
 	if err != nil {
 		// Don't log "not found" errors - these are expected during initialization
 		// and should be handled by the caller. Only return a wrapped error.
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("%w: %s", common.ErrKeyNotFound, key)
+			return nil, nil, fmt.Errorf("%w: %s", common.ErrKeyNotFound, key)
 		}
 		// Log actual unexpected errors
 		log.Printf("[LOCAL] ✗ GET '%s' failed: %v", key, err)
-		return nil, err
+		return nil, nil, err
 	}
+	if !withMetadata {
+		return file, nil, nil
+	}
+	md, err := l.loadMetadata(key)
+	if err != nil {
+		if errors.Is(err, common.ErrMetadataNotFound) {
+			return file, nil, nil
+		}
+		_ = file.Close()
+		return nil, nil, fmt.Errorf("failed to load metadata for at-rest key id: %w", err)
+	}
+	return file, md, nil
+}
+
+// readObject returns the plaintext of the data file opened by openObject,
+// decrypting it with the at-rest key md records. It takes ownership of file.
+func (l *Local) readObject(ctx context.Context, key string, file *os.File, md *common.Metadata) (io.ReadCloser, error) {
+	name := rootName(key)
+	path := filepath.Join(l.path, name)
 
 	// Get at-rest encrypter if factory is set
 	var encrypter common.Encrypter
 	if l.atRestEncrypterFactory != nil {
-		keyID, err := l.atRestKeyID(key)
-		if err != nil {
-			_ = file.Close()
-			return nil, err
+		var keyID string
+		if md != nil && md.Custom != nil {
+			keyID = md.Custom["at_rest_encryption_key_id"]
 		}
+		var err error
 		encrypter, err = l.atRestEncrypterFactory.GetEncrypter(keyID)
 		if err != nil {
 			_ = file.Close()
@@ -485,7 +517,7 @@ func (l *Local) GetWithContext(ctx context.Context, key string) (io.ReadCloser, 
 		}
 		// Note: file will be closed when decryptedData is closed
 		// Get file size for logging
-		info, err := root.Stat(name)
+		info, err := file.Stat()
 		if err == nil {
 			sizeStr := formatBytes(info.Size())
 			log.Printf("[LOCAL] ✓ GET '%s' ← %s (%s, decrypted)", key, path, sizeStr)
@@ -505,24 +537,6 @@ func (l *Local) GetWithContext(ctx context.Context, key string) (io.ReadCloser, 
 	}
 
 	return file, nil
-}
-
-// atRestKeyID returns the at-rest encryption key id recorded for key when it
-// was written, or "" (the factory's default key) when the object has no
-// metadata or the metadata records no key id. Any other metadata error is
-// returned, so a read never silently decrypts with the wrong key.
-func (l *Local) atRestKeyID(key string) (string, error) {
-	md, err := l.loadMetadata(key)
-	if err != nil {
-		if errors.Is(err, common.ErrMetadataNotFound) {
-			return "", nil
-		}
-		return "", fmt.Errorf("failed to load metadata for at-rest key id: %w", err)
-	}
-	if md.Custom == nil {
-		return "", nil
-	}
-	return md.Custom["at_rest_encryption_key_id"], nil
 }
 
 // GetMetadata retrieves only the metadata for an object.

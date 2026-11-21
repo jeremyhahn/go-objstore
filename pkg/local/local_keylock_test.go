@@ -171,3 +171,49 @@ func TestAtRestPutsThroughTwoBucketHandlesKeepKeyIDWithData(t *testing.T) {
 		t.Fatalf("read %q, want the later put %q", got, "two")
 	}
 }
+
+// A read that runs while a put under a new default key has renamed its data
+// into place but not yet saved its metadata must not pair the new bytes with
+// the old at-rest key ID (#243).
+func TestAtRestReadDuringPutAfterKeyChangeKeepsKeyIDWithData(t *testing.T) {
+	a := &keyedEncrypter{id: "A"}
+	b := &pausingEncrypter{keyedEncrypter: keyedEncrypter{id: "B"}, entered: make(chan struct{}), release: make(chan struct{})}
+	f := &sequenceFactory{next: []common.Encrypter{a, b}, byID: map[string]common.Encrypter{"A": a, "B": b}}
+	l := newAtRestLocal(t, f)
+	ctx := context.Background()
+	if err := l.PutWithMetadata(ctx, "obj", bytes.NewReader([]byte("one")), nil); err != nil {
+		t.Fatalf("put under key A: %v", err)
+	}
+
+	putErr := make(chan error, 1)
+	go func() { putErr <- l.PutWithMetadata(ctx, "obj", bytes.NewReader([]byte("two")), nil) }()
+	<-b.entered // the put has renamed its data into place, its metadata still names A
+
+	type result struct {
+		data string
+		err  error
+	}
+	read := make(chan result, 1)
+	go func() {
+		data, err := readAll(t, l, "obj")
+		read <- result{data, err}
+	}()
+	select {
+	case r := <-read: // the read did not wait for the put
+		close(b.release)
+		<-putErr
+		t.Fatalf("read during the put returned %q, %v; want it to wait for the put", r.data, r.err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(b.release)
+	if err := <-putErr; err != nil {
+		t.Fatalf("put under key B: %v", err)
+	}
+	r := <-read
+	if r.err != nil {
+		t.Fatalf("read: %v", r.err)
+	}
+	if r.data != "two" {
+		t.Fatalf("read %q, want %q", r.data, "two")
+	}
+}
