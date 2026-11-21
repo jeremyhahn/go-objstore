@@ -89,7 +89,8 @@ func ArchiveCopy(ctx context.Context, key string, data io.Reader, metadata *Meta
 
 // archivedMetadata is the metadata the archived copy carries: the source's
 // descriptive fields and custom keys, without at-rest keys or the
-// size/ETag/timestamp the destination computes itself.
+// size/ETag/timestamp the destination computes itself. Client "encryption_*"
+// names are written lowercased; other custom names are kept as they are.
 func archivedMetadata(src *Metadata) *Metadata {
 	out := &Metadata{
 		ContentType:     src.ContentType,
@@ -97,8 +98,19 @@ func archivedMetadata(src *Metadata) *Metadata {
 		Custom:          make(map[string]string, len(src.Custom)),
 	}
 	for k, v := range src.Custom {
-		if strings.HasPrefix(strings.ToLower(k), atRestEncryptionPrefix) {
+		lower := strings.ToLower(k)
+		if strings.HasPrefix(lower, atRestEncryptionPrefix) {
 			continue
+		}
+		if strings.HasPrefix(lower, clientEncryptionPrefix) {
+			// The encryption wrapper reads only the lowercase names: a
+			// source that canonicalises them (S3 "Encryption_key_id")
+			// would otherwise give a copy read with the default key. An
+			// exact lowercase entry in the source wins over another case.
+			if _, exact := src.Custom[lower]; exact && lower != k {
+				continue
+			}
+			k = lower
 		}
 		out.Custom[k] = v
 	}

@@ -75,6 +75,65 @@ func TestArchiveCopyKeepsEncryptionMetadata(t *testing.T) {
 	}
 }
 
+// A source that returns the client encryption names canonicalised (S3
+// "Encryption_key_id") gives an archived copy with the lowercase names the
+// encryption wrapper reads, so the copy decrypts with its recorded key and
+// not the default one (#243).
+func TestArchiveCopyLowercasesEncryptionNames(t *testing.T) {
+	ctx := context.Background()
+	const plaintext = "secret written with key A"
+	cipher, err := (&keyedEncrypter{keyID: "keyA"}).Encrypt(ctx, strings.NewReader(plaintext))
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	src := &Metadata{
+		ContentType: "text/plain",
+		Custom: map[string]string{
+			"Encryption_key_id":         "keyA",
+			"Encryption_algorithm":      "test-keyed",
+			"At_rest_encryption_key_id": "rest-1",
+			"Owner":                     "team",
+		},
+	}
+
+	dst := newMockUnderlyingStorage()
+	if err := ArchiveCopy(ctx, "k", cipher, src, dst); err != nil {
+		t.Fatalf("ArchiveCopy: %v", err)
+	}
+	md, err := dst.GetMetadata(ctx, "k")
+	if err != nil {
+		t.Fatalf("GetMetadata: %v", err)
+	}
+	want := map[string]string{
+		"encryption_key_id":    "keyA",
+		"encryption_algorithm": "test-keyed",
+		"Owner":                "team",
+	}
+	if len(md.Custom) != len(want) {
+		t.Fatalf("archived custom metadata = %v, want %v", md.Custom, want)
+	}
+	for k, v := range want {
+		if md.Custom[k] != v {
+			t.Errorf("Custom[%q] = %q, want %q", k, md.Custom[k], v)
+		}
+	}
+
+	// The default key of the reader is B: the copy decrypts with key A.
+	readerB := NewEncryptedStorage(dst, newKeyedFactory("keyB"))
+	if got := readAllString(t, readerB, "k"); got != plaintext {
+		t.Errorf("read archived copy = %q, want %q", got, plaintext)
+	}
+
+	// An exact lowercase entry wins over the same name in another case.
+	both := archivedMetadata(&Metadata{Custom: map[string]string{
+		"encryption_key_id": "keyA",
+		"Encryption_key_id": "keyB",
+	}})
+	if len(both.Custom) != 1 || both.Custom["encryption_key_id"] != "keyA" {
+		t.Errorf("archived custom metadata = %v, want encryption_key_id=keyA only", both.Custom)
+	}
+}
+
 func TestArchiveCopyRefusesMetadataLessDestination(t *testing.T) {
 	dst := &putOnlyArchiver{}
 	err := ArchiveCopy(context.Background(), "k", strings.NewReader("ct"), encryptedMD(), dst)
