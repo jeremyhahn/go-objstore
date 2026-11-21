@@ -18,10 +18,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"time"
 
+	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
 	"github.com/jeremyhahn/go-objstore/pkg/objstore"
@@ -336,6 +339,9 @@ func (r *ToolRegistry) GetTool(name string) (Tool, bool) {
 type ToolExecutor struct {
 	backend  string              // Backend name (empty = default)
 	wireOpts factory.WireOptions // How client-supplied archive destinations are treated
+	// authorizer returns the server's authorizer for the put tool's overwrite
+	// check (#238); nil means allow-all, like the NoOp default.
+	authorizer func() adapters.Authorizer
 }
 
 // NewToolExecutor creates a new tool executor
@@ -400,6 +406,33 @@ func (e *ToolExecutor) Execute(ctx context.Context, toolName string, args map[st
 }
 
 // executePut executes the objstore_put tool
+// authorizeOverwrite refuses a put to an existing key unless the principal may
+// overwrite (#238). The principal is the one the transport gate authorized:
+// HTTP stores the authenticated principal in the context, stdio with
+// EnforceStdioAuthz stores the anonymous principal. With no principal in the
+// context no gate ran (stdio without enforcement), so the put is not checked
+// either. A denial maps to the forbidden JSON-RPC code; a failed existence
+// lookup fails closed with an internal error.
+func (e *ToolExecutor) authorizeOverwrite(ctx context.Context, key string) error {
+	if e.authorizer == nil {
+		return nil
+	}
+	principal, ok := ctx.Value(principalContextKey).(*adapters.Principal)
+	if !ok {
+		return nil
+	}
+	err := adapters.AuthorizeOverwrite(ctx, e.authorizer(), principal, key, func(ctx context.Context) (bool, error) {
+		return objstore.Exists(ctx, e.keyRef(key))
+	})
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, adapters.ErrInsufficientPermissions) {
+		return fmt.Errorf("%w: overwrite of an existing object", common.ErrPermissionDenied)
+	}
+	return fmt.Errorf("failed to check whether the object exists: %w", err)
+}
+
 func (e *ToolExecutor) executePut(ctx context.Context, args map[string]any) (string, error) {
 	key, ok := args[fieldKey].(string)
 	if !ok || key == "" {
@@ -409,6 +442,12 @@ func (e *ToolExecutor) executePut(ctx context.Context, args map[string]any) (str
 	data, ok := args["data"].(string)
 	if !ok {
 		return "", ErrMissingParameter
+	}
+
+	// A put to an existing key needs overwrite as well as write (#238);
+	// checked before the payload is decoded or stored.
+	if err := e.authorizeOverwrite(ctx, key); err != nil {
+		return "", err
 	}
 
 	// Object data travels base64-encoded inside the JSON-RPC payload so the

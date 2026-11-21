@@ -197,13 +197,16 @@ func NewServer(config *ServerConfig) (*Server, error) {
 		rateLimiter = middleware.NewRateLimiter(config.RateLimitConfig, config.Logger)
 	}
 
-	return &Server{
+	s := &Server{
 		config:          config,
 		toolRegistry:    toolRegistry,
 		toolExecutor:    toolExecutor,
 		resourceManager: resourceManager,
 		rateLimiter:     rateLimiter,
-	}, nil
+	}
+	// The put tool's overwrite check uses the same authorizer as the gates.
+	toolExecutor.authorizer = func() adapters.Authorizer { return s.config.Authorizer }
+	return s, nil
 }
 
 // Start starts the MCP server

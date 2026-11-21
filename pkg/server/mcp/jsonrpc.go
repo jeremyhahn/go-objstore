@@ -147,6 +147,10 @@ func (h *RPCHandler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonr
 				Message: "forbidden",
 			}
 		}
+		// The put tool's overwrite check authorizes the same principal.
+		if _, ok := ctx.Value(principalContextKey).(*adapters.Principal); !ok {
+			ctx = context.WithValue(ctx, principalContextKey, principal)
+		}
 	}
 
 	switch req.Method {
