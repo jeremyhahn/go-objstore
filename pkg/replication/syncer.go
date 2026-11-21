@@ -117,6 +117,8 @@ func NewSyncerWithProvider(
 	}
 
 	// Apply CLIENT-SIDE DEK encryption based on mode (Layers 2 & 3)
+	// Asked of the backend itself: an encrypting wrapper hides it.
+	destRetags := metadataWriteRetags(dest)
 	switch policy.ReplicationMode {
 	case common.ReplicationModeTransparent:
 		// In transparent mode, decrypt at source and re-encrypt at destination
@@ -136,12 +138,13 @@ func NewSyncerWithProvider(
 	}
 
 	return &Syncer{
-		policy:   policy,
-		source:   source,
-		dest:     dest,
-		logger:   logger,
-		auditLog: auditLog,
-		metrics:  NewReplicationMetrics(),
+		policy:     policy,
+		source:     source,
+		dest:       dest,
+		destRetags: destRetags,
+		logger:     logger,
+		auditLog:   auditLog,
+		metrics:    NewReplicationMetrics(),
 	}, nil
 }
 
