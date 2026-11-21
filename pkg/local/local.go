@@ -355,10 +355,22 @@ func (l *Local) PutWithMetadataResult(ctx context.Context, key string, data io.R
 	}
 
 	var size int64
+	// The identity is taken from the file actually written, before it is
+	// published: a stat by name after the rename could describe a
+	// concurrent writer's replacement instead.
+	var written os.FileInfo
 	if err := writeObjectAtomic(root, &l.pruneMu, name, 0644, func(w io.Writer) error {
 		n, werr := io.Copy(w, dataToWrite)
 		size = n
-		return werr
+		if werr != nil {
+			return werr
+		}
+		if f, ok := w.(interface{ Stat() (os.FileInfo, error) }); ok {
+			if fi, serr := f.Stat(); serr == nil {
+				written = fi
+			}
+		}
+		return nil
 	}); err != nil {
 		log.Printf("[LOCAL] ✗ Failed to write object '%s': %v", key, err)
 		return nil, err
@@ -370,11 +382,14 @@ func (l *Local) PutWithMetadataResult(ctx context.Context, key string, data io.R
 	}
 	metadata.Size = size
 	metadata.LastModified = time.Now()
+	if afterPublishHook != nil {
+		afterPublishHook(name)
+	}
 
-	// Get file info for ETag (using modification time as simple ETag)
-	info, err := root.Stat(name)
-	if err == nil {
-		metadata.ETag = fmt.Sprintf("%d-%d", info.ModTime().Unix(), size)
+	// ETag from the written file's modification time and size.
+	if written != nil {
+		metadata.LastModified = written.ModTime()
+		metadata.ETag = fmt.Sprintf("%d-%d", written.ModTime().Unix(), size)
 	}
 
 	// Add at-rest encryption metadata if encrypted
@@ -1007,6 +1022,10 @@ func writeFileAtomic(root *os.Root, name string, mode os.FileMode, write func(io
 // yet. Deleting an object prunes the directories it leaves empty, so the
 // directory is created, and the temp file made in it, while holding off the
 // prune of mu's store (see createObjectTemp).
+// afterPublishHook, when set by a test, runs in PutWithMetadataResult after
+// the object is published and before its result is built.
+var afterPublishHook func(name string)
+
 func writeObjectAtomic(root *os.Root, mu *sync.RWMutex, name string, mode os.FileMode, write func(io.Writer) error) error {
 	return writeAtomic(root, mu, name, mode, true, write)
 }
