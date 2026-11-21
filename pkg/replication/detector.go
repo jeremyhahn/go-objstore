@@ -181,7 +181,33 @@ func recordIs(dest *common.Metadata, key, want string) bool {
 // when no destination ETag is recorded, else whether it is dest's ETag.
 func destETagMatches(dest *common.Metadata) bool {
 	recorded, ok := dest.Custom[MetaReplicationDestETag]
+	if ok && recorded == destETagUpload {
+		// Bound by the upload on a backend whose metadata writes re-tag
+		// the copy: the record cannot hold the copy's final ETag, so the
+		// fingerprint and the stored size bind it alone.
+		return true
+	}
 	return ok && recorded != "" && recorded == dest.ETag
+}
+
+// destETagUpload is recorded as MetaReplicationDestETag on a destination
+// whose metadata writes change its ETag (Azure): the upload carries the
+// record itself, and no later metadata write tries to bind the ETag.
+const destETagUpload = "@upload"
+
+// MetadataWriteChangesETag is implemented by a backend whose metadata-only
+// writes (UpdateMetadata) give the object a new ETag, as Azure's
+// SetMetadata and SetHTTPHeaders do. Recording the copy's ETag in its own
+// metadata would then never match.
+type MetadataWriteChangesETag interface {
+	MetadataWriteChangesETag() bool
+}
+
+// metadataWriteRetags reports whether s says a metadata write re-tags its
+// objects. Ask the backend itself: a wrapper does not forward the method.
+func metadataWriteRetags(s common.Storage) bool {
+	r, ok := s.(MetadataWriteChangesETag)
+	return ok && r.MetadataWriteChangesETag()
 }
 
 // sourceFingerprint returns the metadata to write with the destination copy

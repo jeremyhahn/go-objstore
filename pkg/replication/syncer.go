@@ -50,12 +50,16 @@ const (
 )
 
 type Syncer struct {
-	policy   common.ReplicationPolicy
-	source   common.Storage
-	dest     common.Storage
-	logger   adapters.Logger
-	auditLog auditlog.AuditLogger
-	metrics  *ReplicationMetrics
+	policy common.ReplicationPolicy
+	source common.Storage
+	dest   common.Storage
+	// destRetags is set when the destination backend's metadata writes
+	// change the copy's ETag (MetadataWriteChangesETag): the copy is then
+	// bound by its upload, not by a later metadata write.
+	destRetags bool
+	logger     adapters.Logger
+	auditLog   auditlog.AuditLogger
+	metrics    *ReplicationMetrics
 }
 
 // NewSyncer creates a new Syncer with proper encryption wrapping based on the policy.
@@ -352,6 +356,11 @@ func (s *Syncer) SyncObject(ctx context.Context, key string) (int64, error) {
 	// Put to destination (automatically encrypted if enabled), recording the
 	// source fingerprint the next change detection compares against.
 	fingerprint := sourceFingerprint(srcMetadata)
+	if _, ok := fingerprint.Custom[MetaReplicationDestSize]; ok && s.destRetags {
+		// A metadata write would re-tag the copy, so the upload carries
+		// the binding record itself (see bindDestination).
+		fingerprint.Custom[MetaReplicationDestETag] = destETagUpload
+	}
 	stored, err := s.putDestination(ctx, key, reader, fingerprint)
 	if err != nil {
 		_ = s.auditLog.LogObjectMutation(ctx, "replication_failed",
@@ -388,10 +397,21 @@ func (s *Syncer) putDestination(ctx context.Context, key string, data io.Reader,
 // the rewrite, and the next sync copies again. With no identity from the
 // upload nothing is bound, and the next sync copies again: never a skip.
 func (s *Syncer) bindDestination(ctx context.Context, key string, fingerprint, stored *common.Metadata) {
-	if _, ok := fingerprint.Custom[MetaReplicationDestSize]; !ok {
+	expected, ok := fingerprint.Custom[MetaReplicationDestSize]
+	if !ok {
 		return
 	}
-	if stored == nil || stored.ETag == "" {
+	if s.destRetags {
+		// The upload already carried the destETagUpload record. A metadata
+		// write re-tags the copy, so make one only to correct the stored
+		// size (an encrypting destination), and never record an ETag.
+		if stored == nil {
+			stored, _ = s.dest.GetMetadata(ctx, key)
+		}
+		if stored == nil || stored.Size <= 0 || strconv.FormatInt(stored.Size, 10) == expected {
+			return
+		}
+	} else if stored == nil || stored.ETag == "" {
 		return
 	}
 	updated := *fingerprint
@@ -402,7 +422,11 @@ func (s *Syncer) bindDestination(ctx context.Context, key string, fingerprint, s
 	if stored.Size > 0 {
 		updated.Custom[MetaReplicationDestSize] = strconv.FormatInt(stored.Size, 10)
 	}
-	updated.Custom[MetaReplicationDestETag] = stored.ETag
+	if s.destRetags {
+		updated.Custom[MetaReplicationDestETag] = destETagUpload
+	} else {
+		updated.Custom[MetaReplicationDestETag] = stored.ETag
+	}
 	if err := s.dest.UpdateMetadata(ctx, key, &updated); err != nil {
 		s.logger.Warn(ctx, "Failed to record the copy's identity",
 			adapters.Field{Key: fieldKey, Value: key})

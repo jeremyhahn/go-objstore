@@ -182,6 +182,13 @@ func (a *Azure) UpdateMetadata(ctx context.Context, key string, metadata *common
 	return nil
 }
 
+// MetadataWriteChangesETag reports that UpdateMetadata gives the blob a new
+// ETag: SetMetadata and SetHTTPHeaders both re-tag it. Replication then
+// binds a copy by its upload instead of recording the ETag afterwards.
+func (a *Azure) MetadataWriteChangesETag() bool {
+	return true
+}
+
 // DeleteWithContext removes an object from the backend with context support.
 func (a *Azure) DeleteWithContext(ctx context.Context, key string) error {
 	if err := common.ValidateKey(key); err != nil {

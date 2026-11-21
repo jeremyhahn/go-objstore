@@ -342,6 +342,29 @@ func TestHasChanged_NoChange(t *testing.T) {
 	}
 }
 
+// TestHasChanged_UploadBoundCopy: a copy bound by its upload (a destination
+// whose metadata writes re-tag it) is unchanged whatever its ETag, while the
+// fingerprint and the stored size still decide.
+func TestHasChanged_UploadBoundCopy(t *testing.T) {
+	src := &common.Metadata{ETag: "src-1", Size: 4, LastModified: time.Unix(1_700_000_000, 0)}
+	copied := *sourceFingerprint(src)
+	copied.Custom[MetaReplicationDestETag] = destETagUpload
+	copied.ETag = "re-tagged-by-a-metadata-write"
+	if hasChanged(src, &copied) {
+		t.Fatal("upload-bound copy reported changed")
+	}
+	resized := copied
+	resized.Size = 5
+	if !hasChanged(src, &resized) {
+		t.Fatal("upload-bound copy of another size not reported changed")
+	}
+	newer := *src
+	newer.ETag = "src-2"
+	if !hasChanged(&newer, &copied) {
+		t.Fatal("changed source not reported against an upload-bound copy")
+	}
+}
+
 func TestHasChanged_EmptyETags(t *testing.T) {
 	now := time.Now()
 

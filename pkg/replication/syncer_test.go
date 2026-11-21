@@ -18,11 +18,14 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
+	"github.com/jeremyhahn/go-objstore/pkg/memory"
 )
 
 func TestSyncObject_Success(t *testing.T) {
@@ -369,5 +372,117 @@ func TestSyncAll_TimingMetrics(t *testing.T) {
 	}
 	if result.Duration == 0 {
 		t.Error("expected non-zero duration")
+	}
+}
+
+// retaggingStorage behaves like Azure: a metadata-only write gives the
+// object a new ETag, so a copy whose ETag is recorded by UpdateMetadata
+// never matches that record.
+type retaggingStorage struct {
+	common.Storage
+	mu     sync.Mutex
+	writes map[string]int // metadata writes since the last upload, per key
+	puts   int
+}
+
+func newRetaggingStorage() *retaggingStorage {
+	return &retaggingStorage{Storage: memory.New(), writes: map[string]int{}}
+}
+
+func (r *retaggingStorage) MetadataWriteChangesETag() bool { return true }
+
+func (r *retaggingStorage) PutWithMetadata(ctx context.Context, key string, data io.Reader, md *common.Metadata) error {
+	_, err := r.PutWithMetadataResult(ctx, key, data, md)
+	return err
+}
+
+func (r *retaggingStorage) PutWithMetadataResult(ctx context.Context, key string, data io.Reader, md *common.Metadata) (*common.Metadata, error) {
+	if err := r.Storage.PutWithMetadata(ctx, key, data, md); err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	r.puts++
+	r.writes[key] = 0
+	r.mu.Unlock()
+	return r.GetMetadata(ctx, key)
+}
+
+func (r *retaggingStorage) UpdateMetadata(ctx context.Context, key string, md *common.Metadata) error {
+	if err := r.Storage.UpdateMetadata(ctx, key, md); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	r.writes[key]++
+	r.mu.Unlock()
+	return nil
+}
+
+func (r *retaggingStorage) GetMetadata(ctx context.Context, key string) (*common.Metadata, error) {
+	md, err := r.Storage.GetMetadata(ctx, key)
+	if err != nil || md == nil {
+		return md, err
+	}
+	r.mu.Lock()
+	n := r.writes[key]
+	r.mu.Unlock()
+	out := *md
+	out.ETag = md.ETag + "-r" + strconv.Itoa(n)
+	return &out, nil
+}
+
+func (r *retaggingStorage) putCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.puts
+}
+
+// TestSyncAll_RetaggingDestinationNotCopiedAgain: on a destination whose
+// metadata writes re-tag the copy (Azure), the copy is bound by its upload,
+// so the next sync of an unchanged source copies nothing.
+func TestSyncAll_RetaggingDestinationNotCopiedAgain(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		destRetags bool
+		wantPuts   int
+	}{
+		{"bound by the upload", true, 1},
+		// Control: recording the upload ETag by a metadata write re-tags
+		// the copy, so it never matches and every sync copies again.
+		{"bound by a metadata write", false, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			source := memory.New()
+			if err := source.PutWithMetadata(ctx, "file1.txt", bytes.NewBufferString("content1"),
+				&common.Metadata{ContentType: "text/plain"}); err != nil {
+				t.Fatal(err)
+			}
+			dest := newRetaggingStorage()
+			if got := metadataWriteRetags(dest); !got {
+				t.Fatal("metadataWriteRetags(dest) = false, want true")
+			}
+			s := &Syncer{
+				policy:     common.ReplicationPolicy{ID: "p", ReplicationMode: common.ReplicationModeTransparent},
+				source:     source,
+				dest:       dest,
+				destRetags: tc.destRetags,
+				logger:     &mockLogger{},
+				metrics:    NewReplicationMetrics(),
+				auditLog:   &mockAuditLogger{},
+			}
+
+			first, err := s.SyncAll(ctx)
+			if err != nil || first.Synced != 1 {
+				t.Fatalf("first SyncAll: synced %v, err %v", first, err)
+			}
+			second, err := s.SyncAll(ctx)
+			if err != nil {
+				t.Fatalf("second SyncAll: %v", err)
+			}
+			if got := dest.putCount(); got != tc.wantPuts {
+				t.Fatalf("destination uploads = %d, want %d (second sync synced %d)",
+					got, tc.wantPuts, second.Synced)
+			}
+		})
 	}
 }
