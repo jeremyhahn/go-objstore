@@ -7,7 +7,7 @@
 # `if: always()` teardown runs only while the job process lives. When the host
 # or its Docker daemon dies mid-job, the job is gone and so is its teardown: the
 # compose stack stays behind, exited, with its networks and volumes (11 stacks
-# on two runner hosts after the 2026-10-11/12 restarts). Nothing else
+# on ci-node-1 and ci-node-2 after the 2026-10-11/12 restarts). Nothing else
 # removes them, so the first step of every integration job runs this.
 #
 # What it removes, on the Docker host the job talks to:
@@ -16,7 +16,7 @@
 #     networks and volumes (same label);
 #   - a container outside compose whose name starts with <prefix>, when stale,
 #     with its anonymous volumes.
-# v2 (ci-template v1.23, Company Agent m674 item 3, 2026-10-18; the go-qrdb
+# v2 (ci-template v1.23, Tenant Agent m674 item 3, 2026-10-18; the go-qrdb
 # #814 pattern): images too. The integration image is named by its content,
 # <prefix>it:<hash> (`make -s it-image`, ci-standard.md §9), and every job and
 # run of that tree on this runner reuses it, so no job removes it. This
