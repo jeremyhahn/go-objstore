@@ -34,7 +34,7 @@ Its one first-party dependency is go-enclave, the locked-memory primitive.
 | encryption | shipped | Optional at-rest encryption through the `Encrypter` and `EncrypterFactory` interfaces, with AES-GCM available. Key management is the caller's. | [docs/architecture](architecture/encryption.md) |
 | protected-memory | shipped | Keys and credentials live in go-enclave locked, zeroized memory for their whole lifetime. Protected entry points are additive and the plain ones stay deprecated until a coordinated release. | [docs/architecture](architecture/protected-memory.md) |
 | lifecycle | shipped | Retention and archival rules delete or archive objects by age and prefix. | [docs/lifecycle](lifecycle/README.md) |
-| replication | shipped | Replicates objects between providers with change detection and a changelog. | [docs/replication](replication/README.md) |
+| replication | shipped | Replicates objects between providers with change detection and a changelog. Changes are detected by content (a second sync copies nothing) and the server can sync on a schedule via `replication.interval`. | [docs/replication](replication/README.md) |
 | cli | shipped | The `objstore` command exposes the interface, lifecycle and replication from a shell. | [docs/usage](usage/cli.md) |
 | c-client | shipped | `libobjstore` exposes the interface to C callers through opaque handles. | [docs/c_client](c_client/README.md) |
 | sdks | shipped | Client SDKs for Go, Python, Ruby, Rust, TypeScript and C# speak the server APIs. | [api/sdks](../api/sdks/README.md) |
