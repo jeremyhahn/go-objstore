@@ -4,7 +4,7 @@
 #   usage: scripts/in-toolchain-image.sh <image> <command...>
 #   e.g.   scripts/in-toolchain-image.sh go-enclave-toolchain:abc make build
 #
-# in-toolchain-template: v3 (ci-template v1.22.2). Ships beside ci.yml; copy it to
+# in-toolchain-template: v6 (ci-template v1.36; v5 was v1.34.1). Ships beside ci.yml; copy it to
 # scripts/ with the workflow. From go-quicraft's scripts/in-toolchain-image.sh
 # (a141c3c), with the container prefix and uid taken from the environment.
 #
@@ -30,7 +30,7 @@
 # this environment (the four variables dependency-resolution.md §6 has the
 # runner inject), so no token ever appears on a command line.
 #
-# v2 (ci-template v1.22, Company Agent m616 item 2): the caches live in named
+# v2 (ci-template v1.22, Tenant Agent m616 item 2): the caches live in named
 # volumes on the daemon's host (ci-standard.md §6), never in the container's
 # writable layer or its 3 GB /tmp: GOCACHE at /cache/gobuild and
 # GOLANGCI_LINT_CACHE at /cache/golangci for every stage, and, for a bridge
@@ -43,13 +43,40 @@
 # IN_IMAGE_UID by a helper container holding CHOWN and nothing else.
 # scripts/trim-ci-caches.sh bounds their size. CI_CACHE=off mounts none (v1).
 #
-# v3 (ci-template v1.22.2, Company Agent m641 item 2 and m646 item 3): the
+# v3 (ci-template v1.22.2, Tenant Agent m641 item 2 and m646 item 3): the
 # stage runs in this sibling container, so the sibling holds the job slot's
 # CPU bound. The job container's cgroup cpu.max gives it (rounded up; nproc
 # when the job has no quota; IN_IMAGE_CPUS overrides), and the sibling gets
 # --cpus N with GOMAXPROCS=N and GOFLAGS=-p=N. golangci-lint's default
 # concurrency follows the container CPU quota, so lint takes N with no flag.
 # A 4-CPU slot on the Dells gives 4; never a hardcoded number.
+#
+# v4 (ci-template v1.29.4, ruling 261(c); claude-agents #379
+# comment 157032):
+# - The sibling holds the job slot's memory bound the same way (go-qrdb, from
+#   dept-infra #1337; go-trusted-platform #1182). The job container's cgroup
+#   memory.max (8g when the job has no limit; IN_IMAGE_MEMORY, a size such as
+#   12g, overrides) becomes --memory, and --memory-swap is set to the same
+#   size, so the stage gets no swap: a stage that outgrows it is OOM-killed and
+#   fails, instead of swapping the shared runner host. A 16g job slot gives 16g.
+# - Go's build and link scratch is on disk, not the 3 GB /tmp tmpfs (go-xkms
+#   #1733, 6d40166): `make coverage` links cgo test binaries in $WORK and filled
+#   /tmp (ENOSPC "final link failed") in 8 go-xkms Devcontainer jobs on
+#   2026-10-26. An anonymous volume on the image's /var/tmp (IN_IMAGE_SCRATCH
+#   overrides the path) is TMPDIR and GOTMPDIR; it is on the daemon's data disk,
+#   and cleanup's `docker rm -v` removes it. A scratch directory the image
+#   lacks, or the run's user cannot write, fails the stage by name.
+# - A bridge stage's GOPROXY puts DEVCACHE_GOPROXY (Athens, devops.md §2a)
+#   first when the runner sets it: <DEVCACHE_GOPROXY>|https://proxy.golang.org,
+#   so a miss or an unreachable cache falls through to the public proxy.
+#   GOPRIVATE travels with it, so a private path never reaches either proxy.
+#   Unset, the chain is https://proxy.golang.org. There is no `direct` entry
+#   (v5, dependency-resolution.md, "No direct fetch, anywhere"); a private
+#   path is fetched by GOPRIVATE/GONOPROXY, never through GOPROXY.
+# - v6 (ci-template v1.36): a bridge stage also takes TRIVY_DB_REPOSITORY,
+#   TRIVY_JAVA_DB_REPOSITORY and TRIVY_INSECURE when the runner sets them (the
+#   self-hosted pools name the dev-cache ghcr mirror first, the public
+#   repositories after), so trivy's databases come from the LAN.
 #
 # The container is named <CI_STACK_PREFIX>tc-<pid>-<random>, under the prefix
 # scripts/reap-stale-ci-stacks.sh reaps (default <checkout dir>-ci-, which in CI
@@ -97,6 +124,24 @@ fi
 case $cpus in
   "" | 0 | *[!0-9]*) echo "IN_IMAGE_CPUS must be a positive integer: $cpus" >&2; exit 2 ;;
 esac
+memory=${IN_IMAGE_MEMORY:-}
+if [ -z "$memory" ]; then
+  limit=max
+  if [ -r /sys/fs/cgroup/memory.max ]; then read -r limit < /sys/fs/cgroup/memory.max; fi
+  case $limit in
+    max | "" | *[!0-9]*) memory=8g ;;
+    *) memory=$limit ;;
+  esac
+fi
+if ! [[ $memory =~ ^[1-9][0-9]*[mg]?$ ]]; then
+  echo "IN_IMAGE_MEMORY must be a size in bytes, m or g, e.g. 16g: $memory" >&2
+  exit 2
+fi
+scratch=${IN_IMAGE_SCRATCH:-/var/tmp}
+case $scratch in
+  /*) ;;
+  *) echo "IN_IMAGE_SCRATCH must be an absolute path: $scratch" >&2; exit 2 ;;
+esac
 args=(
   --name "$name"
   --cpus "$cpus"
@@ -106,10 +151,16 @@ args=(
   --cap-drop ALL
   --security-opt no-new-privileges:true
   --pids-limit 4096
+  --memory "$memory"
+  --memory-swap "$memory"
   --ulimit memlock=67108864:67108864
   --ulimit core=1048576:1048576
   --ulimit nofile=65536:65536
   --tmpfs "/tmp:rw,exec,nosuid,nodev,size=3g,mode=1777"
+  # Go's build and link scratch on disk, not the tmpfs (v4, above).
+  -v "$scratch"
+  --env TMPDIR="$scratch"
+  --env GOTMPDIR="$scratch"
   --network "$network"
   --user "$uid:$uid"
   --workdir /src
@@ -135,38 +186,26 @@ fi
 if [ "$network" = bridge ]; then
   # The baked module cache is read-only to the run's user and holds only the
   # root module's build list; the nested modules deps-check walks fetch more.
-  args+=(--env "GOPROXY=https://proxy.golang.org,direct" --env "GOMODCACHE=$modcache")
-  for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
+  # Athens first when the runner sets DEVCACHE_GOPROXY (v4, above).
+  args+=(--env "GOPROXY=${DEVCACHE_GOPROXY:+$DEVCACHE_GOPROXY|}https://proxy.golang.org" --env "GOMODCACHE=$modcache")
+  # ci-template v1.36: the Trivy database repositories the runner sets (the
+  # dev-cache ghcr mirror on the LAN first, the public ones after) travel
+  # with the stage, so `make security` and `trivy image` fetch the vulnerability
+  # and Java databases from the LAN instead of the internet.
+  for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 \
+    TRIVY_DB_REPOSITORY TRIVY_JAVA_DB_REPOSITORY TRIVY_INSECURE; do
     if [ -n "${!v:-}" ]; then args+=(--env "$v"); fi
   done
-fi
-# #212: LABSTRINGS_PATTERNS names the labstrings gate's rules file (ci.yml
-# stages the RELEASABILITY_PATTERNS secret there). A bind mount would resolve
-# on the daemon's host, so the file is copied in like the checkout, mode 0400
-# and owned by the run's user, and the variable names the copy. A stage with a
-# network never gets it; unset, nothing is passed.
-patterns=${LABSTRINGS_PATTERNS:-}
-if [ -n "$patterns" ]; then
-  if [ ! -f "$patterns" ] || [ -L "$patterns" ]; then
-    echo "LABSTRINGS_PATTERNS must name a regular file" >&2
-    exit 2
-  fi
-  if [ "$network" = none ]; then
-    args+=(--env LABSTRINGS_PATTERNS=/labstrings-patterns)
-  else
-    patterns=
-  fi
 fi
 
 cleanup() { docker rm -f -v "$name" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
-docker create "${args[@]}" "$image" sh -c "$*" >/dev/null
+# A scratch directory the image lacks, or the run's user cannot write, fails
+# the stage here by name, not later as a tool's ENOSPC or EACCES.
+# shellcheck disable=SC2016 # expands in the container, not here
+guard='[ -d "$TMPDIR" ] && [ -w "$TMPDIR" ] || { echo "in-toolchain-image: scratch directory $TMPDIR is missing or not writable" >&2; exit 2; }'
+docker create "${args[@]}" "$image" sh -c "$guard; $*" >/dev/null
 tar -C "$PWD" --owner="$uid" --group="$uid" --numeric-owner -cf - . |
   docker cp -a - "$name:/src"
-if [ -n "$patterns" ]; then
-  tar -C "$(dirname "$patterns")" --owner="$uid" --group="$uid" --numeric-owner --mode=0400 \
-    --transform 's|.*|labstrings-patterns|' -cf - "$(basename "$patterns")" |
-    docker cp -a - "$name:/"
-fi
 docker start -a "$name"
