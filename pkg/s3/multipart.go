@@ -419,6 +419,77 @@ func (s *S3) putMultipart(ctx context.Context, in *s3.PutObjectInput, rs io.Read
 	return nil
 }
 
+// maxCopyObjectSize is the largest source S3 CopyObject accepts. A larger
+// object is copied part by part with UploadPartCopy.
+const maxCopyObjectSize = int64(5) << 30
+
+// copyMultipart copies the size-byte object named by in.CopySource onto
+// in.Key as a multipart upload of UploadPartCopy ranges, carrying the
+// metadata, content headers and storage class in names. etag, when set,
+// pins every part to the source version that was measured, so a concurrent
+// overwrite fails the copy instead of mixing two versions. Any failure after
+// the upload is created aborts it, bounded by the abort timeout.
+func (s *S3) copyMultipart(ctx context.Context, in *s3.CopyObjectInput, size int64, etag *string) error {
+	key := aws.ToString(in.Key)
+	partSize, err := autoPartSize(size, s.partSize)
+	if err != nil {
+		return err
+	}
+	out, err := s.svc.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
+		Bucket:          in.Bucket,
+		Key:             in.Key,
+		ContentType:     in.ContentType,
+		ContentEncoding: in.ContentEncoding,
+		Metadata:        in.Metadata,
+		StorageClass:    in.StorageClass,
+	})
+	if err != nil {
+		return objectError(err, key)
+	}
+	id := out.UploadId
+	fail := func(err error) error {
+		actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.abortTimeoutOrDefault())
+		defer cancel()
+		if _, aerr := s.svc.AbortMultipartUpload(actx, &s3.AbortMultipartUploadInput{
+			Bucket: in.Bucket, Key: in.Key, UploadId: id,
+		}); aerr != nil {
+			return errors.Join(err, uploadError(aerr, aws.ToString(id)))
+		}
+		return err
+	}
+	completed := make([]types.CompletedPart, 0, (size+partSize-1)/partSize)
+	for n, off := int32(1), int64(0); off < size; n, off = n+1, off+partSize {
+		last := min(off+partSize, size) - 1
+		up, err := s.svc.UploadPartCopy(ctx, &s3.UploadPartCopyInput{
+			Bucket:            in.Bucket,
+			Key:               in.Key,
+			UploadId:          id,
+			PartNumber:        aws.Int32(n),
+			CopySource:        in.CopySource,
+			CopySourceRange:   aws.String(fmt.Sprintf("bytes=%d-%d", off, last)),
+			CopySourceIfMatch: etag,
+		})
+		if err != nil {
+			return fail(objectError(err, key))
+		}
+		var partETag *string
+		if up != nil && up.CopyPartResult != nil {
+			partETag = up.CopyPartResult.ETag
+		}
+		completed = append(completed, types.CompletedPart{ETag: partETag, PartNumber: aws.Int32(n)})
+	}
+	_, err = s.svc.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+		Bucket:          in.Bucket,
+		Key:             in.Key,
+		UploadId:        id,
+		MultipartUpload: &types.CompletedMultipartUpload{Parts: completed},
+	})
+	if err != nil {
+		return fail(uploadError(err, aws.ToString(id)))
+	}
+	return nil
+}
+
 func (s *S3) expiry() time.Duration {
 	if s.multipartExpiry > 0 {
 		return s.multipartExpiry

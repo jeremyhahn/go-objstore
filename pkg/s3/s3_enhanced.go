@@ -157,6 +157,14 @@ func (s *S3) UpdateMetadata(ctx context.Context, key string, metadata *common.Me
 		}
 	}
 
+	// CopyObject takes sources up to 5 GiB; Put stores larger seekable
+	// bodies as multipart uploads, so those are copied part by part.
+	if head != nil {
+		if size := aws.ToInt64(head.ContentLength); size > maxCopyObjectSize {
+			return s.copyMultipart(ctx, input, size, head.ETag)
+		}
+	}
+
 	_, err = s.svc.CopyObject(ctx, input)
 	return objectError(err, key)
 }

@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"testing"
 	"time"
@@ -420,6 +421,136 @@ func TestS3_UpdateMetadata_HeadError(t *testing.T) {
 	}
 	if mockS3.copyObjectInput != nil {
 		t.Error("copy sent for a missing object")
+	}
+}
+
+// partCopyFake records the multipart self-copy UpdateMetadata sends for an
+// object over the 5 GiB CopyObject limit.
+type partCopyFake struct {
+	*mockS3Client
+	create   *s3.CreateMultipartUploadInput
+	parts    []*s3.UploadPartCopyInput
+	complete *s3.CompleteMultipartUploadInput
+	aborts   []*s3.AbortMultipartUploadInput
+	failAt   int   // 1-based part copy that fails with partErr; zero means none
+	partErr  error // error of the failing part copy
+}
+
+func (f *partCopyFake) CreateMultipartUpload(_ context.Context, in *s3.CreateMultipartUploadInput, _ ...func(*s3.Options)) (*s3.CreateMultipartUploadOutput, error) {
+	f.create = in
+	return &s3.CreateMultipartUploadOutput{UploadId: aws.String("up-1")}, nil
+}
+
+func (f *partCopyFake) UploadPartCopy(_ context.Context, in *s3.UploadPartCopyInput, _ ...func(*s3.Options)) (*s3.UploadPartCopyOutput, error) {
+	f.parts = append(f.parts, in)
+	if len(f.parts) == f.failAt {
+		return nil, f.partErr
+	}
+	return &s3.UploadPartCopyOutput{CopyPartResult: &types.CopyPartResult{ETag: aws.String("p")}}, nil
+}
+
+func (f *partCopyFake) CompleteMultipartUpload(_ context.Context, in *s3.CompleteMultipartUploadInput, _ ...func(*s3.Options)) (*s3.CompleteMultipartUploadOutput, error) {
+	f.complete = in
+	return &s3.CompleteMultipartUploadOutput{}, nil
+}
+
+func (f *partCopyFake) AbortMultipartUpload(_ context.Context, in *s3.AbortMultipartUploadInput, _ ...func(*s3.Options)) (*s3.AbortMultipartUploadOutput, error) {
+	f.aborts = append(f.aborts, in)
+	return &s3.AbortMultipartUploadOutput{}, nil
+}
+
+func newPartCopyFake(size int64) *partCopyFake {
+	return &partCopyFake{mockS3Client: &mockS3Client{
+		headObjectOutput: &s3.HeadObjectOutput{
+			ContentLength: aws.Int64(size),
+			StorageClass:  types.StorageClassGlacierIr,
+			ETag:          aws.String(`"src"`),
+		},
+		copyObjectOutput: &s3.CopyObjectOutput{},
+	}}
+}
+
+// CopyObject refuses sources over 5 GiB, so UpdateMetadata copies a larger
+// object onto itself with UploadPartCopy, keeping class and new metadata.
+func TestS3_UpdateMetadata_OverCopyLimitUsesPartCopy(t *testing.T) {
+	size := maxCopyObjectSize + 1
+	fake := newPartCopyFake(size)
+	s := &S3{svc: fake, bucket: "test-bucket"}
+	md := &common.Metadata{ContentType: "text/plain", ContentEncoding: "gzip", Custom: map[string]string{"a": "b"}}
+	if err := s.UpdateMetadata(context.Background(), "key", md); err != nil {
+		t.Fatalf("UpdateMetadata: %v", err)
+	}
+	if fake.copyObjectInput != nil {
+		t.Fatal("CopyObject was sent for an object over 5 GiB")
+	}
+	c := fake.create
+	if c == nil {
+		t.Fatal("no multipart upload was created")
+	}
+	if c.StorageClass != types.StorageClassGlacierIr {
+		t.Errorf("StorageClass = %q, want GLACIER_IR", c.StorageClass)
+	}
+	if aws.ToString(c.ContentType) != "text/plain" || aws.ToString(c.ContentEncoding) != "gzip" || c.Metadata["a"] != "b" {
+		t.Errorf("metadata not carried: type %q encoding %q custom %v", aws.ToString(c.ContentType), aws.ToString(c.ContentEncoding), c.Metadata)
+	}
+	partSize, err := autoPartSize(size, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := int((size + partSize - 1) / partSize)
+	if len(fake.parts) != want {
+		t.Fatalf("part copies = %d, want %d", len(fake.parts), want)
+	}
+	if got := aws.ToString(fake.parts[0].CopySourceRange); got != fmt.Sprintf("bytes=0-%d", partSize-1) {
+		t.Errorf("first range = %q", got)
+	}
+	last := fake.parts[len(fake.parts)-1]
+	if got, wantRange := aws.ToString(last.CopySourceRange), fmt.Sprintf("bytes=%d-%d", int64(want-1)*partSize, size-1); got != wantRange {
+		t.Errorf("last range = %q, want %q", got, wantRange)
+	}
+	for _, p := range fake.parts {
+		if aws.ToString(p.CopySource) != "test-bucket/key" || aws.ToString(p.CopySourceIfMatch) != `"src"` || aws.ToString(p.UploadId) != "up-1" {
+			t.Fatalf("part %d: source %q if-match %q upload %q", aws.ToInt32(p.PartNumber), aws.ToString(p.CopySource), aws.ToString(p.CopySourceIfMatch), aws.ToString(p.UploadId))
+		}
+	}
+	if fake.complete == nil || len(fake.complete.MultipartUpload.Parts) != want {
+		t.Fatalf("complete = %+v, want %d parts", fake.complete, want)
+	}
+	if len(fake.aborts) != 0 {
+		t.Errorf("aborts = %d after a successful copy", len(fake.aborts))
+	}
+}
+
+// An object of exactly 5 GiB still takes the single CopyObject.
+func TestS3_UpdateMetadata_AtCopyLimitUsesCopyObject(t *testing.T) {
+	fake := newPartCopyFake(maxCopyObjectSize)
+	s := &S3{svc: fake, bucket: "test-bucket"}
+	if err := s.UpdateMetadata(context.Background(), "key", nil); err != nil {
+		t.Fatalf("UpdateMetadata: %v", err)
+	}
+	if fake.copyObjectInput == nil || fake.create != nil {
+		t.Fatalf("CopyObject sent %v, multipart created %v", fake.copyObjectInput != nil, fake.create != nil)
+	}
+}
+
+// A failed part copy aborts the upload and returns the part error.
+func TestS3_UpdateMetadata_PartCopyFailureAborts(t *testing.T) {
+	boom := errors.New("part copy failed")
+	fake := newPartCopyFake(maxCopyObjectSize + 1)
+	fake.failAt, fake.partErr = 2, boom
+	s := &S3{svc: fake, bucket: "test-bucket"}
+	err := s.UpdateMetadata(context.Background(), "key", &common.Metadata{ContentType: "text/plain"})
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want the part copy error", err)
+	}
+	if len(fake.parts) != 2 {
+		t.Errorf("part copies = %d, want the copy to stop at the failure", len(fake.parts))
+	}
+	if fake.complete != nil {
+		t.Error("the upload was completed after a part failure")
+	}
+	if len(fake.aborts) != 1 || aws.ToString(fake.aborts[0].UploadId) != "up-1" || aws.ToString(fake.aborts[0].Key) != "key" {
+		t.Fatalf("aborts = %+v, want one abort of up-1", fake.aborts)
 	}
 }
 
