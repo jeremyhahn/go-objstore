@@ -273,6 +273,8 @@ func NewServer(storage common.Storage, config *ServerConfig) (*Server, error) {
 		return nil, &HandlerInitError{Err: err}
 	}
 	handler.wireOpts = factory.WireOptions{AllowLocalDestinations: config.AllowClientLocalArchiveDestinations}
+	handler.authorizer = config.Authorizer
+	handler.logger = config.Logger
 
 	// Setup routes
 	SetupRoutes(router, handler)

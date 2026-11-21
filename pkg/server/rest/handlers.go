@@ -14,6 +14,7 @@
 package rest
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -48,6 +49,11 @@ const keyField = "key"
 type Handler struct {
 	backend  string              // Backend name (empty = default)
 	wireOpts factory.WireOptions // how archiver settings a client sent are treated
+
+	// authorizer decides the overwrite check of PutObject (nil = allow-all,
+	// the NoOpAuthorizer default); logger records its denials.
+	authorizer adapters.Authorizer
+	logger     adapters.Logger
 }
 
 // NewHandler creates a new Handler instance.
@@ -81,6 +87,12 @@ func (h *Handler) PutObject(c *gin.Context) {
 	// Remove leading slashes if present
 	for len(key) > 0 && key[0] == '/' {
 		key = key[1:]
+	}
+
+	// A put to an existing key needs the overwrite action as well as write
+	// (the gate checked write). Decide before the body is read.
+	if !h.authorizeOverwrite(c, key) {
+		return
 	}
 
 	var reader io.Reader
@@ -172,6 +184,49 @@ func (h *Handler) PutObject(c *gin.Context) {
 	}
 
 	RespondWithSuccess(c, http.StatusCreated, "object uploaded successfully", gin.H{keyField: key, "etag": etag})
+}
+
+// authorizeOverwrite runs the overwrite check of a put to key. It responds
+// 403 when the key exists and the principal may not overwrite it, 500 when
+// the existence lookup fails, and returns false in both cases; the caller
+// then writes nothing.
+func (h *Handler) authorizeOverwrite(c *gin.Context, key string) bool {
+	ctx := c.Request.Context()
+	value, _ := c.Get(principalContextKey)
+	principal, _ := value.(*adapters.Principal)
+	err := adapters.AuthorizeOverwrite(ctx, h.authorizer, principal, key, func(ctx context.Context) (bool, error) {
+		return objstore.Exists(ctx, h.keyRef(key))
+	})
+	if err == nil {
+		return true
+	}
+	principalID := ""
+	if principal != nil {
+		principalID = principal.ID
+	}
+	if errors.Is(err, adapters.ErrInsufficientPermissions) {
+		if h.logger != nil {
+			h.logger.Warn(ctx, "Authorization denied",
+				adapters.Field{Key: "error", Value: err.Error()},
+				adapters.Field{Key: "path", Value: c.Request.URL.Path},
+				adapters.Field{Key: "method", Value: c.Request.Method},
+				adapters.Field{Key: "action", Value: adapters.ActionOverwrite},
+				adapters.Field{Key: "resource", Value: key},
+				adapters.Field{Key: "principal_id", Value: principalID},
+			)
+		}
+		RespondWithError(c, http.StatusForbidden, "Forbidden")
+		return false
+	}
+	if h.logger != nil {
+		h.logger.Error(ctx, "Overwrite check failed",
+			adapters.Field{Key: "error", Value: err.Error()},
+			adapters.Field{Key: "resource", Value: key},
+			adapters.Field{Key: "principal_id", Value: principalID},
+		)
+	}
+	RespondWithError(c, http.StatusInternalServerError, "failed to check whether the object exists")
+	return false
 }
 
 // GetObject handles object download

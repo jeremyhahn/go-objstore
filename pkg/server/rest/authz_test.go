@@ -142,6 +142,62 @@ func TestRESTAuthorizationEnforced(t *testing.T) {
 	})
 }
 
+// TestRESTPutOverwriteNeedsOverwriteAction verifies a put to an existing key
+// needs the overwrite action: a [read, write] role creates new objects but is
+// refused with 403 on an existing key, which keeps its bytes; a role with
+// overwrite, or "*", replaces them.
+func TestRESTPutOverwriteNeedsOverwriteAction(t *testing.T) {
+	put := func(router http.Handler, key, body string) int {
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/objects/"+key, strings.NewReader(body))
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		return w.Code
+	}
+	get := func(t *testing.T, router http.Handler, key string) string {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/objects/"+key, nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d, want 200", key, w.Code)
+		}
+		return w.Body.String()
+	}
+
+	t.Run("write only", func(t *testing.T) {
+		router := newRESTServerWithRolePermissions(t, map[string][]string{
+			"reader": {adapters.ActionRead, adapters.ActionWrite},
+		}).Router()
+		if code := put(router, "snap-1", "original"); code != http.StatusCreated {
+			t.Fatalf("PUT new key = %d, want %d", code, http.StatusCreated)
+		}
+		if code := put(router, "snap-1", "replaced"); code != http.StatusForbidden {
+			t.Fatalf("PUT existing key = %d, want %d", code, http.StatusForbidden)
+		}
+		if got := get(t, router, "snap-1"); got != "original" {
+			t.Fatalf("stored bytes = %q, want %q", got, "original")
+		}
+	})
+
+	for name, perms := range map[string][]string{
+		"overwrite": {adapters.ActionRead, adapters.ActionWrite, adapters.ActionOverwrite},
+		"wildcard":  {"*"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			router := newRESTServerWithRolePermissions(t, map[string][]string{"reader": perms}).Router()
+			if code := put(router, "snap-1", "original"); code != http.StatusCreated {
+				t.Fatalf("PUT new key = %d, want %d", code, http.StatusCreated)
+			}
+			if code := put(router, "snap-1", "replaced"); code != http.StatusCreated {
+				t.Fatalf("PUT existing key = %d, want %d", code, http.StatusCreated)
+			}
+			if got := get(t, router, "snap-1"); got != "replaced" {
+				t.Fatalf("stored bytes = %q, want %q", got, "replaced")
+			}
+		})
+	}
+}
+
 // newRESTServerDenyAll builds a server whose authorizer denies every action,
 // for exercising the /metrics authorization default.
 func newRESTServerDenyAll(t *testing.T, metricsPublic bool) *Server {
