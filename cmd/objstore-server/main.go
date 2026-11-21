@@ -72,7 +72,11 @@ func main() {
 	// Enable replication on the default backend so the replication API
 	// (policies, trigger, status) is fully functional. Backends that do not
 	// support a replication manager simply log a warning and continue.
-	cfg.EnableReplication(objstore.EnableReplication)
+	// With replication.interval set, scheduled replication runs until
+	// replCancel at shutdown.
+	replCtx, replCancel := context.WithCancel(context.Background())
+	defer replCancel()
+	cfg.EnableReplicationContext(replCtx, objstore.EnableReplication)
 
 	// Startup logging
 	slog.Info("Object Storage Server starting", "backend", cfg.Backend)
@@ -286,6 +290,9 @@ func main() {
 			slog.Error("QUIC server shutdown error", "error", err)
 		}
 	}
+
+	// Stop scheduled replication.
+	replCancel()
 
 	// Cancel MCP context (startHTTP calls server.Shutdown on ctx.Done).
 	if mcpCancel != nil {

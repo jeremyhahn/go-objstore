@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Added
 
 - server: an `auth` section turns on mutual TLS (client certificates verified against `auth.client_ca`) and role-based access control on gRPC, REST, QUIC, MCP HTTP, MCP stdio and the Unix socket; identities are the certificate common name or `uid:N` of the local user; invalid or incomplete settings refuse to start; without `auth` behaviour is unchanged and each listener logs a warning; `rest.tls_cert`/`rest.tls_key` and `mcp.tls_cert`/`mcp.tls_key` serve TLS. See `docs/configuration/auth.md` (#216)
+- server: `replication.interval` (`OBJSTORE_REPLICATION_INTERVAL`, `-replication-interval`) runs replication in the background at that interval and stops at shutdown; `0` or empty keeps it trigger-only, a negative value refuses to start (#222)
 
 ### Changed
 
@@ -25,6 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - encryption: `Put` and `PutWithContext` on the encrypted storage now record `encryption_key_id` (and `encryption_algorithm`) like `PutWithMetadata`, so an object still decrypts after the default key changes; `PutWithMetadata` accepts nil metadata. `UpdateMetadata` keeps the stored `encryption_*` entries, so a metadata update no longer drops the key id; caller-supplied `encryption_*` entries are ignored. Objects stored earlier without `encryption_key_id` still decrypt with the default key only (#226)
 - **Upgrade:** encryption: objects written by `Put` or `PutWithContext` before this release carry no `encryption_key_id`; if the default key was already rotated, set the old key as the default again to read or rewrite them (#226)
 - server: with `auth` set, any authenticated identity may call the objstore gRPC `Health` RPC whatever its roles; it needed `admin` before. A call with no principal is still refused, and any other unknown gRPC method still needs `admin`. The standard health and reflection services skip authorization by exact service prefix instead of a substring match (#239)
+- replication: a sync with no changes copies nothing, also between backends whose ETags differ (local to S3); each copy records the source ETag and size in `replication_source_etag`/`replication_source_size` custom metadata and later syncs compare against it. A full sync still does not copy deletes (#222)
 
 ### Security
 

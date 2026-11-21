@@ -113,6 +113,8 @@ func bindMiddlewareFlags(fs *flag.FlagSet, c *Config) {
 	boolVar(fs, &c.Replication.AllowClientLocalBackends, "replication-allow-client-local-backends",
 		"replication.allow_client_local_backends",
 		"Allow replication policies with filesystem-path backends such as local (default refuse)")
+	durationVar(fs, &c.Replication.Interval, "replication-interval", "replication.interval",
+		"Run replication in the background at this interval, e.g. 15m (default 0: only when triggered)")
 }
 
 func bindBackendFlags(fs *flag.FlagSet, c *Config) {

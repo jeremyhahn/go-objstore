@@ -424,7 +424,7 @@ func (l *Local) CompleteMultipartUpload(ctx context.Context, key, uploadID strin
 	md.Size = size
 	md.LastModified = time.Now()
 	if info, err := root.Stat(name); err == nil {
-		md.ETag = fmt.Sprintf("%d-%d", info.ModTime().Unix(), size)
+		md.ETag = fmt.Sprintf("%d-%d", info.ModTime().UnixNano(), size)
 	}
 	if enc != nil {
 		if md.Custom == nil {

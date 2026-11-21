@@ -131,6 +131,42 @@ func TestS3_PutWithMetadata(t *testing.T) {
 	}
 }
 
+func TestS3_PutWithMetadataResult(t *testing.T) {
+	ctx := context.Background()
+	var _ common.IdentityPutter = (*S3)(nil)
+
+	mockS3 := &mockS3Client{putObjectOutput: &s3.PutObjectOutput{ETag: aws.String(`"abc"`)}}
+	s := &S3{svc: mockS3, bucket: "test-bucket"}
+	r := bytes.NewReader([]byte("xxdata"))
+	_, _ = r.Seek(2, io.SeekStart)
+	got, err := s.PutWithMetadataResult(ctx, "key", r, nil)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if got == nil || got.ETag != `"abc"` || got.Size != 4 {
+		t.Fatalf("result = %+v, want the response ETag and the 4 bytes after the offset", got)
+	}
+
+	// A reader that cannot seek reports no size; a response without an
+	// ETag reports no identity.
+	got, err = s.PutWithMetadataResult(ctx, "key", io.NopCloser(bytes.NewReader([]byte("d"))), nil)
+	if err != nil || got == nil || got.Size != 0 {
+		t.Fatalf("unseekable: result = %+v, err = %v", got, err)
+	}
+	mockS3.putObjectOutput = &s3.PutObjectOutput{}
+	if got, err = s.PutWithMetadataResult(ctx, "key", bytes.NewReader([]byte("d")), nil); err != nil || got != nil {
+		t.Fatalf("no ETag: result = %+v, err = %v", got, err)
+	}
+
+	if _, err := s.PutWithMetadataResult(ctx, "", bytes.NewReader(nil), nil); err == nil {
+		t.Fatal("expected an invalid key error")
+	}
+	mockS3.putObjectError = errors.New("put failed")
+	if got, err = s.PutWithMetadataResult(ctx, "key", bytes.NewReader([]byte("d")), nil); err == nil || got != nil {
+		t.Fatalf("failed upload: result = %+v, err = %v", got, err)
+	}
+}
+
 func TestS3_PutWithMetadata_NilMetadata(t *testing.T) {
 	mockS3 := &mockS3Client{
 		putObjectOutput: &s3.PutObjectOutput{},

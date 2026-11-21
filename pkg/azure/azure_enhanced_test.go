@@ -102,6 +102,10 @@ func (m *mockBlob) SetMetadata(ctx context.Context, metadata map[string]string) 
 	return nil
 }
 
+func (m *mockBlob) UploadWithMetadata(ctx context.Context, r io.Reader, _ map[string]string, _ azblob.BlobHTTPHeaders) error {
+	return m.UploadFromReader(ctx, r)
+}
+
 func (m *mockBlob) SetHTTPHeaders(ctx context.Context, headers azblob.BlobHTTPHeaders) error {
 	if m.setHTTPHeadersFn != nil {
 		return m.setHTTPHeadersFn(ctx, headers)
@@ -419,6 +423,16 @@ func TestAzure_UpdateMetadata_NilMetadata(t *testing.T) {
 	}
 	if gotHeaders.ContentType != "" || gotHeaders.ContentEncoding != "" {
 		t.Errorf("expected cleared headers, got %+v", gotHeaders)
+	}
+}
+
+// TestAzure_MetadataWriteChangesETag: SetMetadata and SetHTTPHeaders re-tag
+// a blob, so Azure tells replication not to record a copy's ETag afterwards.
+func TestAzure_MetadataWriteChangesETag(t *testing.T) {
+	var s common.Storage = &Azure{}
+	r, ok := s.(interface{ MetadataWriteChangesETag() bool })
+	if !ok || !r.MetadataWriteChangesETag() {
+		t.Fatal("Azure must report that a metadata write changes the ETag")
 	}
 }
 

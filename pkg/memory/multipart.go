@@ -177,7 +177,7 @@ func (m *Memory) CompleteMultipartUpload(ctx context.Context, key, uploadID stri
 	md := multipart.CloneMetadata(u.metadata)
 	md.Size = int64(len(assembled))
 	md.LastModified = time.Now()
-	md.ETag = fmt.Sprintf("%d-%d", md.LastModified.Unix(), md.Size)
+	md.ETag = fmt.Sprintf("%d-%d", md.LastModified.UnixNano(), md.Size)
 	if m.objects == nil {
 		m.objects = make(map[string]*object)
 	}

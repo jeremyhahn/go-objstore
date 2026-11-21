@@ -685,6 +685,11 @@ type ReplicationConfig struct {
 	// RunInBackground starts a background goroutine to run periodic syncs.
 	// If false, syncs must be triggered manually.
 	RunInBackground bool
+
+	// Context bounds the background goroutine started by RunInBackground:
+	// it stops when Context is done. If nil, context.Background() is used
+	// and the goroutine runs until the process exits.
+	Context context.Context
 }
 
 // ReplicationManagerSetter is an interface for backends that can have a replication manager set
@@ -772,7 +777,11 @@ func EnableReplication(backendName string, config *ReplicationConfig) error {
 
 	// Start background processing if requested
 	if config.RunInBackground {
-		go rm.Run(context.Background())
+		ctx := config.Context
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		go rm.Run(ctx)
 	}
 
 	return nil
