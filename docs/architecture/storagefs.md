@@ -1,6 +1,6 @@
 # StorageFS Architecture
 
-> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-11-12
 > Conflicts with this document are defects. Fix them here first.
 
 StorageFS provides a filesystem abstraction layer over object storage. It wraps any storage backend with an interface similar to Go's `os` package, making object storage feel like a traditional filesystem.
@@ -10,22 +10,22 @@ StorageFS provides a filesystem abstraction layer over object storage. It wraps 
 The primary goal is enabling existing code that works with filesystems to use object storage with minimal changes. This is particularly useful for:
 
 - Legacy applications expecting filesystem APIs
-- Standard library functions that take `fs.FS` interfaces
+- Code written against an `os`-like filesystem API
 - Tools and libraries built around file operations
 - Development workflows that mirror production object storage
 
 ## Interface Implementation
 
-StorageFS implements several Go standard library interfaces:
+StorageFS implements the package's own interfaces (`pkg/storagefs/interfaces.go`), modelled on the `os` package. It does not implement `io/fs.FS` or `io/fs.ReadDirFS`.
 
-### fs.FS
-The core filesystem interface from Go 1.16+. Provides `Open()` method for reading files.
+### storagefs.Fs
+Implemented by `*StorageFS` (`storagefs.New(storage common.Storage) *StorageFS`): `Name`, `Create`, `Open`, `OpenFile`, `Mkdir`, `MkdirAll`, `Remove`, `RemoveAll`, `Rename`, `Stat`, `Chmod`, `Chown`, `Chtimes`.
 
-### fs.ReadDirFS
-Extends `fs.FS` with directory listing via `ReadDir()`.
+### storagefs.File
+Implemented by `*StorageFile`: `io.Reader`, `io.ReaderAt`, `io.Writer`, `io.WriterAt`, `io.Seeker`, `io.Closer`, plus `Name`, `Stat`, `Sync`, `Truncate`, `WriteString`, `Readdir` and `Readdirnames`.
 
 ### Additional Operations
-Beyond standard interfaces, StorageFS adds:
+Beyond the standard `io` interfaces, StorageFS adds:
 - File creation and writing
 - Directory creation and removal
 - File deletion
@@ -35,26 +35,27 @@ Beyond standard interfaces, StorageFS adds:
 ## File Operations
 
 ### File Handles
-Opening a file returns a `File` interface that mimics `os.File`:
+Opening a file returns a `storagefs.File` that mimics `os.File`:
 - `Read()` - Read bytes from file
 - `Write()` - Write bytes to file
 - `Seek()` - Change read/write position
 - `Close()` - Finish file operations
 - `Stat()` - Get file information
+- `Readdir()` / `Readdirnames()` - List a directory's direct children
 
 ### Reading Files
 Files can be opened for reading like `os.Open()`. The implementation:
-- Retrieves object from backend on open
-- Buffers content for seeking
+- Retrieves the whole object from the backend on open
+- Buffers content in memory for seeking
 - Releases resources on close
 - Supports partial reads
 
 ### Writing Files
 Files can be created for writing like `os.Create()`. The implementation:
-- Buffers writes in memory or on disk
-- Flushes to backend on close
+- Buffers the whole content in memory
+- Writes it to the backend with one `Put` on `Sync` or `Close`, then writes the metadata
 - Supports seeking during write
-- Atomic uploads when possible
+- Does not write the data and the metadata atomically
 
 ## Directory Operations
 
@@ -62,49 +63,46 @@ Files can be created for writing like `os.Create()`. The implementation:
 Object storage is flat, but StorageFS creates a hierarchical view using key delimiters. By convention, "/" separates path components.
 
 ### Directory Listing
-Listing a directory queries the backend for objects with a matching prefix. Results can be filtered to show only immediate children, mimicking directory semantics.
+Listing a directory calls the backend's `ListWithOptions` with the prefix `<dir>/` and the delimiter `/`, so only immediate children are returned. Keys under `.meta/` and `.dir` markers are skipped.
 
 ### Creating Directories
-Creating a directory may be a no-op or create a marker object, depending on the backend. Some backends require explicit directory markers, while others infer structure from object keys.
+Creating directory `d` always writes the empty marker object `d/.dir` and the metadata object `.meta/d`. `Mkdir` returns `os.ErrExist` when the marker already exists.
 
 ### Removing Directories
-Removing a directory may require deleting all contained objects. Non-recursive removal fails if the directory contains objects.
+`Remove` on a directory deletes its marker and metadata only; it does not check for or delete the contained objects. `RemoveAll` deletes by key prefix only on a backend that offers an unexported `listKeys` method (the built-in backends do not), and always returns `nil`.
 
 ## Path Handling
 
 ### Key Translation
-Filesystem paths are translated to object keys:
-- Absolute paths use the full path as key
-- Relative paths resolve against a root prefix
-- Path separators normalize to "/"
-- Special paths like "." and ".." are handled
+Filesystem paths are translated to object keys by `normalizePath`:
+- `""` and `"/"` become `"."`
+- Backslashes normalize to "/"
+- The path is cleaned with `path.Clean`, which resolves "." and ".."
+- One leading "/" is removed, so absolute and relative paths give the same key
 
 ### Root Prefix
-StorageFS can be rooted at a specific prefix in the backend. This allows multiple filesystems to share a backend without collisions.
+StorageFS has no root prefix: keys are the normalized paths themselves, plus the `.meta/` metadata keys and the `.dir` markers.
 
 ## Metadata and File Info
 
 ### File Information
 The `Stat()` operation returns file information:
-- Name and full path
+- Base name
 - Size in bytes
 - Last modified time
 - Mode bits and permissions
 - Whether it's a directory
 
 ### Metadata Mapping
-Backend metadata maps to filesystem concepts:
-- Content-Type becomes file extension hint
-- ETag provides version information
-- Custom metadata accessible through extended APIs
+StorageFS keeps its own metadata as a JSON object (`name`, `size`, `mode`, `modTime`, `isDir`) at the key `.meta/<path>`. When that object is missing, directory listings fall back to the backend's object size and last-modified time, and `Stat` returns defaults.
 
 ## Buffering and Caching
 
 ### Read Buffering
-Objects are typically buffered on read to support seeking. Small objects buffer entirely in memory, while large objects may use temporary disk storage.
+Objects are buffered entirely in memory on open to support seeking.
 
 ### Write Buffering
-Writes buffer until close to enable seeking and avoid partial uploads. Buffer strategy depends on object size and available resources.
+Writes buffer in memory until `Sync` or `Close` to enable seeking and avoid partial uploads.
 
 ### No Caching
 StorageFS does not cache object content across file handle lifetimes. Each open operation fetches fresh data from the backend.
@@ -112,22 +110,22 @@ StorageFS does not cache object content across file handle lifetimes. Each open 
 ## Concurrency
 
 ### Thread Safety
-Multiple goroutines can safely use the same StorageFS instance. Concurrent operations on different files work independently.
+Each open file serialises its own operations with a `sync.Mutex`. `StorageFS` itself holds no lock, only the backend, so concurrent calls are as safe as the backend is; multi-step operations (`Rename`, `RemoveAll`, `Mkdir`) are not atomic across the backend.
 
 ### File Handle Isolation
-Each file handle maintains its own read/write position and buffer. Concurrent operations on the same logical file use separate handles and see a consistent view.
+Each file handle maintains its own read/write position and buffer. Two handles on the same logical file do not see each other's writes; the last `Sync` or `Close` wins.
 
 ### Consistency Model
 The consistency model matches the underlying backend:
 - Local backend provides strong consistency
 - Cloud backends may have eventual consistency for listings
-- Individual file operations are atomic
+- A single backend `Put` or `Delete` is atomic; StorageFS operations that make several calls are not
 
 ## Limitations
 
 ### Not a Full Filesystem
 StorageFS provides filesystem-like operations but is not a complete filesystem:
-- No POSIX permissions or ownership
+- No POSIX permissions or ownership (modes are stored, not enforced; `Chown` returns `os.ErrInvalid`)
 - No symbolic links or hard links
 - No file locking or advisory locks
 - Limited support for extended attributes
@@ -144,8 +142,8 @@ Object storage has different performance than local filesystem:
 Some operations map poorly to object storage:
 - Appending to files requires rewriting
 - Seeking during write may not be efficient
-- Directory markers may be implicit
-- Renames are copy-and-delete operations
+- Directories exist only through their `.dir` markers
+- Renames are copy-and-delete operations; renaming a directory moves only its marker and metadata
 
 ## Use Cases
 
@@ -156,7 +154,7 @@ Use local backend with StorageFS during development, then switch to cloud backen
 Migrate applications from filesystem to object storage incrementally. Replace `os` package calls with StorageFS equivalents.
 
 ### Standard Library Integration
-Pass StorageFS to functions expecting `fs.FS` interface. Many standard library functions work with any filesystem implementation.
+A `storagefs.File` is an `io.Reader`, `io.Writer`, `io.Seeker` and `io.Closer`, so it works with `io.Copy`, `io.ReadAll`, `bufio` and similar. StorageFS does not implement `io/fs.FS`, so it cannot be passed to functions that take one.
 
 ### Compatibility Layer
 Wrap object storage with familiar filesystem semantics for tools that expect file-based input and output.

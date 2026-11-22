@@ -1,6 +1,6 @@
 # StorageFS - Filesystem Abstraction
 
-> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-11-12
 > Conflicts with this document are defects. Fix them here first.
 
 StorageFS provides a filesystem-like interface on top of any storage backend, allowing you to use familiar file operations with cloud storage.
@@ -24,10 +24,14 @@ StorageFS wraps any `Storage` backend and provides a filesystem interface simila
 package main
 
 import (
+    "fmt"
     "io"
     "log"
-    "go-objstore/pkg/factory"
-    "go-objstore/pkg/storagefs"
+    "os"
+
+    "github.com/jeremyhahn/go-objstore/pkg/common"
+    "github.com/jeremyhahn/go-objstore/pkg/factory"
+    "github.com/jeremyhahn/go-objstore/pkg/storagefs"
 )
 
 func main() {
@@ -42,17 +46,34 @@ func main() {
     // Wrap with filesystem interface
     fs := storagefs.New(storage)
 
-    // Now use like a regular filesystem
-    file, _ := fs.Create("docs/readme.txt")
-    file.WriteString("Hello, StorageFS!")
-    file.Close()
+    // Now use like a regular filesystem. Open the new file write-only:
+    // Create (O_RDWR|O_CREATE) fails on a missing key (see Limitations).
+    file, err := fs.OpenFile("docs/readme.txt", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+    if err != nil {
+        log.Fatal(err)
+    }
+    if _, err := file.WriteString("Hello, StorageFS!"); err != nil {
+        log.Fatal(err)
+    }
+    // Close flushes the buffered content to the backend
+    if err := file.Close(); err != nil {
+        log.Fatal(err)
+    }
 
     // Read it back
-    readFile, _ := fs.Open("docs/readme.txt")
-    content, _ := io.ReadAll(readFile)
-    readFile.Close()
+    readFile, err := fs.Open("docs/readme.txt")
+    if err != nil {
+        log.Fatal(err)
+    }
+    content, err := io.ReadAll(readFile)
+    if err != nil {
+        log.Fatal(err)
+    }
+    if err := readFile.Close(); err != nil {
+        log.Fatal(err)
+    }
 
-    println(string(content)) // "Hello, StorageFS!"
+    fmt.Println(string(content)) // "Hello, StorageFS!"
 }
 ```
 
@@ -61,8 +82,13 @@ func main() {
 ### Creating a Filesystem
 
 ```go
+// func New(storage common.Storage) *StorageFS
 fs := storagefs.New(storage)
+
+name := fs.Name() // the filesystem's name
 ```
+
+`*StorageFS` implements the `storagefs.Fs` interface (`pkg/storagefs/interfaces.go`); `Create`, `Open` and `OpenFile` return a `storagefs.File`.
 
 ### File Operations
 
@@ -78,12 +104,14 @@ file.WriteString("content")
 #### Open a File
 
 ```go
-// Read-only
+// Read-only (OpenFile with os.O_RDONLY)
 file, err := fs.Open("path/to/file.txt")
 
 // With specific flags
 file, err := fs.OpenFile("path/to/file.txt", os.O_RDWR|os.O_CREATE, 0644)
 ```
+
+`Create(name)` is `OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)`. Because of a known defect (see Limitations), `Create` and any `OpenFile` with `os.O_RDWR|os.O_CREATE` fail on a missing file on the local backend with a "key not found: <key>" error; `os.O_WRONLY|os.O_CREATE` works. Opening a missing file without `os.O_CREATE` returns `os.ErrNotExist` only when the backend's error is `os.ErrNotExist` or exactly "key not found"; the local backend's wrapped `common.ErrKeyNotFound` is not recognised, so it returns that error instead. The content is held in memory while the file is open and is written to the backend only by `Sync` or `Close`, and only when the file was opened with `os.O_WRONLY` or `os.O_RDWR`.
 
 #### Write to File
 
@@ -100,6 +128,8 @@ n, err := file.WriteString("text")
 // Write at position
 n, err := file.WriteAt([]byte("data"), offset)
 ```
+
+`Write`, `WriteString`, `WriteAt` and `Truncate` return `os.ErrPermission` on a file opened without `os.O_WRONLY` or `os.O_RDWR`; `Read` and `ReadAt` return `os.ErrPermission` on a file opened `os.O_WRONLY`. Every file operation on a closed file returns `fs.ErrClosed`, and every read, write, seek or truncate on a directory returns `storagefs.ErrIsDirectory`.
 
 #### Read from File
 
@@ -134,6 +164,8 @@ pos, err := file.Seek(10, io.SeekCurrent)
 pos, err := file.Seek(-10, io.SeekEnd)
 ```
 
+`Seek` returns `storagefs.ErrInvalidWhence` for an unknown `whence` and `storagefs.ErrNegativeOffset` when the resulting offset is negative.
+
 ### Directory Operations
 
 #### Create Directory
@@ -146,15 +178,19 @@ err := fs.Mkdir("mydir", 0755)
 err := fs.MkdirAll("path/to/nested/dir", 0755)
 ```
 
+`Mkdir` returns `os.ErrExist` if the directory already exists; it does not check that the parent exists. `MkdirAll` creates each missing component and ignores `os.ErrExist`.
+
 #### Remove Files/Directories
 
 ```go
-// Remove file or empty directory
+// Remove a file, or a directory's marker and metadata
 err := fs.Remove("file.txt")
 
-// Remove recursively (like rm -rf)
+// Remove every key under a prefix
 err := fs.RemoveAll("path/to/dir")
 ```
+
+`Remove` returns `os.ErrNotExist` when neither a directory marker nor a file exists at the path. On a directory it deletes only the marker and its metadata; it does not check that the directory is empty and does not delete the children. `RemoveAll` always returns `nil`; see [Limitations](#limitations).
 
 ### File Information
 
@@ -168,7 +204,12 @@ fmt.Println(info.Size())    // file size in bytes
 fmt.Println(info.Mode())    // file permissions
 fmt.Println(info.ModTime()) // modification time
 fmt.Println(info.IsDir())   // false
+
+// Stat of an open file
+info, err = file.Stat()
 ```
+
+`fs.Stat` returns `os.ErrNotExist` when the path has no metadata and no file or directory marker. A file or directory that exists without metadata gets default info (mode `0644`, or `os.ModeDir|0755`, size 0, the current time).
 
 #### Check if File Exists
 
@@ -222,6 +263,8 @@ for _, name := range names {
 }
 ```
 
+`Readdir(count int) ([]os.FileInfo, error)` and `Readdirnames(n int) ([]string, error)` list the direct children through the backend's `ListWithOptions` with the `/` delimiter, skipping `.meta/` keys and `.dir` markers. They call `ListWithOptions` once and ignore `Truncated` and `NextToken`, so only the first page the backend returns is listed (the local backend returns 1,000 objects per page): in a directory with more entries than that, the rest are never returned and repeated `Readdir` calls return the same page again. With `count <= 0` they return the entries of that page and a `nil` error. With `count > 0` they return up to `count` entries, and `io.EOF` together with the last batch (unlike `os.File`, which returns `io.EOF` only with an empty slice). On a file that is not a directory they return `storagefs.ErrNotDirectory`.
+
 #### Paginated Directory Reading
 
 ```go
@@ -273,6 +316,10 @@ err := fs.Chtimes("file.txt", newTime, newTime)
 err := fs.Rename("old/path.txt", "new/path.txt")
 ```
 
+`Chmod` and `Chtimes` update the stored metadata only; they return the backend's error when the path has no metadata. `Chtimes` records `mtime` and ignores `atime`. `Chown` always returns `os.ErrInvalid`.
+
+`Rename` returns `os.ErrNotExist` when the source does not exist, and the backend's error when the source has no metadata. It copies the object to the new key and deletes the old one; it does not check whether the destination exists, so it overwrites it. Renaming a directory moves only its `.dir` marker and metadata, not its children.
+
 ### Advanced Operations
 
 #### Truncate File
@@ -284,6 +331,8 @@ defer file.Close()
 err := file.Truncate(100) // Set file size to 100 bytes
 ```
 
+`Truncate(size int64) error` shrinks the in-memory content or pads it with zeros; the change reaches the backend at `Sync` or `Close`.
+
 #### Sync to Storage
 
 ```go
@@ -292,6 +341,8 @@ file.WriteString("data")
 err := file.Sync() // Flush to storage
 file.Close()
 ```
+
+`Sync() error` writes the whole content to the backend with `Put` and updates the size and modification time in the metadata. It does nothing on a directory or on a file opened without `os.O_WRONLY` or `os.O_RDWR`. `Close` does the same flush once; a second `Close` returns `fs.ErrClosed`.
 
 ## Usage with Different Backends
 
@@ -344,30 +395,36 @@ fs := storagefs.New(storage)
 ### Directory Representation
 
 Since object storage is flat, directories are simulated using:
-- **Directory markers**: Empty `.dir` files mark directories
-- **Metadata**: JSON metadata stored in `.meta/` prefix
+- **Directory markers**: a directory `d` exists when the empty object `d/.dir` exists (the key `<dir>/.dir`, built with `path.Join(dir, ".dir")`)
+- **Metadata**: JSON metadata stored under the `.meta/` prefix
 - **Path semantics**: Paths are normalized and cleaned
 
 ### Metadata Storage
 
-File metadata (size, permissions, modification time) is stored as JSON:
-- **Location**: `.meta/{path}` in storage
-- **Format**: JSON with name, size, mode, modTime, isDir
+File and directory metadata (size, permissions, modification time) is stored as JSON:
+- **Location**: the key `.meta/<path>` (for example `.meta/docs/readme.txt`; directory `d` has `.meta/d`)
+- **Format**: a JSON object with the fields `name`, `size`, `mode`, `modTime` and `isDir`
 
 ### Path Normalization
 
-All paths are normalized:
-- Leading slashes removed
-- Multiple slashes collapsed
-- Empty path treated as "."
-- Windows backslashes converted to forward slashes
+Every path passed to `StorageFS` is normalized:
+- `""` and `"/"` become `"."`
+- Backslashes are converted to forward slashes
+- The path is cleaned with `path.Clean` (multiple slashes collapsed, `.` and `..` resolved)
+- One leading slash is removed
+- An empty result becomes `"."`
 
 ## Limitations
 
-1. **No ownership**: Chown() returns `os.ErrInvalid`
+1. **No ownership**: `Chown()` always returns `os.ErrInvalid`
 2. **No hard links**: Not supported by object storage
 3. **No symbolic links**: Not supported by object storage
-4. **Permissions**: Stored but not enforced by storage backends
+4. **Permissions**: Stored in metadata but not enforced
+5. **RemoveAll**: it deletes keys only through an unexported `listKeys(prefix string) []string` method on the backend, which the built-in backends do not have; on them it deletes nothing. It always returns `nil`, and the match is a plain key prefix
+6. **Directory Remove and Rename**: they act on the `.dir` marker and metadata only, not on the children
+7. **Whole-object I/O**: an open file holds its whole content in memory; `Sync` and `Close` rewrite the whole object
+8. **Create on a missing key (defect)**: `newStorageFile` recognises only `os.ErrNotExist` or the exact string "key not found", but the local backend's `Get` returns `common.ErrKeyNotFound` wrapped with the key. `Create` and `OpenFile` with `os.O_RDWR` or read-only flags on a missing file therefore return "key not found: <key>", even with `os.O_CREATE`, and `Open` of a missing file does not return `os.ErrNotExist`. Write-only opens (`os.O_WRONLY|os.O_CREATE`) are not affected
+9. **Readdir pagination (defect)**: `Readdir` and `Readdirnames` read only the first page of `ListWithOptions` (1,000 objects on the local backend) and ignore `Truncated` and `NextToken`
 
 ## Performance Considerations
 
@@ -378,7 +435,20 @@ All paths are normalized:
 
 ## Error Handling
 
-StorageFS uses standard `os` package errors:
+StorageFS returns standard `os` errors and its own sentinels; check them with `errors.Is`:
+
+| Error | Returned by |
+|-------|-------------|
+| `os.ErrNotExist` | `Open`/`OpenFile` of a missing file without `os.O_CREATE`, only when the backend reports `os.ErrNotExist` (not the local backend, see Limitations 8); `Stat`, `Remove` and `Rename` of a missing path |
+| `os.ErrExist` | `Mkdir` of an existing directory |
+| `os.ErrInvalid` | `Chown`, always |
+| `os.ErrPermission` | writes and `Truncate` on a file opened read-only; reads on a file opened `os.O_WRONLY` |
+| `fs.ErrClosed` | any `File` method after `Close` |
+| `storagefs.ErrIsDirectory` | `Read`, `ReadAt`, `Write`, `WriteAt`, `Seek` and `Truncate` on a directory |
+| `storagefs.ErrNotDirectory` | `Readdir` and `Readdirnames` on a file |
+| `storagefs.ErrInvalidWhence`, `storagefs.ErrNegativeOffset` | `Seek` |
+
+`Chmod`, `Chtimes`, and `Rename` of a path without metadata return the backend's own error.
 
 ```go
 file, err := fs.Open("nonexistent.txt")
@@ -390,11 +460,16 @@ err = fs.Mkdir("existing", 0755)
 if errors.Is(err, os.ErrExist) {
     // Handle already exists
 }
+
+_, err = dir.Read(buf)
+if errors.Is(err, storagefs.ErrIsDirectory) {
+    // Handle read on a directory
+}
 ```
 
 ## Thread Safety
 
-StorageFS operations are thread-safe when the underlying storage backend is thread-safe (all built-in backends are).
+Each open `File` serialises its own operations with a `sync.Mutex`. `StorageFS` itself holds no lock: it keeps only the backend, so its calls are as safe for concurrent use as the backend is, and the multi-step operations (`Rename`, `RemoveAll`, `Mkdir`, and the data-then-metadata writes of `Sync` and `Close`) are not atomic across the backend. Two `File` values open on the same path do not see each other's writes; the last `Sync` or `Close` wins.
 
 ## Complete Example
 
