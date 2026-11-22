@@ -22,7 +22,7 @@
 #                their compose files.
 #
 # Build with `make docker-build`, which passes GO_IMAGE, GO_GLIBC_IMAGE,
-# GO_BUILD_PROXY and the gomodauth secret.
+# and the secrets gomodauth and goproxy.
 #
 # THE GO TOOLCHAIN is the one every go.mod declares (`go 1.27.4`), from the
 # official Alpine image. Raise the tag in the same change that moves go.mod; to
@@ -37,7 +37,10 @@
 # the RUN that reads it prints nothing of it. An empty or absent secret means
 # the modules resolve without credentials.
 #
-# FETCHING happens only at build time and only through GO_BUILD_PROXY. The
+# FETCHING happens only at build time and only through the proxy the BuildKit
+# secret goproxy names (the Makefile passes the caller's GOPROXY; absent, it is
+# https://proxy.golang.org,direct). A pool's GOPROXY is a LAN cache, and a
+# secret, unlike an ARG, is in no history entry (ruling 901). The
 # images' ENV is GOPROXY=off, so a gate that reaches for a module fails instead
 # of fetching it. CI runs `make security` and `make deps-check` with the
 # network on, and they set their own proxy.
@@ -56,11 +59,9 @@ ARG GO_IMAGE=golang:1.27.4-alpine3.24@sha256:0a5f7fe796599ff487605987432e7619ae4
 # The capi stage's base: the same Go release as GO_IMAGE, on glibc. Raise the
 # two tags, and their digests, together.
 ARG GO_GLIBC_IMAGE=golang:1.27.4-trixie@sha256:b54b2639de8c1bfe538ec5ffc45f29b1932235ac5f6d63c059853646677112d9
-ARG GO_BUILD_PROXY=https://proxy.golang.org,direct
 
 # ---------------------------------------------------------------------------
 FROM ${GO_IMAGE} AS tools
-ARG GO_BUILD_PROXY
 
 # GOTOOLCHAIN=local: the Go tools are built by THIS toolchain. CGO_ENABLED=0:
 # static binaries.
@@ -73,11 +74,14 @@ RUN apk add --no-cache curl tar xz
 
 WORKDIR /build
 COPY scripts/tool-pins.sh scripts/install-tools.sh scripts/
-RUN GOPROXY="$GO_BUILD_PROXY" sh scripts/install-tools.sh /out
+RUN --mount=type=secret,id=goproxy \
+    set -eu; \
+    proxy=https://proxy.golang.org,direct; \
+    if [ -s /run/secrets/goproxy ]; then proxy=$(cat /run/secrets/goproxy); fi; \
+    GOPROXY="$proxy" sh scripts/install-tools.sh /out
 
 # ---------------------------------------------------------------------------
 FROM ${GO_IMAGE} AS base
-ARG GO_BUILD_PROXY
 
 # GOTOOLCHAIN=local makes a go.mod asking for a newer toolchain FAIL rather
 # than download it. CGO_ENABLED=1 is for -race and for the C shared library
@@ -111,13 +115,15 @@ COPY go.mod go.sum ./
 COPY backup/go.mod backup/go.sum backup/
 COPY api/sdks/go/go.mod api/sdks/go/go.sum api/sdks/go/
 COPY examples/encryption/go.mod examples/encryption/go.sum examples/encryption/
-RUN --mount=type=secret,id=gomodauth \
+RUN --mount=type=secret,id=gomodauth --mount=type=secret,id=goproxy \
     set -eu; \
     if [ -s /run/secrets/gomodauth ]; then \
         set -a; . /run/secrets/gomodauth; set +a; \
     fi; \
+    proxy=https://proxy.golang.org,direct; \
+    if [ -s /run/secrets/goproxy ]; then proxy=$(cat /run/secrets/goproxy); fi; \
     for m in . backup api/sdks/go examples/encryption; do \
-        (cd "$m" && GOPROXY="$GO_BUILD_PROXY" go mod download && go mod verify); \
+        (cd "$m" && GOPROXY="$proxy" go mod download && go mod verify); \
     done; \
     chmod -R a+rX /opt/go/mod; \
     find /opt/go/mod/cache -type d -exec chmod a+w {} +
