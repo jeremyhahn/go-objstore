@@ -116,18 +116,9 @@ func (h *Handler) authorize(ctx context.Context, req *Request) *Response {
 	// takes precedence over the transport authenticator. When absent, fall back
 	// to the configured Authenticator (NoOp/anonymous by default), which
 	// preserves backward compatibility and lets consumers inject a custom one.
-	principal, ok := principalFromContext(ctx)
-	if !ok {
-		// Derive the principal via the authenticator's HTTP entrypoint with a
-		// credential-less request (unix transport carries no credentials).
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "/", nil)
-		if err != nil {
-			return h.errorResponse(req.ID, ErrCodeInternalError, "failed to build auth context")
-		}
-		principal, err = h.authenticator.AuthenticateHTTP(ctx, httpReq)
-		if err != nil {
-			return h.errorResponse(req.ID, ErrCodeForbidden, "forbidden")
-		}
+	principal, errResp := h.resolvePrincipal(ctx, req)
+	if errResp != nil {
+		return errResp
 	}
 
 	if err := h.authorizer.Authorize(ctx, principal, mapping.action, mapping.resource); err != nil {
@@ -201,6 +192,54 @@ func (h *Handler) Handle(ctx context.Context, req *Request) *Response {
 }
 
 // handlePut handles the put method
+// resolvePrincipal returns the peer-credential principal stored in ctx or,
+// when there is none, the principal the authenticator derives from a
+// credential-less request (the unix transport carries no credentials).
+func (h *Handler) resolvePrincipal(ctx context.Context, req *Request) (*adapters.Principal, *Response) {
+	if principal, ok := principalFromContext(ctx); ok {
+		return principal, nil
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "/", nil)
+	if err != nil {
+		return nil, h.errorResponse(req.ID, ErrCodeInternalError, "failed to build auth context")
+	}
+	principal, err := h.authenticator.AuthenticateHTTP(ctx, httpReq)
+	if err != nil {
+		return nil, h.errorResponse(req.ID, ErrCodeForbidden, "forbidden")
+	}
+	return principal, nil
+}
+
+// authorizeOverwrite refuses a put to an existing key unless the principal
+// may overwrite (#238). It runs before the payload is decoded or stored. A
+// denial uses the gate's forbidden code; a failed existence lookup fails
+// closed with an internal error.
+func (h *Handler) authorizeOverwrite(ctx context.Context, req *Request, key string) *Response {
+	principal, errResp := h.resolvePrincipal(ctx, req)
+	if errResp != nil {
+		return errResp
+	}
+	err := adapters.AuthorizeOverwrite(ctx, h.authorizer, principal, key, func(ctx context.Context) (bool, error) {
+		return objstore.Exists(ctx, h.keyRef(key))
+	})
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, adapters.ErrInsufficientPermissions) {
+		h.logger.Warn(ctx, "unix authorization denied",
+			adapters.Field{Key: fieldError, Value: err.Error()},
+			adapters.Field{Key: "method", Value: req.Method},
+			adapters.Field{Key: "action", Value: adapters.ActionOverwrite},
+		)
+		return h.errorResponse(req.ID, ErrCodeForbidden, "forbidden")
+	}
+	h.logger.Error(ctx, "unix overwrite check failed",
+		adapters.Field{Key: fieldError, Value: err.Error()},
+		adapters.Field{Key: "method", Value: req.Method},
+	)
+	return h.errorResponse(req.ID, ErrCodeInternalError, "failed to check whether the object exists")
+}
+
 func (h *Handler) handlePut(ctx context.Context, req *Request) *Response {
 	var params PutParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -209,6 +248,10 @@ func (h *Handler) handlePut(ctx context.Context, req *Request) *Response {
 
 	if params.Key == "" {
 		return h.errorResponse(req.ID, ErrCodeInvalidParams, "key is required")
+	}
+
+	if denied := h.authorizeOverwrite(ctx, req, params.Key); denied != nil {
+		return denied
 	}
 
 	// Decode base64 data

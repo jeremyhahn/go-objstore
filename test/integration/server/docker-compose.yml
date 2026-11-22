@@ -70,7 +70,7 @@ services:
     volumes:
       - quic-storage:/tmp/objstore
       - quic-archive:/tmp/archive
-      - ./certs:/certs:ro
+      - ${CERT_DIR:?CERT_DIR must point at the generated test certificates (make test-servers)}:/certs:ro
     environment:
       - STORAGE_BACKEND=local
       - STORAGE_PATH=/tmp/objstore
@@ -129,17 +129,17 @@ services:
         condition: service_started
     volumes:
       - ../../..:/app
-      - ./certs:/certs:ro
+      - ${CERT_DIR:?CERT_DIR must point at the generated test certificates (make test-servers)}:/certs:ro
     working_dir: /app
     environment:
       - GRPC_SERVER_ADDR=grpc-server:50051
       - REST_SERVER_ADDR=http://rest-server:8080
       - QUIC_SERVER_ADDR=https://quic-server:4433
       - MCP_SERVER_ADDR=http://mcp-server:8081
-      - CERT_FILE=/certs/server.crt
-      # Trust the self-signed test certificate in Go's system root pool so the
+      - CERT_FILE=/certs/ca.crt
+      # Trust the generated test CA in Go's system root pool so the
       # CLI's HTTP/3 client can verify the QUIC server.
-      - SSL_CERT_FILE=/certs/server.crt
+      - SSL_CERT_FILE=/certs/ca.crt
       - GO_TEST_TIMEOUT=15m
     # rest_ipv6_test.go binds the REST listener on [::1] from OBJSTORE_* config;
     # IPv6 is required in this container and the test fails without it.

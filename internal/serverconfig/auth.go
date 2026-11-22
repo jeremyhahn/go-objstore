@@ -48,7 +48,8 @@ type AuthConfig struct {
 	// client certificate against it.
 	ClientCA string `mapstructure:"client_ca"`
 	// Roles maps a role name to the actions it permits ("read", "write",
-	// "delete", "list", "admin", or "*" for all).
+	// "overwrite", "delete", "list", "admin", or "*" for all). A put to a
+	// key that already exists needs "overwrite" as well as "write".
 	Roles map[string][]string `mapstructure:"roles"`
 	// Identities maps a certificate common name, or "uid:N" for a local
 	// user, to its roles. A client that matches no identity has no roles
@@ -73,12 +74,13 @@ func (a AuthConfig) Enabled() bool {
 
 // knownActions are the action names the servers pass to Authorize.
 var knownActions = map[string]bool{
-	adapters.ActionRead:   true,
-	adapters.ActionWrite:  true,
-	adapters.ActionDelete: true,
-	adapters.ActionList:   true,
-	adapters.ActionAdmin:  true,
-	wildcardAction:        true,
+	adapters.ActionRead:      true,
+	adapters.ActionWrite:     true,
+	adapters.ActionOverwrite: true,
+	adapters.ActionDelete:    true,
+	adapters.ActionList:      true,
+	adapters.ActionAdmin:     true,
+	wildcardAction:           true,
 }
 
 // tlsListener is one enabled TCP (or QUIC) listener and its TLS key pair.
@@ -153,7 +155,7 @@ func (c *Config) validateAuth() []error {
 				errs = append(errs, &InvalidSettingError{
 					Key: "auth.roles." + role, Value: a,
 					Reason: "unknown action: must be one of " + joinQuoted(adapters.ActionRead, adapters.ActionWrite,
-						adapters.ActionDelete, adapters.ActionList, adapters.ActionAdmin, wildcardAction),
+						adapters.ActionOverwrite, adapters.ActionDelete, adapters.ActionList, adapters.ActionAdmin, wildcardAction),
 				})
 			}
 		}

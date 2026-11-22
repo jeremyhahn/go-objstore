@@ -15,6 +15,7 @@ package grpc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -60,10 +61,52 @@ func (s *Server) keyRef(key string) string {
 	return s.backend + ":" + key
 }
 
+// authorizeOverwrite runs the overwrite check of a put to key (Put and
+// PutStream). It returns PermissionDenied when the key exists and the
+// principal may not overwrite it, Internal when the existence lookup fails,
+// and nil otherwise. A nil authorizer allows everything (auth off).
+func (s *Server) authorizeOverwrite(ctx context.Context, key string) error {
+	principal := principalFromContext(ctx)
+	err := adapters.AuthorizeOverwrite(ctx, s.opts.Authorizer, principal, key, func(ctx context.Context) (bool, error) {
+		return objstore.Exists(ctx, s.keyRef(key))
+	})
+	if err == nil {
+		return nil
+	}
+	principalID := ""
+	if principal != nil {
+		principalID = principal.ID
+	}
+	if errors.Is(err, adapters.ErrInsufficientPermissions) {
+		if s.opts.Logger != nil {
+			s.opts.Logger.Warn(ctx, "Authorization denied",
+				adapters.Field{Key: "action", Value: adapters.ActionOverwrite},
+				adapters.Field{Key: "resource", Value: key},
+				adapters.Field{Key: "principal_id", Value: principalID},
+			)
+		}
+		return status.Error(codes.PermissionDenied, "authorization denied")
+	}
+	if s.opts.Logger != nil {
+		s.opts.Logger.Error(ctx, "Overwrite check failed",
+			adapters.Field{Key: "error", Value: err.Error()},
+			adapters.Field{Key: "resource", Value: key},
+			adapters.Field{Key: "principal_id", Value: principalID},
+		)
+	}
+	return status.Error(codes.Internal, "failed to check whether the object exists")
+}
+
 // Put stores an object in the backend.
 func (s *Server) Put(ctx context.Context, req *objstorepb.PutRequest) (*objstorepb.PutResponse, error) {
 	if req.Key == "" {
 		return nil, status.Error(codes.InvalidArgument, "key is required")
+	}
+
+	// A put to an existing key needs the overwrite action as well as write
+	// (the interceptor checked write).
+	if err := s.authorizeOverwrite(ctx, req.Key); err != nil {
+		return nil, err
 	}
 
 	// Convert protobuf metadata to common.Metadata

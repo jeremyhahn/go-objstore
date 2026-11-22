@@ -102,6 +102,14 @@ DOCKER_COMPOSE := docker compose
 # The classic path reads the secret file without one, so no job has to turn
 # bake's entitlement checks off (BUILDX_BAKE_ENTITLEMENTS_FS=0).
 export COMPOSE_BAKE := false
+# Newer Compose/buildx (runner image ubuntu-26.04 20261111.196) still build
+# `run --build` and `up --build` through bake whatever COMPOSE_BAKE says, and
+# bake then refuses the secret file with "additional privileges requested: pass
+# --allow=fs.read=<dir>". Compose has no --allow flag, so lift bake's
+# filesystem entitlement check, the same variable ci.yml sets on its other
+# jobs. The only path outside the context is the gomodauth secret file the
+# integration and SDK compose files name (empty /dev/null when none is staged).
+export BUILDX_BAKE_ENTITLEMENTS_FS := 0
 
 # Compose project prefix for the integration targets. Concurrent CI jobs share
 # one Docker host, and compose's default project name (the directory) made one
@@ -437,10 +445,13 @@ test-cli: integration-test-cli
 test-servers:
 	@echo "$(CYAN)$(BOLD)→ Running server integration tests...$(RESET)"
 	@echo "$(CYAN)  Generating test certificates...$(RESET)"
-	@cd test/integration/server && bash generate-certs.sh
-	@echo "$(CYAN)  Starting server test environment...$(RESET)"
-	@cd test/integration/server && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-server down -v --remove-orphans --timeout 30 >/dev/null 2>&1 || true
-	@cd test/integration/server && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-server up --build --abort-on-container-exit --exit-code-from test; status=$$?; $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-server down -v --remove-orphans --timeout 30; exit $$status
+	@certdir=$$(mktemp -d) && trap 'rm -rf "$$certdir"' EXIT && \
+		go run ./internal/testutil/testcerts/cmd/gencerts "$$certdir" && \
+		chmod 755 "$$certdir" && chmod 644 "$$certdir"/* && \
+		export CERT_DIR="$$certdir" && \
+		echo "$(CYAN)  Starting server test environment...$(RESET)" && \
+		{ (cd test/integration/server && $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-server down -v --remove-orphans --timeout 30 >/dev/null 2>&1) || true; } && \
+		cd test/integration/server && { $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-server up --build --abort-on-container-exit --exit-code-from test; status=$$?; $(DOCKER_COMPOSE) -p $(COMPOSE_PROJECT)-server down -v --remove-orphans --timeout 30; exit $$status; }
 	@echo "$(GREEN)✓ Server integration tests complete$(RESET)"
 
 .PHONY: integration-test-all

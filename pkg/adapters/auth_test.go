@@ -494,6 +494,59 @@ func TestNoOpAuthorizer(t *testing.T) {
 	}
 }
 
+func TestAuthorizeOverwrite(t *testing.T) {
+	ctx := context.Background()
+	rbac := NewRBACAuthorizer(map[string][]string{
+		"writer":    {ActionRead, ActionWrite},
+		"overwrite": {ActionRead, ActionWrite, ActionOverwrite},
+		"all":       {"*"},
+	})
+	lookupErr := errors.New("backend down")
+
+	cases := []struct {
+		name       string
+		authz      Authorizer
+		principal  *Principal
+		exists     bool
+		existsErr  error
+		wantErr    error
+		wantLookup bool
+	}{
+		{"overwrite granted", rbac, &Principal{ID: "u", Roles: []string{"overwrite"}}, true, nil, nil, false},
+		{"wildcard granted", rbac, &Principal{ID: "u", Roles: []string{"all"}}, true, nil, nil, false},
+		{"noop authorizer", NewNoOpAuthorizer(), &Principal{ID: "u"}, true, nil, nil, false},
+		{"nil authorizer", nil, nil, true, nil, nil, false},
+		{"new key", rbac, &Principal{ID: "u", Roles: []string{"writer"}}, false, nil, nil, true},
+		{"existing key denied", rbac, &Principal{ID: "u", Roles: []string{"writer"}}, true, nil, ErrInsufficientPermissions, true},
+		{"lookup error", rbac, &Principal{ID: "u", Roles: []string{"writer"}}, false, lookupErr, lookupErr, true},
+		{"nil principal existing key", rbac, nil, true, nil, ErrInsufficientPermissions, true},
+		{"nil principal new key", rbac, nil, false, nil, nil, true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			called := false
+			exists := func(context.Context) (bool, error) {
+				called = true
+				return tc.exists, tc.existsErr
+			}
+			err := AuthorizeOverwrite(ctx, tc.authz, tc.principal, "obj-key", exists)
+			if tc.wantErr == nil && err != nil {
+				t.Fatalf("AuthorizeOverwrite() = %v, want nil", err)
+			}
+			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
+				t.Fatalf("AuthorizeOverwrite() = %v, want %v", err, tc.wantErr)
+			}
+			if tc.existsErr != nil && errors.Is(err, ErrInsufficientPermissions) {
+				t.Fatalf("lookup error reported as a denial: %v", err)
+			}
+			if called != tc.wantLookup {
+				t.Fatalf("exists called = %v, want %v", called, tc.wantLookup)
+			}
+		})
+	}
+}
+
 func TestRBACAuthorizer(t *testing.T) {
 	ctx := context.Background()
 	authz := NewRBACAuthorizer(map[string][]string{

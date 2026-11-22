@@ -440,7 +440,7 @@ auth := adapters.NewCompositeAuthenticator(
 )
 ```
 
-**Action vocabulary:** `read`, `write`, `delete`, `list`, `admin`
+**Action vocabulary:** `read`, `write`, `overwrite`, `delete`, `list`, `admin`
 
 **Resource categories:** `object`, `policy`, `replication`
 

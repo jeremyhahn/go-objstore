@@ -364,6 +364,42 @@ func (h *Handler) handleObject(w http.ResponseWriter, r *http.Request) {
 }
 
 // handlePut handles PUT requests to store objects.
+// authorizeOverwrite refuses a put to an existing key unless the principal
+// may overwrite (#238). It writes the error response and returns false when
+// the put must not proceed: 403 on denial, 500 when the existence lookup
+// fails (fail closed).
+func (h *Handler) authorizeOverwrite(ctx context.Context, w http.ResponseWriter, r *http.Request, key string) bool {
+	principal, _ := r.Context().Value(principalContextKey).(*adapters.Principal)
+	err := adapters.AuthorizeOverwrite(ctx, h.authorizer, principal, key, func(ctx context.Context) (bool, error) {
+		return objstore.Exists(ctx, h.keyRef(key))
+	})
+	if err == nil {
+		return true
+	}
+	principalID := ""
+	if principal != nil {
+		principalID = principal.ID
+	}
+	if errors.Is(err, adapters.ErrInsufficientPermissions) {
+		h.logger.Warn(ctx, "QUIC authorization denied",
+			adapters.Field{Key: fieldError, Value: err.Error()},
+			adapters.Field{Key: fieldPath, Value: r.URL.Path},
+			adapters.Field{Key: fieldMethod, Value: r.Method},
+			adapters.Field{Key: "action", Value: adapters.ActionOverwrite},
+			adapters.Field{Key: "principal_id", Value: principalID},
+		)
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return false
+	}
+	h.logger.Error(ctx, "QUIC overwrite check failed",
+		adapters.Field{Key: fieldError, Value: err.Error()},
+		adapters.Field{Key: fieldPath, Value: r.URL.Path},
+		adapters.Field{Key: "principal_id", Value: principalID},
+	)
+	http.Error(w, "failed to check whether the object exists", http.StatusInternalServerError)
+	return false
+}
+
 func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request, key string) {
 	ctx, cancel := context.WithTimeout(r.Context(), h.writeTimeout)
 	defer cancel()
@@ -371,6 +407,12 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request, key string) 
 	// Check content length
 	if r.ContentLength > h.maxRequestBodySize {
 		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+
+	// A put to an existing key needs overwrite as well as write (#238);
+	// checked before the body is read.
+	if !h.authorizeOverwrite(ctx, w, r, key) {
 		return
 	}
 

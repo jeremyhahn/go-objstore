@@ -65,6 +65,14 @@ func TestValidate_AuthValid(t *testing.T) {
 	}
 }
 
+func TestValidate_AuthOverwriteAction(t *testing.T) {
+	c := authConfig()
+	c.Auth.Roles["restore"] = []string{"read", "write", "overwrite"}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("Validate with an overwrite action: %v", err)
+	}
+}
+
 func TestValidate_NoAuthKeepsDefaults(t *testing.T) {
 	c := Defaults()
 	c.Path = testPath
