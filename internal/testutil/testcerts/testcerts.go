@@ -40,7 +40,7 @@ func Write(dir string) (Paths, error) {
 		ServerCert: filepath.Join(dir, "server.crt"), ServerKey: filepath.Join(dir, "server.key"),
 		ClientCert: filepath.Join(dir, "client.crt"), ClientKey: filepath.Join(dir, "client.key"),
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return p, err
 	}
 	now := time.Now()
