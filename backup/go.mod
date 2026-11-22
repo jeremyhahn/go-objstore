@@ -10,7 +10,7 @@ replace (
 )
 
 require (
-	github.com/jeremyhahn/go-enclave v0.11.1-alpha
+	github.com/jeremyhahn/go-enclave v0.12.0-alpha
 	github.com/jeremyhahn/go-objstore v0.9.1-alpha
 	github.com/jeremyhahn/go-objstore/api/sdks/go v0.9.0-alpha // held: replaced by the in-repo module ../api/sdks/go; its latest is the current main commit
 	golang.org/x/sys v0.50.0
@@ -21,8 +21,8 @@ require (
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/quic-go/quic-go v0.65.0 // indirect
 	golang.org/x/crypto v0.59.0 // indirect
-	golang.org/x/net v0.62.0 // indirect
+	golang.org/x/net v0.63.0 // indirect
 	golang.org/x/text v0.44.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20261110000943-09e21b237f2c // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20261118221215-c8830f628b3f // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )

@@ -47,7 +47,8 @@ For current coverage statistics, check the [Codecov dashboard](https://codecov.i
 - Build tag: `integration`
 - Located in: `test/integration/server/`
 - Require the docker-compose stack in `test/integration/server/` (live servers
-  plus the TLS fixture from `generate-certs.sh`); run them with `make test-servers`
+  plus TLS material generated at test time by `internal/testutil/testcerts/cmd/gencerts`
+  into `CERT_DIR`); run them with `make test-servers`
 
 ### 5. CLI Tests
 - Test command-line interface
