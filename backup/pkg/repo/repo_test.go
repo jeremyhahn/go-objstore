@@ -2,9 +2,14 @@ package repo
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"reflect"
+	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	enclave "github.com/jeremyhahn/go-enclave"
@@ -112,6 +117,11 @@ func failOn(op, part string) func(string, string) error {
 	}
 }
 
+// withStore returns a copy of r over another store.
+func withStore(r *Repository, st store.Store) *Repository {
+	return &Repository{st: st, layout: r.layout, dk: r.dk, keys: r.keys, base: r.base, cfg: r.Config(), slot: r.Slot()}
+}
+
 // brokenProvider fails every key operation.
 type brokenProvider struct{}
 
@@ -143,7 +153,7 @@ func TestInitOpen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	if o.Config() != cfg {
+	if !reflect.DeepEqual(o.Config(), cfg) {
 		t.Fatalf("opened config %+v, want %+v", o.Config(), cfg)
 	}
 	a, _ := r.ChunkID([]byte("same"))
@@ -198,6 +208,224 @@ func TestOpenPassesOverOtherKeys(t *testing.T) {
 	}
 	_, err = Open(ctx, st, testPrefix, passphrase(t, "correct horse"))
 	assertRepoError(t, err, ErrNoKey, seal.ErrOpen)
+}
+
+func TestKeySlots(t *testing.T) {
+	ctx := context.Background()
+	r, st := newRepo(t)
+	if got := r.Config(); got.Version != formatVersion || len(got.Keys) != 1 || got.Keys[0] != r.Slot() {
+		t.Fatalf("Init config = %+v, slot %s", got, r.Slot())
+	}
+	// Data sealed under the data key before any key change.
+	data := []byte("snapshot data")
+	sealedData, err := r.keys.Seal(seal.TypeConfig, []byte("old"), seal.CompressionNone, data)
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+	first := r.Slot()
+
+	// Two keys: either opens.
+	added, err := r.AddKey(ctx, passphrase(t, "second key"))
+	if err != nil {
+		t.Fatalf("AddKey: %v", err)
+	}
+	for _, pass := range []string{"correct horse", "second key"} {
+		o, err := Open(ctx, st, testPrefix, passphrase(t, pass))
+		if err != nil {
+			t.Fatalf("Open %q: %v", pass, err)
+		}
+		if keys, _ := o.Keys(ctx); len(keys) != 2 || o.Config().Generation != 1 {
+			t.Fatalf("keys = %v, generation %d", keys, o.Config().Generation)
+		}
+		_ = o.Close()
+	}
+
+	// Remove the added key: it no longer opens, though its object stays.
+	if err := r.RemoveKey(ctx, added); err != nil {
+		t.Fatalf("RemoveKey: %v", err)
+	}
+	if ok, _ := st.Exists(ctx, r.layout.Name(KindKey, added)); !ok {
+		t.Fatal("RemoveKey deleted the key object")
+	}
+	_, err = Open(ctx, st, testPrefix, passphrase(t, "second key"))
+	assertRepoError(t, err, ErrNoKey, ErrKeyRemoved)
+	assertRepoError(t, r.RemoveKey(ctx, added), ErrUnknownKey)
+
+	// The last key cannot go.
+	assertRepoError(t, r.RemoveKey(ctx, first), ErrLastKey)
+
+	// A key change: the new passphrase opens, the old is refused, and the
+	// data sealed before still opens.
+	newID, err := r.ChangeKey(ctx, passphrase(t, "new horse"))
+	if err != nil {
+		t.Fatalf("ChangeKey: %v", err)
+	}
+	if r.Slot() != newID {
+		t.Fatalf("slot = %s, want %s", r.Slot(), newID)
+	}
+	_, err = Open(ctx, st, testPrefix, passphrase(t, "correct horse"))
+	assertRepoError(t, err, ErrNoKey, ErrKeyRemoved)
+	o, err := Open(ctx, st, testPrefix, passphrase(t, "new horse"))
+	if err != nil {
+		t.Fatalf("Open new: %v", err)
+	}
+	defer func() { _ = o.Close() }()
+	got, err := o.keys.Open(seal.TypeConfig, []byte("old"), sealedData)
+	if err != nil || string(got) != string(data) {
+		t.Fatalf("Get = %q, %v", got, err)
+	}
+	if keys, _ := o.Keys(ctx); len(keys) != 1 || keys[0] != newID {
+		t.Fatalf("keys = %v", keys)
+	}
+
+	// A stale handle re-reads the latest generation before it changes the
+	// keys, so the change made through o is not lost.
+	if _, err := o.AddKey(ctx, passphrase(t, "through o")); err != nil {
+		t.Fatalf("AddKey through o: %v", err)
+	}
+	if _, err := r.AddKey(ctx, passphrase(t, "through r")); err != nil {
+		t.Fatalf("AddKey through r: %v", err)
+	}
+	for _, pass := range []string{"new horse", "through o", "through r"} {
+		k, err := Open(ctx, st, testPrefix, passphrase(t, pass))
+		if err != nil {
+			t.Fatalf("Open %q after both changes: %v", pass, err)
+		}
+		_ = k.Close()
+	}
+
+	// Another writer committing the same generation first is a conflict.
+	racing := &faulty{Store: st, fail: func(op, name string) error {
+		if op == "put" && strings.Contains(name, keyringDir) {
+			return store.ErrExists
+		}
+		return nil
+	}}
+	l, err := Open(ctx, racing, testPrefix, passphrase(t, "new horse"))
+	if err != nil {
+		t.Fatalf("Open racing: %v", err)
+	}
+	defer func() { _ = l.Close() }()
+	_, err = l.AddKey(ctx, passphrase(t, "late"))
+	assertRepoError(t, err, ErrKeyConflict)
+}
+
+func TestConcurrentAddKey(t *testing.T) {
+	ctx := context.Background()
+	r, st := newRepo(t)
+	const n = 8
+	ids := make([]seal.ID, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ids[i], errs[i] = r.AddKey(ctx, passphrase(t, "key "+strconv.Itoa(i)))
+			_ = r.Config()
+			_ = r.Slot()
+		}()
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("AddKey %d: %v", i, err)
+		}
+	}
+	o, err := Open(ctx, st, testPrefix, passphrase(t, "correct horse"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = o.Close() }()
+	keys, err := o.Keys(ctx)
+	if err != nil || len(keys) != n+1 {
+		t.Fatalf("Keys = %d slots, %v; want %d", len(keys), err, n+1)
+	}
+	for i, id := range ids {
+		if !slices.Contains(keys, id) {
+			t.Fatalf("slot of key %d was lost", i)
+		}
+	}
+}
+
+func TestFormat1Upgrade(t *testing.T) {
+	ctx := context.Background()
+	r, st := newRepo(t)
+	// Rewrite the config as the format before key slots wrote it.
+	v1 := r.Config()
+	v1.Version = formatVersionV1
+	v1.Keys = nil
+	plain, _ := json.Marshal(v1)
+	sealed, err := r.keys.Seal(seal.TypeConfig, configID, seal.CompressionNone, plain)
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+	st.Replace(testPrefix+"/config", sealed)
+
+	o, err := Open(ctx, st, testPrefix, passphrase(t, "correct horse"))
+	if err != nil {
+		t.Fatalf("Open format 1: %v", err)
+	}
+	if o.Config().Version != formatVersionV1 {
+		t.Fatalf("version = %d", o.Config().Version)
+	}
+	keys, err := o.Keys(ctx)
+	if err != nil || len(keys) != 1 || keys[0] != o.Slot() {
+		t.Fatalf("Keys = %v, %v", keys, err)
+	}
+	if _, err := o.AddKey(ctx, passphrase(t, "second key")); err != nil {
+		t.Fatalf("AddKey: %v", err)
+	}
+	_ = o.Close()
+
+	// The first key change upgraded the repository to format 2.
+	u, err := Open(ctx, st, testPrefix, passphrase(t, "second key"))
+	if err != nil {
+		t.Fatalf("Open upgraded: %v", err)
+	}
+	defer func() { _ = u.Close() }()
+	if c := u.Config(); c.Version != formatVersion || c.Generation != 1 || len(c.Keys) != 2 {
+		t.Fatalf("upgraded config = %+v", c)
+	}
+
+	// A generation whose name does not match its content is corrupt.
+	gen, _ := st.Get(ctx, testPrefix+"/keyring/0000000000000001")
+	st.Replace(testPrefix+"/keyring/0000000000000002", gen)
+	_, err = Open(ctx, st, testPrefix, passphrase(t, "second key"))
+	assertRepoError(t, err, ErrCorrupt)
+}
+
+func TestFormat1OrphanKey(t *testing.T) {
+	ctx := context.Background()
+	r, st := newRepo(t)
+	v1 := r.Config()
+	v1.Version = formatVersionV1
+	v1.Keys = nil
+	plain, _ := json.Marshal(v1)
+	sealed, err := r.keys.Seal(seal.TypeConfig, configID, seal.CompressionNone, plain)
+	if err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+	st.Replace(testPrefix+"/config", sealed)
+	// A failed legacy Init left a key object for another data key.
+	_, wrapped, err := keyseam.NewDataKey(ctx, passphrase(t, "correct horse"))
+	if err != nil {
+		t.Fatalf("NewDataKey: %v", err)
+	}
+	if err := st.Put(ctx, r.layout.Name(KindKey, sha256.Sum256(wrapped)), wrapped); err != nil {
+		t.Fatalf("Put orphan: %v", err)
+	}
+
+	o, err := Open(ctx, st, testPrefix, passphrase(t, "correct horse"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = o.Close() }()
+	keys, err := o.Keys(ctx)
+	if err != nil || len(keys) != 1 || keys[0] != o.Slot() {
+		t.Fatalf("Keys = %v, %v; want only the opening slot", keys, err)
+	}
+	assertRepoError(t, o.RemoveKey(ctx, o.Slot()), ErrLastKey)
 }
 
 func keyNames(t *testing.T, st store.Store) []string {

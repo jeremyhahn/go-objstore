@@ -97,7 +97,7 @@ func (p *Packer) Add(ctx context.Context, id seal.ID, data []byte) error {
 	if err != nil {
 		return fromSeal("pack chunk", "", err)
 	}
-	if len(p.pending) > 0 && len(p.buf)+len(blob) > p.r.cfg.PackSize {
+	if len(p.pending) > 0 && len(p.buf)+len(blob) > p.r.Config().PackSize {
 		if err := p.Flush(ctx); err != nil {
 			return err
 		}
