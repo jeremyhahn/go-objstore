@@ -380,7 +380,8 @@ jobs:
       run: |
         cat > Dockerfile.cli << 'EOF'
         # Multi-stage build for go-objstore CLI
-        FROM golang:1.27.3-alpine AS builder
+        # Digests are the multi-arch index digests, resolved 2026-11-22 from the Docker Hub registry API (sha256 of the index manifest).
+        FROM golang:1.27.3-alpine@sha256:fa3d596898d9f126af7c01d14ee7597bab3f39cccf392ef36b69fe77cd681f18 AS builder
         RUN apk add --no-cache git ca-certificates make
         WORKDIR /build
         COPY go.mod go.sum ./
@@ -388,7 +389,7 @@ jobs:
         COPY . .
         RUN make build-cli WITH_LOCAL=1 WITH_AWS=1 WITH_GCP=1 WITH_AZURE=1
 
-        FROM alpine:latest
+        FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
         RUN apk add --no-cache ca-certificates tzdata
         RUN adduser -D -u 1000 appuser
         WORKDIR /app
@@ -483,7 +484,8 @@ jobs:
       run: |
         cat > Dockerfile.server << 'EOF'
         # Multi-stage build for go-objstore server (all protocols)
-        FROM golang:1.27.3-alpine AS builder
+        # Digests are the multi-arch index digests, resolved 2026-11-22 from the Docker Hub registry API (sha256 of the index manifest).
+        FROM golang:1.27.3-alpine@sha256:fa3d596898d9f126af7c01d14ee7597bab3f39cccf392ef36b69fe77cd681f18 AS builder
         RUN apk add --no-cache git ca-certificates make
         WORKDIR /build
         COPY go.mod go.sum ./
@@ -491,7 +493,7 @@ jobs:
         COPY . .
         RUN make build-server WITH_LOCAL=1 WITH_AWS=1 WITH_GCP=1 WITH_AZURE=1
 
-        FROM alpine:latest
+        FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
         RUN apk add --no-cache ca-certificates tzdata
         RUN adduser -D -u 1000 appuser
         WORKDIR /app
