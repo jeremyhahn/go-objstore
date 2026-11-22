@@ -63,7 +63,7 @@ tempfile = "3.27"
 testcontainers = "0.28"
 tokio-test = "0.4.6"
 paste = "1.0.15"
-rcgen = "0.14"
+rcgen = "0.13"
 
 [lib]
 name = "go_objstore"
