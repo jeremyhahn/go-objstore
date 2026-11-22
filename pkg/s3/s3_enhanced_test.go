@@ -56,6 +56,11 @@ func (m *mockS3Client) HeadObjectWithContext(ctx aws.Context, input *s3.HeadObje
 	if m.headObjectError != nil {
 		return nil, m.headObjectError
 	}
+	if m.headObjectOutput == nil {
+		// An unconfigured HEAD succeeds with no metadata, like S3 for a
+		// plain object (Archive reads metadata since #243).
+		return &s3.HeadObjectOutput{}, nil
+	}
 	return m.headObjectOutput, nil
 }
 

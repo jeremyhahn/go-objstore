@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 
@@ -46,8 +47,18 @@ func (a *Azure) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 	if err := common.ValidateKey(key); err != nil {
 		return err
 	}
-	blob := a.container.NewBlockBlob(key)
-	return blob.UploadFromReader(ctx, data)
+	// The headers and metadata travel in the upload options, so the commit
+	// that creates the blob also stores them: no reader sees the data
+	// without its encryption metadata (or with an earlier version's), and a
+	// failed upload leaves nothing behind (#243).
+	var headers azblob.BlobHTTPHeaders
+	var custom map[string]string
+	if metadata != nil {
+		headers.ContentType = metadata.ContentType
+		headers.ContentEncoding = metadata.ContentEncoding
+		custom = maps.Clone(metadata.Custom)
+	}
+	return a.container.NewBlockBlob(key).UploadWithMetadata(ctx, data, headers, custom)
 }
 
 // GetWithContext retrieves an object from the backend with context support.
@@ -75,6 +86,11 @@ func (a *Azure) GetMetadata(ctx context.Context, key string) (*common.Metadata, 
 	if err != nil {
 		return nil, mapNotFound(err, key)
 	}
+	return metadataFromProperties(props), nil
+}
+
+// metadataFromProperties converts a blob's properties to common.Metadata.
+func metadataFromProperties(props *BlobProperties) *common.Metadata {
 	metadata := &common.Metadata{
 		ContentType:     props.ContentType,
 		ContentEncoding: props.ContentEncoding,
@@ -88,7 +104,7 @@ func (a *Azure) GetMetadata(ctx context.Context, key string) (*common.Metadata, 
 			metadata.Custom[k] = v
 		}
 	}
-	return metadata, nil
+	return metadata
 }
 
 // UpdateMetadata updates the metadata for an existing object.

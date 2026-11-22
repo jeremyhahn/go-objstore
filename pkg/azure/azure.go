@@ -53,7 +53,13 @@ type BlobProperties struct {
 // Small internal interfaces for testability without network.
 type BlobAPI interface {
 	UploadFromReader(ctx context.Context, r io.Reader) error
+	// UploadWithMetadata uploads r as the blob's content with these HTTP
+	// headers and metadata, in the upload that creates the blob.
+	UploadWithMetadata(ctx context.Context, r io.Reader, headers azblob.BlobHTTPHeaders, metadata map[string]string) error
 	NewReader(ctx context.Context) (io.ReadCloser, error)
+	// NewReaderWithProperties downloads the blob once and returns its body
+	// with the properties of the same response: both describe one version.
+	NewReaderWithProperties(ctx context.Context) (io.ReadCloser, *BlobProperties, error)
 	Delete(ctx context.Context) error
 	GetProperties(ctx context.Context) (*BlobProperties, error)
 	SetMetadata(ctx context.Context, metadata map[string]string) error
@@ -91,6 +97,28 @@ var (
 			return nil, err
 		}
 		return resp.Body(azblob.RetryReaderOptions{}), nil
+	}
+	azureUploadWithMetadataFn = func(ctx context.Context, r io.Reader, b azblob.BlockBlobURL, headers azblob.BlobHTTPHeaders, metadata map[string]string) error {
+		_, err := azblob.UploadStreamToBlockBlob(ctx, r, b, azblob.UploadStreamToBlockBlobOptions{
+			BlobHTTPHeaders: headers,
+			Metadata:        azblob.Metadata(metadata),
+		})
+		return err
+	}
+	azureDownloadWithPropertiesFn = func(ctx context.Context, b azblob.BlockBlobURL) (io.ReadCloser, *BlobProperties, error) {
+		resp, err := b.Download(ctx, 0, azblob.CountToEnd, azblob.BlobAccessConditions{}, false, azblob.ClientProvidedKeyOptions{})
+		if err != nil {
+			return nil, nil, err
+		}
+		props := &BlobProperties{
+			Size:            resp.ContentLength(),
+			ContentType:     resp.ContentType(),
+			ContentEncoding: resp.ContentEncoding(),
+			LastModified:    resp.LastModified(),
+			ETag:            string(resp.ETag()),
+			Metadata:        resp.NewMetadata(),
+		}
+		return resp.Body(azblob.RetryReaderOptions{}), props, nil
 	}
 	azureDeleteFn = func(ctx context.Context, b azblob.BlockBlobURL) error {
 		_, err := b.Delete(ctx, azblob.DeleteSnapshotsOptionNone, azblob.BlobAccessConditions{})
@@ -153,8 +181,14 @@ func (c containerWrapper) ListBlobsFlat(ctx context.Context, prefix string) ([]s
 func (b blobWrapper) UploadFromReader(ctx context.Context, r io.Reader) error {
 	return azureUploadFn(ctx, r, b.BlockBlobURL)
 }
+func (b blobWrapper) UploadWithMetadata(ctx context.Context, r io.Reader, headers azblob.BlobHTTPHeaders, metadata map[string]string) error {
+	return azureUploadWithMetadataFn(ctx, r, b.BlockBlobURL, headers, metadata)
+}
 func (b blobWrapper) NewReader(ctx context.Context) (io.ReadCloser, error) {
 	return azureDownloadFn(ctx, b.BlockBlobURL)
+}
+func (b blobWrapper) NewReaderWithProperties(ctx context.Context) (io.ReadCloser, *BlobProperties, error) {
+	return azureDownloadWithPropertiesFn(ctx, b.BlockBlobURL)
 }
 func (b blobWrapper) Delete(ctx context.Context) error {
 	return azureDeleteFn(ctx, b.BlockBlobURL)
@@ -359,13 +393,27 @@ func (a *Azure) List(prefix string) ([]string, error) {
 }
 
 func (a *Azure) Archive(key string, destination common.Archiver) error {
-	rc, err := a.Get(key)
-	if err != nil {
+	if destination == nil {
+		return common.ErrArchiveDestinationNil
+	}
+	if a.container == nil {
+		return common.ErrNotConfigured
+	}
+	if err := common.ValidateKey(key); err != nil {
 		return err
+	}
+	// The archived copy keeps the object's client-side encryption metadata
+	// (or the archive is refused when the destination cannot store it). The
+	// data and its metadata come from one Download response, so a concurrent
+	// overwrite cannot pair one version's data with another's key ID (#243).
+	ctx := context.TODO()
+	rc, props, err := a.container.NewBlockBlob(key).NewReaderWithProperties(ctx)
+	if err != nil {
+		return mapNotFound(err, key)
 	}
 	defer func() { _ = rc.Close() }()
 
-	return destination.Put(key, rc)
+	return common.ArchiveCopy(ctx, key, rc, metadataFromProperties(props), destination)
 }
 
 // AddPolicy adds a new lifecycle policy by configuring Azure Blob lifecycle management.

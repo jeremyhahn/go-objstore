@@ -28,6 +28,7 @@ import (
 
 	"cloud.google.com/go/storage"
 	"google.golang.org/api/iterator"
+	"google.golang.org/api/option"
 )
 
 // Test error variables
@@ -364,6 +365,14 @@ type fakeObj struct {
 	attrsErr  bool
 	updateErr bool
 	updated   *storage.ObjectAttrsToUpdate
+	// written holds the attributes NewAttrsWriter created the object with,
+	// set when its writer closes without error.
+	written *storage.ObjectAttrs
+	meta    map[string]string // the object's custom metadata
+	gen     int64             // the object's current generation
+	// onRead, when set, runs once right after NewReader opens a reader: a
+	// test replaces the object there, between the read and its metadata.
+	onRead func(f *fakeObj)
 }
 
 func (f *fakeObj) NewWriter(ctx context.Context) io.WriteCloser {
@@ -373,11 +382,52 @@ func (f *fakeObj) NewWriter(ctx context.Context) io.WriteCloser {
 	return &nopWriteCloser{buf: &f.data, closeErr: f.closeErr}
 }
 
+func (f *fakeObj) NewAttrsWriter(ctx context.Context, attrs storage.ObjectAttrs) io.WriteCloser {
+	if f.writeErr {
+		return &errorWriter{closeErr: f.closeErr}
+	}
+	return &nopWriteCloser{buf: &f.data, closeErr: f.closeErr, onClose: func() {
+		f.written = &attrs
+		f.meta = attrs.Metadata
+	}}
+}
+
 func (f *fakeObj) NewReader(ctx context.Context) (io.ReadCloser, error) {
 	if f.err {
 		return nil, errReadError
 	}
-	return io.NopCloser(bytes.NewReader(f.data)), nil
+	r := &fakeReader{ReadCloser: io.NopCloser(bytes.NewReader(f.data)), gen: f.gen}
+	if hook := f.onRead; hook != nil {
+		f.onRead = nil
+		hook(f)
+	}
+	return r, nil
+}
+
+func (f *fakeObj) Generation(gen int64) gcsObject {
+	return &fakeGeneration{fakeObj: f, pinned: gen}
+}
+
+// fakeReader is a reader of one generation of a fakeObj.
+type fakeReader struct {
+	io.ReadCloser
+	gen int64
+}
+
+func (r *fakeReader) Generation() int64 { return r.gen }
+
+// fakeGeneration is a fakeObj pinned to one generation: its attributes are
+// not found once the object has moved to another generation.
+type fakeGeneration struct {
+	*fakeObj
+	pinned int64
+}
+
+func (g *fakeGeneration) Attrs(ctx context.Context) (*storage.ObjectAttrs, error) {
+	if g.fakeObj.gen != g.pinned {
+		return nil, storage.ErrObjectNotExist
+	}
+	return g.fakeObj.Attrs(ctx)
 }
 
 func (f *fakeObj) Delete(ctx context.Context) error {
@@ -395,7 +445,7 @@ func (f *fakeObj) Attrs(ctx context.Context) (*storage.ObjectAttrs, error) {
 	if f.data == nil {
 		return nil, errObjectNotExist
 	}
-	return &storage.ObjectAttrs{Name: "test", Size: int64(len(f.data))}, nil
+	return &storage.ObjectAttrs{Name: "test", Size: int64(len(f.data)), Generation: f.gen, Metadata: f.meta}, nil
 }
 
 func (f *fakeObj) Update(ctx context.Context, uattrs storage.ObjectAttrsToUpdate) (*storage.ObjectAttrs, error) {
@@ -412,6 +462,7 @@ func (f *fakeObj) Update(ctx context.Context, uattrs storage.ObjectAttrsToUpdate
 type nopWriteCloser struct {
 	buf      *[]byte
 	closeErr bool
+	onClose  func() // runs when Close succeeds
 }
 
 func (n *nopWriteCloser) Write(p []byte) (int, error) {
@@ -422,6 +473,9 @@ func (n *nopWriteCloser) Write(p []byte) (int, error) {
 func (n *nopWriteCloser) Close() error {
 	if n.closeErr {
 		return errCloseError
+	}
+	if n.onClose != nil {
+		n.onClose()
 	}
 	return nil
 }
@@ -699,6 +753,21 @@ func TestGCS_Archive_GetError(t *testing.T) {
 	}
 }
 
+// TestGCS_Archive_MetadataError: Archive reads the object's metadata (to
+// keep client-side encryption metadata on the copy, #243) and fails when it
+// cannot, without writing to the destination.
+func TestGCS_Archive_MetadataError(t *testing.T) {
+	objs := map[string]*fakeObj{
+		"test-key": {data: []byte("x"), attrsErr: true},
+	}
+	fc := fakeClient{b: fakeBucket{objs: objs}}
+	g := &GCS{client: fc, bucket: "test-bucket"}
+
+	if err := g.Archive("test-key", &mockArch{}); err == nil {
+		t.Fatal("expected error from GetMetadata in Archive")
+	}
+}
+
 func TestGCS_Archive_PutError(t *testing.T) {
 	objs := map[string]*fakeObj{
 		"test-key": {data: []byte("data")},
@@ -713,6 +782,113 @@ func TestGCS_Archive_PutError(t *testing.T) {
 	}
 	if err.Error() != "put failed" {
 		t.Fatalf("expected 'put failed', got %v", err)
+	}
+}
+
+// recordingArchiver is an archive destination that stores metadata.
+type recordingArchiver struct {
+	data []byte
+	md   *common.Metadata
+}
+
+func (r *recordingArchiver) Put(_ string, data io.Reader) error {
+	var err error
+	r.data, err = io.ReadAll(data)
+	return err
+}
+
+func (r *recordingArchiver) PutWithMetadata(_ context.Context, _ string, data io.Reader, md *common.Metadata) error {
+	r.md = md
+	return r.Put("", data)
+}
+
+// TestGCS_Archive_PairsDataWithItsGeneration: the object is replaced right
+// after Archive opens its data. The metadata read pinned to the opened
+// generation is not found, so Archive starts over and archives the new
+// data with the new key ID, never the old data with the new key ID (#243).
+func TestGCS_Archive_PairsDataWithItsGeneration(t *testing.T) {
+	obj := &fakeObj{data: []byte("old"), gen: 1, meta: map[string]string{"encryption_key_id": "k1"}}
+	obj.onRead = func(f *fakeObj) {
+		f.data, f.gen, f.meta = []byte("new"), 2, map[string]string{"encryption_key_id": "k2"}
+	}
+	fc := fakeClient{b: fakeBucket{objs: map[string]*fakeObj{"k": obj}}}
+	g := &GCS{client: fc, bucket: "b"}
+	dest := &recordingArchiver{}
+	if err := g.Archive("k", dest); err != nil {
+		t.Fatalf("Archive: %v", err)
+	}
+	if dest.md == nil {
+		t.Fatal("archived without metadata")
+	}
+	if got := string(dest.data) + "/" + dest.md.Custom["encryption_key_id"]; got != "new/k2" {
+		t.Fatalf("archived data/key ID = %s, want new/k2", got)
+	}
+}
+
+// TestGCS_Archive_GivesUpWhenAlwaysReplaced: an object replaced on every
+// read is not archived; the error says why.
+func TestGCS_Archive_GivesUpWhenAlwaysReplaced(t *testing.T) {
+	obj := &fakeObj{data: []byte("d"), meta: map[string]string{"encryption_key_id": "k1"}}
+	reads := 0
+	var replace func(f *fakeObj)
+	replace = func(f *fakeObj) {
+		reads++
+		f.gen++
+		f.onRead = replace
+	}
+	obj.onRead = replace
+	fc := fakeClient{b: fakeBucket{objs: map[string]*fakeObj{"k": obj}}}
+	g := &GCS{client: fc, bucket: "b"}
+	dest := &recordingArchiver{}
+	err := g.Archive("k", dest)
+	if !errors.Is(err, errGenerationReplaced) {
+		t.Fatalf("Archive err = %v, want errGenerationReplaced", err)
+	}
+	if reads != archiveSnapshotAttempts || dest.data != nil {
+		t.Fatalf("reads = %d, archived %q", reads, dest.data)
+	}
+}
+
+func TestReaderGeneration(t *testing.T) {
+	if gen, err := readerGeneration(&storage.Reader{Attrs: storage.ReaderObjectAttrs{Generation: 7}}); err != nil || gen != 7 {
+		t.Fatalf("storage.Reader: gen %d, err %v", gen, err)
+	}
+	if _, err := readerGeneration(bytes.NewReader(nil)); !errors.Is(err, errNoReaderGeneration) {
+		t.Fatalf("plain reader: err %v", err)
+	}
+}
+
+func TestGCS_Archive_InvalidKey(t *testing.T) {
+	g := &GCS{client: fakeClient{b: fakeBucket{objs: map[string]*fakeObj{}}}, bucket: "b"}
+	if err := g.Archive("", &recordingArchiver{}); err == nil {
+		t.Fatal("expected an invalid key error")
+	}
+}
+
+// TestObjectWrapper_NewAttrsWriter: the SDK writer carries the content type,
+// content encoding and custom metadata, so the upload request creates the
+// object with them (#243). Nothing is written, so no request is sent.
+func TestObjectWrapper_NewAttrsWriter(t *testing.T) {
+	c, err := storage.NewClient(context.Background(), option.WithoutAuthentication())
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	defer func() { _ = c.Close() }()
+	ow := objectWrapper{c.Bucket("b").Object("k")}
+	w := ow.NewAttrsWriter(context.Background(), storage.ObjectAttrs{
+		ContentType: "application/octet-stream", ContentEncoding: "gzip",
+		Metadata: map[string]string{"encryption_key_id": "k1"},
+	})
+	sw, ok := w.(*storage.Writer)
+	if !ok {
+		t.Fatalf("writer is %T", w)
+	}
+	if sw.Name != "k" || sw.ContentType != "application/octet-stream" || sw.ContentEncoding != "gzip" ||
+		sw.Metadata["encryption_key_id"] != "k1" {
+		t.Fatalf("writer attrs = %+v", sw.ObjectAttrs)
+	}
+	if ow.Generation(7) == nil {
+		t.Fatal("Generation returned nil")
 	}
 }
 

@@ -63,6 +63,11 @@ type Local struct {
 	// root itself is safe for concurrent use.
 	rootMu sync.Mutex
 	root   *os.Root
+
+	// keyLocks keeps a key's data and its at-rest metadata from two writers
+	// apart (see keyLocks). It is shared by every handle on the directory
+	// (see keyLocksFor).
+	keyLocks *keyLocks
 }
 
 // fsRoot returns the store's root, opening it on first use for a Local built
@@ -160,6 +165,7 @@ func (l *Local) configure(settings map[string]string, root *os.Root) error {
 		}
 	}
 	l.setRoot(root)
+	l.keyLocks = keyLocksFor(l.path)
 
 	l.buckets = nil
 	if settings[settingBucketRoot] != "" {
@@ -347,6 +353,11 @@ func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 		dataToWrite = encryptedData
 	}
 
+	// Hold the key from the data write until its metadata is saved, so a
+	// concurrent put or UpdateMetadata cannot pair these bytes with another
+	// write's at-rest key ID (#243).
+	defer l.lockKey(name)()
+
 	var size int64
 	if err := writeObjectAtomic(root, &l.pruneMu, name, 0644, func(w io.Writer) error {
 		n, werr := io.Copy(w, dataToWrite)
@@ -433,27 +444,66 @@ func (l *Local) GetWithContext(ctx context.Context, key string) (io.ReadCloser, 
 	if err != nil {
 		return nil, err
 	}
+	file, md, err := l.openObject(root, key, l.atRestEncrypterFactory != nil)
+	if err != nil {
+		return nil, err
+	}
+	return l.readObject(ctx, key, file, md)
+}
+
+// openObject opens the data file of key and, when withMetadata is set,
+// loads its metadata (nil when the key has none). It holds the key's lock
+// while it does both, so the descriptor and the at-rest key ID come from one
+// put: a put renames its data into place and saves its metadata under the
+// same lock (#243).
+func (l *Local) openObject(root *os.Root, key string, withMetadata bool) (*os.File, *common.Metadata, error) {
 	name := rootName(key)
-	path := filepath.Join(l.path, name)
+	defer l.lockKey(name)()
 	file, err := root.Open(name)
 	if err != nil {
 		// Don't log "not found" errors - these are expected during initialization
 		// and should be handled by the caller. Only return a wrapped error.
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("%w: %s", common.ErrKeyNotFound, key)
+			return nil, nil, fmt.Errorf("%w: %s", common.ErrKeyNotFound, key)
 		}
 		// Log actual unexpected errors
 		log.Printf("[LOCAL] ✗ GET '%s' failed: %v", key, err)
-		return nil, err
+		return nil, nil, err
 	}
+	if !withMetadata {
+		return file, nil, nil
+	}
+	md, err := l.loadMetadata(key)
+	if err != nil {
+		if errors.Is(err, common.ErrMetadataNotFound) {
+			return file, nil, nil
+		}
+		_ = file.Close()
+		return nil, nil, fmt.Errorf("failed to load metadata for at-rest key id: %w", err)
+	}
+	return file, md, nil
+}
+
+// readObject returns the plaintext of the data file opened by openObject,
+// decrypting it with the at-rest key md records. It takes ownership of file.
+func (l *Local) readObject(ctx context.Context, key string, file *os.File, md *common.Metadata) (io.ReadCloser, error) {
+	name := rootName(key)
+	path := filepath.Join(l.path, name)
 
 	// Get at-rest encrypter if factory is set
 	var encrypter common.Encrypter
 	if l.atRestEncrypterFactory != nil {
+		var keyID string
+		if md != nil && md.Custom != nil {
+			keyID = md.Custom["at_rest_encryption_key_id"]
+		}
 		var err error
-		encrypter, err = l.atRestEncrypterFactory.GetEncrypter("")
+		encrypter, err = l.atRestEncrypterFactory.GetEncrypter(keyID)
 		if err != nil {
 			_ = file.Close()
+			if keyID != "" {
+				return nil, fmt.Errorf("failed to get at-rest encrypter for key id %q: %w", keyID, err)
+			}
 			return nil, fmt.Errorf("failed to get encrypter: %w", err)
 		}
 	}
@@ -467,7 +517,7 @@ func (l *Local) GetWithContext(ctx context.Context, key string) (io.ReadCloser, 
 		}
 		// Note: file will be closed when decryptedData is closed
 		// Get file size for logging
-		info, err := root.Stat(name)
+		info, err := file.Stat()
 		if err == nil {
 			sizeStr := formatBytes(info.Size())
 			log.Printf("[LOCAL] ✓ GET '%s' ← %s (%s, decrypted)", key, path, sizeStr)
@@ -521,6 +571,9 @@ func (l *Local) UpdateMetadata(ctx context.Context, key string, metadata *common
 	if err != nil {
 		return err
 	}
+	// Hold the key from reading the stored at-rest fields until the save, so
+	// a put in between cannot have its key ID replaced by the old one (#243).
+	defer l.lockKey(rootName(key))()
 	info, err := root.Stat(rootName(key))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -529,15 +582,62 @@ func (l *Local) UpdateMetadata(ctx context.Context, key string, metadata *common
 		return err
 	}
 
-	// Update size and last modified from file
-	if metadata == nil {
-		metadata = &common.Metadata{}
+	metadata, err = l.keepAtRestFields(key, metadata)
+	if err != nil {
+		return err
 	}
+
+	// Update size and last modified from file
 	metadata.Size = info.Size()
 	metadata.LastModified = time.Now()
 	metadata.ETag = fmt.Sprintf("%d-%d", info.ModTime().Unix(), info.Size())
 
 	return l.saveMetadata(key, metadata)
+}
+
+// keepAtRestFields returns a copy of metadata (an empty one when it is nil)
+// whose "at_rest_encryption_*" entries are those of the stored sidecar:
+// UpdateMetadata replaces the whole sidecar, so without this an update would
+// drop at_rest_encryption_key_id, and the object would no longer decrypt once
+// the default key changes. Caller supplied "at_rest_encryption_*" entries are
+// ignored, matched case-insensitively, so a caller cannot redirect decryption
+// to another key. An object without a sidecar keeps none. The caller's
+// metadata is not modified.
+func (l *Local) keepAtRestFields(key string, metadata *common.Metadata) (*common.Metadata, error) {
+	updated := &common.Metadata{}
+	if metadata != nil {
+		*updated = *metadata
+	}
+	custom := make(map[string]string, len(updated.Custom))
+	for k, v := range updated.Custom {
+		if !isAtRestField(k) {
+			custom[k] = v
+		}
+	}
+
+	stored, err := l.loadMetadata(key)
+	if err != nil && !errors.Is(err, common.ErrMetadataNotFound) {
+		return nil, fmt.Errorf("failed to load metadata for at-rest fields: %w", err)
+	}
+	if stored != nil {
+		for k, v := range stored.Custom {
+			if isAtRestField(k) {
+				custom[k] = v
+			}
+		}
+	}
+
+	updated.Custom = nil
+	if len(custom) > 0 {
+		updated.Custom = custom
+	}
+	return updated, nil
+}
+
+// isAtRestField reports whether a custom metadata key is owned by the at-rest
+// encryption of the local backend.
+func isAtRestField(k string) bool {
+	return strings.HasPrefix(strings.ToLower(k), "at_rest_encryption_")
 }
 
 // Delete removes an object from the backend.
@@ -848,12 +948,24 @@ func (l *Local) Archive(key string, destination common.Archiver) error {
 	if destination == nil {
 		return common.ErrArchiveDestinationNil
 	}
-	r, err := l.Get(key)
+	root, err := l.fsRoot()
+	if err != nil {
+		return err
+	}
+	// The archived copy keeps the object's client-side encryption metadata
+	// (or the archive is refused when the destination cannot store it). The
+	// data and the metadata are taken under the key lock, so both belong to
+	// one put (#243).
+	file, md, err := l.openObject(root, key, true)
+	if err != nil {
+		return err
+	}
+	r, err := l.readObject(context.TODO(), key, file, md)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = r.Close() }()
-	return destination.Put(key, r)
+	return common.ArchiveCopy(context.TODO(), key, r, md, destination)
 }
 
 // AddPolicy adds a new lifecycle policy.
