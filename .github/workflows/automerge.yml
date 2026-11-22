@@ -165,8 +165,7 @@ jobs:
           # 2026-10-02). Logins, exact. A restricted repository replaces
           # this list entirely via APPROVERS_ONLY below, rather than adding
           # to it.
-          # lab-string-ok: principal id the workflow compares; a value, not prose (rule 25 rewords prose only)
-          APPROVERS: '["claude","codex","opencode","jeremyhahn","agent-company","agent-software"]'
+          APPROVERS: '["claude","codex","opencode","jeremyhahn","agent-company","agent-software"]'  # lab-string-ok: principal id the workflow compares; a value, not prose (rule 25 rewords prose only)
           # Per-repo REPLACEMENT for APPROVERS (v9; owner ruling 2026-10-06 --
           # repo-policy.sh's automerge_approvers_only, applied by
           # setup-pr-sdlc.sh). Gitea 1.27 supports the `vars` context. Unset
@@ -184,8 +183,7 @@ jobs:
             echo "::error::AGENT_TOKEN is not set on this repository; the merge is made as the project agent."
             exit 1; }
           case "$REPOSITORY" in
-            # lab-string-ok: principal id the workflow compares; a value, not prose (rule 25 rewords prose only)
-            */automatethethings) me=agent-company ;;
+            */automatethethings) me=agent-company ;;  # lab-string-ok: principal id the workflow compares; a value, not prose (rule 25 rewords prose only)
             *) me="agent-${REPOSITORY#*/}" ;;
           esac
           me_email="$me@$AGENT_DOMAIN"
