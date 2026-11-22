@@ -178,15 +178,20 @@ IT_CI_IMAGE = $(PROJECT_NAME)-ci-it:$(shell { git rev-parse 'HEAD^{tree}'; git d
 	git ls-files -oz --exclude-standard | xargs -0r sha256sum; } 2>/dev/null | sha256sum | cut -c1-16)
 # GO_IMAGE and GO_GLIBC_IMAGE are the Go base images, tag@digest; unset, they
 # are the Dockerfile's ARG defaults, read from it so the pins live in one
-# place. GO_BUILD_PROXY_ARG hands the caller's GOPROXY to the stages that
-# fetch; the shell expands $$GOPROXY, so make never echoes its value.
+# place. GO_BUILD_PROXY_SECRET hands the proxy chain to the stages that
+# fetch as the BuildKit secret goproxy: the make variable GO_BUILD_PROXY (CI's
+# `bp`, `<DEVCACHE_GOPROXY>|https://proxy.golang.org`), else the caller's
+# GOPROXY, read from the environment by name so make never echoes it: a
+# pool's GOPROXY is a LAN cache, and a secret, unlike a build argument, is in
+# no history entry (ruling 901). Unset, there is no secret and the Dockerfile
+# falls back to the public proxy.
 DEVCONTAINER_ARGS := $(file < $(DEVCONTAINER_DIR)/Dockerfile)
 GO_IMAGE ?= $(patsubst GO_IMAGE=%,%,$(filter GO_IMAGE=%,$(DEVCONTAINER_ARGS)))
 GO_GLIBC_IMAGE ?= $(patsubst GO_GLIBC_IMAGE=%,%,$(filter GO_GLIBC_IMAGE=%,$(DEVCONTAINER_ARGS)))
-GO_BUILD_PROXY_ARG = $(if $(GOPROXY),--build-arg GO_BUILD_PROXY="$$GOPROXY")
+GO_BUILD_PROXY_SECRET = $(if $(GO_BUILD_PROXY),--secret id=goproxy$(COMMA)env=GO_BUILD_PROXY,$(if $(GOPROXY),--secret id=goproxy$(COMMA)env=GOPROXY))
 DEVCONTAINER_BUILD = DOCKER_BUILDKIT=1 docker buildx build --load \
 	--build-arg GO_IMAGE=$(GO_IMAGE) --build-arg GO_GLIBC_IMAGE=$(GO_GLIBC_IMAGE) \
-	$(GO_BUILD_PROXY_ARG) \
+	$(GO_BUILD_PROXY_SECRET) \
 	--secret id=gomodauth,src=$(MODULE_ENV_FILE) \
 	-f $(DEVCONTAINER_DIR)/Dockerfile
 
