@@ -41,12 +41,21 @@ func main() {
 
 	slog.Info("Starting QUIC/HTTP3 Object Storage Server")
 
+	// The local backend also gets the lifecycle settings; other backends
+	// ignore the lifecycle section.
+	if cfg.Backend != "local" {
+		slog.Info("Lifecycle settings ignored: they apply to the local backend only", "backend", cfg.Backend)
+	} else if cfg.Lifecycle.Run {
+		slog.Info("Lifecycle policies run on a schedule",
+			"manager", cfg.Lifecycle.Manager, "interval", cfg.Lifecycle.Interval.String())
+	}
+
 	// Initialize the objstore facade with simplified API
 	if err := objstore.Initialize(&objstore.FacadeConfig{
 		BackendConfigs: map[string]objstore.BackendConfig{
 			"default": {
 				Type:     cfg.Backend,
-				Settings: map[string]string{"path": cfg.Path},
+				Settings: cfg.StorageSettings(),
 			},
 		},
 		DefaultBackend: "default",

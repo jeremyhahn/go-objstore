@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"time"
 
 	objstorepb "github.com/jeremyhahn/go-objstore/api/proto"
@@ -442,13 +443,22 @@ func (s *Server) GetPolicies(ctx context.Context, req *objstorepb.GetPoliciesReq
 
 // ApplyPolicies executes all lifecycle policies.
 func (s *Server) ApplyPolicies(ctx context.Context, req *objstorepb.ApplyPoliciesRequest) (*objstorepb.ApplyPoliciesResponse, error) {
-	// Get policies using facade
-	policies, err := objstore.GetPolicies(s.backend)
+	// The facade pages through the whole listing.
+	result, err := objstore.ApplyPolicies(ctx, s.backend, func(key, action string, err error) {
+		msg := "Failed to delete object during policy application"
+		if action == "archive" {
+			msg = "Failed to archive object during policy application"
+		}
+		s.opts.Logger.Error(ctx, msg,
+			adapters.Field{Key: "key", Value: key},
+			adapters.Field{Key: fieldError, Value: err.Error()},
+		)
+	})
 	if err != nil {
 		return nil, mapError(err)
 	}
 
-	if len(policies) == 0 {
+	if result.PoliciesCount == 0 {
 		return &objstorepb.ApplyPoliciesResponse{
 			Success:          true,
 			PoliciesCount:    0,
@@ -457,71 +467,38 @@ func (s *Server) ApplyPolicies(ctx context.Context, req *objstorepb.ApplyPolicie
 		}, nil
 	}
 
-	// Apply policies by listing objects and checking retention
-	objectsProcessed := int32(0)
-	opts := &common.ListOptions{
-		Prefix: "",
-	}
-	result, err := objstore.ListWithOptions(ctx, s.backend, opts)
+	objectsProcessed := clampToInt32(result.ObjectsProcessed)
+	policiesCount, err := policiesCountToInt32(result.PoliciesCount)
 	if err != nil {
-		return nil, mapError(err)
-	}
-
-	for _, policy := range policies {
-		for _, obj := range result.Objects {
-			// Check if object matches policy prefix
-			if policy.Prefix != "" && !hasPrefix(obj.Key, policy.Prefix) {
-				continue
-			}
-
-			// Get metadata to check last modified time
-			if obj.Metadata == nil {
-				continue
-			}
-
-			// Check if object is older than retention period
-			age := time.Since(obj.Metadata.LastModified)
-			if age <= policy.Retention {
-				continue
-			}
-
-			// Apply action using facade
-			switch policy.Action {
-			case "delete":
-				if err := objstore.DeleteWithContext(ctx, s.keyRef(obj.Key)); err != nil {
-					s.opts.Logger.Error(ctx, "Failed to delete object during policy application",
-						adapters.Field{Key: "key", Value: obj.Key},
-						adapters.Field{Key: fieldError, Value: err.Error()},
-					)
-					continue
-				}
-				objectsProcessed++
-			case "archive":
-				if policy.Destination != nil {
-					if err := objstore.Archive(s.keyRef(obj.Key), policy.Destination); err != nil {
-						s.opts.Logger.Error(ctx, "Failed to archive object during policy application",
-							adapters.Field{Key: "key", Value: obj.Key},
-							adapters.Field{Key: fieldError, Value: err.Error()},
-						)
-						continue
-					}
-					objectsProcessed++
-				}
-			}
-		}
-	}
-
-	policiesCount := len(policies)
-	if policiesCount > 2147483647 {
-		return nil, ErrPoliciesCountExceedsRange
+		return nil, err
 	}
 
 	return &objstorepb.ApplyPoliciesResponse{
 		Success:          true,
-		PoliciesCount:    int32(policiesCount),
+		PoliciesCount:    policiesCount,
 		ObjectsProcessed: objectsProcessed,
 		Message:          "lifecycle policies applied successfully",
 	}, nil
+}
+
+// policiesCountToInt32 converts a policy count to the int32 the proto carries,
+// returning ErrPoliciesCountExceedsRange when it is negative or above MaxInt32.
+func policiesCountToInt32(n int) (int32, error) {
+	if n < 0 || n > math.MaxInt32 {
+		return 0, ErrPoliciesCountExceedsRange
+	}
+	return int32(n), nil
+}
+
+// clampToInt32 converts a count to int32, clamping it to [0, MaxInt32].
+func clampToInt32(n int) int32 {
+	if n < 0 {
+		return 0
+	}
+	if n > math.MaxInt32 {
+		return math.MaxInt32
+	}
+	return int32(n)
 }
 
 // Helper functions
@@ -611,11 +588,6 @@ func extractGRPCClientIP(ctx context.Context) string {
 	}
 
 	return principalUnknown
-}
-
-// hasPrefix checks if a string starts with the given prefix.
-func hasPrefix(s, prefix string) bool {
-	return len(s) >= len(prefix) && s[0:len(prefix)] == prefix
 }
 
 // protoToLifecyclePolicy converts proto LifecyclePolicy to common.LifecyclePolicy.

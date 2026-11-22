@@ -16,6 +16,7 @@ package common
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"sync"
@@ -116,7 +117,13 @@ type fileSystemAdapter struct {
 	openFile func(name string, flag int, perm os.FileMode) (LifecycleFile, error)
 	remove   func(name string) error
 	rename   func(src, dst string) error
+	// inPlace is the wrapped filesystem's ReplacesInPlace declaration.
+	inPlace bool
 }
+
+// ReplacesInPlace forwards the wrapped filesystem's declaration (false when
+// it makes none), so a StorageFS keeps its in-place policy writes.
+func (a *fileSystemAdapter) ReplacesInPlace() bool { return a.inPlace }
 
 func (a *fileSystemAdapter) OpenFile(name string, flag int, perm os.FileMode) (LifecycleFile, error) {
 	return a.openFile(name, flag, perm)
@@ -138,7 +145,12 @@ func NewFileSystemAdapter(fs interface {
 	Remove(name string) error
 	Rename(src, dst string) error
 }) FileSystem {
+	inPlace := false
+	if r, ok := fs.(replacesInPlace); ok {
+		inPlace = r.ReplacesInPlace()
+	}
 	return &fileSystemAdapter{
+		inPlace: inPlace,
 		openFile: func(name string, flag int, perm os.FileMode) (LifecycleFile, error) {
 			file, err := fs.OpenFile(name, flag, perm)
 			if err != nil {
@@ -212,9 +224,19 @@ func (lm *PersistentLifecycleManager) AddPolicy(policy LifecyclePolicy) error {
 	lm.mutex.Lock()
 	defer lm.mutex.Unlock()
 
+	// The live map only keeps the policy once it is on disk: a policy that
+	// failed to persist must never run.
+	prev, had := lm.policies[policy.ID]
 	lm.policies[policy.ID] = policy
-
-	return lm.save()
+	if err := lm.save(); err != nil {
+		if had {
+			lm.policies[policy.ID] = prev
+		} else {
+			delete(lm.policies, policy.ID)
+		}
+		return err
+	}
+	return nil
 }
 
 // RemovePolicy removes a lifecycle policy and persists the change to storage.
@@ -222,9 +244,17 @@ func (lm *PersistentLifecycleManager) RemovePolicy(id string) error {
 	lm.mutex.Lock()
 	defer lm.mutex.Unlock()
 
+	prev, had := lm.policies[id]
 	delete(lm.policies, id)
-
-	return lm.save()
+	if err := lm.save(); err != nil {
+		// A removal that failed to persist leaves the policy in force, as
+		// it will be after a restart.
+		if had {
+			lm.policies[id] = prev
+		}
+		return err
+	}
+	return nil
 }
 
 // GetPolicies returns all the lifecycle policies.
@@ -262,8 +292,16 @@ func (lm *PersistentLifecycleManager) save() error {
 		return err
 	}
 
-	// Write atomically: temp file → fsync → rename.
-	tmpName := lm.policyFile + ".tmp"
+	// The policy file is staged under a reserved name, fsynced and renamed
+	// onto the policy file, so a failed or interrupted save leaves the
+	// previous document whole. Only a FileSystem that declares whole-object
+	// replacement on Close (a StorageFS over an object store, whose providers
+	// refuse ".tmp-" keys) and does not reserve the staging names gets the
+	// file written in place.
+	if lm.writesInPlace() {
+		return lm.writeInPlace(jsonData)
+	}
+	tmpName := PolicyStagingName(lm.policyFile)
 	tmp, err := lm.fs.OpenFile(tmpName, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return err
@@ -292,6 +330,108 @@ func (lm *PersistentLifecycleManager) save() error {
 	}
 	committed = true
 	return nil
+}
+
+// writeInPlace writes data over the policy file itself, for an
+// InPlaceFileSystem, and restores the previous document if the write fails.
+func (lm *PersistentLifecycleManager) writeInPlace(data []byte) error {
+	prev, existed, err := lm.readPolicyFile()
+	if err != nil {
+		return err
+	}
+	if err := lm.replacePolicyFile(data); err != nil {
+		// The failed write may have stored part or all of the new document
+		// (Close stores the buffer before its metadata write can fail), so
+		// put the previous document back: the error then matches what is
+		// persisted.
+		if rerr := lm.restorePolicyFile(prev, existed); rerr != nil {
+			return errors.Join(err, fmt.Errorf("restore previous policy file: %w", rerr))
+		}
+		return err
+	}
+	return nil
+}
+
+// writesInPlace reports whether save writes the policy file in place: only
+// when the FileSystem declares whole-object replacement on Close and does not
+// reserve the staging names. Every other FileSystem gets temp file → fsync →
+// rename.
+func (lm *PersistentLifecycleManager) writesInPlace() bool {
+	if sfs, ok := lm.fs.(StagingFileSystem); ok && sfs.ReservesStagingNames() {
+		return false
+	}
+	ifs, ok := lm.fs.(InPlaceFileSystem)
+	return ok && ifs.ReplacesInPlace()
+}
+
+// readPolicyFile returns the stored policy document and whether it exists.
+func (lm *PersistentLifecycleManager) readPolicyFile() ([]byte, bool, error) {
+	f, err := lm.fs.OpenFile(lm.policyFile, os.O_RDONLY, 0)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	defer func() { _ = f.Close() }() //nolint:errcheck // read-only file
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return nil, false, err
+	}
+	return data, true, nil
+}
+
+// replacePolicyFile writes data over the policy file with a single store:
+// Write fills the file's buffer and Close stores it whole. There is no Sync,
+// which on an InPlaceFileSystem would store the document a second time.
+func (lm *PersistentLifecycleManager) replacePolicyFile(data []byte) error {
+	f, err := lm.fs.OpenFile(lm.policyFile, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close() //nolint:errcheck // already failing; the caller restores
+		return err
+	}
+	return f.Close()
+}
+
+// restorePolicyFile puts the previous policy document back after a failed
+// in-place write, or removes the policy file when there was none.
+func (lm *PersistentLifecycleManager) restorePolicyFile(prev []byte, existed bool) error {
+	if !existed {
+		if err := lm.fs.Remove(lm.policyFile); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	return lm.replacePolicyFile(prev)
+}
+
+// StagingFileSystem is a FileSystem whose names under PolicyStagingName are
+// unreachable by object keys (the local backend's own filesystem). Such a
+// FileSystem always has the policy file staged and renamed into place.
+type StagingFileSystem interface {
+	FileSystem
+	// ReservesStagingNames reports that staging names are protected.
+	ReservesStagingNames() bool
+}
+
+// InPlaceFileSystem is a FileSystem whose written files replace the stored
+// file whole, in a single store, when closed (a StorageFS over an object
+// store, whose providers refuse the reserved staging names). Only such a
+// FileSystem, when it does not also reserve the staging names, has the policy
+// file written in place; every other FileSystem gets temp file → fsync →
+// rename.
+type InPlaceFileSystem interface {
+	FileSystem
+	// ReplacesInPlace reports that closing a written file replaces it whole.
+	ReplacesInPlace() bool
+}
+
+// replacesInPlace is the optional declaration NewFileSystemAdapter forwards.
+type replacesInPlace interface {
+	ReplacesInPlace() bool
 }
 
 // load reads policies from storage.

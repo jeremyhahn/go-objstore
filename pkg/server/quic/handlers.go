@@ -965,14 +965,23 @@ func (h *Handler) handleApplyPolicies(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), h.writeTimeout)
 	defer cancel()
 
-	// Get policies using facade
-	policies, err := objstore.GetPolicies(h.backend)
+	// The facade pages through the whole listing.
+	result, err := objstore.ApplyPolicies(ctx, h.backend, func(key, action string, err error) {
+		msg := "Failed to delete object during policy application"
+		if action == "archive" {
+			msg = "Failed to archive object during policy application"
+		}
+		h.logger.Error(ctx, msg,
+			adapters.Field{Key: fieldKey, Value: key},
+			adapters.Field{Key: fieldError, Value: err.Error()},
+		)
+	})
 	if err != nil {
 		writeBackendError(ctx, w, err)
 		return
 	}
 
-	if len(policies) == 0 {
+	if result.PoliciesCount == 0 {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		if err := json.NewEncoder(w).Encode(map[string]any{
@@ -985,68 +994,12 @@ func (h *Handler) handleApplyPolicies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Apply policies by listing objects and checking retention
-	objectsProcessed := 0
-	opts := &common.ListOptions{
-		Prefix: "",
-	}
-	// List objects using facade
-	result, err := objstore.ListWithOptions(ctx, h.backend, opts)
-	if err != nil {
-		writeBackendError(ctx, w, err)
-		return
-	}
-
-	for _, policy := range policies {
-		for _, obj := range result.Objects {
-			// Check if object matches policy prefix
-			if policy.Prefix != "" && !strings.HasPrefix(obj.Key, policy.Prefix) {
-				continue
-			}
-
-			// Get metadata to check last modified time
-			if obj.Metadata == nil {
-				continue
-			}
-
-			// Check if object is older than retention period
-			age := time.Since(obj.Metadata.LastModified)
-			if age <= policy.Retention {
-				continue
-			}
-
-			// Apply action using facade
-			switch policy.Action {
-			case "delete":
-				if err := objstore.DeleteWithContext(ctx, h.keyRef(obj.Key)); err != nil {
-					h.logger.Error(ctx, "Failed to delete object during policy application",
-						adapters.Field{Key: fieldKey, Value: obj.Key},
-						adapters.Field{Key: fieldError, Value: err.Error()},
-					)
-					continue
-				}
-				objectsProcessed++
-			case "archive":
-				if policy.Destination != nil {
-					if err := objstore.Archive(h.keyRef(obj.Key), policy.Destination); err != nil {
-						h.logger.Error(ctx, "Failed to archive object during policy application",
-							adapters.Field{Key: fieldKey, Value: obj.Key},
-							adapters.Field{Key: fieldError, Value: err.Error()},
-						)
-						continue
-					}
-					objectsProcessed++
-				}
-			}
-		}
-	}
-
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(map[string]any{
 		fieldMessage:        "lifecycle policies applied successfully",
-		"policies_count":    len(policies),
-		"objects_processed": objectsProcessed,
+		"policies_count":    result.PoliciesCount,
+		"objects_processed": result.ObjectsProcessed,
 	}); err != nil {
 		h.logger.Error(r.Context(), "failed to encode response", adapters.Field{Key: fieldError, Value: err.Error()})
 	}

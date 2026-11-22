@@ -120,6 +120,15 @@ local.AddPolicy(policy)
 // After process restart, the policy will be automatically reloaded
 ```
 
+**Servers**: every server binary (`objstore-server` and the single-transport
+`objstore-grpc-server`, `objstore-rest-server`, `objstore-quic-server` and
+`objstore-mcp-server`) passes the `lifecycle` configuration section to a local
+backend: `lifecycle.run`, `lifecycle.manager`, `lifecycle.policy_file` and
+`lifecycle.interval`, set in the config file, as `OBJSTORE_LIFECYCLE_*`
+environment variables, or with the `-lifecycle-run`, `-lifecycle-manager`,
+`-lifecycle-policy-file` and `-lifecycle-interval` flags. Other backends
+ignore the section and log that they do.
+
 #### In-Memory Manager
 
 The in-memory manager is available for programmatic use when you don't need persistence:
@@ -145,6 +154,8 @@ local.AddPolicy(policy)
 ```
 
 **Important Note**: Archive policies with `Destination` cannot be fully persisted, as the `Archiver` interface cannot be serialized. After a restart, you must re-register archive destinations before archive policies will work.
+
+**Object age**: an object's age is the time since its metadata `LastModified`, the value `GetMetadata` and `ListWithOptions` report (an object with no metadata sidecar falls back to the data file's modification time). The scheduled pass and a manual `ApplyPolicies` (`objstore policy apply`) both use it, so they expire the same objects. `UpdateMetadata` sets `LastModified` to the time of the update, so updating an object's metadata restarts its retention period.
 
 ### Amazon S3
 
@@ -467,6 +478,7 @@ This allows you to:
 
 - **CLI (local backend)**: Automatically uses persistent lifecycle manager, policies saved to `.lifecycle-policies.json`
 - **Local backend (programmatic)**: Defaults to in-memory for backwards compatibility, use `lifecycleManagerType: "persistent"` for disk persistence
+- **Persistent manager saves**: the policy file is written to `.tmp-<policy file name>` beside it and renamed into place; that name is reserved, so no object key can reach it. A policy change whose save fails is rolled back and never runs.
 - **Cloud backends**: Policies persisted in cloud provider configuration
 - **Archive operations**: Atomic - object copied then original deleted
 - **Error handling**: Failed policy actions logged but don't stop execution

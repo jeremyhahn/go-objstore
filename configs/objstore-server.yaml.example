@@ -73,6 +73,16 @@
 # that names a local (filesystem path) archiver: the client would choose a
 # directory the server's user writes into.
 
+# lifecycle:
+#   run: true
+#   manager: persistent
+#   policy_file: ""
+#   interval: 1h0m0s
+# objstore-server only, local backend only (other backends ignore it). With
+# run true a pass applies every lifecycle policy each interval. A persistent
+# manager keeps policies across restarts in policy_file, relative to path
+# (empty means .lifecycle-policies.json); memory loses them on exit.
+
 # replication:
 #   allow_client_local_backends: false
 # Replication policies name their backends and settings, so a "local" backend
