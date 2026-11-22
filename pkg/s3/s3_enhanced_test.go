@@ -19,54 +19,56 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"testing"
 	"time"
 
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/request"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 // Extended mock to support context methods
-func (m *mockS3Client) PutObjectWithContext(ctx aws.Context, input *s3.PutObjectInput, opts ...request.Option) (*s3.PutObjectOutput, error) {
+func (m *mockS3Client) PutObject(ctx context.Context, input *s3.PutObjectInput, opts ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
 	if m.putObjectError != nil {
 		return nil, m.putObjectError
 	}
 	return m.putObjectOutput, nil
 }
 
-func (m *mockS3Client) GetObjectWithContext(ctx aws.Context, input *s3.GetObjectInput, opts ...request.Option) (*s3.GetObjectOutput, error) {
+func (m *mockS3Client) GetObject(ctx context.Context, input *s3.GetObjectInput, opts ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
 	if m.getObjectError != nil {
 		return nil, m.getObjectError
 	}
 	return m.getObjectOutput, nil
 }
 
-func (m *mockS3Client) DeleteObjectWithContext(ctx aws.Context, input *s3.DeleteObjectInput, opts ...request.Option) (*s3.DeleteObjectOutput, error) {
+func (m *mockS3Client) DeleteObject(ctx context.Context, input *s3.DeleteObjectInput, opts ...func(*s3.Options)) (*s3.DeleteObjectOutput, error) {
 	if m.deleteObjectError != nil {
 		return nil, m.deleteObjectError
 	}
 	return m.deleteObjectOutput, nil
 }
 
-func (m *mockS3Client) HeadObjectWithContext(ctx aws.Context, input *s3.HeadObjectInput, opts ...request.Option) (*s3.HeadObjectOutput, error) {
+func (m *mockS3Client) HeadObject(ctx context.Context, input *s3.HeadObjectInput, opts ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
 	if m.headObjectError != nil {
 		return nil, m.headObjectError
 	}
 	return m.headObjectOutput, nil
 }
 
-func (m *mockS3Client) CopyObjectWithContext(ctx aws.Context, input *s3.CopyObjectInput, opts ...request.Option) (*s3.CopyObjectOutput, error) {
+func (m *mockS3Client) CopyObject(ctx context.Context, input *s3.CopyObjectInput, opts ...func(*s3.Options)) (*s3.CopyObjectOutput, error) {
+	m.copyObjectInput = input
 	if m.copyObjectError != nil {
 		return nil, m.copyObjectError
 	}
 	return m.copyObjectOutput, nil
 }
 
-func (m *mockS3Client) ListObjectsV2WithContext(ctx aws.Context, input *s3.ListObjectsV2Input, opts ...request.Option) (*s3.ListObjectsV2Output, error) {
+func (m *mockS3Client) ListObjectsV2(ctx context.Context, input *s3.ListObjectsV2Input, opts ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
 	if m.listObjectsV2Error != nil {
 		return nil, m.listObjectsV2Error
 	}
@@ -214,9 +216,9 @@ func TestS3_GetMetadata(t *testing.T) {
 			ETag:            aws.String("abc123"),
 			ContentType:     aws.String("application/json"),
 			ContentEncoding: aws.String("gzip"),
-			Metadata: map[string]*string{
-				"author":  aws.String("test"),
-				"version": aws.String("1.0"),
+			Metadata: map[string]string{
+				"author":  "test",
+				"version": "1.0",
 			},
 		},
 	}
@@ -294,10 +296,10 @@ func TestS3_GetMetadata_LowercasesCustomKeys(t *testing.T) {
 	mockS3 := &mockS3Client{
 		headObjectOutput: &s3.HeadObjectOutput{
 			ContentLength: aws.Int64(1),
-			Metadata: map[string]*string{
-				"Encryption_key_id":    aws.String("key-2"),
-				"Encryption_algorithm": aws.String("AES-256-GCM"),
-				"Author":               aws.String("test"),
+			Metadata: map[string]string{
+				"Encryption_key_id":    "key-2",
+				"Encryption_algorithm": "AES-256-GCM",
+				"Author":               "test",
 			},
 		},
 	}
@@ -375,6 +377,180 @@ func TestS3_UpdateMetadata_Error(t *testing.T) {
 	err := s.UpdateMetadata(ctx, "key", metadata)
 	if err == nil {
 		t.Fatal("expected error, got nil")
+	}
+}
+
+// UpdateMetadata copies the object onto itself; S3 resets the storage class
+// of such a copy to STANDARD unless the request names one, so the class the
+// object already has must ride along.
+func TestS3_UpdateMetadata_KeepsStorageClass(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		class types.StorageClass
+		want  types.StorageClass
+	}{
+		{"standard-ia", types.StorageClassStandardIa, types.StorageClassStandardIa},
+		{"onezone-ia", types.StorageClassOnezoneIa, types.StorageClassOnezoneIa},
+		{"glacier-ir", types.StorageClassGlacierIr, types.StorageClassGlacierIr},
+		// The v2 SDK has one zero value for an absent and an empty header.
+		{"unset", "", ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			mockS3 := &mockS3Client{
+				headObjectOutput: &s3.HeadObjectOutput{StorageClass: tt.class},
+				copyObjectOutput: &s3.CopyObjectOutput{},
+			}
+			s := &S3{svc: mockS3, bucket: "test-bucket"}
+			if err := s.UpdateMetadata(context.Background(), "key", &common.Metadata{ContentType: "text/plain"}); err != nil {
+				t.Fatalf("UpdateMetadata: %v", err)
+			}
+			got := mockS3.copyObjectInput.StorageClass
+			if got != tt.want {
+				t.Errorf("copy StorageClass = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// A missing source object is reported before any copy is sent.
+func TestS3_UpdateMetadata_HeadError(t *testing.T) {
+	mockS3 := &mockS3Client{headObjectError: awsErr("NotFound")}
+	s := &S3{svc: mockS3, bucket: "test-bucket"}
+	if err := s.UpdateMetadata(context.Background(), "key", nil); !errors.Is(err, common.ErrKeyNotFound) {
+		t.Errorf("err = %v, want ErrKeyNotFound", err)
+	}
+	if mockS3.copyObjectInput != nil {
+		t.Error("copy sent for a missing object")
+	}
+}
+
+// partCopyFake records the multipart self-copy UpdateMetadata sends for an
+// object over the 5 GiB CopyObject limit.
+type partCopyFake struct {
+	*mockS3Client
+	create   *s3.CreateMultipartUploadInput
+	parts    []*s3.UploadPartCopyInput
+	complete *s3.CompleteMultipartUploadInput
+	aborts   []*s3.AbortMultipartUploadInput
+	failAt   int   // 1-based part copy that fails with partErr; zero means none
+	partErr  error // error of the failing part copy
+}
+
+func (f *partCopyFake) CreateMultipartUpload(_ context.Context, in *s3.CreateMultipartUploadInput, _ ...func(*s3.Options)) (*s3.CreateMultipartUploadOutput, error) {
+	f.create = in
+	return &s3.CreateMultipartUploadOutput{UploadId: aws.String("up-1")}, nil
+}
+
+func (f *partCopyFake) UploadPartCopy(_ context.Context, in *s3.UploadPartCopyInput, _ ...func(*s3.Options)) (*s3.UploadPartCopyOutput, error) {
+	f.parts = append(f.parts, in)
+	if len(f.parts) == f.failAt {
+		return nil, f.partErr
+	}
+	return &s3.UploadPartCopyOutput{CopyPartResult: &types.CopyPartResult{ETag: aws.String("p")}}, nil
+}
+
+func (f *partCopyFake) CompleteMultipartUpload(_ context.Context, in *s3.CompleteMultipartUploadInput, _ ...func(*s3.Options)) (*s3.CompleteMultipartUploadOutput, error) {
+	f.complete = in
+	return &s3.CompleteMultipartUploadOutput{}, nil
+}
+
+func (f *partCopyFake) AbortMultipartUpload(_ context.Context, in *s3.AbortMultipartUploadInput, _ ...func(*s3.Options)) (*s3.AbortMultipartUploadOutput, error) {
+	f.aborts = append(f.aborts, in)
+	return &s3.AbortMultipartUploadOutput{}, nil
+}
+
+func newPartCopyFake(size int64) *partCopyFake {
+	return &partCopyFake{mockS3Client: &mockS3Client{
+		headObjectOutput: &s3.HeadObjectOutput{
+			ContentLength: aws.Int64(size),
+			StorageClass:  types.StorageClassGlacierIr,
+			ETag:          aws.String(`"src"`),
+		},
+		copyObjectOutput: &s3.CopyObjectOutput{},
+	}}
+}
+
+// CopyObject refuses sources over 5 GiB, so UpdateMetadata copies a larger
+// object onto itself with UploadPartCopy, keeping class and new metadata.
+func TestS3_UpdateMetadata_OverCopyLimitUsesPartCopy(t *testing.T) {
+	size := maxCopyObjectSize + 1
+	fake := newPartCopyFake(size)
+	s := &S3{svc: fake, bucket: "test-bucket"}
+	md := &common.Metadata{ContentType: "text/plain", ContentEncoding: "gzip", Custom: map[string]string{"a": "b"}}
+	if err := s.UpdateMetadata(context.Background(), "key", md); err != nil {
+		t.Fatalf("UpdateMetadata: %v", err)
+	}
+	if fake.copyObjectInput != nil {
+		t.Fatal("CopyObject was sent for an object over 5 GiB")
+	}
+	c := fake.create
+	if c == nil {
+		t.Fatal("no multipart upload was created")
+	}
+	if c.StorageClass != types.StorageClassGlacierIr {
+		t.Errorf("StorageClass = %q, want GLACIER_IR", c.StorageClass)
+	}
+	if aws.ToString(c.ContentType) != "text/plain" || aws.ToString(c.ContentEncoding) != "gzip" || c.Metadata["a"] != "b" {
+		t.Errorf("metadata not carried: type %q encoding %q custom %v", aws.ToString(c.ContentType), aws.ToString(c.ContentEncoding), c.Metadata)
+	}
+	partSize, err := autoPartSize(size, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := int((size + partSize - 1) / partSize)
+	if len(fake.parts) != want {
+		t.Fatalf("part copies = %d, want %d", len(fake.parts), want)
+	}
+	if got := aws.ToString(fake.parts[0].CopySourceRange); got != fmt.Sprintf("bytes=0-%d", partSize-1) {
+		t.Errorf("first range = %q", got)
+	}
+	last := fake.parts[len(fake.parts)-1]
+	if got, wantRange := aws.ToString(last.CopySourceRange), fmt.Sprintf("bytes=%d-%d", int64(want-1)*partSize, size-1); got != wantRange {
+		t.Errorf("last range = %q, want %q", got, wantRange)
+	}
+	for _, p := range fake.parts {
+		if aws.ToString(p.CopySource) != "test-bucket/key" || aws.ToString(p.CopySourceIfMatch) != `"src"` || aws.ToString(p.UploadId) != "up-1" {
+			t.Fatalf("part %d: source %q if-match %q upload %q", aws.ToInt32(p.PartNumber), aws.ToString(p.CopySource), aws.ToString(p.CopySourceIfMatch), aws.ToString(p.UploadId))
+		}
+	}
+	if fake.complete == nil || len(fake.complete.MultipartUpload.Parts) != want {
+		t.Fatalf("complete = %+v, want %d parts", fake.complete, want)
+	}
+	if len(fake.aborts) != 0 {
+		t.Errorf("aborts = %d after a successful copy", len(fake.aborts))
+	}
+}
+
+// An object of exactly 5 GiB still takes the single CopyObject.
+func TestS3_UpdateMetadata_AtCopyLimitUsesCopyObject(t *testing.T) {
+	fake := newPartCopyFake(maxCopyObjectSize)
+	s := &S3{svc: fake, bucket: "test-bucket"}
+	if err := s.UpdateMetadata(context.Background(), "key", nil); err != nil {
+		t.Fatalf("UpdateMetadata: %v", err)
+	}
+	if fake.copyObjectInput == nil || fake.create != nil {
+		t.Fatalf("CopyObject sent %v, multipart created %v", fake.copyObjectInput != nil, fake.create != nil)
+	}
+}
+
+// A failed part copy aborts the upload and returns the part error.
+func TestS3_UpdateMetadata_PartCopyFailureAborts(t *testing.T) {
+	boom := errors.New("part copy failed")
+	fake := newPartCopyFake(maxCopyObjectSize + 1)
+	fake.failAt, fake.partErr = 2, boom
+	s := &S3{svc: fake, bucket: "test-bucket"}
+	err := s.UpdateMetadata(context.Background(), "key", &common.Metadata{ContentType: "text/plain"})
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want the part copy error", err)
+	}
+	if len(fake.parts) != 2 {
+		t.Errorf("part copies = %d, want the copy to stop at the failure", len(fake.parts))
+	}
+	if fake.complete != nil {
+		t.Error("the upload was completed after a part failure")
+	}
+	if len(fake.aborts) != 1 || aws.ToString(fake.aborts[0].UploadId) != "up-1" || aws.ToString(fake.aborts[0].Key) != "key" {
+		t.Fatalf("aborts = %+v, want one abort of up-1", fake.aborts)
 	}
 }
 
@@ -462,7 +638,7 @@ func TestS3_Exists_OtherError(t *testing.T) {
 func TestS3_ListWithContext(t *testing.T) {
 	mockS3 := &mockS3Client{
 		listObjectsV2Output: &s3.ListObjectsV2Output{
-			Contents: []*s3.Object{
+			Contents: []types.Object{
 				{Key: aws.String("file1.txt")},
 				{Key: aws.String("file2.txt")},
 			},
@@ -487,14 +663,14 @@ func TestS3_ListWithContext_WithPagination(t *testing.T) {
 	mockS3 := &mockS3Client{
 		listObjectsV2Outputs: []*s3.ListObjectsV2Output{
 			{
-				Contents: []*s3.Object{
+				Contents: []types.Object{
 					{Key: aws.String("file1.txt")},
 				},
 				IsTruncated:           aws.Bool(true),
 				NextContinuationToken: aws.String("token1"),
 			},
 			{
-				Contents: []*s3.Object{
+				Contents: []types.Object{
 					{Key: aws.String("file2.txt")},
 				},
 				IsTruncated: aws.Bool(false),
@@ -534,7 +710,7 @@ func TestS3_ListWithOptions(t *testing.T) {
 	now := time.Now()
 	mockS3 := &mockS3Client{
 		listObjectsV2Output: &s3.ListObjectsV2Output{
-			Contents: []*s3.Object{
+			Contents: []types.Object{
 				{
 					Key:          aws.String("file1.txt"),
 					Size:         aws.Int64(100),
@@ -548,7 +724,7 @@ func TestS3_ListWithOptions(t *testing.T) {
 					LastModified: &now,
 				},
 			},
-			CommonPrefixes: []*s3.CommonPrefix{
+			CommonPrefixes: []types.CommonPrefix{
 				{Prefix: aws.String("dir/")},
 			},
 			IsTruncated:           aws.Bool(true),
@@ -588,7 +764,7 @@ func TestS3_ListWithOptions(t *testing.T) {
 func TestS3_ListWithOptions_NilOptions(t *testing.T) {
 	mockS3 := &mockS3Client{
 		listObjectsV2Output: &s3.ListObjectsV2Output{
-			Contents:    []*s3.Object{},
+			Contents:    []types.Object{},
 			IsTruncated: aws.Bool(false),
 		},
 	}
@@ -609,7 +785,7 @@ func TestS3_ListWithOptions_NilOptions(t *testing.T) {
 func TestS3_ListWithOptions_NilKey(t *testing.T) {
 	mockS3 := &mockS3Client{
 		listObjectsV2Output: &s3.ListObjectsV2Output{
-			Contents: []*s3.Object{
+			Contents: []types.Object{
 				{Key: nil}, // Nil key should be skipped
 				{Key: aws.String("valid.txt")},
 			},
@@ -633,7 +809,7 @@ func TestS3_ListWithOptions_NilKey(t *testing.T) {
 func TestS3_ListWithOptions_NilLastModified(t *testing.T) {
 	mockS3 := &mockS3Client{
 		listObjectsV2Output: &s3.ListObjectsV2Output{
-			Contents: []*s3.Object{
+			Contents: []types.Object{
 				{
 					Key:          aws.String("file.txt"),
 					Size:         aws.Int64(100),
