@@ -895,6 +895,14 @@ install-security-tools:
 # An explicit GO_BUILD_TAGS overrides the default.
 SECURITY_TAGS = $(if $(filter file,$(origin GO_BUILD_TAGS)),local$(COMMA)awss3$(COMMA)gcpstorage$(COMMA)azureblob$(COMMA)glacier,$(GO_BUILD_TAGS_CSV))
 
+.PHONY: gosec
+## gosec: The gosec half of make security (devops.md §4): scripts/gosec-scan.sh
+# with SECURITY_TAGS, so an explicit GO_BUILD_TAGS (as CI's lint job passes it)
+# selects the tags scanned. It reads only the tree: no network.
+gosec:
+	@echo "$(CYAN)  Running gosec...$(RESET)"
+	@PATH="$$PATH:$$(go env GOPATH)/bin" ./scripts/gosec-scan.sh "$(SECURITY_TAGS)" && echo "$(GREEN)✓ gosec passed$(RESET)"
+
 .PHONY: security
 ## security: Full devops.md §8 suite (gosec, govulncheck, go mod verify, trivy fs)
 # Container images are NOT scanned here -- `make trivy-image` builds and scans
@@ -903,8 +911,7 @@ SECURITY_TAGS = $(if $(filter file,$(origin GO_BUILD_TAGS)),local$(COMMA)awss3$(
 # scripts/gosec-scan.sh, which explains its two scans.
 security:
 	@echo "$(CYAN)$(BOLD)→ Running security checks...$(RESET)"
-	@echo "$(CYAN)  Running gosec...$(RESET)"
-	@PATH="$$PATH:$$(go env GOPATH)/bin" ./scripts/gosec-scan.sh "$(SECURITY_TAGS)" && echo "$(GREEN)✓ gosec passed$(RESET)"
+	@$(MAKE) --no-print-directory gosec
 	@echo "$(CYAN)  Running govulncheck in every module...$(RESET)"
 	@BIN=$$($(REQUIRE_TOOL) govulncheck) || { echo "$(RED)✗ govulncheck required$(RESET)"; exit 1; }; \
 	export GOFLAGS="-tags=$(SECURITY_TAGS)"; \
