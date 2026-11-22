@@ -16,9 +16,9 @@ futures = { version = "0.3.34", features = ["alloc"] }
 async-trait = "0.1.92"
 
 # gRPC
-tonic = "0.11"
-prost = "0.12"
-prost-types = "0.12"
+tonic = "0.14"
+prost = "0.14"
+prost-types = "0.14"
 
 # HTTP clients
 reqwest = { version = "0.13", features = ["json", "multipart", "stream"] }
@@ -54,7 +54,7 @@ http = "1.5"
 base64 = "0.23"
 
 [build-dependencies]
-tonic-build = "0.11"
+tonic-build = "0.14"
 
 [dev-dependencies]
 mockito = "1.7"
@@ -63,7 +63,7 @@ tempfile = "3.27"
 testcontainers = "0.28"
 tokio-test = "0.4.6"
 paste = "1.0.15"
-rcgen = "0.13"
+rcgen = "0.14"
 
 [lib]
 name = "go_objstore"
