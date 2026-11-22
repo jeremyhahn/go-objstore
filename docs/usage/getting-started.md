@@ -1,6 +1,6 @@
 # Getting Started with go-objstore
 
-> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-10-09
+> **Status: NORMATIVE** · Scope: go-objstore · Last verified: 2026-11-12
 > Conflicts with this document are defects. Fix them here first.
 
 Quick start guide for using go-objstore in your applications.
@@ -48,9 +48,12 @@ Operations support context for cancellation and timeouts.
 ### Choose a Backend
 Select a storage backend based on your needs:
 - `local` - Development and testing
-- `s3` - Amazon S3 or S3-compatible
-- `gcs` - Google Cloud Storage
-- `azure` - Azure Blob Storage
+- `memory` - In-process storage for tests and caches
+- `s3` - Amazon S3 or S3-compatible (build tag `awss3`)
+- `gcs` - Google Cloud Storage (build tag `gcpstorage`)
+- `azure` - Azure Blob Storage (build tag `azureblob`)
+
+See [Storage Backends](../backends/README.md) for each backend's settings and build tags.
 
 ### Create Storage Instance
 Use the factory with backend type and configuration map.
@@ -77,11 +80,14 @@ Store and retrieve custom metadata alongside objects using PutWithMetadata and G
 
 ## Error Handling
 
-Check errors returned from all operations. Common errors include:
-- Object not found
-- Access denied
-- Network failures
-- Storage full
+Errors are typed sentinels; compare them with `errors.Is`, never by their text:
+- `factory.ErrUnknownBackend` - the backend ID is not registered (unknown, or built without its tag)
+- `factory.ErrArchiveOnlyBackend` - `glacier` and `azurearchive` are archive destinations, not storage
+- `common.ErrCredentialInSettings` - a credential was put in the settings map instead of `common.Credentials`
+- `common.ErrPathNotSet`, `common.ErrBucketNotSet`, `common.ErrAccountNotSet` - a required setting is missing
+- `common.ErrKeyNotFound` - no object at the requested key
+
+See [Error Handling](../backends/README.md#error-handling) for an example.
 
 ## Best Practices
 
