@@ -20,6 +20,7 @@ jobs:
   create-release:
     name: Create Release
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'release' }}
+    if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     outputs:
       version: ${{ steps.get_version.outputs.version }}
 
@@ -109,6 +110,7 @@ jobs:
     name: Build Binaries
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'release' }}
     needs: create-release
+    if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     strategy:
       matrix:
         include:
@@ -239,6 +241,7 @@ jobs:
     name: Build Shared Libraries
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'release' }}
     needs: create-release
+    if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     strategy:
       matrix:
         goarch: [amd64, arm64]
@@ -321,7 +324,7 @@ jobs:
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'release' }}
     needs: create-release
     # Skip prerelease versions (alpha/beta/rc) so only stable releases hit npm.
-    if: ${{ !contains(needs.create-release.outputs.version, 'alpha') && !contains(needs.create-release.outputs.version, 'beta') && !contains(needs.create-release.outputs.version, 'rc') }}
+    if: ${{ ((github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')) && !contains(needs.create-release.outputs.version, 'alpha') && !contains(needs.create-release.outputs.version, 'beta') && !contains(needs.create-release.outputs.version, 'rc') }}
 
     steps:
     - name: Checkout code
@@ -354,7 +357,7 @@ jobs:
     # ghcr.io and the GITHUB_TOKEN that authenticates to it exist only on
     # GitHub; elsewhere the login is denied and the release fails after the
     # binaries have already published. Skipped rather than failed off GitHub.
-    if: github.server_url == 'https://github.com'
+    if: github.server_url == 'https://github.com' && ((github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     permissions:
       contents: read
       packages: write
@@ -457,7 +460,7 @@ jobs:
     # ghcr.io and the GITHUB_TOKEN that authenticates to it exist only on
     # GitHub; elsewhere the login is denied and the release fails after the
     # binaries have already published. Skipped rather than failed off GitHub.
-    if: github.server_url == 'https://github.com'
+    if: github.server_url == 'https://github.com' && ((github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     permissions:
       contents: read
       packages: write
@@ -555,6 +558,7 @@ jobs:
   create-checksums:
     name: Create Master Checksums
     needs: [create-release, build-binaries, build-libraries]
+    if: (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))) || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'release' }}
     steps:
       - name: Checkout code

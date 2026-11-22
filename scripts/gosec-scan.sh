@@ -31,12 +31,20 @@ die() {
 [ $# -eq 1 ] && [ -n "$1" ] || die "usage: $prog <comma-separated build tags>"
 tags=$1
 gosec=$(command -v gosec) || die "gosec not found on PATH"
+# Bound gosec's memory so it fits a small CI runner (an unbounded run was
+# OOM-killed, exit 137). gosec defaults to 64 concurrent package analyses;
+# fewer, plus a soft heap limit and a lower GOGC, cap the peak without
+# dropping any rule, package or tag set. Override from the environment.
+GOMEMLIMIT=${GOSEC_GOMEMLIMIT:-768MiB}
+GOGC=${GOSEC_GOGC:-50}
+conc=${GOSEC_CONCURRENCY:-2}
+export GOMEMLIMIT GOGC
 tmp=$(mktemp -d)
 canary=cmd/zz-gosec-cgo-canary
 trap 'rm -rf "$tmp" "$canary"' EXIT
 
 echo "$prog: pure-Go scan (CGO_ENABLED=0)"
-CGO_ENABLED=0 "$gosec" -exclude-generated -tags "$tags" \
+CGO_ENABLED=0 "$gosec" -concurrency "$conc" -exclude-generated -tags "$tags" \
   -fmt json -out gosec-results.json -stdout -verbose text \
   -exclude-dir=examples -exclude-dir=cmd/objstorelib ./...
 
@@ -53,7 +61,7 @@ rm -rf "$canary"
 
 echo "$prog: cgo scan (cmd/objstorelib, CGO_ENABLED=1)"
 rc=0
-CGO_ENABLED=1 "$gosec" -tags "$tags" \
+CGO_ENABLED=1 "$gosec" -concurrency "$conc" -tags "$tags" \
   -fmt json -out gosec-cgo-results.json -stdout -verbose text \
   ./cmd/objstorelib/... >"$tmp/cgo.log" 2>&1 || rc=$?
 cat "$tmp/cgo.log"

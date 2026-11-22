@@ -102,6 +102,14 @@ DOCKER_COMPOSE := docker compose
 # The classic path reads the secret file without one, so no job has to turn
 # bake's entitlement checks off (BUILDX_BAKE_ENTITLEMENTS_FS=0).
 export COMPOSE_BAKE := false
+# Newer Compose/buildx (runner image ubuntu-26.04 20261111.196) still build
+# `run --build` and `up --build` through bake whatever COMPOSE_BAKE says, and
+# bake then refuses the secret file with "additional privileges requested: pass
+# --allow=fs.read=<dir>". Compose has no --allow flag, so lift bake's
+# filesystem entitlement check, the same variable ci.yml sets on its other
+# jobs. The only path outside the context is the gomodauth secret file the
+# integration and SDK compose files name (empty /dev/null when none is staged).
+export BUILDX_BAKE_ENTITLEMENTS_FS := 0
 
 # Compose project prefix for the integration targets. Concurrent CI jobs share
 # one Docker host, and compose's default project name (the directory) made one
@@ -170,15 +178,20 @@ IT_CI_IMAGE = $(PROJECT_NAME)-ci-it:$(shell { git rev-parse 'HEAD^{tree}'; git d
 	git ls-files -oz --exclude-standard | xargs -0r sha256sum; } 2>/dev/null | sha256sum | cut -c1-16)
 # GO_IMAGE and GO_GLIBC_IMAGE are the Go base images, tag@digest; unset, they
 # are the Dockerfile's ARG defaults, read from it so the pins live in one
-# place. GO_BUILD_PROXY_ARG hands the caller's GOPROXY to the stages that
-# fetch; the shell expands $$GOPROXY, so make never echoes its value.
+# place. GO_BUILD_PROXY_SECRET hands the proxy chain to the stages that
+# fetch as the BuildKit secret goproxy: the make variable GO_BUILD_PROXY (CI's
+# `bp`, `<DEVCACHE_GOPROXY>|https://proxy.golang.org`), else the caller's
+# GOPROXY, read from the environment by name so make never echoes it: a
+# pool's GOPROXY is a LAN cache, and a secret, unlike a build argument, is in
+# no history entry (ruling 901). Unset, there is no secret and the Dockerfile
+# falls back to the public proxy.
 DEVCONTAINER_ARGS := $(file < $(DEVCONTAINER_DIR)/Dockerfile)
 GO_IMAGE ?= $(patsubst GO_IMAGE=%,%,$(filter GO_IMAGE=%,$(DEVCONTAINER_ARGS)))
 GO_GLIBC_IMAGE ?= $(patsubst GO_GLIBC_IMAGE=%,%,$(filter GO_GLIBC_IMAGE=%,$(DEVCONTAINER_ARGS)))
-GO_BUILD_PROXY_ARG = $(if $(GOPROXY),--build-arg GO_BUILD_PROXY="$$GOPROXY")
+GO_BUILD_PROXY_SECRET = $(if $(GO_BUILD_PROXY),--secret id=goproxy$(COMMA)env=GO_BUILD_PROXY,$(if $(GOPROXY),--secret id=goproxy$(COMMA)env=GOPROXY))
 DEVCONTAINER_BUILD = DOCKER_BUILDKIT=1 docker buildx build --load \
 	--build-arg GO_IMAGE=$(GO_IMAGE) --build-arg GO_GLIBC_IMAGE=$(GO_GLIBC_IMAGE) \
-	$(GO_BUILD_PROXY_ARG) \
+	$(GO_BUILD_PROXY_SECRET) \
 	--secret id=gomodauth,src=$(MODULE_ENV_FILE) \
 	-f $(DEVCONTAINER_DIR)/Dockerfile
 
@@ -887,6 +900,14 @@ install-security-tools:
 # An explicit GO_BUILD_TAGS overrides the default.
 SECURITY_TAGS = $(if $(filter file,$(origin GO_BUILD_TAGS)),local$(COMMA)awss3$(COMMA)gcpstorage$(COMMA)azureblob$(COMMA)glacier,$(GO_BUILD_TAGS_CSV))
 
+.PHONY: gosec
+## gosec: The gosec half of make security (devops.md §4): scripts/gosec-scan.sh
+# with SECURITY_TAGS, so an explicit GO_BUILD_TAGS (as CI's lint job passes it)
+# selects the tags scanned. It reads only the tree: no network.
+gosec:
+	@echo "$(CYAN)  Running gosec...$(RESET)"
+	@PATH="$$PATH:$$(go env GOPATH)/bin" ./scripts/gosec-scan.sh "$(SECURITY_TAGS)" && echo "$(GREEN)✓ gosec passed$(RESET)"
+
 .PHONY: security
 ## security: Full devops.md §8 suite (gosec, govulncheck, go mod verify, trivy fs)
 # Container images are NOT scanned here -- `make trivy-image` builds and scans
@@ -895,8 +916,7 @@ SECURITY_TAGS = $(if $(filter file,$(origin GO_BUILD_TAGS)),local$(COMMA)awss3$(
 # scripts/gosec-scan.sh, which explains its two scans.
 security:
 	@echo "$(CYAN)$(BOLD)→ Running security checks...$(RESET)"
-	@echo "$(CYAN)  Running gosec...$(RESET)"
-	@PATH="$$PATH:$$(go env GOPATH)/bin" ./scripts/gosec-scan.sh "$(SECURITY_TAGS)" && echo "$(GREEN)✓ gosec passed$(RESET)"
+	@$(MAKE) --no-print-directory gosec
 	@echo "$(CYAN)  Running govulncheck in every module...$(RESET)"
 	@BIN=$$($(REQUIRE_TOOL) govulncheck) || { echo "$(RED)✗ govulncheck required$(RESET)"; exit 1; }; \
 	export GOFLAGS="-tags=$(SECURITY_TAGS)"; \
