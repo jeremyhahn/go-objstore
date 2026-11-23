@@ -36,7 +36,7 @@ Its only first-party dependency is go-enclave.
 
 ## Now
 
-None.
+- **maintenance** — standing row (ruling 1234): dependency updates and CI configuration on `row/293-maintenance`; stays open, no milestone, never gates a release — [#293](../../issues/293) — standing
 
 ## Next
 
