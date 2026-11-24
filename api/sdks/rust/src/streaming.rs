@@ -1,4 +1,4 @@
-// ! `get_stream` and `put_stream` extensions; REST streams chunked, gRPC and QUIC buffer, Unix and MCP have none.
+//! `get_stream` and `put_stream` extensions; REST streams chunked, gRPC and QUIC buffer, Unix and MCP have none.
 
 use crate::error::{error_from_http_status, Error, Result};
 use crate::grpc_client::GrpcClient;

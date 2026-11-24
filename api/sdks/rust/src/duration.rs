@@ -1,4 +1,4 @@
-// ! Parses Go `time.Duration` strings ("1m30s", "100ms") into milliseconds.
+//! Parses Go `time.Duration` strings ("1m30s", "100ms") into milliseconds.
 
 /// Parse a Go `time.Duration` string into milliseconds; empty or unparseable input yields 0.
 pub fn parse_go_duration_ms(s: &str) -> i64 {
