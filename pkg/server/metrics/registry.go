@@ -11,11 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package metrics provides a small, dependency-free, transport-agnostic metrics
-// registry and a Prometheus text-exposition renderer. Every server transport
-// (REST, gRPC, QUIC, MCP, Unix) records request outcomes into the shared
-// process-wide Default registry; the HTTP-based transports expose it at
-// /metrics via Handler. No third-party metrics library is required.
+// Package metrics is a dependency-free metrics registry with a Prometheus text renderer; HTTP transports expose Default at /metrics.
 package metrics
 
 import (

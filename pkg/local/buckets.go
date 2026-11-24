@@ -34,11 +34,7 @@ var _ common.BucketManager = (*Buckets)(nil)
 // settingBucketRoot names the directory whose subdirectories are the buckets.
 const settingBucketRoot = "bucketRoot"
 
-// Buckets emulates buckets over the filesystem: a bucket is a directory
-// directly under the bucket root, and Bucket returns a Local rooted there.
-//
-// The root is explicit because its parent, the alternative, could hold
-// unrelated directories that would then be listed as buckets.
+// Buckets emulates buckets as directories directly under an explicit bucket root.
 type Buckets struct {
 	root     string
 	dirMu    sync.Mutex
@@ -49,9 +45,7 @@ type Buckets struct {
 	encrypters common.EncrypterFactory // handed to each bucket; nil means no encryption at rest
 }
 
-// SetAtRestEncrypterFactory sets the factory that encrypts the objects and
-// multipart parts of every bucket handed out afterwards, as it does for a
-// single Local.
+// SetAtRestEncrypterFactory sets the at-rest encryption of every bucket handed out afterwards.
 func (b *Buckets) SetAtRestEncrypterFactory(factory common.EncrypterFactory) {
 	b.encrypters = factory
 }
@@ -243,12 +237,7 @@ func (b *Buckets) Bucket(ctx context.Context, name string) (common.Storage, erro
 }
 
 // requireDir reports ErrBucketNotFound unless the bucket is a directory.
-// openDir returns the bucket root as an os.Root. The handle held in b.dir is
-// reused while it still names the directory at b.root. Once that directory
-// has been removed or replaced, the path is opened again, after creating it
-// when create is set, so the buckets follow the root rather than a directory
-// that is gone. A handle that is replaced stays open: a call still using it
-// must not see it closed under it.
+// openDir returns the bucket root as an os.Root, reopening (and creating when asked) once the directory is gone; old handles stay open.
 func (b *Buckets) openDir(create bool) (*os.Root, error) {
 	b.dirMu.Lock()
 	defer b.dirMu.Unlock()

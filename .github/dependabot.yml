@@ -1,9 +1,4 @@
-# Dependabot configuration for go-objstore.
-#
-# Covers every dependency ecosystem that actually exists in the repo (the core
-# Go module, the per-language SDKs, and GitHub Actions). Updates are grouped and
-# weekly to keep PR volume low. Paths that no longer exist (e.g. the removed
-# JavaScript SDK) are intentionally absent so Dependabot stops scanning them.
+# Dependabot: the Go module, the per-language SDKs and GitHub Actions, grouped weekly.
 version: 2
 updates:
   # ---- Go modules ----

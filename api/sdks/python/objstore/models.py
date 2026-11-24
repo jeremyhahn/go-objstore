@@ -274,8 +274,7 @@ class SyncResult(BaseModel):
     deleted: int = Field(..., description="Objects deleted")
     failed: int = Field(..., description="Objects failed")
     bytes_total: int = Field(..., description="Total bytes transferred")
-    # REST server sends a Go duration string; gRPC sends an int.
-    # We accept both and normalise to duration_ms (int milliseconds).
+    # REST sends a Go duration string and gRPC an int; both normalise to duration_ms.
     duration: Optional[str] = Field(None, description="Go duration string from REST (e.g. '80.481µs')")
     duration_ms: Optional[int] = Field(None, description="Duration in milliseconds")
     errors: List[str] = Field(default_factory=list, description="Error messages")

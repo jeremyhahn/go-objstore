@@ -23,10 +23,7 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 )
 
-// TestAuthenticationMiddlewareConcurrentNoBadLoggerRace fires many goroutines
-// through a single shared gin engine that has AuthenticationMiddleware mounted
-// to prove that the per-request logger enrichment no longer mutates the shared
-// captured logger variable. Run with -race; must produce zero data-race reports.
+// TestAuthenticationMiddlewareConcurrentNoBadLoggerRace: per-request logger enrichment must not race under -race.
 func TestAuthenticationMiddlewareConcurrentNoBadLoggerRace(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

@@ -1,13 +1,5 @@
 #!/usr/bin/env bash
-# Builds and starts a local objstore-server with the REST, MCP (HTTP), and
-# Unix-socket transports enabled against a temp-dir local backend, for SDK
-# e2e smoke tests. Prints the connection details as shell exports and writes
-# the server PID to $PID_FILE (default /tmp/objstore-smoke.pid).
-#
-# Usage:
-#   eval "$(./scripts/start-test-server.sh)"   # exports SMOKE_* vars
-#   ... run smoke tests ...
-#   kill "$(cat /tmp/objstore-smoke.pid)"
+# Start a local objstore-server (REST, MCP, Unix) for SDK smoke tests: eval "$(./scripts/start-test-server.sh)"; PID in $PID_FILE.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

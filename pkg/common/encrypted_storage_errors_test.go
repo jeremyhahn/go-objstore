@@ -329,8 +329,7 @@ func TestEncryptedStorage_GetWithContext_KeyFromMetadata(t *testing.T) {
 	}
 }
 
-// Metadata naming a key id the factory does not know fails the read; it
-// never falls back to the default key (#226).
+// Metadata naming an unknown key id fails the read; it never falls back to the default key.
 func TestEncryptedStorage_GetWithContext_UnknownKeyID_NoFallback(t *testing.T) {
 	ctx := context.Background()
 	underlying := newMockUnderlyingStorage()
@@ -359,8 +358,7 @@ func TestEncryptedStorage_GetWithContext_UnknownKeyID_NoFallback(t *testing.T) {
 // GetWithContext closes the encrypted reader and propagates a Decrypt error.
 func TestEncryptedStorage_GetWithContext_DecryptError(t *testing.T) {
 	underlying := newMockUnderlyingStorage()
-	// Store raw bytes — the mock encrypter expects "ENCRYPTED:" prefix for
-	// Decrypt, so raw bytes will cause the decrypt error we want.
+	// Raw bytes lack the mock's "ENCRYPTED:" prefix, so Decrypt fails.
 	underlying.data["k"] = []byte("not-encrypted-data")
 	underlying.metadata["k"] = &Metadata{}
 

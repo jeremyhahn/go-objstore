@@ -46,20 +46,7 @@ func MetricsMiddleware() gin.HandlerFunc {
 // principal is stored by AuthenticationMiddleware.
 const principalContextKey = "principal"
 
-// CORSMiddleware handles Cross-Origin Resource Sharing.
-//
-// The allowedOrigins parameter controls which origins may access the API:
-//
-//   - When empty/nil (or equal to ["*"]), the middleware allows all origins by
-//     sending "Access-Control-Allow-Origin: *". In this permissive mode the
-//     "Access-Control-Allow-Credentials" header is NOT sent, since the wildcard
-//     origin combined with credentials is invalid per the Fetch standard.
-//   - When set to a specific allowlist, the middleware echoes the request's
-//     Origin header only if it is present in the allowlist (along with
-//     "Vary: Origin"), and in that case it is safe to also send
-//     "Access-Control-Allow-Credentials: true". Requests whose Origin is not
-//     allowlisted receive no "Access-Control-Allow-Origin" header, so the
-//     browser blocks the cross-origin response.
+// CORSMiddleware allows every origin without credentials when allowedOrigins is empty or ["*"], else echoes an allowlisted Origin with credentials.
 func CORSMiddleware(allowedOrigins []string) gin.HandlerFunc {
 	allowAll := len(allowedOrigins) == 0 || (len(allowedOrigins) == 1 && allowedOrigins[0] == "*")
 
@@ -180,12 +167,7 @@ func RequestSizeLimitMiddleware(maxSize int64) gin.HandlerFunc {
 	}
 }
 
-// AuthenticationMiddleware authenticates HTTP requests using the provided
-// authenticator. Public paths (/health, and /metrics when metricsPublic is
-// set) bypass authentication entirely so they remain reachable behind
-// restrictive authenticators (e.g. Prometheus scrapers and load-balancer
-// health checks carry no credentials). Swagger documentation is not public
-// and requires authentication.
+// AuthenticationMiddleware authenticates requests; /health, and /metrics when metricsPublic, bypass it. Swagger is not public.
 func AuthenticationMiddleware(authenticator adapters.Authenticator, logger adapters.Logger, auditLogger auditlog.AuditLogger, metricsPublic bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if isPublicPath(c.Request.URL.Path, metricsPublic) {
@@ -226,12 +208,7 @@ func AuthenticationMiddleware(authenticator adapters.Authenticator, logger adapt
 	}
 }
 
-// AuthorizationMiddleware enforces authorization on authenticated requests using
-// the provided authorizer. It must run AFTER AuthenticationMiddleware so that the
-// principal is present in the gin context. It derives the (action, resource) pair
-// from the HTTP method and route, then calls authorizer.Authorize. On denial it
-// responds with 403 Forbidden. The default authorizer (NoOpAuthorizer) allows
-// everything, preserving prior behavior.
+// AuthorizationMiddleware authorizes the route's action after authentication; denial is 403.
 func AuthorizationMiddleware(authorizer adapters.Authorizer, logger adapters.Logger, auditLogger auditlog.AuditLogger, metricsPublic bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Public paths and swagger are exempt from authorization; swagger still
@@ -288,10 +265,7 @@ func AuthorizationMiddleware(authorizer adapters.Authorizer, logger adapters.Log
 	}
 }
 
-// isPublicPath reports whether the path bypasses authentication entirely.
-// Only /health is always public; /metrics is public when the server is
-// configured with MetricsPublic. Swagger documentation requires
-// authentication and is therefore never public.
+// isPublicPath reports /health, and /metrics when MetricsPublic.
 func isPublicPath(path string, metricsPublic bool) bool {
 	if path == "/metrics" {
 		return metricsPublic
@@ -306,11 +280,7 @@ func isAuthzExemptPath(path string, metricsPublic bool) bool {
 	return isPublicPath(path, metricsPublic) || strings.HasPrefix(path, "/swagger")
 }
 
-// deriveActionResource maps an HTTP request to a (action, resource) pair from
-// the matched route template and the HTTP method (routeActions). Object and
-// metadata operations use the object key as the resource; management
-// operations use the resource category constants. ok is false when no route
-// matched or the route has no entry, and the request must then be refused.
+// deriveActionResource maps the route template and method to an action and resource; ok is false when no route matched.
 func deriveActionResource(c *gin.Context) (action, resource string, ok bool) {
 	// The matched route template (e.g. "/api/v1/objects/*key"), never the
 	// request path: an object key may itself contain "/metadata", "/exists",
@@ -343,9 +313,7 @@ type routeAction struct {
 	resource string
 }
 
-// routeActions maps "METHOD route-template" (without the /api/v1 prefix) to
-// the action a principal needs. Every route registered in SetupRoutes has an
-// entry; a route without one is refused by AuthorizationMiddleware.
+// routeActions maps "METHOD route-template" to the action needed; every route has one, and one without is refused.
 var routeActions = map[string]routeAction{
 	"GET /metrics": {adapters.ActionRead, ""},
 

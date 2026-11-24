@@ -19,9 +19,7 @@ const patternsEnv = "LABSTRINGS_PATTERNS"
 // maxPatternsFileSize bounds the rules file.
 const maxPatternsFileSize = 1 << 20
 
-// classes are the classes with specific guidance. The rules file states its
-// own class set (ruling 411): a line may name any well-formed class, and one
-// outside these four gets defaultGuidance.
+// classes have specific guidance; any other well-formed class gets defaultGuidance.
 var classes = []class{labAddress, labHost, ownerPath, ownerAccount}
 
 // classField is a well-formed class field in the rules file.

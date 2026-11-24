@@ -27,10 +27,7 @@ func RegisterBucketManager(backendType string, creator BucketManagerCreator) {
 	bucketManagerRegistry[backendType] = creator
 }
 
-// NewBucketManager creates the bucket manager of a backend type. Archive-only
-// backends return ErrArchiveOnlyBackend and unknown types ErrUnknownBackend.
-// A registered backend that offers no bucket management returns
-// common.ErrNotSupported.
+// NewBucketManager returns a backend type's bucket manager, or ErrArchiveOnlyBackend, ErrUnknownBackend or common.ErrNotSupported.
 func NewBucketManager(backendType string, settings map[string]string, creds common.Credentials) (common.BucketManager, error) {
 	if archiveOnlyTypes[backendType] {
 		return nil, ErrArchiveOnlyBackend

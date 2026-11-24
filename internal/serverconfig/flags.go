@@ -18,10 +18,7 @@ import (
 	"time"
 )
 
-// Each Bind*Flags function registers one binary's command line. Flag names
-// are the binaries' established names; every flag points at a Config field,
-// defaults to that field's current value (the defaults layer during parsing)
-// and names the config key and environment variable that set the same field.
+// Each Bind*Flags function registers one binary's flags, each bound to a Config field and defaulting to its current value.
 
 // BindServerFlags registers the flags of objstore-server, which runs every
 // transport in one process.

@@ -75,7 +75,7 @@ func newStorageFile(fs *StorageFS, name string, flag int, perm os.FileMode) (*St
 
 	// Determine read/write mode
 	writeMode := flag&(os.O_WRONLY|os.O_RDWR) != 0
-	// O_RDONLY is 0, so we need to check if neither WRONLY nor RDWR is set, or if RDWR is set
+	// O_RDONLY is 0: readable unless WRONLY without RDWR.
 	accMode := flag & (os.O_WRONLY | os.O_RDWR)
 	readMode := (accMode == 0) || (accMode == os.O_RDWR)
 	// Alternative: readMode := accMode != os.O_WRONLY

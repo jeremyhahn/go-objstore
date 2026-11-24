@@ -91,18 +91,7 @@ pub enum Error {
     Generic(String),
 }
 
-/// Map an HTTP status code to the canonical SDK [`Error`].
-///
-/// Canonical table: 400 -> [`Error::InvalidArgument`], 401 ->
-/// [`Error::Unauthenticated`], 403 -> [`Error::Forbidden`], 404 ->
-/// [`Error::NotFound`], 409 -> [`Error::AlreadyExists`], 429 ->
-/// [`Error::RateLimited`]; any other failure status ->
-/// [`Error::OperationFailed`].
-///
-/// `resource` names the object key or policy id involved and is carried by
-/// the not-found / already-exists payloads; `message` describes the failed
-/// operation and is used everywhere else (and as the fallback when no
-/// resource applies).
+/// Map an HTTP status to the SDK [`Error`] (400, 401, 403, 404, 409, 429; else OperationFailed); `resource` names the key or policy.
 pub(crate) fn error_from_http_status(
     status: u16,
     resource: Option<&str>,
@@ -120,13 +109,7 @@ pub(crate) fn error_from_http_status(
 }
 
 impl From<tonic::Status> for Error {
-    /// Map a gRPC status to the canonical SDK [`Error`].
-    ///
-    /// Canonical table: `NotFound` -> [`Error::NotFound`], `PermissionDenied`
-    /// -> [`Error::Forbidden`], `Unauthenticated` -> [`Error::Unauthenticated`],
-    /// `AlreadyExists` -> [`Error::AlreadyExists`], `ResourceExhausted` ->
-    /// [`Error::RateLimited`], `InvalidArgument` -> [`Error::InvalidArgument`];
-    /// any other code is surfaced as [`Error::GrpcStatus`].
+    /// Map a gRPC status to the SDK [`Error`]; unmapped codes stay [`Error::GrpcStatus`].
     fn from(status: tonic::Status) -> Self {
         let message = status.message().to_string();
         match status.code() {

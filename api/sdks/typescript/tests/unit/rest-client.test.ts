@@ -741,9 +741,7 @@ describe('RestClient', () => {
   // --------------------------------------------------------------------------
   describe('validation', () => {
     it('rest_validation_empty_key', async () => {
-      // The REST client has no client-side validation, so an empty key would
-      // hit /objects/ on the wire. With NO nock interceptor registered, the
-      // request is refused (no successful network call) and the call rejects.
+      // No client-side validation and no nock interceptor: the empty-key request is refused and the call rejects.
       nock.disableNetConnect();
       try {
         await expect(

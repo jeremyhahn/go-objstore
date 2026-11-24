@@ -96,10 +96,7 @@ export class GrpcClient implements IObjectStoreClient {
   private callMeta: grpc.Metadata;
 
   constructor(config: GrpcClientConfig) {
-    // Try multiple paths to find the proto file
-    // 1. In Docker container: /app/proto/objstore.proto
-    // 2. In local development: ../../../proto/objstore.proto (from dist)
-    // 3. In source: ../../proto/objstore.proto (from src)
+    // Find the proto file in the container, beside dist, or beside src.
     const possiblePaths = [
       '/app/proto/objstore.proto',
       join(__dirname, '../../../proto/objstore.proto'),

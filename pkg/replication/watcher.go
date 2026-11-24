@@ -264,10 +264,7 @@ func (w *FSNotifyWatcher) handleEvent(event fsnotify.Event) {
 		return
 	}
 
-	// Removals are never debounced: dropping a delete that follows a put
-	// would leave the replica holding an object that no longer exists.
-	// Clearing the path's debounce entry also lets an immediate re-create
-	// through.
+	// Removals are never debounced, so a replica never keeps a deleted object; clearing the entry lets a re-create through.
 	if event.Op&(fsnotify.Remove|fsnotify.Rename) != 0 {
 		w.mu.Lock()
 		delete(w.lastEvent, event.Name)
@@ -298,8 +295,7 @@ func (w *FSNotifyWatcher) handleEvent(event fsnotify.Event) {
 func (w *FSNotifyWatcher) convertEvent(event fsnotify.Event) *FileSystemEvent {
 	var operation string
 
-	// Destructive bits take precedence: fsnotify can coalesce operations
-	// (e.g. Write|Rename), and the path no longer holds the object.
+	// Destructive bits win when fsnotify coalesces operations (Write|Rename).
 	switch {
 	case event.Op&fsnotify.Remove == fsnotify.Remove:
 		operation = "delete"

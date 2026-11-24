@@ -11,11 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package main provides a self-contained example of implementing go-objstore's
-// encryption interfaces using only the Go standard library. AESEncrypter and
-// AESEncrypterFactory demonstrate how any application can wire in its own key
-// management by satisfying common.Encrypter and common.EncrypterFactory — no
-// external KMS dependency required.
+// Package main implements common.Encrypter and common.EncrypterFactory with the standard library only.
 package main
 
 import (
@@ -136,10 +132,7 @@ func (e *AESEncrypter) Decrypt(_ context.Context, ciphertext io.Reader) (io.Read
 		return nil, err
 	}
 
-	// Reject attacker-controlled nonce lengths before allocating. The nonce size
-	// is fixed by the GCM construction, so a mismatch indicates corrupt or hostile
-	// input; validating here also prevents a memory-amplification DoS where a tiny
-	// 4-byte header (e.g. 0xFFFFFFFF) would otherwise drive a multi-gigabyte make.
+	// Reject a nonce length other than the GCM size before allocating.
 	if nonceLen != uint32(gcm.NonceSize()) {
 		return nil, fmt.Errorf("invalid nonce length: got %d, want %d", nonceLen, gcm.NonceSize())
 	}
@@ -172,10 +165,7 @@ func (e *AESEncrypter) KeyID() string {
 	return e.keyID
 }
 
-// AESEncrypterFactory implements common.EncrypterFactory using in-memory AES-256
-// keys generated at startup. Each key CN in the configuration gets a fresh
-// random 32-byte key; in a production system these would be loaded from your
-// KMS (HashiCorp Vault, AWS KMS, GCP KMS, Azure Key Vault, etc.).
+// AESEncrypterFactory implements common.EncrypterFactory with random in-memory AES-256 keys per key CN; production loads them from a KMS.
 type AESEncrypterFactory struct {
 	keys         map[string][]byte // keyID → 32-byte AES key
 	defaultKeyID string

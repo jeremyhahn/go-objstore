@@ -169,8 +169,7 @@ func TestPeerCredBackwardCompatNoOp(t *testing.T) {
 // derived role (its primary OS group / gid fallback) allows actions the role
 // has and denies actions it lacks.
 func TestPeerCredRBACByRole(t *testing.T) {
-	// Discover the role the server derives for this process so the RBAC rules
-	// key off the same value the peer-cred extractor produces.
+	// Use the role the server derives for this process.
 	probe := &recordingAuthorizer{inner: &adapters.NoOpAuthorizer{}}
 	probeConn := startPeerCredServer(t, NewMockStorage(), ServerConfig{Authorizer: probe})
 	if resp := sendRequest(t, probeConn, &Request{JSONRPC: jsonRPCVersion, Method: MethodList, ID: 1}); resp.Error != nil {

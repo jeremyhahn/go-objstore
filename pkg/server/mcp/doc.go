@@ -11,8 +11,5 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package mcp implements the go-objstore Model Context Protocol server.
-//
-// It serves object operations as MCP tools and resources over both HTTP and
-// stdio, using the shared JSON-RPC error taxonomy.
+// Package mcp is the go-objstore Model Context Protocol server over HTTP and stdio.
 package mcp

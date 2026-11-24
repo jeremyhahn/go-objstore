@@ -11,10 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package multipart holds the rules shared by the providers that emulate
-// multipart upload (memory and local): upload IDs, part and completion
-// checks, part ETags and the expiry setting. Keeping them here makes every
-// emulated provider behave the same way.
+// Package multipart holds the multipart-upload rules shared by the emulating providers (memory and local).
 package multipart
 
 import (
@@ -138,10 +135,7 @@ func CopyPart(dst io.Writer, src io.Reader, size int64) (string, error) {
 	return r.Finish()
 }
 
-// PartReader hands a part body to a consumer while it hashes the bytes that
-// pass and counts them, so the body can be checked against its declared size
-// without keeping a copy of it. Wrap the body, give the reader to whatever
-// stores or seals it, then call Finish.
+// PartReader hashes and counts a part body as it passes, so its size is checked without a copy; call Finish after.
 type PartReader struct {
 	src  io.Reader
 	size int64
@@ -191,15 +185,7 @@ func (r *PartReader) Finish() (string, error) {
 	return hex.EncodeToString(r.h.Sum(nil)), nil
 }
 
-// CheckComplete validates the parts named at completion against the stored
-// parts, which lookup returns by part number. It returns, in order, the part
-// numbers to assemble.
-//
-// The parts must be non-empty and in strictly ascending part-number order
-// (common.ErrInvalidPartOrder), every number must be in range
-// (common.ErrInvalidPartNumber), each must match a stored part's ETag
-// (common.ErrPartMismatch), and every part except the last must be at least
-// common.MinPartSize (common.ErrPartTooSmall).
+// CheckComplete validates the completion parts against the stored ones (order, range, ETag, MinPartSize) and returns the part numbers to assemble.
 func CheckComplete(parts []common.CompletedPart, lookup func(partNumber int) (common.PartInfo, bool)) ([]int, error) {
 	if len(parts) == 0 {
 		return nil, fmt.Errorf("%w: no parts given", common.ErrInvalidPartOrder)

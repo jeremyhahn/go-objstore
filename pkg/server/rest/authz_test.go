@@ -268,9 +268,7 @@ func TestIsAuthzExemptPath(t *testing.T) {
 	}
 }
 
-// TestSwaggerRequiresAuthentication verifies that /swagger/* is no longer
-// exempt from authentication: an authenticator that rejects credential-less
-// requests must deny access to the API documentation.
+// TestSwaggerRequiresAuthentication: /swagger/* requires authentication.
 func TestSwaggerRequiresAuthentication(t *testing.T) {
 	config := DefaultServerConfig()
 	config.Mode = gin.TestMode
@@ -285,9 +283,7 @@ func TestSwaggerRequiresAuthentication(t *testing.T) {
 	}
 }
 
-// TestSwaggerExemptFromAuthorization verifies that an authenticated principal
-// may reach swagger regardless of RBAC permissions: swagger requires
-// authentication but no specific authorization.
+// TestSwaggerExemptFromAuthorization: any authenticated principal may reach swagger.
 func TestSwaggerExemptFromAuthorization(t *testing.T) {
 	router := newRESTServerDenyAll(t, false).Router()
 

@@ -66,10 +66,7 @@ func generateRequestID() string {
 	return hex.EncodeToString(bytes)
 }
 
-// RequestIDMiddleware creates a Gin middleware that generates/extracts request IDs.
-// Inbound X-Request-ID values are sanitized (allowlist [A-Za-z0-9._-], max 128
-// chars). An inbound value that fails validation is replaced with a fresh
-// server-generated ID, preventing unsanitized client data from propagating.
+// RequestIDMiddleware sanitizes X-Request-ID ([A-Za-z0-9._-], max 128) or replaces it with a fresh ID.
 func RequestIDMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Sanitize the inbound header; fall back to a fresh ID if invalid.

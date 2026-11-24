@@ -134,11 +134,7 @@ func TestNewCommandContext_ServerWithUnsupportedProtocol(t *testing.T) {
 	}
 }
 
-// TestNewCommandContext_LocalStorageCreateError covers the "return nil, err" branch
-// inside the else clause of NewCommandContext when factory.NewStorage fails.
-// The local backend's Configure calls os.MkdirAll; passing an unwritable path
-// causes that call to fail. We skip the test when running as root since root
-// can write anywhere.
+// TestNewCommandContext_LocalStorageCreateError: NewStorage fails on an unwritable path (skipped as root).
 func TestNewCommandContext_LocalStorageCreateError(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("skipping unwritable-path test when running as root")
@@ -162,8 +158,7 @@ func TestNewCommandContext_LocalStorageCreateError(t *testing.T) {
 }
 
 func TestNewCommandContext_ServerRestSuccess(t *testing.T) {
-	// The REST client constructor does not dial the server, so NewClient succeeds
-	// even when the server isn't running. This covers the "ctx.Client = remoteClient" branch.
+	// The REST constructor does not dial, so NewClient succeeds without a server.
 	cfg := &Config{
 		Backend:        "local",
 		BackendPath:    t.TempDir(),
@@ -564,17 +559,7 @@ func TestApplyLocalPolicies_ObjectWithNilMetadata(t *testing.T) {
 }
 
 func TestApplyLocalPolicies_DeleteError(t *testing.T) {
-	// When DeleteWithContext returns an error applyLocalPolicies logs to stderr
-	// and continues – it does NOT propagate the error to the caller. We verify
-	// that the overall call still returns nil.
-	//
-	// Strategy: create a very old object in the metadata store so the policy
-	// age check passes, then pre-remove it from the data map so that
-	// DeleteWithContext finds nothing and returns an error. The listing still
-	// returns the object because metadataStorage.ListWithOptions iterates the
-	// data map – so we must keep the key in data but make the delete fail.
-	// We achieve this by using metadataStorage.archiveErr approach: put the
-	// object, let it age, then use a separate helper that wraps DeleteWithContext.
+	// applyLocalPolicies logs a delete error and continues, so the call returns nil.
 
 	// Simplest reliable approach: put an old object, run the delete policy,
 	// confirm nil return (and the object gets deleted if the mock allows it).

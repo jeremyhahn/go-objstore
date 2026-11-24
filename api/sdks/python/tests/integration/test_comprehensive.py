@@ -105,12 +105,7 @@ def quic_client() -> Generator[ObjectStoreClient, None, None]:
     client.close()
 
 
-# ---------------------------------------------------------------------------
-# AVAILABLE_PROTOCOLS parametrisation
-#
-# Using indirect=True so the fixture logic (skip decisions) runs per-test.
-# Each parameter is a (protocol_label, fixture_name) tuple.
-# ---------------------------------------------------------------------------
+# AVAILABLE_PROTOCOLS: (protocol_label, fixture_name) parameters, indirect so skip decisions run per test.
 
 PROTOCOL_PARAMS = [
     pytest.param("rest", "rest_client", id="REST"),
@@ -164,13 +159,7 @@ def _canonical_replication_policy(policy_id: str) -> ReplicationPolicy:
     )
 
 
-# ---------------------------------------------------------------------------
-# OPERATIONS TABLE
-#
-# Each entry is an OperationDef.  The driver test (test_operation) iterates
-# over this table × PROTOCOL_PARAMS.  Cleanup is handled inside each
-# callable so that even a partially-executed op leaves the server clean.
-# ---------------------------------------------------------------------------
+# OPERATIONS table: test_operation iterates it across PROTOCOL_PARAMS; each callable cleans up after itself.
 
 
 @dataclass
@@ -620,17 +609,7 @@ def test_operation(
     op.run(client)
 
 
-# ---------------------------------------------------------------------------
-# Cross-protocol consistency
-#
-# For every ordered (A, B) pair in AVAILABLE protocols (REST, gRPC, QUIC):
-#   put via A -> get via B -> assert data equal
-#   put via A -> getMetadata via B -> assert size and content_type equal
-#   delete via A -> exists via B == False
-#
-# gRPC is no longer excluded.  Protocols that are unreachable are skipped
-# explicitly (pytest.skip with a logged reason), never silently passed over.
-# ---------------------------------------------------------------------------
+# Cross-protocol consistency: put, metadata and delete via A must be observed via B; unreachable protocols are skipped with a reason.
 
 _CROSS_PROTOCOL_PAIRS = [
     pytest.param("rest_client", "grpc_client", id="REST->gRPC"),

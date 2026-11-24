@@ -22,13 +22,7 @@ import (
 	"testing"
 )
 
-// TestBackendsHoldNoCredentialHandle proves that no backend, nor any caller
-// that builds one, retains a credential handle: a Configure call borrows the
-// handle, builds the SDK credential, and lets go. No struct field in these
-// packages may have the
-// type enclave.ByteAccess or common.Credentials (directly, as a pointer,
-// slice, array or map element, or embedded). Every file is parsed regardless
-// of build tags.
+// TestBackendsHoldNoCredentialHandle: no struct field in these packages, under any build tag, may hold an enclave.ByteAccess or common.Credentials.
 func TestBackendsHoldNoCredentialHandle(t *testing.T) {
 	// The backends, plus every package that builds one from a caller's
 	// credential: each borrows the handle for one call and lets go.

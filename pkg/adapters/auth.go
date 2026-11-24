@@ -24,10 +24,7 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
-// PrincipalContextKey is the typed context key under which an authenticated
-// *Principal is stored. All server transports (REST, gRPC, QUIC, MCP, Unix)
-// use this key so that shared middleware (e.g. audit) can retrieve the
-// principal without importing transport-specific packages.
+// PrincipalContextKey is the context key every transport stores the authenticated *Principal under.
 type PrincipalContextKey struct{}
 
 var (
@@ -50,10 +47,7 @@ var (
 	ErrMTLSRequiresPeer = errors.New("mTLS requires peer.Peer")
 )
 
-// Action constants define the canonical set of operations an Authorizer
-// evaluates. Servers map their protocol-specific methods onto these actions
-// before invoking Authorize, giving Authorizer implementations a stable,
-// transport-independent vocabulary.
+// Action constants are the transport-independent operations an Authorizer evaluates.
 const (
 	// ActionRead covers operations that read object data or metadata
 	// (get, head, exists, getmetadata).
@@ -115,12 +109,7 @@ type Principal struct {
 	// Attributes contains additional custom attributes.
 	Attributes map[string]any
 
-	// TenantID is an optional tenant identifier. It is populated by injected
-	// authenticators that support multi-tenancy (e.g., by reading an
-	// X-Tenant-ID request header or a tenant claim in a JWT). The default
-	// NoOp, Bearer, and MTLS authenticators leave this field empty. Core
-	// server code does not read or enforce TenantID; that is the injected
-	// authenticator's responsibility.
+	// TenantID is optional, set only by injected multi-tenant authenticators; core server code never reads it.
 	TenantID string
 }
 
@@ -275,18 +264,7 @@ func (a *MTLSAuthenticator) AuthenticateGRPC(ctx context.Context, md metadata.MD
 	return nil, ErrMTLSRequiresPeer
 }
 
-// AuthenticateMTLS authenticates using TLS connection state.
-//
-// When RequiredRoots is set, the peer certificate must chain to one of those
-// roots before a principal is extracted: a non-empty state.VerifiedChains
-// (populated by the TLS handshake) is accepted as proof of verification;
-// otherwise the leaf certificate is verified against RequiredRoots using the
-// remaining peer certificates as intermediates and requiring the client-auth
-// extended key usage.
-//
-// When RequiredRoots is nil, the TLS layer is presumed to have verified the
-// chain (e.g. tls.RequireAndVerifyClientCert) and the principal is extracted
-// from the leaf certificate without further checks.
+// AuthenticateMTLS extracts the principal from the leaf certificate, first verifying the chain against RequiredRoots (client-auth EKU) when set.
 func (a *MTLSAuthenticator) AuthenticateMTLS(ctx context.Context, state *tls.ConnectionState) (*Principal, error) {
 	if len(state.PeerCertificates) == 0 {
 		return nil, ErrMissingCredentials
@@ -385,25 +363,14 @@ func (a *NoOpAuthorizer) Authorize(ctx context.Context, principal *Principal, ac
 	return nil
 }
 
-// RBACAuthorizer is a basic role-based authorizer. It is constructed with a map
-// from role name to the set of actions that role permits. An entry of
-// wildcardPermission ("*") in a role's permission set grants every action.
-//
-// A principal is authorized when any of its roles maps to a permission set that
-// contains the requested action or the wildcard. By convention, callers grant
-// full access to administrators by mapping "admin" to []string{"*"}; this
-// authorizer applies no privileged meaning to any role name beyond the supplied
-// map.
+// RBACAuthorizer authorizes a principal when any of its roles grants the action or "*".
 type RBACAuthorizer struct {
 	// rolePermissions maps a role name to the set of actions it grants. The
 	// inner map is used as a set for O(1) action lookups.
 	rolePermissions map[string]map[string]struct{}
 }
 
-// NewRBACAuthorizer creates a role-based authorizer from a role-to-actions map.
-// Each value is the list of action strings the role grants; the special value
-// wildcardPermission ("*") grants all actions. The input map is copied, so later
-// mutations by the caller do not affect the authorizer.
+// NewRBACAuthorizer copies a role-to-actions map; "*" grants every action.
 func NewRBACAuthorizer(rolePermissions map[string][]string) *RBACAuthorizer {
 	permissions := make(map[string]map[string]struct{}, len(rolePermissions))
 	for role, actions := range rolePermissions {

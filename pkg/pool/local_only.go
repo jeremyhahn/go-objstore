@@ -19,27 +19,12 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
-// localOnlyManager is a Manager wrapper whose Pick rejects any candidate
-// the inner Manager returns that does not satisfy common.PathAccessor.
-// It is the primitive qrdb's per-tenant Pebble consumer wraps its pool
-// through to guarantee filesystem semantics — Pebble can only run on a
-// real OS path.
-//
-// The wrapper validates at Pick time rather than Register so a single
-// underlying pool can serve both filesystem-only and cloud-tolerant
-// consumers; the same pool, wrapped through LocalOnly for one consumer
-// and used raw for another, keeps mixed-backend deployments simple.
+// localOnlyManager rejects at Pick time any candidate that is not a common.PathAccessor, so one pool can serve filesystem-only and cloud-tolerant consumers.
 type localOnlyManager struct {
 	inner Manager
 }
 
-// LocalOnly wraps a Manager so Pick rejects any candidate that isn't a
-// common.PathAccessor. Register and List delegate verbatim to the
-// inner Manager.
-//
-// The wrapper does not deep-copy the inner Manager — registering or
-// listing on either the wrapper or the inner is equivalent. Pool
-// ownership stays with the caller that created the inner Manager.
+// LocalOnly wraps a Manager so Pick rejects non-PathAccessor candidates; Register and List delegate to the inner Manager.
 func LocalOnly(m Manager) Manager {
 	return &localOnlyManager{inner: m}
 }

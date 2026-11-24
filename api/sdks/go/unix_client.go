@@ -70,10 +70,7 @@ func (c *UnixClient) dial() error {
 	return nil
 }
 
-// dropConn closes the current connection and marks it nil so the next call
-// re-dials lazily.  The server closes idle connections (30s read deadline),
-// so any write/read failure or protocol violation must not poison the client
-// permanently.  Callers must hold c.mu.
+// dropConn closes the connection so the next call re-dials; callers must hold c.mu.
 func (c *UnixClient) dropConn() {
 	if c.conn != nil {
 		c.conn.Close()
@@ -115,10 +112,7 @@ func (c *UnixClient) call(ctx context.Context, method string, params any, dest a
 	}
 	data = append(data, '\n')
 
-	// Apply the ctx deadline or configured request timeout; clear any stale
-	// deadline from a previous call otherwise. A failed SetDeadline would
-	// leave the request able to hang indefinitely, so surface it instead of
-	// ignoring it.
+	// Apply the ctx deadline or request timeout, clearing a stale one; a failed SetDeadline is returned.
 	deadline := time.Time{}
 	if d, ok := ctx.Deadline(); ok {
 		deadline = d
@@ -420,8 +414,7 @@ func (c *UnixClient) RemovePolicy(ctx context.Context, policyID string) error {
 
 // GetPolicies retrieves lifecycle policies.
 func (c *UnixClient) GetPolicies(ctx context.Context, prefix string) ([]*LifecyclePolicy, error) {
-	// The unix server returns policies as a BARE JSON array, and does not
-	// filter by prefix server-side; filter client-side.
+	// The unix server returns policies as a bare JSON array and does not filter by prefix; filter here.
 	var result []unixLifecyclePolicy
 	if err := c.call(ctx, "get_policies", map[string]any{}, &result); err != nil {
 		return nil, err
@@ -491,7 +484,7 @@ func (c *UnixClient) RemoveReplicationPolicy(ctx context.Context, policyID strin
 
 // GetReplicationPolicies retrieves all replication policies.
 func (c *UnixClient) GetReplicationPolicies(ctx context.Context) ([]*ReplicationPolicy, error) {
-	// Returned as a BARE JSON array (see pkg/server/unix/handlers.go).
+	// Returned as a bare JSON array (see pkg/server/unix/handlers.go).
 	var result []unixReplicationPolicy
 	if err := c.call(ctx, "get_replication_policies", map[string]any{}, &result); err != nil {
 		return nil, err

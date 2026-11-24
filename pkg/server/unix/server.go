@@ -35,10 +35,7 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/server/middleware"
 )
 
-// ErrPeerCredUnsupported indicates that peer credentials could not be obtained
-// for the connection (e.g. on a platform without SO_PEERCRED, or for a
-// non-Unix connection). Callers fall back to the configured Authenticator when
-// this is returned.
+// ErrPeerCredUnsupported means peer credentials are unavailable for the connection; callers fall back to the Authenticator.
 var ErrPeerCredUnsupported = errors.New("unix: peer credentials not supported on this platform/connection")
 
 // principalCtxKey is the context key under which a peer-credential principal is
@@ -88,15 +85,7 @@ type ServerConfig struct {
 	// Logger is the pluggable logger adapter
 	Logger adapters.Logger
 
-	// Authenticator is the pluggable authentication adapter (default: NoOpAuthenticator).
-	//
-	// Unix-domain-socket transport carries no HTTP/gRPC/mTLS credential object,
-	// so the server cannot present transport credentials to the authenticator.
-	// With the default NoOpAuthenticator every request is treated as the
-	// anonymous principal. Custom authenticators are still honored for their
-	// principal shape, but principals here are derived without transport
-	// credentials. Richer unix authN (e.g. SO_PEERCRED-based identity) is a
-	// follow-up.
+	// Authenticator is used when peer credentials are off or unavailable; it receives no transport credentials (default NoOpAuthenticator).
 	Authenticator adapters.Authenticator
 
 	// Authorizer is the pluggable authorization adapter (default: NoOpAuthorizer = allow-all).
@@ -111,27 +100,7 @@ type ServerConfig struct {
 	// iteration. Zero uses the default (30 s).
 	ReadDeadline time.Duration
 
-	// UsePeerCredentials, when set, controls whether the request principal is
-	// derived from the connecting peer's OS credentials (SO_PEERCRED: uid/gid/pid)
-	// instead of the configured Authenticator.
-	//
-	// A nil value (the zero value, i.e. unset) is treated as TRUE: peer
-	// credentials are the natural, zero-config identity for a Unix domain socket
-	// and are strictly more informative than an anonymous principal. Use
-	// DisablePeerCredentials() to opt out, or EnablePeerCredentials() to be
-	// explicit.
-	//
-	// The socket file's permission bits (SocketPermissions, default 0660) remain
-	// the primary access gate: the OS only lets processes that can open the
-	// socket connect at all. Peer credentials add the authenticated identity
-	// (uid/gid and primary-group role) on top, which the Authorizer then uses for
-	// per-method decisions. With the default NoOpAuthorizer every method is still
-	// allowed, so enabling peer credentials does not change access on its own;
-	// supply an RBACAuthorizer keyed on the peer's group/role to restrict by OS
-	// identity.
-	//
-	// If peer credentials cannot be extracted (non-Linux platforms, or a non-Unix
-	// connection), the server falls back to the configured Authenticator.
+	// UsePeerCredentials derives the principal from SO_PEERCRED (nil means true); socket permissions remain the access gate and the Authorizer decides per method.
 	UsePeerCredentials *bool
 
 	// EnableRateLimit enables rate limiting (default: false). Requests are
@@ -257,11 +226,7 @@ func NewServer(config *ServerConfig) (*Server, error) {
 	}, nil
 }
 
-// removeStaleSocket removes the file at path only when it is a Unix domain
-// socket left over from a previous run. It returns nil when the path does not
-// exist. When the path exists but is not a socket it leaves the file untouched
-// and returns an error, so a misconfigured SocketPath never deletes an
-// unrelated file.
+// removeStaleSocket removes path only if it is a socket; nil when absent, an error and no removal when it is another file.
 func removeStaleSocket(path string) error {
 	fi, err := os.Lstat(path)
 	if err != nil {
@@ -331,10 +296,7 @@ func (s *Server) acceptLoop(ctx context.Context) {
 			continue
 		}
 
-		// Acquire the concurrency slot BEFORE spawning the goroutine so
-		// MaxConnections bounds goroutines and file descriptors, not just
-		// concurrent processing. Excess connections queue in the kernel's
-		// accept backlog instead of accumulating one goroutine each.
+		// Take the slot before spawning so MaxConnections bounds goroutines and descriptors; excess waits in the accept backlog.
 		s.connSem <- struct{}{}
 		s.wg.Add(1)
 		go s.handleConnection(ctx, conn)
@@ -349,12 +311,7 @@ func (s *Server) handleConnection(ctx context.Context, conn net.Conn) {
 
 	s.config.Logger.Debug(ctx, "New client connected")
 
-	// Extract the peer's OS credentials once per connection and carry the
-	// resulting principal in the context so the handler can authorize by the
-	// connecting process's identity. The socket file permissions remain the
-	// primary access gate; peer credentials supply the principal identity. If
-	// extraction is unsupported (non-Linux, non-Unix conn), fall back to the
-	// configured Authenticator by leaving the principal out of the context.
+	// Carry the peer-credential principal in the context; when unsupported, leave it out so the Authenticator applies.
 	if s.usePeerCred {
 		if principal, err := peerCredPrincipal(conn); err != nil {
 			if !errors.Is(err, ErrPeerCredUnsupported) {

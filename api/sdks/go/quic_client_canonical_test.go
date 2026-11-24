@@ -7,11 +7,7 @@
 
 package objstore
 
-// This file implements the canonical SDK unit-test matrix for the QUIC
-// protocol client. The QUIC client speaks HTTP semantics over its transport,
-// so the tests drive it through an httptest server (quicServer) just like
-// REST, but assert the QUIC-specific wire scheme (per-key X-Meta-* request
-// headers, HEAD-based metadata reads).
+// Canonical SDK unit-test matrix for the QUIC client, over an httptest server.
 
 import (
 	"context"

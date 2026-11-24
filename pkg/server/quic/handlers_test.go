@@ -2071,8 +2071,7 @@ func TestHandlerDeletePermissionDenied(t *testing.T) {
 	}
 }
 
-// TestHandlerGetMetadataBackendUnavailable verifies that a backend outage
-// surfaces as 503 via the shared taxonomy instead of a blanket 404.
+// TestHandlerGetMetadataBackendUnavailable: an unavailable backend answers 503.
 func TestHandlerGetMetadataBackendUnavailable(t *testing.T) {
 	mockStorage := newMockErrorStorage()
 	mockStorage.getMetadataError = fmt.Errorf("backend down: %w", common.ErrUnavailable)

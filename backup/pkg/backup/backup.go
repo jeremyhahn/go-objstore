@@ -1,13 +1,4 @@
-// Package backup is the backup write path: it walks a directory tree,
-// splits each file into chunks, stores the chunks the repository does not
-// already hold in packs, and records the run in an index object and a
-// snapshot manifest.
-//
-// Regular files, directories and symlinks are backed up; symlinks are
-// recorded, not followed. Anything else, such as sockets, pipes and devices,
-// is skipped and counted. The manifest is written last, so a run that fails
-// part way leaves packs and perhaps an index object, but no snapshot; the
-// next run reuses what it left.
+// Package backup walks a tree, chunks files, stores new chunks in packs and writes an index and, last, the snapshot manifest; non-regular files are skipped and counted.
 package backup
 
 import (
@@ -32,15 +23,9 @@ type Options struct {
 	Host string
 	// Now returns the run's time. Nil means time.Now.
 	Now func() time.Time
-	// ReadFrom, if set, is the directory the walk reads instead of root: a
-	// frozen view of root, such as the same directory inside a source
-	// snapshot. The manifest still records root, so a restore is the same
-	// as one of a backup that read root itself. Empty means read root.
+	// ReadFrom, if set, is a frozen view of root (such as a source snapshot) the walk reads instead; the manifest still records root.
 	ReadFrom string
-	// Skip lists directories, by their absolute paths in the live tree,
-	// that the walk neither records nor descends into, such as those that
-	// hold source snapshots. With ReadFrom, an entry is skipped when its
-	// path under root is listed.
+	// Skip lists live-tree directories the walk neither records nor descends into, such as snapshot directories.
 	Skip []string
 }
 

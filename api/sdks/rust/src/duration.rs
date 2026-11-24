@@ -1,14 +1,6 @@
-//! Parsing of Go `time.Duration` string representations.
-//!
-//! The REST and QUIC servers serialize durations using Go's `Duration.String()`
-//! (e.g. `"5.2s"`, `"1m30s"`, `"100ms"`, `"1h2m3s"`, `"1.5µs"`). The SDK exposes
-//! these as integer milliseconds, so this module converts the Go textual form
-//! into milliseconds.
+// ! Parses Go `time.Duration` strings ("1m30s", "100ms") into milliseconds.
 
-/// Parse a Go `time.Duration` string into milliseconds.
-///
-/// Returns `0` for an empty string or `"0s"`. Unparseable input yields `0` so
-/// that callers never fail solely because of a malformed duration field.
+/// Parse a Go `time.Duration` string into milliseconds; empty or unparseable input yields 0.
 pub fn parse_go_duration_ms(s: &str) -> i64 {
     parse_go_duration_nanos(s)
         .map(|nanos| nanos / 1_000_000)

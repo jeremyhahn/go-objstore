@@ -159,9 +159,7 @@ type ReplicationStatusResponse struct {
 	SyncCount           int64  `json:"sync_count" example:"100"`
 } // @name ReplicationStatusResponse
 
-// RespondWithBackendError classifies a backend error through the shared
-// taxonomy (common.Classify) and sends the matching HTTP status, so REST
-// reports the same class of failure as gRPC and the JSON-RPC transports.
+// RespondWithBackendError sends the HTTP status common.Classify gives err.
 func RespondWithBackendError(c *gin.Context, err error) {
 	code, message := servererrors.HTTPStatus(err)
 	RespondWithError(c, code, message)

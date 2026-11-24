@@ -29,21 +29,7 @@ const leastUtilizationStrategyName = "least_utilization"
 // "pool/<poolName>/least_utilization/loads".
 const loadKeySuffix = "/" + leastUtilizationStrategyName + "/loads"
 
-// LeastUtilizationStrategy picks the candidate carrying the lowest
-// cumulative assigned load. Load is tracked per candidate index in the
-// caller-supplied StateStore: every Pick adds the caller's
-// Hint.SizeHint (or 1 when no size hint is given) to the chosen
-// candidate's tally, so placement converges on the backend that has
-// been assigned the fewest bytes. Ties break toward the lowest
-// candidate index, making selection deterministic.
-//
-// Like the round-robin cursor, the tallies are namespaced by pool name
-// and keyed by candidate index, so candidate order must stay stable
-// across restarts for the persisted state to remain meaningful. If the
-// candidate count changes, the tallies reset to zero.
-//
-// A single LeastUtilizationStrategy value can serve multiple pools; the
-// pool name is read from the context the Manager threads in via Pick.
+// LeastUtilizationStrategy picks the candidate with the lowest assigned load (SizeHint or 1 per pick, ties to the lowest index), persisted per pool and index; a resize resets it.
 type LeastUtilizationStrategy struct {
 	// State is the persistent load store. Required — Pick returns a
 	// MissingStateStoreError if it is nil.
@@ -54,15 +40,7 @@ type LeastUtilizationStrategy struct {
 	mu sync.Mutex
 }
 
-// Pick implements Strategy.
-//
-// Algorithm:
-//  1. Read the per-candidate load tallies from the StateStore (all zero
-//     if missing or if the candidate count changed).
-//  2. Select the candidate with the lowest tally; ties go to the lowest
-//     index.
-//  3. Add max(hint.SizeHint, 1) to the selected candidate's tally and
-//     persist.
+// Pick implements Strategy: lowest tally wins, then max(hint.SizeHint, 1) is added and persisted.
 func (s *LeastUtilizationStrategy) Pick(ctx context.Context, candidates []common.Storage, hint Hint) (common.Storage, error) {
 	if s.State == nil {
 		return nil, &MissingStateStoreError{Strategy: leastUtilizationStrategyName}
@@ -109,10 +87,7 @@ func (s *LeastUtilizationStrategy) Name() string {
 	return leastUtilizationStrategyName
 }
 
-// loadTallies reads the per-candidate load tallies from the state store.
-// A missing key, or a value whose length does not match the current
-// candidate count (the pool was resized, or the value is corrupt),
-// yields all-zero tallies that are overwritten on the next store.
+// loadTallies reads the tallies; a missing or wrong-length value yields zeros.
 func (s *LeastUtilizationStrategy) loadTallies(ctx context.Context, key string, n int) ([]uint64, error) {
 	loads := make([]uint64, n)
 

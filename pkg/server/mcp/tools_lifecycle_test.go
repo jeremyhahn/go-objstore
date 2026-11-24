@@ -216,8 +216,7 @@ func TestExecuteArchiveTool(t *testing.T) {
 					"path": "/tmp/archive-test",
 				},
 			},
-			// Note: This may fail if the archiver backend is not available due to build constraints
-			// The factory returns ErrUnknownArchiver when the backend isn't registered
+			// May fail with ErrUnknownArchiver when the archiver is not built in.
 			wantError:    false,
 			wantContains: "",
 		},
@@ -331,8 +330,7 @@ func TestExecuteAddPolicyTool(t *testing.T) {
 					"path": "/tmp/archive-test",
 				},
 			},
-			// Note: This may fail if the archiver backend is not available due to build constraints
-			// The factory returns ErrUnknownArchiver when the backend isn't registered
+			// May fail with ErrUnknownArchiver when the archiver is not built in.
 			wantError:    false,
 			wantContains: "",
 		},

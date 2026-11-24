@@ -196,10 +196,7 @@ func ListMultipartUploads(ctx context.Context, backendName, prefix string) ([]co
 	return mu.ListMultipartUploads(ctx, prefix)
 }
 
-// AbortExpiredMultipartUploads aborts the uploads of the backend that were
-// initiated more than olderThan ago and returns how many it aborted. An
-// upload another caller removed meanwhile is not an error. A failure to abort
-// one upload does not stop the others; the failures are returned joined.
+// AbortExpiredMultipartUploads aborts uploads older than olderThan, returning the count and the joined failures.
 func AbortExpiredMultipartUploads(ctx context.Context, backendName string, olderThan time.Duration) (int, error) {
 	if olderThan <= 0 {
 		return 0, fmt.Errorf("%w: olderThan must be positive", common.ErrInvalidArgument)

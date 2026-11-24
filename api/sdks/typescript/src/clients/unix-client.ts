@@ -395,8 +395,7 @@ export class UnixClient implements IObjectStoreClient {
       after_days?: number;
       retention_seconds?: number;
     };
-    // The server returns a BARE JSON array as the JSON-RPC result; accept a
-    // wrapped { policies: [...] } shape too, defensively.
+    // The server returns a bare JSON array; a wrapped { policies } shape is accepted too.
     const result = await this.rpc('get_policies', {});
     const wirePolicies: WirePolicy[] = Array.isArray(result)
       ? (result as WirePolicy[])
@@ -459,8 +458,7 @@ export class UnixClient implements IObjectStoreClient {
       schedule?: string;
       enabled?: boolean;
     };
-    // The server returns a BARE JSON array as the JSON-RPC result; accept a
-    // wrapped { policies: [...] } shape too, defensively.
+    // The server returns a bare JSON array; a wrapped { policies } shape is accepted too.
     const result = await this.rpc('get_replication_policies', {});
     const wirePolicies: WireReplicationPolicy[] = Array.isArray(result)
       ? (result as WireReplicationPolicy[])

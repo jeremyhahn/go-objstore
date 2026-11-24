@@ -53,12 +53,7 @@ type Handler struct {
 	wireOpts      factory.WireOptions // how archiver settings a client sent are treated
 }
 
-// NewHandler creates a new handler.
-//
-// Unix transport carries no per-request HTTP/gRPC/mTLS credential object, so the
-// authenticator is invoked via its HTTP entrypoint with a credential-less request.
-// With the default NoOpAuthenticator this yields the anonymous principal; custom
-// authenticators that require credentials will deny (since none are present).
+// NewHandler creates a handler; the authenticator gets a credential-less HTTP request, so only allow-anonymous authenticators pass.
 func NewHandler(backend string, logger adapters.Logger, authenticator adapters.Authenticator, authorizer adapters.Authorizer) *Handler {
 	if authenticator == nil {
 		authenticator = adapters.NewNoOpAuthenticator()
@@ -111,11 +106,7 @@ func (h *Handler) authorize(ctx context.Context, req *Request) *Response {
 		return nil
 	}
 
-	// Prefer a peer-credential principal injected at the connection layer
-	// (Unix SO_PEERCRED). This is the natural identity for a Unix socket and
-	// takes precedence over the transport authenticator. When absent, fall back
-	// to the configured Authenticator (NoOp/anonymous by default), which
-	// preserves backward compatibility and lets consumers inject a custom one.
+	// Prefer the SO_PEERCRED principal from the connection layer, else the configured Authenticator.
 	principal, ok := principalFromContext(ctx)
 	if !ok {
 		// Derive the principal via the authenticator's HTTP entrypoint with a

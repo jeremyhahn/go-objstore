@@ -20,12 +20,7 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
-// ErrClientLocalBackend is returned when a replication policy names a backend
-// type whose settings take a filesystem path (such as "local") while the
-// manager refuses them. A policy's backend type and settings come from the
-// client, so such a backend could open any directory the service user can
-// read. It wraps common.ErrInvalidArgument, so every transport reports it as
-// an invalid argument.
+// ErrClientLocalBackend refuses a policy naming a filesystem-path backend; it wraps common.ErrInvalidArgument.
 var ErrClientLocalBackend = fmt.Errorf(
 	"replication: backend type takes a filesystem path and client-supplied filesystem backends are disabled: %w",
 	common.ErrInvalidArgument)
@@ -42,10 +37,7 @@ func IsPathBackendType(backendType string) bool {
 	return pathBackendTypes[strings.ToLower(strings.TrimSpace(backendType))]
 }
 
-// WithClientLocalBackends sets whether policies may name a backend type whose
-// settings take a filesystem path (see IsPathBackendType). The default is to
-// refuse them: AddPolicy returns ErrClientLocalBackend and loading a policy
-// file that holds one fails.
+// WithClientLocalBackends allows policies naming filesystem-path backends; by default they are refused.
 func WithClientLocalBackends(allow bool) ManagerOption {
 	return func(prm *PersistentReplicationManager) {
 		prm.allowClientLocalBackends = allow

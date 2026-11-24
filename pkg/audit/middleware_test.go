@@ -665,10 +665,7 @@ func (m *mockAddr) String() string {
 	return m.addr
 }
 
-// TestAuditMiddlewarePrincipalPointer is a regression test for H1: the REST
-// authentication middleware stores *adapters.Principal (pointer) under the
-// "principal" gin context key. The audit middleware must handle the pointer
-// form and correctly populate UserID/Principal in the audit record.
+// TestAuditMiddlewarePrincipalPointer: the audit middleware handles the *adapters.Principal the REST middleware stores.
 func TestAuditMiddlewarePrincipalPointer(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

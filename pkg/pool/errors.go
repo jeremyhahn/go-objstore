@@ -58,16 +58,10 @@ func (e *StrategyNotImplementedError) Error() string {
 	return "pool: strategy " + e.Strategy + " not implemented"
 }
 
-// ErrStrategyNotImplemented was the sentinel returned by
-// LeastUtilizationStrategy.Pick before its concrete implementation
-// landed. No strategy in this package returns it anymore; it is kept so
-// existing callers that match on it keep compiling.
+// ErrStrategyNotImplemented is not returned by any strategy; kept so callers that match on it compile.
 var ErrStrategyNotImplemented = &StrategyNotImplementedError{Strategy: leastUtilizationStrategyName}
 
-// NonLocalCandidateError is returned by LocalOnly.Pick when the wrapped
-// Manager surfaces a candidate that does not satisfy common.PathAccessor.
-// Cloud-only backends (S3, GCS, Azure, Glacier) trigger this — their
-// presence in a LocalOnly pool is a configuration mistake.
+// NonLocalCandidateError is returned by LocalOnly.Pick for a candidate that is not a common.PathAccessor.
 type NonLocalCandidateError struct {
 	Pool string
 }
@@ -97,10 +91,7 @@ func (e *NilStrategyError) Error() string {
 	return "pool/" + e.Pool + ": strategy must not be nil"
 }
 
-// MissingStateStoreError is returned by a strategy's Pick when the
-// strategy was constructed without a StateStore. Its persistent state
-// (round-robin cursor, least-utilization load tallies) cannot be kept
-// without one.
+// MissingStateStoreError is returned by a strategy constructed without a StateStore.
 type MissingStateStoreError struct {
 	// Strategy is the canonical name of the strategy that needs the
 	// StateStore (e.g. "round_robin").

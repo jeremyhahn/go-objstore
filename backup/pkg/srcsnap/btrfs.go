@@ -20,12 +20,7 @@ func (d *btrfsDriver) base(v Volume) string {
 	return v.MountPoint
 }
 
-// BtrfsHiddenDir is the directory, at the top of a btrfs file system whose
-// subvolume is mounted at its own root, that holds a run's snapshots by
-// default: the mount point's parent is another file system, which cannot
-// hold them. A run creates it and removes it, and a sweep removes it with
-// the leftovers inside. Its leading dot keeps it from being taken for a
-// snapshot.
+// BtrfsHiddenDir holds a run's snapshots at the top of a btrfs file system mounted at its own root.
 const BtrfsHiddenDir = "." + NamePrefix + "snapshots"
 
 // dir returns where v's snapshots are made, and whether that is the hidden

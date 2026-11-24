@@ -270,12 +270,7 @@ func (g *GCS) listUpload(ctx context.Context, uploadID string) (map[int]uploadPa
 	return parts, names, nil
 }
 
-// CompleteMultipartUpload composes the listed parts into the object. More
-// parts than one compose call takes are composed in a tree of intermediate
-// objects. The metadata of the manifest is applied to the final object, and
-// the objects of the upload are deleted afterwards.
-//
-// An upload older than the multipartExpiry setting is treated as aborted.
+// CompleteMultipartUpload composes the parts (in a tree when needed), applies the manifest metadata and deletes the upload; uploads older than multipartExpiry count as aborted.
 func (g *GCS) CompleteMultipartUpload(ctx context.Context, key, uploadID string, parts []common.CompletedPart) error {
 	if err := common.ValidateKey(key); err != nil {
 		return err

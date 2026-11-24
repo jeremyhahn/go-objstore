@@ -1,27 +1,5 @@
 #!/usr/bin/env bash
-# changelog-assemble.sh — folds changelog.d/ fragments and the existing
-# "## [Unreleased]" content into a new "## [X.Y.Z-alpha] - YYYY-MM-DD" section of
-# CHANGELOG.md, deletes the consumed fragments, and commits the result through
-# the signing wrapper. release-versioning.md §5: assembly is a COMMITTED step
-# performed BEFORE tagging, so the tag's tree carries the assembled entry.
-#
-# Run by `make changelog-assemble`, a prerequisite of `make release-alpha`
-# (mk/release.mk). Inputs arrive as environment variables, set by that target
-# through the same override/export/$(value) pattern the release template uses:
-#
-#   CL_VERSION    vX.Y.Z-alpha, exactly as given to release-alpha
-#   CL_AGENT_GIT  the agent-git.sh wrapper; every git write goes through it
-#   CL_REPO       the literal repo name the wrapper signs as
-#   CL_REMOTE     the Gitea remote the release is pushed to
-#   CL_MODULES    the nested modules tagged in lockstep (LOCKSTEP_MODULES)
-#
-# The pre-flight guards mirror the template's, so an assembly commit is never
-# made for a release the template would then refuse. Every failure exits
-# non-zero before CHANGELOG.md is touched.
-#
-# Idempotent: with no fragments and an empty Unreleased section, a CHANGELOG
-# that already has the version's section is left alone (hand-prepared, or a
-# release re-run after a later step failed) — the template's guard then checks it.
+# changelog-assemble.sh folds changelog.d/ fragments and Unreleased into the version's CHANGELOG section and commits it signed, before tagging; inputs are CL_VERSION, CL_AGENT_GIT, CL_REPO, CL_REMOTE and CL_MODULES.
 set -euo pipefail
 
 die() { printf 'ERROR: %s\n' "$1" >&2; exit 1; }
@@ -63,11 +41,7 @@ done
 plain="${ver#v}"
 heading="## [$plain]"
 
-# fence_awk — CommonMark fenced-code tracking shared by both passes below, the
-# same rules as the template's CHANGELOG guard: 0-3 spaces of indent, a run of
-# 3+ backticks or tildes; closed only by the same character at least as long
-# with nothing after it; an unclosed fence runs to end of input. infence()
-# returns 1 for a line that opens, sits inside, or closes a fence.
+# fence_awk tracks CommonMark fenced code; infence() returns 1 for a line that opens, sits in or closes a fence.
 fence_awk='
 function fence(s,   i, n) {
 	i = 1; while (i <= 3 && substr(s, i, 1) == " ") i++
@@ -95,10 +69,7 @@ read -r ustart uend have < <(awk -v ver="$heading" "$fence_awk"'
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-# The Unreleased body is the lines strictly between its heading and the next.
-# With no line between them (the next heading directly follows), the body is
-# empty: sed given a range whose end precedes its start would still print the
-# start line — the next heading — so that case is produced explicitly.
+# The Unreleased body is the lines strictly between its heading and the next; adjacent headings mean an empty body.
 if [ "$((uend - 1))" -ge "$((ustart + 1))" ]; then
 	sed -n "$((ustart + 1)),$((uend - 1))p" CHANGELOG.md > "$tmp/unreleased"
 else
@@ -119,10 +90,7 @@ if [ "$pending" -eq 0 ]; then
 fi
 [ "$have" -eq 0 ] || die "CHANGELOG.md already has a \"$heading\" section AND unreleased entries are pending (changelog.d/ fragments or Unreleased content). Fold them in by hand or remove that section; assembling would duplicate it"
 
-# Group every "### " subsection by its exact heading text, in order of first
-# appearance: the Unreleased content first, then each fragment in filename
-# order. Lines before a source's first subsection heading form an untitled
-# preamble. Chunks from different sources join with one blank line.
+# Group "### " subsections by heading in first-appearance order, Unreleased first, then fragments by filename.
 awk "$fence_awk"'
 	function flush(   t) {
 		t = chunk; sub(/^[ \t\n]+/, "", t); sub(/[ \t\n]+$/, "", t)

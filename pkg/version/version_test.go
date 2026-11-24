@@ -28,7 +28,7 @@ func TestGet(t *testing.T) {
 	expectedVersion := "0.1.0-beta"
 	if version != expectedVersion {
 		t.Logf("Version from file: %q (expected %q)", version, expectedVersion)
-		// Don't fail - just log in case VERSION file was updated
+		// Log rather than fail when VERSION changed.
 	}
 
 	// Calling Get() again should return the same cached value

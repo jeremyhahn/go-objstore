@@ -22,12 +22,7 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/pool"
 )
 
-// ---------------------------------------------------------------------------
-// Error type Error() method coverage
-// All eight Error() implementations were at 0% because the existing tests
-// only check via errors.As (which compares pointers, not strings). Calling
-// Error() directly exercises the uncovered statement in each method.
-// ---------------------------------------------------------------------------
+// Error() of every error type.
 
 func TestPoolNotFoundError_Error(t *testing.T) {
 	e := &pool.PoolNotFoundError{Name: "mypool"}

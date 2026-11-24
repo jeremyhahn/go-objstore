@@ -79,10 +79,7 @@ type Options struct {
 	// If empty, the default backend is used.
 	Backend string
 
-	// AllowedOrigins is the list of origins permitted by the CORS handling in
-	// ServeHTTP. When empty/nil (or set to ["*"]), all origins are allowed
-	// without credentials. When set to a specific allowlist, only those origins
-	// are echoed back and credentials are permitted.
+	// AllowedOrigins lists the CORS origins; empty or ["*"] allows all without credentials.
 	AllowedOrigins []string
 
 	// EnableRequestID enables X-Request-ID handling (default: true).

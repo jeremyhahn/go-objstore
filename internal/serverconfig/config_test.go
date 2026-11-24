@@ -52,12 +52,7 @@ func mustLoad(t *testing.T, args []string, defaults Config, bind BindFunc) *Conf
 	return cfg
 }
 
-// TestDefaults_ComeFromTransportPackages verifies the defaults layer takes
-// every listen address from the owning transport package.
-// testPath is the storage path every Load in this package's tests starts
-// from. The local backend has no default path and Validate refuses it
-// empty, so TestMain supplies one through the environment layer; a test that
-// sets OBJSTORE_PATH itself overrides it.
+// testPath is the storage path every Load in these tests starts from, supplied by TestMain through the environment.
 var testPath string
 
 func TestMain(m *testing.M) {

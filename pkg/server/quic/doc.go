@@ -11,8 +11,5 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package quic implements the go-objstore server over QUIC/HTTP3.
-//
-// It mirrors the REST API surface and uses the shared cross-transport error
-// taxonomy so clients see consistent status codes across transports.
+// Package quic is the go-objstore server over QUIC/HTTP3, mirroring the REST API and error taxonomy.
 package quic

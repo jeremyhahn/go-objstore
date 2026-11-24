@@ -60,12 +60,7 @@ func (e *ValidationError) Error() string {
 // transport.
 func (e *ValidationError) Unwrap() error { return ErrInvalidArgument }
 
-// inReservedArea reports whether key names the multipart staging directory or
-// anything below it, however the path is spelled: leading "./" segments and
-// backslash separators lead to the same directory on a filesystem backend, and
-// a case-insensitive filesystem does not tell the letter cases apart. Keys
-// with ".." never get here with a way back into the directory; they are
-// rejected as traversal.
+// inReservedArea reports whether key names the multipart staging directory or below it, however spelled ("./", backslashes, letter case).
 func inReservedArea(key string) bool {
 	for len(key) >= 2 && key[0] == '.' && (key[1] == '/' || key[1] == '\\') {
 		key = key[2:]
@@ -77,15 +72,7 @@ func inReservedArea(key string) bool {
 	return len(key) == len(dir) || key[len(dir)] == '/' || key[len(dir)] == '\\'
 }
 
-// ValidateKey validates an object key for security issues
-// Returns error if the key:
-// - Is empty
-// - Contains path traversal sequences (..)
-// - Is an absolute path
-// - Contains null bytes
-// - Exceeds maximum length
-// - Contains invalid characters
-// - Names the reserved multipart staging directory, or anything below it
+// ValidateKey rejects empty, traversing, absolute, NUL-containing, overlong or invalid-character keys and the reserved multipart staging directory.
 func ValidateKey(key string) error {
 	if key == "" {
 		return &ValidationError{
@@ -227,12 +214,7 @@ func ValidateKey(key string) error {
 	return nil
 }
 
-// ValidateMetadata validates metadata for security and size constraints
-// Returns error if metadata:
-// - Has too many entries
-// - Has keys or values that are too long
-// - Contains null bytes
-// - Contains invalid UTF-8
+// ValidateMetadata rejects too many entries, overlong keys or values, NUL bytes and invalid UTF-8.
 func ValidateMetadata(metadata map[string]string) error {
 	if metadata == nil {
 		return nil
@@ -323,10 +305,7 @@ func ValidateMetadata(metadata map[string]string) error {
 	return nil
 }
 
-// containsControlChar reports whether s contains any ASCII control
-// character: the C0 range (0x00-0x1F, which includes CR, LF and tab) or
-// DEL (0x7F). It is used to reject metadata that could be reflected into
-// response headers and enable header injection.
+// containsControlChar reports any C0 control character or DEL, which could inject response headers.
 func containsControlChar(s string) bool {
 	for i := 0; i < len(s); i++ {
 		if c := s[i]; c < 0x20 || c == 0x7F {

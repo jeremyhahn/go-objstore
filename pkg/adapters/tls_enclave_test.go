@@ -259,11 +259,7 @@ func TestLoadKeyPairProtected_Errors(t *testing.T) {
 	}
 }
 
-// TestTLSConfig_BuildDestroyedEnclaveDoesNotFallBack proves Build fails CLOSED
-// on the key. ServerKeyPEM here is a VALID key for the same certificate, so a
-// fallback would produce a working *tls.Config and the caller would never
-// learn that the protected key it configured was gone — serving TLS from
-// unprotected key material after the protected path was chosen.
+// TestTLSConfig_BuildDestroyedEnclaveDoesNotFallBack: Build fails rather than use a valid ServerKeyPEM.
 func TestTLSConfig_BuildDestroyedEnclaveDoesNotFallBack(t *testing.T) {
 	certPEM, keyPEM, _, err := generateTestCert(false)
 	if err != nil {
@@ -291,13 +287,7 @@ func TestTLSConfig_BuildDestroyedEnclaveDoesNotFallBack(t *testing.T) {
 	}
 }
 
-// TestTLSConfig_WithServerKeyEnclave_WipesLegacyServerKeyPEM covers the
-// incremental-migration path: a caller that already supplied the key through
-// the deprecated ServerKeyPEM and then switches to the enclave. Build ignoring
-// the old copy is not the same as the copy being gone — it would stay resident
-// in ordinary heap memory for the config's lifetime, which is exactly what the
-// protected path exists to prevent. The assertion is on the backing array, not
-// the field, so nilling the field alone does not satisfy it.
+// TestTLSConfig_WithServerKeyEnclave_WipesLegacyServerKeyPEM checks the old PEM's backing array is zeroized.
 func TestTLSConfig_WithServerKeyEnclave_WipesLegacyServerKeyPEM(t *testing.T) {
 	certPEM, keyPEM, _, err := generateTestCert(false)
 	if err != nil {
@@ -331,12 +321,7 @@ func TestTLSConfig_WithServerKeyEnclave_WipesLegacyServerKeyPEM(t *testing.T) {
 	}
 }
 
-// TestTLSConfig_SourceTransitions covers reconfiguring a TLSConfig that already
-// holds an enclave. Build ranks the enclave first, so a setter that leaves the
-// old one attached serves the superseded key — a certificate rotation that
-// looks like it happened and did not. Each case asserts on the certificate
-// Build actually produces, so "the field was cleared" cannot pass for "the new
-// credentials are in use".
+// TestTLSConfig_SourceTransitions asserts on the certificate Build produces after each source change.
 func TestTLSConfig_SourceTransitions(t *testing.T) {
 	// Two independent certificates, so the wrong one is detectable.
 	certA, keyA, _, err := generateTestCert(false)
@@ -431,11 +416,7 @@ func TestTLSConfig_SourceTransitions(t *testing.T) {
 	})
 
 	t.Run("an overlapping subslice replacement is not wiped", func(t *testing.T) {
-		// The replacement shares the old backing array but starts at a
-		// DIFFERENT element, so a start-address-only aliasing test calls the
-		// two unrelated and zeroes the bytes being installed. Build is not
-		// asserted here — an offset subslice is not a parseable key — because
-		// the property under test is that the installed bytes survive.
+		// The replacement aliases the old array at an offset; the installed bytes must survive.
 		buf := append([]byte(nil), keyB...)
 		const offset = 8
 		config := NewTLSConfig().WithServerCertPEM(certB, buf)

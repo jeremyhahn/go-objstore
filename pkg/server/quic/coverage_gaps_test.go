@@ -336,12 +336,7 @@ func TestServeHTTPRouteDefault404(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// handleHealth — json encode error path (handlers.go:322-324)
-// The production handler calls json.NewEncoder(w).Encode(...) and logs on
-// error. We test via a writer that fails after WriteHeader so Encode returns
-// an error; the handler must not panic.
-// ---------------------------------------------------------------------------
+// handleHealth: an Encode error on a failing writer must not panic.
 
 // gapBrokenWriter returns an error on every Write call after WriteHeader.
 type gapBrokenWriter struct {
@@ -1051,12 +1046,7 @@ func TestGenerateAndSaveSelfSignedCertBadPath(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// ServeHTTP — panic recovery paths (handlers.go:157-173)
-// These lines are inside the defer func() in ServeHTTP. To hit them we need
-// a real panic inside ServeHTTP routing. We achieve this by using a storage
-// whose methods panic, which propagates up through the handler functions.
-// ---------------------------------------------------------------------------
+// ServeHTTP panic recovery, via a storage whose methods panic.
 
 // gapPanicStorage panics when Get is called.
 type gapPanicStorage struct {
@@ -1172,12 +1162,7 @@ func TestHandleExistsJSONEncodeError(t *testing.T) {
 	// No panic; encode error is logged.
 }
 
-// ---------------------------------------------------------------------------
-// handleArchive — json encode error path (handlers.go:776-778)
-// This requires a valid archiver AND a successful Archive call.
-// Use mockErrorStorage.Archive (which succeeds) with a broken writer.
-// The archive route requires an archiver from the factory — glacier works.
-// ---------------------------------------------------------------------------
+// handleArchive: Encode error on a broken writer after a successful glacier archive.
 
 func TestHandleArchiveJSONEncodeError(t *testing.T) {
 	storage := newMockErrorStorage()
@@ -1464,17 +1449,9 @@ func TestHandleGetReplicationStatusEncodeError(t *testing.T) {
 	h.handleGetReplicationStatus(bw, req)
 }
 
-// ---------------------------------------------------------------------------
-// ServeHTTP — panic AFTER header written (handlers.go:171-173).
-// We need a reader that panics during io.Copy (after WriteHeader at line 456).
-// The defer recover in ServeHTTP catches the panic; since rw.wroteHeader is
-// true it re-panics with http.ErrAbortHandler. httptest.ResponseRecorder
-// does not call http.ErrAbortHandler itself, so we wrap ServeHTTP in a
-// recover to catch the re-panic and verify the path was hit.
-// ---------------------------------------------------------------------------
+// ServeHTTP: a panic after the header is written re-panics with http.ErrAbortHandler.
 
-// gapPanicReader always panics on Read — used to panic INSIDE io.Copy after
-// WriteHeader has been called, hitting the "panic after header" branch.
+// gapPanicReader panics on Read, inside io.Copy after WriteHeader.
 type gapPanicReader struct{}
 
 func (g *gapPanicReader) Read(_ []byte) (int, error) {
@@ -1526,12 +1503,7 @@ func TestServeHTTPPanicRecoveryAfterHeaderWritten(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// server.go:108 — ListenUDP error path.
-// ResolveUDPAddr succeeds for any syntactically valid address, but
-// ListenUDP fails when the host IP is not assigned to any local interface.
-// 192.168.255.254:0 resolves fine but cannot be bound on most systems.
-// ---------------------------------------------------------------------------
+// ListenUDP fails on an address no local interface holds.
 
 func TestStartListenUDPError(t *testing.T) {
 	storage := local.New()
@@ -1557,12 +1529,4 @@ func TestStartListenUDPError(t *testing.T) {
 	}
 }
 
-// server.go:126 — error inside Start goroutine (when Serve returns error
-// while server is still marked running). This is triggered when the http3
-// server's internal Serve call fails, which happens naturally when the UDP
-// connection is closed underneath it — but the goroutine only logs if
-// s.running.Load() is true at the time. We test this via TestServerStartStop
-// which already covers the goroutine; the specific error-logging line requires
-// timing that's non-deterministic. We leave the existing coverage here as-is
-// rather than introducing a flaky sleep-based test.
-// ---------------------------------------------------------------------------
+// The Serve error log inside Start's goroutine is timing-dependent; TestServerStartStop covers the goroutine.

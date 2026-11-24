@@ -521,10 +521,7 @@ class RestClient:
 
             if response.status_code == 200:
                 data = response.json()
-                # Custom metadata is carried in the X-Object-Metadata response
-                # header (JSON string->string map). The /metadata/{key} body
-                # also returns the custom map under the "metadata" key, so fall
-                # back to that when the header is absent.
+                # Custom metadata comes from the X-Object-Metadata header, else the body's "metadata" map.
                 custom = self._parse_custom_header(response)
                 if not custom:
                     body_custom = data.get("metadata")

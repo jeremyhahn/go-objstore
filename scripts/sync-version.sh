@@ -1,14 +1,5 @@
 #!/usr/bin/env bash
-#
-# sync-version.sh — Propagate the root VERSION file to every SDK manifest.
-#
-# The repository root VERSION file is the single source of truth for the
-# release version. This script writes that exact value into each SDK's
-# version declaration (Go, Python, Ruby, Rust, JavaScript, TypeScript, C#)
-# using precise, anchored edits so only the version value is touched.
-#
-# The script is idempotent: running it twice produces no further changes.
-#
+# sync-version.sh: write the root VERSION into every SDK manifest; idempotent.
 set -euo pipefail
 
 # Resolve the repository root (parent of the scripts/ directory).
@@ -89,17 +80,11 @@ apply "ruby (version.rb)" "$SDKS/ruby/lib/objstore/version.rb" \
 apply "ruby (gemspec)" "$SDKS/ruby/objstore.gemspec" \
 	"s/^([[:space:]]*spec\.version[[:space:]]*=[[:space:]]*\")[^\"]*(\")/\1${VERSION_ESC}\2/"
 
-# Rust: Cargo.toml [package] version = "..."
-# The [package] version is the only top-level `version =` at column 0;
-# dependency versions live inside `{ version = ... }` inline tables or are
-# indented, so anchoring at start-of-line is sufficient.
+# Rust: the [package] version is the only top-level version = at column 0.
 apply "rust (Cargo.toml)" "$SDKS/rust/Cargo.toml" \
 	"s/^(version[[:space:]]*=[[:space:]]*\")[^\"]*(\")/\1${VERSION_ESC}\2/"
 
-# JavaScript / TypeScript package.json: edit only the top-level "version"
-# key. Prefer node so the JSON value is updated robustly; fall back to an
-# anchored sed that replaces only the first "version": "..." entry (the
-# top-level package version, which npm emits before "dependencies").
+# package.json: set only the top-level "version", with node or an anchored sed.
 sync_package_json() {
 	local label="$1" file="$2"
 	if [[ ! -f "$file" ]]; then
@@ -131,13 +116,7 @@ sync_package_json() {
 	fi
 }
 
-# sync_package_lock updates only the root package version inside an npm
-# package-lock.json (lockfileVersion 2/3): the top-level "version" key and
-# packages[""].version. Every other "version" entry belongs to a dependency
-# and must be left untouched. node is used for a structurally correct edit;
-# the sed fallback rewrites only the first two "version" lines, which in an
-# npm lockfile are always the root version (line ~3) and packages[""].version
-# (the first entry inside `"": {`), both emitted before any dependency block.
+# sync_package_lock sets only the root version and packages[""].version in package-lock.json.
 sync_package_lock() {
 	local label="$1" file="$2"
 	if [[ ! -f "$file" ]]; then

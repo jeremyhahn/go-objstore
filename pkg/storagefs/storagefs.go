@@ -331,8 +331,7 @@ func (fs *StorageFS) Chmod(name string, mode os.FileMode) error {
 	return fs.putMetadataInternal(name, meta)
 }
 
-// Chown changes the owner and group of the named file.
-// Not supported by StorageFS.
+// Chown is not supported by StorageFS.
 func (fs *StorageFS) Chown(name string, uid, gid int) error {
 	return os.ErrInvalid
 }
@@ -482,10 +481,7 @@ func (fs *StorageFS) deleteMetadata(name string) error {
 // listKeys returns all keys with the given prefix.
 // This is a helper that assumes the storage backend can provide this functionality.
 func (fs *StorageFS) listKeys(prefix string) []string {
-	// Since the Storage interface doesn't have a List method yet,
-	// we'll need to use a type assertion to access it on the mock.
-	// In real implementations, we'd need to add this to the Storage interface
-	// or use a different approach.
+	// List is not on the Storage interface, so assert for it.
 
 	type lister interface {
 		listKeys(prefix string) []string

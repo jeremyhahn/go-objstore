@@ -11,17 +11,5 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package serverconfig is the configuration layer shared by the objstore
-// server binaries (objstore-server and the single-transport servers).
-//
-// Every setting — including every listen host, port, address and socket
-// path — resolves through one path with the company precedence:
-//
-//	flags > environment > config file > defaults
-//
-// Defaults come from Defaults (derived from the transport packages' own
-// defaults), the optional YAML file is named by the -config flag or
-// OBJSTORE_CONFIG, environment variables are OBJSTORE_<KEY> with nesting
-// joined by "_" (rest.host → OBJSTORE_REST_HOST), and a flag is applied only
-// when it was set on the command line.
+// Package serverconfig resolves every server setting with precedence flags > environment (OBJSTORE_<KEY_PATH>) > config file (-config or OBJSTORE_CONFIG) > defaults.
 package serverconfig

@@ -11,9 +11,5 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package cli implements the objstore command-line interface.
-//
-// It wires the cobra commands for object, metadata, archive, lifecycle-policy,
-// and replication operations, running them against either a local backend or a
-// remote server.
+// Package cli implements the objstore command line against a local backend or a remote server.
 package cli

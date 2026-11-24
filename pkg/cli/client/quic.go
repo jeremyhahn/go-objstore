@@ -39,10 +39,7 @@ type QUICClient struct {
 	transport  *http3.Transport
 }
 
-// NewQUICClient creates a new QUIC client speaking genuine HTTP/3 over UDP.
-// Server certificates are verified against the system root pool, which honors
-// the standard SSL_CERT_FILE/SSL_CERT_DIR overrides for custom CAs. Set
-// Config.InsecureSkipVerify to skip verification (testing only).
+// NewQUICClient creates an HTTP/3 client verifying against the system roots (SSL_CERT_FILE/SSL_CERT_DIR); InsecureSkipVerify is for tests only.
 func NewQUICClient(config *Config) (*QUICClient, error) {
 	if config.ServerURL == "" {
 		return nil, ErrServerURLRequired

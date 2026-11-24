@@ -265,12 +265,7 @@ type ClientConfig struct {
 	// Retry configuration
 	Retry *RetryConfig
 
-	// App-layer auth (SDK transmits only; no auth logic is performed here).
-	//
-	// Token is sent as "Authorization: Bearer <Token>" on REST/QUIC/MCP requests
-	// and as the "authorization" metadata value on gRPC calls.
-	// Unix socket clients ignore Token since auth is handled by OS peercred
-	// server-side.
+	// Token is sent as a Bearer Authorization header (REST/QUIC/MCP) or authorization metadata (gRPC); Unix sockets ignore it.
 	Token string
 
 	// Headers are additional HTTP headers added to every REST/QUIC/MCP request.

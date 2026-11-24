@@ -81,20 +81,14 @@ func (s *sizedReader) Read(p []byte) (int, error) {
 	}
 }
 
-// sizedSeeker is a sizedReader over an io.ReadSeeker that can be rewound, so
-// the v4 signer can hash the part and the SDK can resend it without the part
-// ever being copied. It exposes the size bytes that follow start, the offset of
-// rs when the upload began; the caller's reader is not read past them.
+// sizedSeeker is a rewindable sizedReader of size bytes from start, so the signer can hash the part and the SDK resend it without a copy.
 type sizedSeeker struct {
 	sizedReader
 	rs    io.ReadSeeker
 	start int64
 }
 
-// Read fails for good once the part has failed. The v4 signer ignores a read
-// error while it hashes the body and then sends the body anyway, so the
-// failure has to outlive the rewind that follows the hashing pass: a part that
-// is not the declared size must not reach the service as a complete request.
+// Read fails for good once the part failed: the v4 signer ignores a read error while hashing and sends the body anyway.
 func (s *sizedSeeker) Read(p []byte) (int, error) {
 	switch {
 	case s.err != nil:
@@ -134,13 +128,7 @@ func (s *sizedSeeker) Seek(offset int64, whence int) (int64, error) {
 // endpoint is not https.
 var errUnsignedPlain = fmt.Errorf("%w: a part body that cannot be seeked is sent with an unsigned payload, which needs an https endpoint", common.ErrInvalidArgument)
 
-// unsignedPayload sends the request with X-Amz-Content-Sha256 set to
-// UNSIGNED-PAYLOAD. The v4 signer otherwise hashes the body, which means
-// reading it twice, and a streamed part body cannot be read twice without
-// buffering the part in memory or spooling its plaintext to disk. The header
-// is still covered by the request signature; what is given up is the payload
-// hash, so integrity in transit rests on TLS alone. Over plain http nothing
-// would vouch for the payload, so the request is refused there.
+// unsignedPayload sends X-Amz-Content-Sha256: UNSIGNED-PAYLOAD for a streamed part, relying on TLS for payload integrity; refused over plain http.
 func unsignedPayload(r *request.Request) {
 	r.Handlers.Build.PushBack(func(r *request.Request) {
 		if r.HTTPRequest.URL.Scheme != "https" {
@@ -151,18 +139,12 @@ func unsignedPayload(r *request.Request) {
 	})
 }
 
-// noContentMD5 stops the SDK from adding a Content-MD5 header, which it does by
-// hashing a seekable body with MD5. The part is already covered by the
-// signature's payload hash (or, for a streamed part, by TLS), and MD5 is not
-// available under FIPS 140-only.
+// noContentMD5 stops the SDK adding Content-MD5: the payload is otherwise covered, and MD5 is unavailable under FIPS 140-only.
 func noContentMD5(r *request.Request) {
 	r.Config.S3DisableContentMD5Validation = aws.Bool(true)
 }
 
-// partBody returns the reader to send for a part, the sizedReader that
-// reports how it failed, and the request options the body needs. A seekable
-// caller reader is sent as a rewindable view of the part; any other reader is
-// streamed with an unsigned payload.
+// partBody returns a rewindable view for a seekable reader, else a streamed body with an unsigned payload, plus its sizedReader and options.
 func partBody(data io.Reader, size int64) (io.Reader, *sizedReader, []request.Option, error) {
 	if rs, ok := data.(io.ReadSeeker); ok {
 		if start, end, ok := seekExtent(rs); ok {
@@ -307,11 +289,7 @@ func (s *S3) UploadPart(ctx context.Context, key, uploadID string, partNumber in
 	return common.PartInfo{PartNumber: partNumber, ETag: aws.StringValue(out.ETag), Size: size}, nil
 }
 
-// CompleteMultipartUpload assembles the listed parts. The order and the
-// numbers of the parts are checked here; their entity tags and sizes are
-// checked by the service, which refuses the whole request on a mismatch.
-//
-// An upload older than the multipartExpiry setting is treated as aborted.
+// CompleteMultipartUpload checks part order and numbers (the service checks ETags and sizes); uploads older than multipartExpiry count as aborted.
 func (s *S3) CompleteMultipartUpload(ctx context.Context, key, uploadID string, parts []common.CompletedPart) error {
 	if err := common.ValidateKey(key); err != nil {
 		return err
@@ -359,10 +337,7 @@ func (s *S3) CompleteMultipartUpload(ctx context.Context, key, uploadID string, 
 	return uploadError(err, uploadID)
 }
 
-// rejectExpired returns ErrUploadNotFound for an upload that outlived the
-// multipartExpiry setting. It finds the upload by listing, once per
-// completion, which UploadPart is spared. An upload the listing does not show
-// is left to the service to judge.
+// rejectExpired returns ErrUploadNotFound for an upload past multipartExpiry, found by one listing per completion.
 func (s *S3) rejectExpired(ctx context.Context, key, uploadID string) error {
 	uploads, err := s.ListMultipartUploads(ctx, key)
 	if err != nil {

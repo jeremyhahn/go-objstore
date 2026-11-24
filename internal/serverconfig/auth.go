@@ -25,10 +25,7 @@ import (
 	mcpserver "github.com/jeremyhahn/go-objstore/pkg/server/mcp"
 )
 
-// UIDSubjectPrefix marks an identity subject that names a local user by
-// numeric uid (for example "uid:1000"). The Unix socket and MCP stdio
-// listeners identify their peer this way; the TLS listeners identify a
-// client by the common name of its verified certificate.
+// UIDSubjectPrefix marks a subject naming a local uid ("uid:1000"), used by the Unix socket and MCP stdio listeners.
 const UIDSubjectPrefix = "uid:"
 
 // AnonymousSubject is the principal ID a transport gives a peer it cannot
@@ -38,14 +35,9 @@ const AnonymousSubject = "anonymous"
 // wildcardAction grants every action (the RBACAuthorizer convention).
 const wildcardAction = "*"
 
-// AuthConfig is the `auth` section. When it is set (any field non-empty),
-// every enabled listener authenticates its clients and authorizes each
-// request through an RBAC authorizer built from Roles; when it is empty the
-// servers keep their NoOp (allow-all) defaults.
+// AuthConfig is the `auth` section; set, every listener authenticates and authorizes through RBAC, empty keeps the allow-all defaults.
 type AuthConfig struct {
-	// ClientCA is the PEM file of the CA that signs client certificates.
-	// The gRPC, QUIC, REST and MCP HTTP listeners require and verify a
-	// client certificate against it.
+	// ClientCA is the PEM CA that client certificates on the TLS listeners must chain to.
 	ClientCA string `mapstructure:"client_ca"`
 	// Roles maps a role name to the actions it permits ("read", "write",
 	// "delete", "list", "admin", or "*" for all).
@@ -224,10 +216,7 @@ func (c *Config) Authorizer() adapters.Authorizer {
 	return adapters.NewRBACAuthorizer(roles)
 }
 
-// CertAuthenticator returns the authenticator of the TLS listeners, or nil
-// when auth is not set. The TLS layer verifies the client certificate
-// against auth.client_ca; the principal is the leaf certificate's common
-// name with the roles auth.identities binds to it (none when unmapped).
+// CertAuthenticator returns the TLS listeners' authenticator, or nil without auth; the principal is the leaf CN with its mapped roles.
 func (c *Config) CertAuthenticator() adapters.Authenticator {
 	if !c.Auth.Enabled() {
 		return nil
@@ -247,11 +236,7 @@ func (c *Config) CertAuthenticator() adapters.Authenticator {
 	}, nil)
 }
 
-// identityAuthorizer authorizes by the roles auth.identities binds to the
-// principal's ID ("uid:N" on the Unix socket), ignoring any roles the
-// principal already carries (the Unix peer principal carries its OS group
-// name, which must not grant a role of the same name). When subject is set
-// it is used in place of the principal (MCP stdio: the process owner).
+// identityAuthorizer authorizes by the roles auth.identities binds to the principal ID (or subject when set), ignoring roles the principal carries.
 func (c *Config) identityAuthorizer(subject string) adapters.Authorizer {
 	return &identityAuthorizer{inner: c.Authorizer(), auth: c.Auth, subject: subject}
 }
@@ -272,10 +257,7 @@ func (a *identityAuthorizer) Authorize(ctx context.Context, principal *adapters.
 	return a.inner.Authorize(ctx, mapped, action, resource)
 }
 
-// listenerTLS returns the TLS configuration of a listener with the given
-// key pair: nil when no certificate is set, server TLS without auth, and
-// mutual TLS requiring a client certificate signed by auth.client_ca when
-// auth is set.
+// listenerTLS returns nil without a certificate, server TLS without auth, and mutual TLS against auth.client_ca with auth.
 func (c *Config) listenerTLS(cert, key string) *adapters.TLSConfig {
 	if cert == "" || key == "" {
 		return nil

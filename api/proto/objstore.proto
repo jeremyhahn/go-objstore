@@ -11,10 +11,7 @@ service ObjectStore {
   // Put stores an object in the backend.
   rpc Put(PutRequest) returns (PutResponse);
 
-  // PutStream stores an object sent as a client stream. The first message
-  // carries the key and optional metadata (PutStreamHeader); every later
-  // message carries a chunk of object data. The object is stored when the
-  // client closes the stream; a cancelled stream stores nothing.
+  // PutStream stores an object sent as a client stream: a header message, then data chunks; a cancelled stream stores nothing.
   rpc PutStream(stream PutStreamRequest) returns (PutResponse);
 
   // Get retrieves an object from the backend with streaming support for large files.

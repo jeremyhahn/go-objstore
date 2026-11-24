@@ -80,10 +80,7 @@ func (c *GRPCClient) Put(ctx context.Context, key string, reader io.Reader, meta
 		return err
 	}
 
-	// The server sends its response headers once it accepts the header
-	// message. Without them the stream already ended: a refusal, or a server
-	// older than PutStream, which gets the unary Put. Nothing has been read
-	// from the reader yet.
+	// No response headers means the stream ended: a refusal, or a server without PutStream, which gets the unary Put.
 	if md, herr := stream.Header(); herr != nil || md == nil {
 		_, err := stream.CloseAndRecv()
 		if err == nil {
@@ -116,10 +113,7 @@ func (c *GRPCClient) Put(ctx context.Context, key string, reader io.Reader, meta
 // fits the smallest receive limit the server accepts (1 MiB).
 const putStreamChunkSize = 1<<20 - 1<<10
 
-// sendPutChunks reads reader in chunks of putStreamChunkSize and passes each
-// to send, holding one chunk in memory at a time. Each chunk is a fresh
-// buffer, since gRPC forbids modifying a message after it is sent. A read
-// error is returned wrapped; a send error is returned as is.
+// sendPutChunks sends reader in fresh putStreamChunkSize buffers, one in memory at a time; read errors are wrapped, send errors returned as is.
 func sendPutChunks(reader io.Reader, send func([]byte) error) error {
 	for {
 		buf := make([]byte, putStreamChunkSize)
@@ -139,10 +133,7 @@ func sendPutChunks(reader io.Reader, send func([]byte) error) error {
 	}
 }
 
-// fillPutChunk reads from r until buf is full or r returns an error. Only
-// io.EOF ends the data: it is returned with the bytes read before it. Any
-// other error, io.ErrUnexpectedEOF from the source included, is returned
-// as is, so the put is aborted instead of storing a short object.
+// fillPutChunk reads until buf is full; only io.EOF ends the data, any other error aborts the put.
 func fillPutChunk(r io.Reader, buf []byte) (int, error) {
 	n := 0
 	for n < len(buf) {

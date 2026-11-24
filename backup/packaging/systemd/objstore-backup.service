@@ -1,15 +1,4 @@
-# objstore-backup as a long-running systemd service. The schedule is in the
-# configuration file, so no timer unit is needed.
-#
-# Install:
-#   useradd --system --no-create-home --shell /usr/sbin/nologin objstore-backup
-#   install -m 0755 objstore-backup /usr/local/bin/objstore-backup
-#   install -d -m 0700 -o objstore-backup -g objstore-backup /etc/objstore-backup
-#   install -m 0600 -o objstore-backup -g objstore-backup config.json /etc/objstore-backup/config.json
-#   install -m 0400 -o objstore-backup -g objstore-backup passphrase /etc/objstore-backup/passphrase
-#   install -m 0644 objstore-backup.service /etc/systemd/system/objstore-backup.service
-#   systemctl daemon-reload && systemctl enable --now objstore-backup
-#   journalctl -u objstore-backup -f
+# objstore-backup as a long-running service; the schedule is in the configuration file. Install steps: backup/README.md.
 
 [Unit]
 Description=objstore-backup scheduled backup agent

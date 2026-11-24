@@ -56,11 +56,7 @@ type Syncer struct {
 	metrics  *ReplicationMetrics
 }
 
-// NewSyncer creates a new Syncer with proper encryption wrapping based on the policy.
-// It handles three-layer encryption:
-// - Layer 1: Backend at-rest encryption (for local backends)
-// - Layer 2: Source DEK (client-side encryption)
-// - Layer 3: Destination DEK (client-side encryption)
+// NewSyncer creates a Syncer with the policy's encryption layers: backend at rest, source DEK and destination DEK.
 func NewSyncer(
 	policy common.ReplicationPolicy,
 	backendFactory common.EncrypterFactory,
@@ -72,10 +68,7 @@ func NewSyncer(
 	return NewSyncerWithProvider(context.Background(), nil, policy, backendFactory, sourceFactory, destFactory, logger, auditLog)
 }
 
-// NewSyncerWithProvider creates a Syncer whose backends are configured with the
-// handles a CredentialProvider yields for each target. The handles are
-// destroyed as soon as their backend is configured. A nil provider selects the
-// SDK default credential chain, as NewSyncer does.
+// NewSyncerWithProvider configures each backend with the provider's handles, destroyed once used; nil selects the SDK default chain.
 func NewSyncerWithProvider(
 	ctx context.Context,
 	provider CredentialProvider,
@@ -114,7 +107,7 @@ func NewSyncerWithProvider(
 		}
 	}
 
-	// Apply CLIENT-SIDE DEK encryption based on mode (Layers 2 & 3)
+	// Apply client-side DEK encryption by mode (layers 2 and 3).
 	switch policy.ReplicationMode {
 	case common.ReplicationModeTransparent:
 		// In transparent mode, decrypt at source and re-encrypt at destination

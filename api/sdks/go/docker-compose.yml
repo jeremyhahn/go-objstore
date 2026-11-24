@@ -1,9 +1,4 @@
-# Project name: never the directory name ("go"), which collides with every other
-# checkout's api/sdks/go on a shared daemon. The Makefile exports a stable
-# per-checkout COMPOSE_PROJECT_NAME (../compose-project.mk); the default covers
-# a bare compose run. No host ports are published: the tests reach
-# objstore-server over the compose network, so concurrent projects cannot
-# collide on a host port.
+# Project name comes from ../compose-project.mk; no host ports are published, so concurrent projects never collide.
 name: ${COMPOSE_PROJECT_NAME:-objstore-sdk-go}
 
 services:
@@ -40,11 +35,7 @@ services:
 
   # Go SDK unit tests
   go-unit-tests:
-      # No source bind mount: the image is built from this SDK's source and
-      # already contains it, tests included. Mounting the tree over it is
-      # redundant on a normal host and impossible under a containerised CI
-      # runner, where the daemon is asked to mount a path that exists only
-      # inside the job container ("mkdir /workspace: file exists").
+      # No source bind mount: the image already contains the source, and a containerised runner cannot mount it.
     build:
       context: ../../..
       dockerfile: api/sdks/go/Dockerfile
@@ -81,13 +72,7 @@ networks:
   objstore-net:
     driver: bridge
 
-# go mod download inside the objstore-server (root Dockerfile) and go-integration
-# builds resolves the internal go-enclave module from Gitea via an optional
-# BuildKit secret carrying the read-only module token (dependency-resolution.md
-# §6); the caller supplies the file path in GOMODAUTH_ENV. go-unit-tests does
-# not need it (go.mod does not list go-enclave, and module pruning keeps it out
-# of the SDK's build), but declares the secret for consistency. Unset
-# GOMODAUTH_ENV defaults to /dev/null and resolves from the public proxy.
+# GOMODAUTH_ENV is the optional BuildKit secret file for private modules; unset, it is /dev/null.
 secrets:
   gomodauth:
     file: ${GOMODAUTH_ENV:-/dev/null}

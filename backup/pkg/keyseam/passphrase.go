@@ -36,21 +36,7 @@ const (
 	passphraseWrapSize   = passphraseHeaderSize + DataKeySize + gcm.Overhead
 )
 
-// PassphraseProvider is the standalone Provider, for a host with no
-// key-management service. Its key-encryption key is derived from a passphrase
-// with PBKDF2-HMAC-SHA-256 (NIST SP 800-132) over a random 16-byte salt, and
-// the data key is wrapped under it with AES-256-GCM.
-//
-// Every WrapKey draws a fresh salt, and the wrapped form carries the salt and
-// the iteration count beside the sealed key:
-//
-//	"OBKP" | version (1) | iterations (uint32, big-endian) | salt (16) | nonce (12) | sealed key (32) | tag (16)
-//
-// The header is the AEAD's additional data, so neither the salt nor the
-// iteration count can be altered. The passphrase and each derived KEK are
-// held in go-enclave locked memory. The standard library's PBKDF2 takes the
-// passphrase as a string and HMAC keeps its own copy of it, so transient heap
-// copies of the passphrase exist while a KEK is derived.
+// PassphraseProvider derives the KEK with PBKDF2-HMAC-SHA-256 over a random salt and wraps with AES-256-GCM: "OBKP" | version (1) | iterations (4, BE) | salt (16) | nonce (12) | sealed key (32) | tag (16), header as AAD.
 type PassphraseProvider struct {
 	passphrase enclave.ByteAccess
 	iterations int
@@ -58,11 +44,7 @@ type PassphraseProvider struct {
 
 var _ Provider = (*PassphraseProvider)(nil)
 
-// NewPassphraseProvider returns a provider over passphrase, deriving with
-// iterations PBKDF2 iterations (MinIterations when iterations is 0). It takes
-// ownership of passphrase and destroys it on Close. It fails with ErrInvalidKey
-// for a nil or empty passphrase, ErrKeyDestroyed for a destroyed one, and
-// ErrIterations for a count outside [MinIterations, MaxIterations].
+// NewPassphraseProvider takes ownership of passphrase (destroyed on Close); iterations 0 means MinIterations.
 func NewPassphraseProvider(passphrase enclave.ByteAccess, iterations int) (*PassphraseProvider, error) {
 	const op = "new passphrase provider"
 	if iterations == 0 {

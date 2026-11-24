@@ -489,10 +489,7 @@ impl GrpcClient {
             .ok_or_else(|| Error::InvalidResponse("Missing replication status".to_string()))
     }
 
-    /// Close the client, releasing any underlying resources.
-    ///
-    /// The tonic channel manages its own connection lifecycle and is closed
-    /// when the client is dropped, so this is a no-op provided for API parity.
+    /// Close the client; a no-op for API parity, since the channel closes on drop.
     pub async fn close(&self) -> Result<()> {
         Ok(())
     }
@@ -613,22 +610,7 @@ fn convert_from_pb_replication_policy(p: pb::ReplicationPolicy) -> ReplicationPo
 mod tests {
     use super::*;
 
-    // =========================================================================
-    // gRPC canonical test matrix.
-    //
-    // NOTE: conversion-layer (no gRPC server stub). The checked-in generated
-    // protobuf module (`src/proto/objstore.v1.rs`) exposes only the *client*
-    // stub -- there is no `object_store_server` and no `.proto` wired through
-    // `build.rs` for server generation -- so a real in-process tonic mock
-    // server cannot be stood up here without modifying frozen build infra.
-    //
-    // Instead, each `grpc_<op>_<case>` test exercises the exact request-build
-    // and response-handling logic that the async methods delegate to: the
-    // SDK->`pb` request construction, the public `convert_*` helpers, and the
-    // success/`message`-empty/`Option`-missing discrimination. The response
-    // handlers below mirror the inline logic in the async methods verbatim so
-    // the assertions cover the same mapping the network path produces.
-    // =========================================================================
+    // gRPC canonical matrix at the conversion layer: the generated module has no server stub, so tests drive the request build and response mapping directly.
 
     // ---- request builders (mirror the async methods' request construction) ----
 
@@ -1653,10 +1635,7 @@ mod tests {
 
     #[test]
     fn grpc_metadata_round_trip() {
-        // NOTE: conversion-layer. Metadata travels in proto message fields:
-        // SDK Metadata -> pb::Metadata (as put/update build it) -> back via
-        // convert_pb_metadata. content_type, content_encoding and the custom
-        // map must all survive the round trip.
+        // Metadata round trip through pb::Metadata and convert_pb_metadata.
         let original = sample_metadata();
 
         // Rides inside a PutRequest.metadata field.
@@ -1702,11 +1681,7 @@ mod tests {
 
     #[test]
     fn grpc_status_code_canonical_mapping() {
-        // Every row of the canonical gRPC code table, asserted through the
-        // same From<tonic::Status> conversion the async methods use via `?`:
-        // NotFound, PermissionDenied -> Forbidden, Unauthenticated,
-        // AlreadyExists, ResourceExhausted -> RateLimited, InvalidArgument;
-        // unmapped codes stay GrpcStatus.
+        // Every row of the gRPC code table through From<tonic::Status>.
         assert!(matches!(
             Error::from(tonic::Status::not_found("m")),
             Error::NotFound(_)

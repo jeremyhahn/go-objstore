@@ -296,10 +296,7 @@ func TestStartListenFailure(t *testing.T) {
 	}
 }
 
-// TestRemoveStaleSocketLstatNonNotExistError verifies that removeStaleSocket
-// returns a non-nil error when os.Lstat fails with something other than
-// ErrNotExist (line 258).  We create a regular file and use it as a path
-// component so Lstat on the sub-path returns ENOTDIR, not ENOENT.
+// TestRemoveStaleSocketLstatNonNotExistError: an ENOTDIR from Lstat is returned.
 func TestRemoveStaleSocketLstatNonNotExistError(t *testing.T) {
 	// Create a regular file and try to Lstat "file/socket.sock" (ENOTDIR).
 	f, err := os.CreateTemp(t.TempDir(), "notadir")
@@ -1274,8 +1271,7 @@ func TestHandleArchiveSuccessPath(t *testing.T) {
 	handler := NewHandler("", &mockLogger{}, nil, nil)
 	handler.wireOpts = factory.WireOptions{AllowLocalDestinations: true}
 
-	// Use the "local" archiver type with a valid temp path so factory.NewArchiver
-	// succeeds and reaches the objstore.Archive call.
+	// A local archiver on a temp path reaches objstore.Archive.
 	archDir := t.TempDir()
 	params, _ := json.Marshal(ArchiveParams{
 		Key:                 "arch-key",
@@ -1509,15 +1505,7 @@ func TestHandleApplyPoliciesArchiveWithDestinationError(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// server.go: handleConnection – peer cred error != ErrPeerCredUnsupported (line 345)
-// This path requires the SO_PEERCRED call itself to error, which requires a
-// specially crafted broken connection. We approximate it by verifying the
-// warning-log branch is reachable via a connection type that is a *net.UnixConn
-// but has a broken SyscallConn. In practice, on Linux the only reachable path
-// here is when SyscallConn().Control() errors, which is OS-specific and not
-// reliably testable in unit tests. Accept the 1-statement residual miss.
-// ---------------------------------------------------------------------------
+// The SO_PEERCRED failure branch is not reachable from user space.
 
 // ---------------------------------------------------------------------------
 // server.go: handleConnection – SetReadDeadline warnings (lines 364, 373)
@@ -1738,15 +1726,4 @@ func TestPeerCredNonUnixConn(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// server.go: handleConnection – peer cred non-unsupported error (line 345)
-// This requires peerCredPrincipal to fail with something other than
-// ErrPeerCredUnsupported. On Linux, that means SyscallConn() or
-// GetsockoptUcred() failed. We exercise this path by using a custom conn type
-// that IS a *net.UnixConn wrapper but fails inside peerCredPrincipal.
-// Since peerCredPrincipal checks for *net.UnixConn specifically (type assertion)
-// and our fake conn cannot satisfy that, the only way to reach line 345-350 is
-// to use a real *net.UnixConn whose underlying syscall fails.
-// This is OS-specific and not practically testable from user-space. Accept the
-// residual miss for these two statements.
-// ---------------------------------------------------------------------------
+// The non-unsupported peer-credential error needs a failing syscall on a real *net.UnixConn; not testable here.

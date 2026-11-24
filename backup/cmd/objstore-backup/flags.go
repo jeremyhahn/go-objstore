@@ -35,25 +35,14 @@ func openSDK(_ context.Context, cfg *objstore.ClientConfig) (store.PruneStore, f
 	return st, c.Close, nil
 }
 
-// maxMessage is the largest gRPC message the CLI sends or receives, and so the
-// largest object it moves over gRPC: gRPC's own ceiling, the largest length
-// its message framing carries. gRPC's default receive limit of 4 MiB is below
-// a default pack. No smaller fixed bound holds every pack the repository
-// format allows: a pack carries up to repo.MaxPackSize bytes of sealed chunks
-// and a trailer of one entry per chunk, which with the smallest chunks
-// outgrows the chunks themselves. The bound caps a message and allocates
-// nothing; the client reads every object whole into memory on every protocol,
-// and only gRPC caps it.
+// maxMessage is gRPC's framing ceiling: no smaller fixed bound holds every pack the repository format allows.
 const maxMessage = math.MaxInt32
 
 var protocols = []objstore.Protocol{
 	objstore.ProtocolREST, objstore.ProtocolGRPC, objstore.ProtocolQUIC, objstore.ProtocolMCP, objstore.ProtocolUnix,
 }
 
-// connFlags are the settings that connect to an objstore server as one
-// identity. The backup identity's set has no name prefix; prune's set is
-// named "prune-", so the backup identity's settings never stand in for the
-// delete-capable identity prune needs.
+// connFlags connect as one identity; prune's set is prefixed "prune-" so backup settings never stand in for the delete-capable identity.
 type connFlags struct {
 	prefix    string
 	protocol  string
@@ -204,10 +193,7 @@ func printFlags(w io.Writer, fs *flag.FlagSet) {
 	})
 }
 
-// parse parses args for command name, with flags allowed among the
-// positional arguments, and checks there are min to max positionals (max -1
-// means no limit). It prints the help for -h and a usage error for anything
-// else; ok is false when the command must return code.
+// parse parses args with flags among positionals and checks min..max positionals (max -1 is unlimited); ok is false when the command must return code.
 func (e *env) parse(name, help string, fs *flag.FlagSet, args []string, minArgs, maxArgs int) (pos []string, code int, ok bool) {
 	for {
 		if err := fs.Parse(args); err != nil {

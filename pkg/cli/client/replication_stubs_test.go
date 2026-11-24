@@ -38,8 +38,7 @@ func newRESTClient(baseURL string) *RESTClient {
 
 // TestRESTClient_Replication tests all REST replication methods with mock server
 func TestRESTClient_Replication(t *testing.T) {
-	// REST client replication methods make actual HTTP calls, not stubs
-	// We'll test they work with a mock server
+	// The REST replication methods make real HTTP calls; test them against a mock server.
 	ctx := context.Background()
 
 	policy := common.ReplicationPolicy{

@@ -11,11 +11,7 @@ RUN apt-get update && apt-get install -y \
 # Set working directory
 WORKDIR /app
 
-# Copy Gemfile for dependency installation (from api/sdks/ruby context).
-# Gemfile.lock is not committed (gem/library convention, matching the Rust
-# SDK's Cargo.lock); the wildcard copies it when present for reproducible
-# local builds and tolerates its absence on fresh checkouts (CI), where
-# bundler resolves dependencies fresh.
+# Gemfile.lock is not committed; the wildcard copies it when present.
 COPY sdks/ruby/Gemfile sdks/ruby/objstore.gemspec ./
 COPY sdks/ruby/Gemfile.lock* ./
 COPY sdks/ruby/lib/objstore/version.rb ./lib/objstore/

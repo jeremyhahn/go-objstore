@@ -92,9 +92,7 @@ var (
 	// ErrPolicyNotFound is returned when a replication policy is not found.
 	ErrPolicyNotFound = errors.New("replication policy not found")
 
-	// Canonical cross-transport sentinels. Backends and services wrap these so
-	// every transport (REST, gRPC, QUIC, MCP, unix) maps errors consistently
-	// via Classify.
+	// Cross-transport sentinels: backends wrap them so every transport maps errors consistently via Classify.
 
 	// ErrAlreadyExists is returned when a resource already exists.
 	ErrAlreadyExists = errors.New("already exists")

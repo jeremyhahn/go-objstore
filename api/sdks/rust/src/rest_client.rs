@@ -33,12 +33,7 @@ struct RestObjectResponse {
     metadata: Option<HashMap<String, String>>,
 }
 
-/// Wire response from `GET /metadata/{key}`.
-///
-/// The server's `RespondWithObject` sends an `ObjectResponse` JSON body whose
-/// `size` is the stored object size and `metadata` is the custom key/value map.
-/// The HTTP `Content-Length` header reflects the length of the JSON payload, not
-/// the stored object, so we must parse from the body.
+/// Wire response of `GET /metadata/{key}`; size comes from the body, since Content-Length is the JSON length.
 #[derive(Debug, Deserialize)]
 struct MetadataObjectResponse {
     #[serde(default)]
@@ -85,10 +80,7 @@ impl RestClient {
         self.put_body(key, data.into(), metadata).await
     }
 
-    /// Put an object using an arbitrary request body (buffered or streamed).
-    ///
-    /// Shared by [`put`](Self::put) and the streaming `put_stream` extension;
-    /// a streaming body is sent with chunked transfer encoding.
+    /// Put an object from a buffered or streamed body; a stream is sent chunked.
     pub(crate) async fn put_body(
         &self,
         key: &str,
@@ -273,10 +265,7 @@ impl RestClient {
             ));
         }
 
-        // The metadata endpoint returns a JSON body (ObjectResponse) whose
-        // `size` field carries the stored object's size.  Parsing
-        // Content-Length from the HTTP response would give the size of the
-        // JSON payload itself, not the stored object.
+        // The stored size is the body's `size`; Content-Length is the JSON payload length.
         let body: MetadataObjectResponse = response.json().await?;
         Ok(Metadata {
             content_type: body.content_type,
@@ -654,10 +643,7 @@ impl RestClient {
         Ok(rest_replication_status_into(parsed))
     }
 
-    /// Close the client, releasing any underlying resources.
-    ///
-    /// The REST client holds no persistent connections beyond reqwest's
-    /// connection pool, so this is a no-op provided for API parity.
+    /// Close the client; a no-op for API parity.
     pub async fn close(&self) -> Result<()> {
         Ok(())
     }
@@ -809,10 +795,7 @@ fn parse_rfc3339(s: String) -> Option<chrono::DateTime<chrono::Utc>> {
         .map(|dt| dt.with_timezone(&chrono::Utc))
 }
 
-/// Serialize a [`ReplicationPolicy`] into the JSON body expected by the server.
-///
-/// `interval_field` is the JSON key used for the check interval: REST uses
-/// `check_interval_seconds`, while QUIC uses `check_interval`.
+/// Serialize a [`ReplicationPolicy`]; `interval_field` is `check_interval_seconds` (REST) or `check_interval` (QUIC).
 pub(crate) fn replication_policy_to_rest_json(
     policy: &ReplicationPolicy,
     interval_field: &str,
@@ -851,14 +834,7 @@ pub(crate) fn replication_policy_to_rest_json(
     body
 }
 
-/// Build the HTTP headers for a PUT request following the canonical
-/// `X-Object-Metadata` contract.
-///
-/// `Content-Type` and `Content-Encoding` are emitted as standard headers (the
-/// latter only when present). The custom string->string map is serialized to
-/// JSON and placed in `X-Object-Metadata`; the header is omitted entirely when
-/// there is no custom metadata. `content_type`/`content_encoding` are never
-/// duplicated into the JSON body.
+/// PUT headers: Content-Type, Content-Encoding, and the custom map as JSON in `X-Object-Metadata` when non-empty.
 fn put_metadata_headers(meta: &Metadata) -> Vec<(&'static str, String)> {
     let mut headers = Vec::new();
 
@@ -877,13 +853,7 @@ fn put_metadata_headers(meta: &Metadata) -> Vec<(&'static str, String)> {
     headers
 }
 
-/// Parse object [`Metadata`] from HTTP response headers following the canonical
-/// `X-Object-Metadata` contract.
-///
-/// `Content-Type`, `Content-Encoding`, `Content-Length`, `ETag` and
-/// `Last-Modified` are read from their standard headers. The custom
-/// string->string map is parsed from the JSON-encoded `X-Object-Metadata`
-/// header, if present.
+/// Parse [`Metadata`] from the standard headers and the JSON `X-Object-Metadata` header.
 fn metadata_from_headers(headers: &reqwest::header::HeaderMap) -> Metadata {
     let header_str = |name: &str| {
         headers
@@ -930,22 +900,7 @@ mod tests {
     use super::*;
     use mockito::Server;
 
-    // =========================================================================
-    // REST canonical test matrix.
-    //
-    // Each op gets `rest_<op>_success` / `rest_<op>_error`; the nine read/mutate
-    // ops additionally get `rest_<op>_not_found`. Plus `rest_metadata_round_trip`
-    // and `rest_validation_empty_key`. The transport is mocked with `mockito`;
-    // no live server is required.
-    //
-    // Documented impl behaviors:
-    //  - PUT only treats HTTP 201 CREATED as success.
-    //  - `exists` returns Ok(false) only for 404 and Ok(true) for a success
-    //    status; any other status (e.g. 5xx) returns an Err -> see
-    //    rest_exists_error / rest_exists_not_found.
-    //  - The REST client performs NO client-side empty-key validation; an empty
-    //    key is sent to the server -> see rest_validation_empty_key.
-    // =========================================================================
+    // REST canonical matrix over mockito: PUT succeeds only on 201, exists is false only on 404, no client-side empty-key check.
 
     fn meta_with_custom(pairs: &[(&str, &str)]) -> Metadata {
         let mut meta = Metadata::default();
@@ -1953,9 +1908,7 @@ mod tests {
 
     #[tokio::test]
     async fn rest_validation_empty_key() {
-        // The REST client performs NO client-side empty-key validation: the
-        // request is sent with an empty key and the server decides. Here the
-        // server returns 404, which surfaces as Error::NotFound.
+        // No client-side empty-key check: the server answers 404, surfaced as Error::NotFound.
         let mut server = Server::new_async().await;
         let mock = server
             .mock("GET", mockito::Matcher::Any)
@@ -1970,10 +1923,7 @@ mod tests {
 
     #[tokio::test]
     async fn rest_http_status_canonical_mapping() {
-        // Every row of the canonical HTTP status table, asserted over the
-        // mocked transport: 400 InvalidArgument, 401 Unauthenticated,
-        // 403 Forbidden, 404 NotFound, 409 AlreadyExists, 429 RateLimited,
-        // 5xx OperationFailed.
+        // Every row of the HTTP status table over the mocked transport.
         let cases: [(usize, fn(&Error) -> bool); 7] = [
             (400, |e| matches!(e, Error::InvalidArgument(_))),
             (401, |e| matches!(e, Error::Unauthenticated(_))),

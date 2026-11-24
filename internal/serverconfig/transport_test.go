@@ -289,10 +289,7 @@ func TestAuditOutput_StdioModeKeepsStdoutForJSONRPC(t *testing.T) {
 	}
 }
 
-// TestRESTHost_IPv6ReachesListenerAddress drives an IPv6 bind host from each
-// config path through RESTServerConfig into the REST server and checks the
-// address that server listens on is a valid IPv6 TCP address. Binding the
-// socket is covered by the server integration suite.
+// TestRESTHost_IPv6ReachesListenerAddress checks an IPv6 bind host from each config path reaches the REST listener address.
 func TestRESTHost_IPv6ReachesListenerAddress(t *testing.T) {
 	objstore.Reset()
 	t.Cleanup(objstore.Reset)

@@ -11,6 +11,5 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package server defines limits, configuration constants, and shared types
-// common to the go-objstore protocol servers (REST, gRPC, QUIC, MCP, and Unix).
+// Package server holds the limits, constants and shared types of the go-objstore protocol servers.
 package server

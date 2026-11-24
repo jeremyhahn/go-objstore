@@ -22,11 +22,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-// TestAuthenticationUnaryInterceptorConcurrentNoBadLoggerRace fires many
-// goroutines through the single interceptor closure returned by
-// AuthenticationUnaryInterceptor to prove that the per-request logger enrichment
-// no longer mutates the shared captured logger variable. Run with -race; must
-// produce zero data-race reports.
+// TestAuthenticationUnaryInterceptorConcurrentNoBadLoggerRace: per-request logger enrichment must not race under -race.
 func TestAuthenticationUnaryInterceptorConcurrentNoBadLoggerRace(t *testing.T) {
 	authenticator := adapters.NewNoOpAuthenticator()
 	logger := adapters.NewNoOpLogger()
@@ -52,11 +48,7 @@ func TestAuthenticationUnaryInterceptorConcurrentNoBadLoggerRace(t *testing.T) {
 	wg.Wait()
 }
 
-// TestAuthenticationStreamInterceptorConcurrentNoBadLoggerRace fires many
-// goroutines through the single stream interceptor closure returned by
-// AuthenticationStreamInterceptor to prove that the per-request logger enrichment
-// no longer mutates the shared captured logger variable. Run with -race; must
-// produce zero data-race reports.
+// TestAuthenticationStreamInterceptorConcurrentNoBadLoggerRace: per-request logger enrichment must not race under -race.
 func TestAuthenticationStreamInterceptorConcurrentNoBadLoggerRace(t *testing.T) {
 	authenticator := adapters.NewNoOpAuthenticator()
 	logger := adapters.NewNoOpLogger()

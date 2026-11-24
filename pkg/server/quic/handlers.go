@@ -72,12 +72,7 @@ type Handler struct {
 	wireOpts           factory.WireOptions // how archiver settings a client sent are treated
 }
 
-// NewHandler creates a new HTTP/3 handler using the ObjstoreFacade.
-// The facade must be initialized before calling this function.
-//
-// allowedOrigins controls CORS behavior: when empty/nil (or ["*"]), all origins
-// are allowed without credentials; when set to a specific allowlist, only those
-// origins are echoed back and credentials are permitted.
+// NewHandler creates an HTTP/3 handler over an initialized facade; allowedOrigins sets CORS (see setCORSHeaders).
 func NewHandler(backend string, maxRequestBodySize int64, readTimeout, writeTimeout time.Duration, logger adapters.Logger, authenticator adapters.Authenticator, authorizer adapters.Authorizer, allowedOrigins []string) (*Handler, error) {
 	if !objstore.IsInitialized() {
 		return nil, objstore.ErrNotInitialized
@@ -105,17 +100,7 @@ func (h *Handler) keyRef(key string) string {
 	return h.backend + ":" + key
 }
 
-// setCORSHeaders applies CORS response headers based on the handler's allowed
-// origins configuration.
-//
-//   - When allowedOrigins is empty/nil (or ["*"]), all origins are allowed via
-//     "Access-Control-Allow-Origin: *" and credentials are NOT sent, since the
-//     wildcard origin combined with credentials is invalid per the Fetch
-//     standard.
-//   - When allowedOrigins is a specific allowlist, the request's Origin header
-//     is echoed back (with "Vary: Origin") only if it is allowlisted, and in
-//     that case "Access-Control-Allow-Credentials: true" is also sent. A
-//     non-allowlisted Origin receives no "Access-Control-Allow-Origin" header.
+// setCORSHeaders allows every origin without credentials when allowedOrigins is empty or ["*"], else echoes an allowlisted Origin with credentials.
 func (h *Handler) setCORSHeaders(w http.ResponseWriter, r *http.Request) {
 	header := w.Header()
 
@@ -299,12 +284,7 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 	return rw.ResponseWriter.Write(b)
 }
 
-// writeBackendError classifies a backend error through the shared taxonomy
-// (common.Classify) and writes the matching HTTP status, so QUIC reports the
-// same class of failure as the other transports. When the request context has
-// already expired, the context error takes precedence so backend errors that
-// do not wrap it still map to the canonical timeout (504) or cancellation
-// (499) status instead of masquerading as another failure class.
+// writeBackendError writes the status common.Classify gives err; an expired request context maps to 504 or 499 first.
 func writeBackendError(ctx context.Context, w http.ResponseWriter, err error) {
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		err = ctxErr
@@ -516,8 +496,7 @@ func (h *Handler) handleHead(w http.ResponseWriter, r *http.Request, key string)
 	w.WriteHeader(http.StatusOK)
 }
 
-// metadataResponse mirrors the REST ObjectResponse JSON shape so that QUIC
-// metadata consumers receive the same schema as REST/gRPC/MCP/Unix.
+// metadataResponse mirrors the REST ObjectResponse JSON shape.
 type metadataResponse struct {
 	Key         string            `json:"key"`
 	Size        int64             `json:"size"`
@@ -527,10 +506,7 @@ type metadataResponse struct {
 	Metadata    map[string]string `json:"metadata,omitempty"`
 }
 
-// handleExistsHead handles HEAD /exists/<key> requests. Per the OpenAPI
-// contract (and matching the REST route) existence is signaled by the status
-// code alone: 200 when present, 404 when absent, no body. The legacy
-// GET /objects/<key>?exists= query variant is preserved in handleObject.
+// handleExistsHead answers HEAD /exists/<key> with 200 or 404 and no body.
 func (h *Handler) handleExistsHead(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodHead {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -556,9 +532,7 @@ func (h *Handler) handleExistsHead(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleGetMetadata handles GET /metadata/<key> requests, returning object
-// metadata as a JSON body. This mirrors the REST GET /metadata/*key route,
-// keeping the existing HEAD /objects/<key> behavior unchanged.
+// handleGetMetadata answers GET /metadata/<key> with the metadata as JSON.
 func (h *Handler) handleGetMetadata(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

@@ -66,7 +66,7 @@ func TestMapError_Various(t *testing.T) {
 			err:      context.Canceled,
 			wantCode: codes.Canceled,
 		},
-		// Bare strings no longer classify: producers must wrap sentinels.
+		// Bare strings do not classify: producers must wrap sentinels.
 		{
 			name:     "string only not found",
 			err:      errors.New("not found"),
@@ -77,10 +77,7 @@ func TestMapError_Various(t *testing.T) {
 			err:      errors.New("some random error"),
 			wantCode: codes.Internal,
 		},
-		// Wrapped sentinel cases — the production scenario that was previously broken.
-		// Backends use fmt.Errorf("%w: %s", common.ErrKeyNotFound, key), producing a
-		// message like "key not found: mykey" that never matched the old exact-string
-		// switch, causing these to fall through to codes.Internal.
+		// Wrapped sentinels (fmt.Errorf("%w: %s", common.ErrKeyNotFound, key)) must map to their codes, not codes.Internal.
 		{
 			name:     "wrapped ErrKeyNotFound",
 			err:      fmt.Errorf("%w: %s", common.ErrKeyNotFound, "mykey"),

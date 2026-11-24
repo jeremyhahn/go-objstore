@@ -56,7 +56,7 @@ func TestTaxonomyMatrix(t *testing.T) {
 		{"deadline", context.DeadlineExceeded, http.StatusGatewayTimeout, codes.DeadlineExceeded, jsonrpc.CodeInternal},
 		{"unclassified", fmt.Errorf("disk on fire"), http.StatusInternalServerError, codes.Internal, jsonrpc.CodeInternal},
 		{"raw fs not exist", fmt.Errorf("open: %w", fs.ErrNotExist), http.StatusNotFound, codes.NotFound, jsonrpc.CodeNotFound},
-		// Bare strings no longer classify: producers must wrap sentinels.
+		// Bare strings do not classify: producers must wrap sentinels.
 		{"string only not found", fmt.Errorf("not found"), http.StatusInternalServerError, codes.Internal, jsonrpc.CodeInternal},
 	}
 

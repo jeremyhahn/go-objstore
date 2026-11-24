@@ -1,7 +1,4 @@
-// Command objstore-backup is the go-objstore backup agent. It backs
-// directories up to a repository on an objstore server, encrypted,
-// deduplicated and incremental, and restores, verifies and prunes that
-// repository.
+// Command objstore-backup backs directories up to an objstore repository (encrypted, deduplicated, incremental) and restores, verifies and prunes it.
 package main
 
 import (
@@ -128,10 +125,7 @@ func (e *env) usageError(name string, err error) int {
 	return exitUsage
 }
 
-// fail prints err, a typed error from the library or this command, and
-// returns exitFailure. The library's errors name operations and objects and
-// never carry key material or file content; this command's name the source
-// of a secret and never its bytes.
+// fail prints err, which never carries key material or file content, and returns exitFailure.
 func (e *env) fail(name string, err error) int {
 	msg := strings.ReplaceAll(err.Error(), "\n", "\n  ")
 	fmt.Fprintf(e.stderr, "objstore-backup %s: %s\n", name, msg)

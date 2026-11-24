@@ -16,10 +16,7 @@ const (
 	aceDenied  = 1 // ACCESS_DENIED_ACE_TYPE
 )
 
-// aclWriteRights are the rights that let a principal add, change or remove
-// a file in a directory, change a file, or take either over: write data,
-// append data, write extended attributes, delete child, write attributes,
-// delete, write DACL, write owner, and the generic all and write rights.
+// aclWriteRights are the rights that let a principal change or take over a file or directory.
 const aclWriteRights uint32 = 0x2 | 0x4 | 0x10 | 0x40 | 0x100 |
 	0x10000 | 0x40000 | 0x80000 | 0x10000000 | 0x40000000
 
@@ -31,14 +28,7 @@ type aclEntry struct {
 	sid  string
 }
 
-// checkACL decides whether a Windows snapshot directory, or a file in it,
-// is private to SYSTEM, Administrators and user, the running user's SID:
-// owner must be one of them, and no ACE may grant a write right to anyone
-// else. Inherit-only ACEs count, since they reach the files made later.
-// Denied ACEs only take rights away; an ACE of a type other than allowed or
-// denied that grants a write right is refused, its SID unread. hasDACL is
-// false for a missing (NULL) DACL, which grants everyone everything. It
-// returns nil or the reason for refusal.
+// checkACL requires owner and every write-granting ACE (inherit-only included) to be SYSTEM, Administrators or user; a NULL DACL is refused.
 func checkACL(owner string, dacl []aclEntry, hasDACL bool, user string) error {
 	trusted := func(sid string) bool { return sid == sidSystem || sid == sidAdmins || sid == user }
 	if !trusted(owner) {

@@ -60,10 +60,7 @@ func (g *GCS) GetWithContext(ctx context.Context, key string) (io.ReadCloser, er
 	return r, nil
 }
 
-// GetMetadata retrieves only the metadata for an object.
-// It performs a best-effort Attrs call to populate Size and ContentType;
-// callers are guaranteed a non-nil *common.Metadata on success. A missing key
-// returns an error that wraps common.ErrKeyNotFound.
+// GetMetadata returns an object's metadata (best-effort Size and ContentType); a missing key wraps common.ErrKeyNotFound.
 func (g *GCS) GetMetadata(ctx context.Context, key string) (*common.Metadata, error) {
 	if err := common.ValidateKey(key); err != nil {
 		return nil, err
@@ -90,11 +87,7 @@ func (g *GCS) GetMetadata(ctx context.Context, key string) (*common.Metadata, er
 	return meta, nil
 }
 
-// UpdateMetadata updates the metadata for an existing object.
-// Matching the local and S3 backends, the object's metadata is replaced
-// rather than merged: custom metadata, content type and content encoding not
-// present in the supplied metadata are cleared. A missing object yields an
-// error wrapping common.ErrKeyNotFound.
+// UpdateMetadata replaces an object's metadata; a missing object wraps common.ErrKeyNotFound.
 func (g *GCS) UpdateMetadata(ctx context.Context, key string, metadata *common.Metadata) error {
 	if err := common.ValidateKey(key); err != nil {
 		return err

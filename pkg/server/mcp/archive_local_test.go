@@ -66,9 +66,7 @@ func TestArchiveToolRefusesClientLocalDestinationByDefault(t *testing.T) {
 	}
 }
 
-// TestArchiveToolRefusalMapsToInvalidParams checks that the refusal reaches an
-// MCP client as the JSON-RPC invalid-params code: handleToolsCall maps a tool
-// error through servererrors.JSONRPCError (#236).
+// TestArchiveToolRefusalMapsToInvalidParams: the refusal reaches the client as JSON-RPC invalid params.
 func TestArchiveToolRefusalMapsToInvalidParams(t *testing.T) {
 	storage := local.New()
 	if err := storage.Configure(map[string]string{"path": t.TempDir()}, common.Credentials{}); err != nil {

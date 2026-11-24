@@ -58,14 +58,9 @@ type TLSConfig struct {
 	// ServerCertPEM is the server certificate in PEM format (alternative to ServerCertFile).
 	ServerCertPEM []byte
 
-	// ServerKeyPEM is the server private key in PEM format (alternative to ServerKeyFile).
+	// ServerKeyPEM is the server private key in PEM format.
 	//
-	// Deprecated: ServerKeyPEM holds private key material in ordinary heap
-	// memory for the lifetime of the TLSConfig — pageable to swap, visible in
-	// a core dump, and never zeroized. Use WithServerKeyEnclave, which keeps
-	// the key in a locked, zeroized memory enclave ([enclave.ByteAccess]). This field
-	// remains for compatibility and is removed in the next major version;
-	// when both are set, the enclave wins.
+	// Deprecated: the key sits in ordinary heap memory; use WithServerKeyEnclave. When both are set, the enclave wins.
 	ServerKeyPEM []byte
 
 	// serverKeyEnclave holds the server private key in locked, zeroized
@@ -109,22 +104,7 @@ func NewTLSConfig() *TLSConfig {
 	}
 }
 
-// selectServerKeySource clears every server certificate and private-key source
-// this config holds, so that choosing one source cannot leave another attached
-// for Build to prefer. Build ranks the enclave first, so a stale enclave left
-// behind by a later WithServerCertFiles or WithServerCertPEM would silently
-// keep serving the superseded key — a certificate rotation that appears to
-// have happened and has not.
-//
-// Any enclave being discarded is destroyed rather than merely dropped, and the
-// deprecated ServerKeyPEM is zeroized, so replacing a source removes the key
-// material it held instead of leaving it resident.
-//
-// keepEnclave names an enclave the caller is about to install, which must not
-// be destroyed on the way through. ServerKeyPEM needs no such exemption: the
-// config always holds its own copy of the key (see WithServerCertPEM), so
-// wiping it can never reach memory the caller still owns or is about to
-// install.
+// selectServerKeySource clears every key source except keepEnclave, destroying a discarded enclave and zeroizing ServerKeyPEM, so a rotation never serves a superseded key.
 func (c *TLSConfig) selectServerKeySource(keepEnclave enclave.ByteAccess) {
 	if c.serverKeyEnclave != nil && c.serverKeyEnclave != keepEnclave {
 		c.releaseErr = errors.Join(c.releaseErr, c.serverKeyEnclave.Destroy())
@@ -139,11 +119,7 @@ func (c *TLSConfig) selectServerKeySource(keepEnclave enclave.ByteAccess) {
 	c.ServerKeyFile = ""
 }
 
-// WithServerCertFiles sets the server certificate and key from files.
-//
-// It selects the file source: any previously configured enclave is destroyed
-// and any deprecated ServerKeyPEM is zeroized, so Build uses the files rather
-// than a superseded key.
+// WithServerCertFiles selects the file source, destroying any enclave and zeroizing ServerKeyPEM.
 func (c *TLSConfig) WithServerCertFiles(certFile, keyFile string) *TLSConfig {
 	c.Mode = TLSModeServer
 	c.selectServerKeySource(nil)
@@ -152,23 +128,13 @@ func (c *TLSConfig) WithServerCertFiles(certFile, keyFile string) *TLSConfig {
 	return c
 }
 
-// WithServerCertPEM sets the server certificate and key from PEM data.
+// WithServerCertPEM selects the PEM source, destroying any enclave and clearing file paths.
 //
-// It selects the PEM source: any previously configured enclave is destroyed
-// and any previously configured file paths are cleared, so Build uses keyPEM
-// rather than a superseded key.
-//
-// Deprecated: keyPEM is retained in ordinary heap memory. Use
-// WithServerKeyEnclave, which takes ownership of the key bytes and holds them
-// in a locked, zeroized memory enclave ([enclave.ByteAccess]). This method remains for
-// compatibility and is removed in the next major version.
+// Deprecated: keyPEM stays in heap memory; use WithServerKeyEnclave.
 func (c *TLSConfig) WithServerCertPEM(certPEM, keyPEM []byte) *TLSConfig {
 	c.Mode = TLSModeServer
 
-	// Copy the key before clearing the previous source. The config owns its
-	// copy, so replacing or destroying it wipes only memory this config
-	// allocated — never the caller's array, and never a replacement that
-	// happens to alias the value being replaced.
+	// Copy the key first: the config wipes only memory it allocated.
 	key := append([]byte(nil), keyPEM...)
 
 	c.selectServerKeySource(nil)
@@ -177,25 +143,7 @@ func (c *TLSConfig) WithServerCertPEM(certPEM, keyPEM []byte) *TLSConfig {
 	return c
 }
 
-// WithServerKeyEnclave sets the server certificate from PEM data and the
-// server private key from a locked, zeroized memory enclave.
-//
-// This is the protected replacement for WithServerCertPEM. The certificate is
-// public and stays a plain []byte; only the private key is enclaved. The
-// TLSConfig TAKES OWNERSHIP of keyEnclave — call [TLSConfig.Destroy] when the
-// configuration is no longer needed to zeroize it. Any previously set
-// enclave is destroyed here.
-//
-// Build reads the key out of the enclave for exactly as long as
-// crypto/tls needs to parse the key pair.
-//
-// A caller migrating off the deprecated path already has a complete private
-// key in ServerKeyPEM, so this ZEROIZES that field and clears it. Build merely
-// ignoring the old copy would leave the key resident in ordinary heap memory
-// for the config's lifetime, which is the thing the protected path exists to
-// prevent — selecting the enclave has to remove the plain copy, not just stop
-// reading it. Only the config's own copy is wiped; the caller's slice is left
-// alone, and a caller that still holds one is responsible for wiping it.
+// WithServerKeyEnclave sets the certificate from PEM and takes ownership of the key enclave (call Destroy); it destroys any previous enclave and zeroizes the config's ServerKeyPEM copy.
 func (c *TLSConfig) WithServerKeyEnclave(certPEM []byte, keyEnclave enclave.ByteAccess) *TLSConfig {
 	c.Mode = TLSModeServer
 	c.selectServerKeySource(keyEnclave)
@@ -211,10 +159,7 @@ func (c *TLSConfig) ServerKeyEnclave() enclave.ByteAccess {
 	return c.serverKeyEnclave
 }
 
-// Destroy zeroizes the private key material this configuration owns. It is
-// idempotent and safe to defer. The deprecated ServerKeyPEM field is wiped
-// too, so that a caller migrating away from it does not leave the old copy
-// behind; the certificate and CA fields are public data and are left alone.
+// Destroy zeroizes the key material this configuration owns, ServerKeyPEM included; idempotent.
 func (c *TLSConfig) Destroy() error {
 	err := c.releaseErr
 	if c.serverKeyEnclave != nil {
@@ -277,12 +222,7 @@ func (c *TLSConfig) Build() (*tls.Config, error) {
 
 	switch {
 	case c.serverKeyEnclave != nil:
-		// Once an enclave has been selected for the private key it is the ONLY
-		// source. A destroyed enclave — it can be destroyed independently of
-		// this call, e.g. by a rotation or a teardown elsewhere — reports
-		// itself rather than falling back to the deprecated ServerKeyPEM, which
-		// would serve TLS with stale, unprotected key material after the
-		// protected path was chosen.
+		// A selected enclave is the only key source; a destroyed one is an error, never a fallback to ServerKeyPEM.
 		if len(c.ServerCertPEM) == 0 {
 			return nil, ErrInvalidCertificate
 		}
@@ -394,11 +334,7 @@ func keyPairFromEnclave(certPEM []byte, keyEnclave enclave.ByteAccess) (tls.Cert
 	return cert, err
 }
 
-// loadKeyPairProtected is the protected replacement for tls.LoadX509KeyPair.
-// The standard library reads the key file into an ordinary heap buffer that is
-// never wiped; this reads it into a memory enclave instead, so the PEM-encoded
-// key exists in unprotected memory for no longer than the read itself and is
-// zeroized as soon as the pair is parsed.
+// loadKeyPairProtected reads the key file into an enclave and zeroizes it once the pair is parsed.
 func loadKeyPairProtected(certFile, keyFile string) (cert tls.Certificate, err error) {
 	certPEM, err := os.ReadFile(certFile) // #nosec G304 -- TLS certificate paths are controlled by application configuration
 	if err != nil {

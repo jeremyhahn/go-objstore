@@ -33,20 +33,7 @@ const configKey = "config"
 // field it sets and defaulting to that field's current value.
 type BindFunc func(fs *flag.FlagSet, c *Config)
 
-// Load resolves a binary's configuration from args and the process
-// environment with the precedence flags > environment > file > defaults.
-//
-// defaults is the defaults layer. The YAML file named by -config (or, when
-// that flag is not given, OBJSTORE_CONFIG) is optional; when named it must
-// exist and may only contain known keys. Environment variables are
-// OBJSTORE_<KEY>. A flag overrides the lower layers only when it was set on
-// the command line, so a flag's default never masks the file or environment.
-// The result is validated before it is returned.
-//
-// Errors are typed: *FlagError (command line), *ConfigFileError (file),
-// *DecodeError (unknown key or mistyped value) and joined
-// *InvalidSettingError values (validation). flag.ErrHelp is returned
-// unwrapped when -h or -help is given.
+// Load resolves and validates a binary's configuration (flags > env > file > defaults); errors are *FlagError, *ConfigFileError, *DecodeError or joined *InvalidSettingError, and flag.ErrHelp for -h.
 func Load(name string, args []string, defaults Config, bind BindFunc) (*Config, error) {
 	// Parse the command line into a scratch copy only to learn which flags
 	// were set and to what.

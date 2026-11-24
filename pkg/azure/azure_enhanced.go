@@ -91,11 +91,7 @@ func (a *Azure) GetMetadata(ctx context.Context, key string) (*common.Metadata, 
 	return metadata, nil
 }
 
-// UpdateMetadata updates the metadata for an existing object.
-// Matching the local and S3 backends, the object's metadata is replaced
-// rather than merged: custom metadata and HTTP headers not present in the
-// supplied metadata are cleared. A missing blob yields an error wrapping
-// common.ErrKeyNotFound.
+// UpdateMetadata replaces an object's metadata; a missing blob wraps common.ErrKeyNotFound.
 func (a *Azure) UpdateMetadata(ctx context.Context, key string, metadata *common.Metadata) error {
 	if err := common.ValidateKey(key); err != nil {
 		return err

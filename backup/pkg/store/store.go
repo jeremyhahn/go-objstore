@@ -1,10 +1,4 @@
-// Package store is the backup repository's storage seam: the few operations a
-// repository needs on the immutable objects it holds.
-//
-// Objects are put once. The backup identity never deletes or overwrites, so a
-// repository can live in a WORM bucket: a Put of a name that already exists
-// fails with ErrExists and leaves the existing object as it was. Removing
-// objects is a separate capability, PruneStore, that only prune holds.
+// Package store is the repository's storage seam: put-once objects (ErrExists on a second put), with removal only through PruneStore.
 package store
 
 import (

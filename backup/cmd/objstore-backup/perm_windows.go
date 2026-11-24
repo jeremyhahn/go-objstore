@@ -41,9 +41,7 @@ var broadSIDs = []windows.WELL_KNOWN_SID_TYPE{
 	windows.WinAnonymousSid,
 }
 
-// aclRestricted reports whether the open file's DACL grants none of
-// Everyone, Authenticated Users, Users, Guests or Anonymous the access a
-// names. A file with no DACL grants everyone everything.
+// aclRestricted reports whether the DACL grants none of the broad groups the access a names; no DACL grants everything.
 func aclRestricted(f *os.File, a access) (bool, error) {
 	sd, err := windows.GetSecurityInfo(windows.Handle(f.Fd()), windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
 	if err != nil {

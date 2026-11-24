@@ -98,13 +98,7 @@ func buildOutgoingMD(config *ClientConfig) metadata.MD {
 	return md
 }
 
-// wrapGRPCError converts a gRPC transport error into the SDK error model:
-// canonical status codes are mapped to the matching SDK sentinel
-// (codes.InvalidArgument -> ErrInvalidArgument, codes.Unauthenticated ->
-// ErrUnauthenticated, codes.PermissionDenied -> ErrPermissionDenied,
-// codes.NotFound -> ErrObjectNotFound, codes.AlreadyExists ->
-// ErrAlreadyExists, codes.ResourceExhausted -> ErrRateLimited) while the
-// original status error stays in the chain for status.Code inspection.
+// wrapGRPCError maps canonical gRPC status codes to the SDK sentinels and keeps the status error in the chain.
 func wrapGRPCError(op string, err error) error {
 	var sentinel error
 	switch status.Code(err) {
@@ -748,14 +742,7 @@ func (c *GRPCClient) GetStream(ctx context.Context, key string) (io.ReadCloser, 
 // smallest receive limit the server accepts (1 MiB).
 const grpcPutChunkSize = 1<<20 - 1<<10
 
-// PutStream stores an object from an io.Reader over the PutStream RPC: a
-// header message with key and metadata, then chunks of grpcPutChunkSize read
-// from r, so only one chunk is held in memory and the object may exceed the
-// server's message size limit. size is advisory and may be -1. A read error
-// or a cancelled ctx aborts the stream and the server stores nothing. The
-// call is not retried, since r cannot be replayed. Against a server without
-// PutStream (Unimplemented, detected before r is read) it reads r whole and
-// falls back to the unary Put.
+// PutStream streams r in grpcPutChunkSize chunks after a header; it is not retried, and falls back to unary Put when the server lacks PutStream.
 func (c *GRPCClient) PutStream(ctx context.Context, key string, r io.Reader, size int64, meta *Metadata) (*PutResult, error) {
 	if err := validateKey(key); err != nil {
 		return nil, err
@@ -830,10 +817,7 @@ func (c *GRPCClient) PutStream(ctx context.Context, key string, r io.Reader, siz
 	}, nil
 }
 
-// fillChunk reads from r until buf is full or r returns an error. Only
-// io.EOF ends the data: it is returned with the bytes read before it. Any
-// other error, io.ErrUnexpectedEOF from the source included, is returned
-// as is, so the caller aborts the put instead of storing a short object.
+// fillChunk reads until buf is full; only io.EOF ends the data, any other error aborts the put.
 func fillChunk(r io.Reader, buf []byte) (int, error) {
 	n := 0
 	for n < len(buf) {

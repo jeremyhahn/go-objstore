@@ -18,12 +18,7 @@ services:
       - FLOCI_SERVICES_MSK_ENABLED=false
       - FLOCI_SERVICES_OPENSEARCH_ENABLED=false
       - FLOCI_SERVICES_CODEBUILD_ENABLED=false
-    # Ephemeral host port. Nothing outside the compose network uses it -- the
-    # test service reaches Floci by service name and the healthcheck runs inside
-    # the container -- so publishing it on a fixed host port would only invite a
-    # collision on a runner that runs jobs concurrently. Docker picks a free
-    # port instead; `docker compose port floci 4566` reports it when a human
-    # wants to look.
+    # Ephemeral host port: only the compose network uses Floci.
     ports:
       - "4566"
     # Floci's documented health endpoint, the same probe its image ships.
@@ -53,13 +48,7 @@ services:
       - S3_ENDPOINT=http://floci:4566
     working_dir: /app
 
-# The go mod download inside each build resolves the internal first-party
-# module go-enclave from Gitea via an optional BuildKit secret carrying the
-# read-only module token (conventions/dependency-resolution.md §6). The file is
-# supplied by the caller through GOMODAUTH_ENV — the CI integration-test job
-# stages it under RUNNER_TEMP, outside the build context. When GOMODAUTH_ENV is
-# unset it defaults to /dev/null (empty secret) and the build resolves from the
-# public proxy.
+# The optional gomodauth secret (GOMODAUTH_ENV, default /dev/null) lets the builds resolve the private go-enclave module.
 secrets:
   gomodauth:
     file: ${GOMODAUTH_ENV:-/dev/null}

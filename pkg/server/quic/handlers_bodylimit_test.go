@@ -25,16 +25,7 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/local"
 )
 
-// TestHandlePutNoContentLengthIsBounded verifies that a PUT request which does
-// NOT advertise a Content-Length (ContentLength == -1, e.g. chunked / unknown
-// length transfers) but sends a body larger than the configured limit is still
-// bounded by the io.LimitReader in handlePut.
-//
-// The Content-Length pre-check (r.ContentLength > maxRequestBodySize) cannot fire
-// for an unknown length, so the LimitReader is the only safeguard against reading
-// unbounded memory. The documented and verified safe behavior here is that the
-// server accepts the request (201 Created) but stores ONLY the first
-// maxRequestBodySize bytes, never reading the body unbounded.
+// TestHandlePutNoContentLengthIsBounded: without Content-Length the LimitReader stores only maxRequestBodySize bytes (201).
 func TestHandlePutNoContentLengthIsBounded(t *testing.T) {
 	const maxBody int64 = 64
 

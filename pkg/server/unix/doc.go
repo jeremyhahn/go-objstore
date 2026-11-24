@@ -11,8 +11,5 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package unix implements the go-objstore server over a Unix domain socket.
-//
-// It speaks newline-delimited JSON-RPC, with optional peer-credential
-// authentication and bounded concurrent-connection handling.
+// Package unix is the go-objstore server over a Unix socket, speaking newline-delimited JSON-RPC.
 package unix

@@ -282,10 +282,7 @@ func (cl *JSONLChangeLog) rotate() error {
 	return nil
 }
 
-// rewriteFile rewrites the entire file with the given events atomically
-// (must be called with mutex held). It writes to a sibling temp file, fsyncs
-// it, renames it over the log file, then reopens the log file for appending.
-// A crash between write and rename leaves the original file intact.
+// rewriteFile atomically replaces the log with events (temp file, fsync, rename) and reopens it for append; call with the mutex held.
 func (cl *JSONLChangeLog) rewriteFile(events []ChangeEvent) error {
 	dir := filepath.Dir(cl.filePath)
 	tmp, err := os.CreateTemp(dir, ".changelog-tmp-*")

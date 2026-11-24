@@ -22,10 +22,7 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 )
 
-// RequestIDHTTPMiddleware is the net/http counterpart of RequestIDMiddleware,
-// used by transports without gin (QUIC, MCP HTTP). Inbound X-Request-ID values
-// are sanitized; invalid or absent values are replaced with a fresh ID. The ID
-// is stored in the request context and echoed in the response header.
+// RequestIDHTTPMiddleware sanitizes or generates X-Request-ID, stores it in the context and echoes it, for transports without gin.
 func RequestIDHTTPMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestID := sanitizeRequestID(r.Header.Get(RequestIDHeader))

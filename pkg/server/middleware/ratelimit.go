@@ -65,10 +65,7 @@ const idleClientTTL = 5 * time.Minute
 // evictInterval controls how often the sweep runs.
 const evictInterval = idleClientTTL
 
-// RateLimiter is a stoppable rate limiter shared across transports. Create one
-// per server with NewRateLimiter, attach it via GinMiddleware, HTTPMiddleware,
-// UnaryInterceptor, or StreamInterceptor, and call Stop during server shutdown
-// to terminate the background eviction goroutine.
+// RateLimiter is a shared, stoppable limiter; call Stop at shutdown to end its eviction goroutine.
 type RateLimiter struct {
 	config   *RateLimitConfig
 	global   *rate.Limiter
@@ -208,10 +205,7 @@ func (l *RateLimiter) GinMiddleware() gin.HandlerFunc {
 	}
 }
 
-// grpcClientKey derives the rate-limit key for a gRPC request. When per-IP
-// limiting is enabled, the peer address host identifies the client; otherwise
-// a single global key is used. Falls back to the global key when the peer is
-// unavailable (e.g. in-process transports).
+// grpcClientKey keys by peer host when per-IP limiting is on, else (or without a peer) the global key.
 func grpcClientKey(ctx context.Context, perIP bool) string {
 	if !perIP {
 		return "global"

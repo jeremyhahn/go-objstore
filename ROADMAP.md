@@ -1,7 +1,7 @@
 # go-objstore roadmap
 
 > **Status: REFERENCE** · Scope: go-objstore · Last verified: 2026-10-27
-> An as-built plan. Gitea issues are the backlog; this orders them.
+> An as-built plan. The issues are the backlog; this orders them.
 
 ## Mission
 
@@ -11,7 +11,7 @@ Its only first-party dependency is go-enclave.
 
 ## Milestones
 
-- [Dev complete](../../milestone/5) — release candidate; tagged only after go-trusted-platform and every lower library are dev complete, `-alpha` until then — projected date set by the department plan; open release item: public release readiness, [#51](../../issues/51), needs info
+- [Dev complete](../../milestone/5) — release candidate; tagged only after go-trusted-platform and every lower library are dev complete, `-alpha` until then; open release item: public release readiness, [#51](../../issues/51), needs info
 
 ## Complete
 
@@ -44,7 +44,7 @@ None.
 
 ## Later
 
-- **qrdb-storage-provider** — go-objstore backends serve as a go-qrdb backend storage provider, configured per backend by go-quicbaas; waits on a Software-seated lane (P2) — [docs/architecture](docs/architecture/storage-layer.md) — open
+- **qrdb-storage-provider** — go-objstore backends serve as a go-qrdb backend storage provider, configured per backend by go-quicbaas (P2) — [docs/architecture](docs/architecture/storage-layer.md) — open
 
 ## Future
 

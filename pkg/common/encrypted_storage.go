@@ -45,14 +45,7 @@ type encryptedStorage struct {
 	defaultKeyID     string
 }
 
-// NewEncryptedStorage creates a new encrypted storage wrapper.
-// The underlying storage backend will store encrypted data.
-// The encrypterFactory provides encryption/decryption operations.
-//
-// The wrapper encrypts each object as one stream, and separately encrypted
-// parts do not join into such a stream. It therefore offers neither
-// MultipartUploader nor BucketManager, whatever the wrapped storage offers,
-// and the facade reports ErrNotSupported for a wrapped backend.
+// NewEncryptedStorage wraps storage with per-object stream encryption; it offers neither MultipartUploader nor BucketManager.
 func NewEncryptedStorage(underlying Storage, encrypterFactory EncrypterFactory) Storage {
 	return &encryptedStorage{
 		underlying:       underlying,
@@ -74,8 +67,7 @@ func (e *encryptedStorage) Put(key string, data io.Reader) error {
 
 // PutWithContext encrypts data and stores it in the underlying storage with context support
 func (e *encryptedStorage) PutWithContext(ctx context.Context, key string, data io.Reader) error {
-	// Store through the metadata path so the key ID is recorded (#226):
-	// without it the object only decrypts while the default key is unchanged.
+	// Store through the metadata path so the key ID is recorded and the object decrypts after the default key changes.
 	return e.putEncrypted(ctx, key, data, &Metadata{})
 }
 
@@ -169,13 +161,7 @@ func (e *encryptedStorage) GetMetadata(ctx context.Context, key string) (*Metada
 	return e.underlying.GetMetadata(ctx, key)
 }
 
-// UpdateMetadata updates metadata for an object (metadata is not encrypted)
-// UpdateMetadata replaces the object's metadata but keeps every
-// "encryption_*" entry of the stored metadata: backends replace the whole
-// record, so without this an update would drop encryption_key_id and the
-// object would no longer decrypt after the default key changes. Caller
-// supplied "encryption_*" entries are ignored. The caller's metadata is not
-// modified.
+// UpdateMetadata replaces the metadata but keeps the stored "encryption_*" entries, ignoring caller-supplied ones; the caller's map is not modified.
 func (e *encryptedStorage) UpdateMetadata(ctx context.Context, key string, metadata *Metadata) error {
 	if metadata == nil {
 		return e.underlying.UpdateMetadata(ctx, key, metadata)

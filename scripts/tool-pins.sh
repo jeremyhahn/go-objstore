@@ -1,18 +1,5 @@
 # shellcheck shell=sh disable=SC2034
-# tool-pins.sh — the pins of the analysis tools the devcontainer's toolchain
-# image carries. Sourced, never run.
-#
-# Read by the devcontainer's tools stage (scripts/install-tools.sh sources it)
-# and by the Makefile, which feeds the file into the toolchain image's content
-# tag. NAME=value lines only, comments on their own lines: the file is both
-# make and sh, and make would keep a trailing comment's leading space in the
-# value.
-#
-# Every pin tracks the tool's latest upstream release; a pin exists only so a
-# build is reproducible. Never @latest, never an older version than upstream's.
-#
-# Raise with `go list -m github.com/golangci/golangci-lint/v2@latest`, and the
-# Makefile's GOLANGCI_LINT_VERSION with it.
+# tool-pins.sh: NAME=value pins of the toolchain image's analysis tools, sourced by sh and make; each tracks the latest upstream release.
 GOLANGCI_VERSION=v2.14.0
 # Raise with `go list -m github.com/securego/gosec/v2@latest`.
 GOSEC_VERSION=v2.29.0

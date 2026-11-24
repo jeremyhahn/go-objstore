@@ -189,13 +189,7 @@ func (a *Azure) CreateBucket(ctx context.Context, name string) error {
 	return bucketError(acc.CreateContainer(ctx, name), name)
 }
 
-// DeleteBucket removes an empty container. The service itself deletes a
-// container together with its blobs, so the container is listed first and
-// refused when it holds one; staged multipart state counts as content.
-//
-// The check and the delete are two calls: a blob written in between is
-// deleted with the container. A caller that cannot allow that must stop its
-// writers before it deletes the bucket.
+// DeleteBucket refuses a container holding a blob or multipart state; a blob written between the check and the delete is deleted with it.
 func (a *Azure) DeleteBucket(ctx context.Context, name string) error {
 	if err := common.ValidateBucketName(name); err != nil {
 		return err

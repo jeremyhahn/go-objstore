@@ -1,16 +1,4 @@
-//! Streaming helpers for `get_stream` and `put_stream` operations.
-//!
-//! Each protocol client gains two extension methods:
-//!
-//! - `get_stream` – returns the raw bytes of an object as an async byte
-//!   stream ([`bytes::Bytes`] chunks from reqwest / gRPC / QUIC).
-//! - `put_stream` – accepts a [`futures::Stream`] of [`bytes::Bytes`]
-//!   chunks and stores the concatenated payload under `key`.  The REST
-//!   client streams the chunks as a chunked-transfer-encoded request body;
-//!   gRPC and QUIC buffer the stream before sending.
-//!
-//! Unix and MCP clients do not have streaming variants; they buffer data
-//! in memory via their existing `put`/`get` methods.
+// ! `get_stream` and `put_stream` extensions; REST streams chunked, gRPC and QUIC buffer, Unix and MCP have none.
 
 use crate::error::{error_from_http_status, Error, Result};
 use crate::grpc_client::GrpcClient;
@@ -37,10 +25,7 @@ async fn collect_stream(
 // ── REST streaming ────────────────────────────────────────────────────────────
 
 impl RestClient {
-    /// Stream the bytes of an object from the REST server.
-    ///
-    /// Returns an async stream of [`Bytes`] chunks.  The HTTP response body
-    /// is streamed rather than buffered into a single allocation.
+    /// Stream an object's bytes from the REST server without buffering.
     pub async fn get_stream(
         &self,
         key: &str,
@@ -67,10 +52,7 @@ impl RestClient {
         Ok((stream, metadata))
     }
 
-    /// Upload a stream of bytes to the REST server under `key`.
-    ///
-    /// The stream is sent as a chunked-transfer-encoded request body, so the
-    /// payload is never buffered into a single contiguous allocation.
+    /// Upload a byte stream under `key` as a chunked request body.
     pub async fn put_stream(
         &self,
         key: &str,
@@ -85,22 +67,13 @@ impl RestClient {
 // ── gRPC streaming ────────────────────────────────────────────────────────────
 
 impl GrpcClient {
-    /// Stream the bytes of an object via the gRPC server-streaming `Get` RPC.
-    ///
-    /// The gRPC `Get` method is already defined as server-streaming in the
-    /// protobuf schema.  This wrapper collects the stream of chunks into a
-    /// single Bytes value so the caller receives a one-item stream.  True
-    /// progressive streaming is available by calling `get` directly and
-    /// reading the underlying tonic stream.
+    /// Collect the server-streaming gRPC `Get` into a one-item stream; call `get` for progressive reads.
     pub async fn get_stream(&self, key: String) -> Result<impl Stream<Item = Result<Bytes>>> {
         let (data, _meta) = self.get(key).await?;
         Ok(futures::stream::once(async move { Ok(data) }))
     }
 
-    /// Upload a stream of bytes via the gRPC `Put` RPC.
-    ///
-    /// The stream is fully buffered before sending because the generated
-    /// protobuf client uses a unary RPC for put.
+    /// Upload via the unary gRPC `Put`, buffering the stream first.
     pub async fn put_stream(
         &self,
         key: String,
@@ -114,22 +87,14 @@ impl GrpcClient {
 // ── QUIC streaming ────────────────────────────────────────────────────────────
 
 impl QuicClient {
-    /// Stream the bytes of an object from the QUIC/HTTP3 server.
-    ///
-    /// The response body is yielded as a single [`Bytes`] chunk after the
-    /// QUIC stream has been fully read.  True chunk-by-chunk streaming from
-    /// QUIC would require lower-level HTTP/3 framing; the buffered approach
-    /// keeps the interface consistent across transports.
+    /// Read an object over QUIC/HTTP3 as one buffered chunk.
     pub async fn get_stream(&self, key: &str) -> Result<impl Stream<Item = Result<Bytes>>> {
         let (data, _meta) = self.get(key).await?;
         let stream = futures::stream::once(async move { Ok(data) });
         Ok(stream)
     }
 
-    /// Upload a stream of bytes via QUIC/HTTP3.
-    ///
-    /// The stream is buffered before sending; see [`RestClient::put_stream`]
-    /// for the rationale.
+    /// Upload via QUIC/HTTP3, buffering the stream first.
     pub async fn put_stream(
         &self,
         key: &str,
@@ -140,11 +105,7 @@ impl QuicClient {
     }
 }
 
-// ── accessor shims ────────────────────────────────────────────────────────────
-//
-// The streaming methods need access to the private fields of `RestClient`
-// and `GrpcClient`.  We expose minimal accessor methods defined in the same
-// crate (the `pub(crate)` pattern), keeping the public API clean.
+// Crate-private accessors the streaming methods need.
 
 #[cfg(test)]
 mod tests {

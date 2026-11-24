@@ -32,11 +32,7 @@ import (
 // reliably rejected by net/http before the request is dispatched.
 const badURLBase = "http://\x00bad"
 
-// ---------------------------------------------------------------------------
-// REST – http.NewRequestWithContext error branches
-// (rest.go:67, 107, 157, 183, 222, 253, 284/289, 322/327, 354/359, 386,
-//  412, 464, 498, 519, 530, 545, 557, 571, 585, 602, 616, 638, 685)
-// ---------------------------------------------------------------------------
+// REST: http.NewRequestWithContext error branches.
 
 // restClientWithBadURL returns a RESTClient whose baseURL will cause every
 // http.NewRequestWithContext call to fail immediately.
@@ -148,16 +144,9 @@ func TestRESTClient_Health_NewRequestError(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// REST – empty body fallback error branches
-// (rest.go:96, 122, etc. — the `return fmt.Errorf("%w %d", ...)` line
-//  reached when body is empty on a non-2xx response)
-// ---------------------------------------------------------------------------
+// REST: empty-body error branches on non-2xx responses.
 
-// The existing error-without-body tests use http.StatusInternalServerError
-// without writing a body. However, some tests previously wrote a body so the
-// "with-body" branch got hit but not the empty-body branch. The tests below
-// explicitly confirm empty-body behaviour for each remaining method.
+// Each remaining method returns an error on a non-2xx response with an empty body.
 
 func TestRESTClient_Put_EmptyBodyError(t *testing.T) {
 	// StatusBadRequest with no body text
@@ -742,12 +731,7 @@ func TestGRPCClient_Get_FirstRecvError(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// QUIC – archive empty-body path (quic.go:365)
-// The Archive function has two "empty-body" branches (one at line 362 for the
-// Archive error and also possibly the marshal error, but json.Marshal doesn't
-// fail on map[string]string, so we target the HTTP error path).
-// ---------------------------------------------------------------------------
+// QUIC: Archive HTTP error with an empty body.
 
 func TestQUICClient_Archive_EmptyBodyError(t *testing.T) {
 	srv := newHTTP3TestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -962,13 +946,7 @@ func TestQUICClient_UpdateMetadata_EmptyBodyError(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// gRPC – Put write-error branch: the goroutine pw.Write failure (grpc.go:106)
-// is tested indirectly when the reader is closed mid-stream; the
-// mockStreamErrorGRPCServer already covers the pw.CloseWithError path in the
-// existing test, so we add a test that explicitly reads from the pipe after
-// the goroutine has closed it with an error to confirm the error propagates.
-// ---------------------------------------------------------------------------
+// gRPC Put: a write error on the closed pipe propagates to the reader.
 
 // TestGRPCClient_Get_PipeWriteError verifies that if stream.Recv returns EOF
 // immediately after the first chunk (i.e., zero additional data), the reader

@@ -1,7 +1,4 @@
-// Package restore rebuilds a snapshot's tree from a repository and verifies a
-// repository without writing files. Repository data is treated as untrusted:
-// every sealed object is opened and every chunk ID and file digest checked,
-// and nothing is written outside the target directory.
+// Package restore rebuilds and verifies snapshots, treating repository data as untrusted and never writing outside the target.
 package restore
 
 import (
@@ -37,15 +34,7 @@ type Stats struct {
 	Bytes int64
 }
 
-// Restore rebuilds snapshot id under the directory target, creating target
-// if it is missing. Files get their recorded permission bits and
-// modification times, and directories theirs once their entries are in
-// place; symlinks keep the times the system gives them.
-//
-// Each pack the snapshot uses is fetched once. File content is written to
-// temporary names in the target and moved to its final name only once every
-// file has passed its size and digest checks, so a failed check leaves no
-// file under a manifest name.
+// Restore rebuilds snapshot id under target with recorded modes and times; files land under their names only after every size and digest check passes.
 func Restore(ctx context.Context, r *repo.Repository, id seal.ID, target string, opts Options) (*Stats, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, newError("start", "", "", ErrCanceled, err)

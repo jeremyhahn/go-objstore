@@ -1,33 +1,4 @@
-# Nightly — the scheduled scan. NOT a home for demoted gates.
-#
-# What this file is for: catching drift that happens with NO push. A
-# vulnerability database updates daily, so a tree that was clean this morning
-# can be vulnerable tonight without a single commit. Nothing on the push path
-# can see that, because nothing on the push path runs.
-#
-# What this file is NOT for: parking a gate to buy queue position. A first pass
-# at ci-template v1.9 moved `fips` and `trivy` here for exactly that reason and
-# it was reverted the same night (the Company Agent's ruling 2026-08-21, decided
-# identically for go-signal an hour earlier). The template's nightly carve-out
-# is for jobs that are KNOWN-RED and cannot clear from inside the repo — a job
-# burning 90 runner-minutes to re-report a finding already written on an issue.
-# A job that PASSES carries signal, and devops.md §8 makes trivy blocking
-# outright.
-#
-# So both jobs are gates in ci.yml, in the expensive tier and in `ci-gate`.
-#
-#   * trivy ALSO runs here, and this is the one job where a scheduled copy
-#     earns its slot: the code has not changed, but the advisory data has.
-#   * fips runs here too, on schedule and workflow_dispatch (Software on #122,
-#     the template's placement). It stays a gate: ci.yml runs it on every push
-#     to main, on workflow_dispatch and on a PR labelled ci:full, and CI Gate
-#     fails when it should have run and did not pass. It is off the plain PR
-#     tier, which keeps the fast guard (make build compiles every package with
-#     GOFIPS140=latest), so this is the run that covers the tree on the
-#     nights between merges; ci.yml's own schedule run skips it.
-#
-# Adding a job here is a claim that it can go red WITHOUT a push. If it cannot,
-# it belongs in ci.yml or nowhere.
+# Scheduled scans that can go red without a push (advisory data changes); every job here is also a gate in ci.yml.
 
 name: Nightly
 
@@ -47,12 +18,7 @@ env:
   GO_VERSION: '1.27.3'
 
 jobs:
-  # Identical in scope to ci.yml's `fips` job — keep the two in step: the root
-  # module's unit suite and the backup suite in FIPS 140-3 only mode
-  # (GOFIPS140=latest GODEBUG=fips140=only, set by make test-fips), the
-  # coverage threshold included, in the toolchain image built at this commit
-  # (ci-standard.md §2). A red night means a non-approved algorithm is on a
-  # tested path; fix the call site, never the mode.
+  # Same scope as ci.yml's fips job: unit and backup suites in FIPS 140-3 only mode; fix the call site, never the mode.
   fips:
     name: FIPS 140-3 Tests
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
@@ -102,14 +68,7 @@ jobs:
         if: always()
         run: rm -f "$RUNNER_TEMP/gomodauth.env"
 
-  # Identical in scope to ci.yml's `trivy` job — keep the two in step. The only
-  # difference is what makes it fail: there, a finding a push introduced; here,
-  # a finding the advisory feed introduced.
-  #
-  # A red night is real and actionable. Do not silence it by widening
-  # skip-dirs; fix or record the finding, and remember the same scan gates
-  # every merge, so a nightly failure means the push path is about to block
-  # too.
+  # Same scope as ci.yml's trivy job; fails on a finding the advisory feed introduced.
   trivy:
     name: Trivy
     runs-on: ubuntu-latest
@@ -119,10 +78,7 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v6
 
-    # Two paths for one scan. trivy-action's setup step cannot authenticate to
-    # github.com from a Gitea runner and upload-sarif has no GHES-compatible
-    # endpoint there, so the action path is guarded on the server URL and Gitea
-    # runs the trivy CLI below.
+    # The action path runs on GitHub; other forges run the trivy CLI below.
     - name: Trivy scan (SARIF for code scanning)
       if: github.server_url == 'https://github.com'
       uses: aquasecurity/trivy-action@master
@@ -154,10 +110,7 @@ jobs:
         format: table
         skip-dirs: test,coverage,bin,**/vendor
 
-    # Retried with backoff: raw.githubusercontent.com intermittently answers a
-    # Gitea runner with transient HTTP errors (curl exit 22), which failed the
-    # whole job on a fetch that succeeds seconds later. One network blip must
-    # not read as a security finding.
+    # Retried with backoff: the raw content host returns transient HTTP errors.
     - name: Install Trivy CLI (Gitea)
       if: github.server_url != 'https://github.com'
       run: |

@@ -509,10 +509,7 @@ func TestUnixClient_RemovePolicy_EmptyID(t *testing.T) {
 	assert.Equal(t, ErrInvalidPolicyID, err)
 }
 
-// TestUnixClient_GetPolicies exercises get_policies, pinning the wire shape
-// (the unix server returns a BARE JSON array, not an enclosing object) and
-// the retention round trip: retention_seconds is preferred when present,
-// after_days*86400 is the fallback for older servers.
+// TestUnixClient_GetPolicies pins the bare-array wire shape and the retention_seconds / after_days fallback.
 func TestUnixClient_GetPolicies(t *testing.T) {
 	_, sockPath := newUnixTestServer(t, func(method string, _ json.RawMessage) (any, error) {
 		assert.Equal(t, "get_policies", method)

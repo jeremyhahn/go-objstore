@@ -25,44 +25,19 @@ import (
 // in the cursor key.
 const roundRobinStrategyName = "round_robin"
 
-// cursorKeyPrefix namespaces the round-robin cursor inside the
-// caller-supplied StateStore. The full key is
-// "pool/<poolName>/round_robin/cursor". Keeping it stable across
-// versions is important for cursor compatibility on upgrade.
+// cursorKeyPrefix: the key is "pool/<poolName>/round_robin/cursor"; keep it stable across versions.
 const cursorKeyPrefix = "pool/"
 
-// RoundRobinStrategy returns candidates in rotation. The cursor is
-// namespaced by pool name and persisted via the supplied StateStore so
-// consecutive picks across daemon restarts continue advancing instead of
-// resetting.
-//
-// A single RoundRobinStrategy value can serve multiple pools; the pool
-// name is read from the context the Manager threads in via Pick.
+// RoundRobinStrategy rotates through candidates with a cursor persisted per pool name in the StateStore.
 type RoundRobinStrategy struct {
-	// State is the persistent cursor store. Required — Pick returns a
-	// MissingStateStoreError if it is nil. Callers can use a tiny
-	// in-memory map for tests; production callers (qrdb) plug in a
-	// system-tenant-backed KV store.
+	// State is the persistent cursor store; Pick returns MissingStateStoreError when nil.
 	State StateStore
 
-	// mu serializes concurrent Pick calls so increment-and-store is
-	// atomic with respect to the StateStore round trip. The lock is
-	// per-strategy (not per-pool) — per-pool locks would require keying
-	// off the pool name and add complexity that the round-robin
-	// throughput does not warrant.
+	// mu serializes Pick so increment-and-store is atomic.
 	mu sync.Mutex
 }
 
-// Pick implements Strategy.
-//
-// Algorithm:
-//  1. Read cursor c from StateStore (zero if missing).
-//  2. Select candidate at c % len(candidates).
-//  3. Persist cursor (c+1) — modulo applied at read time so it never
-//     overflows a uint64 in any realistic deployment.
-//
-// Pick is serialized by an internal mutex so two concurrent callers on
-// the same strategy can't both see cursor=N.
+// Pick implements Strategy: candidate c % len, then persist c+1, serialized by mu.
 func (s *RoundRobinStrategy) Pick(ctx context.Context, candidates []common.Storage, hint Hint) (common.Storage, error) {
 	if s.State == nil {
 		return nil, &MissingStateStoreError{Strategy: roundRobinStrategyName}
@@ -71,10 +46,7 @@ func (s *RoundRobinStrategy) Pick(ctx context.Context, candidates []common.Stora
 		return nil, err
 	}
 
-	// Guard against an empty candidate set. The Manager rejects empty
-	// pools upstream, but a direct caller can still pass nil/empty here;
-	// without this check the cursor % len(candidates) below would panic
-	// with an integer divide-by-zero.
+	// An empty candidate set would divide by zero below.
 	if len(candidates) == 0 {
 		return nil, &EmptyPoolError{Name: poolNameFromContext(ctx)}
 	}
@@ -104,10 +76,7 @@ func (s *RoundRobinStrategy) Name() string {
 	return roundRobinStrategyName
 }
 
-// loadCursor reads the cursor value from the state store. A missing key
-// returns 0 (the cursor starts at zero). A malformed value (wrong byte
-// length) is treated as zero and overwritten on the next store — robust
-// against corrupted state from older versions or partial writes.
+// loadCursor reads the cursor; missing or malformed values count as zero.
 func (s *RoundRobinStrategy) loadCursor(ctx context.Context, key string) (uint64, error) {
 	value, found, err := s.State.Get(ctx, key)
 	if err != nil {

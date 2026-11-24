@@ -11,16 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package pool provides a Volume Pool primitive that selects one Storage
-// from a registered set of candidates using a pluggable Strategy. It is
-// intentionally Layer 0 — storage-agnostic, no external dependencies
-// beyond pkg/common — so qrdb and future consumers can share the
-// same placement primitive without taking on any of each other's deps.
-//
-// Cursor / metric state is supplied by the caller through the small
-// StateStore interface. go-objstore tests use an in-memory stub; qrdb
-// supplies an implementation backed by its system-tenant key/value
-// store so cursors survive daemon restarts.
+// Package pool selects one Storage from registered candidates with a pluggable Strategy; persistent state lives in a caller-supplied StateStore.
 package pool
 
 import (
@@ -29,10 +20,7 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
-// Hint carries optional placement information passed from the caller to
-// the strategy. Every field is optional; strategies may ignore any field
-// they do not consume. Adding new fields is non-breaking — strategies
-// that don't read them are unaffected.
+// Hint carries optional placement information; strategies may ignore any field.
 type Hint struct {
 	// TenantID is a sticky-placement signal. A future strategy could use
 	// it to keep the same tenant on the same backend across restarts.
@@ -48,18 +36,9 @@ type Hint struct {
 	Region string
 }
 
-// Strategy decides which Storage to return from a pool's candidates.
-// Implementations: RoundRobinStrategy (rotate through candidates) and
-// LeastUtilizationStrategy (pick the candidate with the lowest
-// cumulative assigned load).
-//
-// Strategies must be safe for concurrent use across multiple goroutines
-// and across multiple pools sharing the same instance.
+// Strategy picks a Storage from a pool's candidates (RoundRobinStrategy, LeastUtilizationStrategy); it must be safe for concurrent use across pools.
 type Strategy interface {
-	// Pick selects one Storage from candidates. Implementations may
-	// consult ctx for cancellation and the StateStore for persistent
-	// cursor / metric state. The returned Storage is one of the values
-	// in candidates; callers receive a typed error otherwise.
+	// Pick selects one of candidates, consulting ctx and the StateStore.
 	Pick(ctx context.Context, candidates []common.Storage, hint Hint) (common.Storage, error)
 
 	// Name returns the canonical strategy name (e.g. "round_robin").
@@ -67,13 +46,7 @@ type Strategy interface {
 	Name() string
 }
 
-// StateStore is a tiny key/value abstraction the round-robin strategy
-// uses to persist its cursor across restarts. It is caller-supplied so
-// the pool package stays storage-agnostic and Layer 0.
-//
-// Get returns the stored value plus a found flag. A missing key is not
-// an error condition — callers signal it with found=false and a nil
-// error so the caller can apply a zero default.
+// StateStore is a caller-supplied key/value store for strategy state; a missing key is found=false with a nil error.
 type StateStore interface {
 	// Get returns the value for key. If the key is not present found
 	// will be false and err nil. err is reserved for true I/O failures.
@@ -100,10 +73,7 @@ type Pool struct {
 // Manager is the registry of named pools. Implementations must be safe
 // for concurrent use.
 type Manager interface {
-	// Register adds a new pool. Returns DuplicatePoolError if the name
-	// is already taken, InvalidPoolNameError if name is empty, and
-	// NilStrategyError if strategy is nil. An empty candidates slice
-	// is accepted at Register time — Pick surfaces EmptyPoolError.
+	// Register adds a pool; DuplicatePoolError, InvalidPoolNameError or NilStrategyError on bad input. Empty candidates fail at Pick.
 	Register(name string, candidates []common.Storage, strategy Strategy) error
 
 	// Pick selects one Storage from the named pool using its strategy.
@@ -111,18 +81,11 @@ type Manager interface {
 	// EmptyPoolError if the pool has no candidates.
 	Pick(ctx context.Context, poolName string, hint Hint) (common.Storage, error)
 
-	// List returns a snapshot of all registered pools. The returned
-	// slice is independent of the manager's internal state — callers
-	// may iterate freely. The Candidates slice inside each Pool is
-	// also copied to keep the snapshot stable.
+	// List returns an independent snapshot of all pools, candidates copied.
 	List(ctx context.Context) ([]Pool, error)
 }
 
-// poolNameContextKey is the private context key that the Manager uses
-// to thread the active pool name down to the strategy. Strategies that
-// need to namespace persistent state by pool name (round-robin) read
-// it via poolNameFromContext. Keeping the key unexported prevents
-// outside packages from spoofing it.
+// poolNameContextKey threads the active pool name to the strategy; unexported so it cannot be spoofed.
 type poolNameContextKey struct{}
 
 // withPoolName returns a derived context carrying the supplied pool

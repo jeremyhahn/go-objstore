@@ -371,9 +371,7 @@ const OPERATIONS: OperationTest[] = [
     },
   },
 
-  // ===== REPLICATION =====
-  // All 6 ops assert real success using the canonical local-to-local payload.
-  // The server has replication enabled (STORAGE_BACKEND=local, EnableReplication wired).
+  // ===== REPLICATION ===== (canonical local-to-local payload; the server has replication enabled)
   {
     name: 'addReplicationPolicy',
     category: 'replication',
@@ -541,10 +539,7 @@ describe('Comprehensive Integration Tests', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Cross-protocol consistency — true write-A / read-B over (REST, gRPC) pairs
-  // QUIC excluded: explicit skip per above.
-  // -------------------------------------------------------------------------
+  // Cross-protocol consistency over (REST, gRPC) pairs; QUIC is skipped.
   describe('Cross-Protocol Consistency', () => {
     const availableProtocols = PROTOCOLS.filter((p) => !p.skip);
 

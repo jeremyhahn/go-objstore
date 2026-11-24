@@ -60,9 +60,7 @@ func New(opts *Options) (*Server, error) {
 	}
 	handler.wireOpts = factory.WireOptions{AllowLocalDestinations: opts.AllowClientLocalArchiveDestinations}
 
-	// Wrap the handler with the shared middleware stack. Order (outermost
-	// first): request ID → rate limit → audit → handler, matching the REST
-	// server's ordering.
+	// Middleware order, outermost first: request ID, rate limit, audit, handler.
 	var h http.Handler = handler
 	var rateLimiter *middleware.RateLimiter
 	if opts.EnableAudit && opts.AuditLogger != nil {

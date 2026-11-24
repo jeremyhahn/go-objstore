@@ -11,8 +11,5 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package objstore is the official Go SDK for go-objstore.
-//
-// It provides a unified client for interacting with a go-objstore server over
-// the REST, gRPC, QUIC/HTTP3, MCP, and Unix-socket protocols.
+// Package objstore is the Go SDK for go-objstore over REST, gRPC, QUIC/HTTP3, MCP and Unix sockets.
 package objstore

@@ -1,11 +1,5 @@
 #!/usr/bin/env bash
-#
-# check-version.sh — Verify every SDK manifest matches the root VERSION file.
-#
-# Exits 0 if all SDK version declarations equal the root VERSION value.
-# Exits 1 and lists each mismatch otherwise. This is the verification
-# counterpart to scripts/sync-version.sh.
-#
+# check-version.sh: exit 1 listing every SDK manifest whose version differs from VERSION.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,11 +15,7 @@ VERSION="$(tr -d '[:space:]' < "$VERSION_FILE")"
 SDKS="$ROOT_DIR/api/sdks"
 MISMATCH=0
 
-# extract prints capture group 1 of the first line in <file> matching the
-# full-line extended-regex <regex> (which must capture the version in group
-# 1 and match the entire line), or nothing if the file/pattern is absent.
-# Uses a control-char delimiter so regexes may contain literal slashes
-# (e.g. the C# </Version> closing tag).
+# extract FILE REGEX prints group 1 of the first full-line match, or nothing; a control-char delimiter allows slashes.
 extract() {
 	local file="$1" regex="$2"
 	[[ -f "$file" ]] || { echo ""; return 0; }

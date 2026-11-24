@@ -11,8 +11,5 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package middleware provides transport-agnostic server middleware.
-//
-// It implements token-bucket rate limiting (global and per-client) and
-// request-ID propagation, with gin, HTTP, and gRPC adapters.
+// Package middleware provides token-bucket rate limiting and request-ID propagation with gin, HTTP and gRPC adapters.
 package middleware

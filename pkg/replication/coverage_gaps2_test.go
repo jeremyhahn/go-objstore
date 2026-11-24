@@ -83,12 +83,7 @@ func TestRotate_RenameAndReopenBothFail(t *testing.T) {
 	cl.filePath = filepath.Join(dir, "noexist", "changes.jsonl")
 	cl.mutex.Unlock()
 
-	// rotate() closes cl.file (which is still the valid path), then tries to
-	// rename logPath -> cl.filePath (fails), then tries to reopen cl.filePath (fails).
-	// But wait – cl.file was opened at logPath. After Close(), the real file is
-	// gone. We need to ensure the real internal file is at the old logPath.
-	// Reset filePath to something that will make the rename destination fail.
-	// Use /dev/null as destination dir (can't rename into a file as a dir).
+	// Make the rotate rename fail with an unusable destination.
 	cl.mutex.Lock()
 	f2, _ := os.OpenFile(logPath, os.O_APPEND|os.O_RDWR, 0600)
 	if f2 != nil {
@@ -124,12 +119,7 @@ func containsMsg(s, sub string) bool {
 	}()
 }
 
-// rotate – rename succeeds but opening the new file fails.
-// We arrange this by: making dir read-only AFTER the file is already there,
-// then calling rotate which closes+renames the existing file. On a read-only
-// dir the rename of the backup destination fails; that is equivalent to
-// exercising the error path. Both "rename fails" and "create new file fails"
-// are valid outcomes depending on OS behavior.
+// rotate in a read-only directory: the rename or the create fails, depending on the OS.
 func TestRotate_NewFileOpenFails(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("running as root; permission restrictions don't apply")

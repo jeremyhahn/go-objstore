@@ -11,10 +11,7 @@ import (
 	"github.com/jeremyhahn/go-objstore/backup/pkg/seal"
 )
 
-// Policy says which snapshots to keep. It applies to each group of snapshots
-// with the same host and root on its own: within a group, a snapshot is kept
-// when any rule keeps it, and every other snapshot is forgotten. Times are the
-// ones sealed inside the manifests, in UTC.
+// Policy says which snapshots to keep, per host and root group; a snapshot any rule keeps is kept. Times are UTC from the manifests.
 type Policy struct {
 	// Last keeps the newest Last snapshots.
 	Last int
@@ -61,10 +58,7 @@ func (g Group) String() string {
 	return g.Host + ":" + g.Root
 }
 
-// keepGroups applies the policy to each group of snapshots with the same
-// host and root independently, so one source's snapshots never take the
-// place of another's. It returns the groups ordered by host and root, each
-// listing its snapshots in the order given.
+// keepGroups applies the policy to each host and root group independently, ordered by host and root.
 func (p Policy) keepGroups(snaps []dated, now time.Time) []Group {
 	bySource := make(map[source][]dated)
 	for _, s := range snaps {
