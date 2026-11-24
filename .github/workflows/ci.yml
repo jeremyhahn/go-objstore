@@ -38,10 +38,10 @@
 # draft pull request runs no CI. Every job but CI Gate skips when
 # github.event.pull_request.draft is true (Gitea sets it on a WIP: title),
 # and CI Gate fails on a draft without running anything, so no draft head
-# carries a green or skipped gate into its merge. Marking the PR ready
-# starts no run, and there is no edited or ready_for_review trigger (an
-# edited run would join the PR's group and cancel a run in flight): the
-# PR's own lane pushes an empty commit when the PR leaves draft.
+# carries a green or skipped gate into its merge. There is no edited
+# trigger (an edited run would join the PR's group and cancel a run in
+# flight). go-objstore adds ready_for_review (DS-10501), so marking the PR
+# ready starts the run; a draft has no run in flight to cancel.
 # >>> CUSTOMIZE (go-objstore)
 # go-objstore: nested-module-build, nested-module-test, fips and sdk-tests
 # need no skipped job, so each carries the draft guard itself, as integration
@@ -375,7 +375,8 @@ on:
     # >>> CUSTOMIZE (go-objstore)
     # Gitea fires label_updated, not labeled; synchronize re-runs on a push.
     # Adding ci:full takes effect on the next push or a workflow_dispatch.
-    types: [opened, synchronize, reopened]
+    # ready_for_review: marking a draft ready starts the run (DS-10501).
+    types: [opened, synchronize, reopened, ready_for_review]
     # <<< CUSTOMIZE
   workflow_dispatch:                    # re-fire a whole workflow; also the
                                         # only retry when a run was never
