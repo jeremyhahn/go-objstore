@@ -51,16 +51,10 @@ type Local struct {
 	now                    func() time.Time   // time source for upload expiry; nil means time.Now
 	buckets                *Buckets           // set when the bucketRoot setting is present
 
-	// pruneMu orders directory pruning against writers. A writer holds the
-	// read side from the moment it creates a parent directory until its
-	// temporary file exists in it; pruneEmptyDirs holds the write side while
-	// it removes directories. Writers never block one another.
+	// pruneMu: writers hold the read side from mkdir until their temp file exists; pruneEmptyDirs holds the write side.
 	pruneMu sync.RWMutex
 
-	// root is the configured directory opened as an os.Root. Every open,
-	// create, rename and remove goes through it, so a symlink planted below
-	// the root cannot lead a call outside it. rootMu guards the field; the
-	// root itself is safe for concurrent use.
+	// root is the configured directory as an os.Root, so a planted symlink cannot lead outside it; rootMu guards the field.
 	rootMu sync.Mutex
 	root   *os.Root
 }
@@ -130,10 +124,7 @@ func (l *Local) Configure(settings map[string]string, _ common.Credentials) erro
 	return l.configure(settings, nil)
 }
 
-// configure is Configure with an optional root already opened on the path,
-// which a bucket store gets from its bucket root so that a symlinked bucket
-// directory cannot lead it outside. With a nil root the path is created and
-// opened here.
+// configure is Configure with an optional pre-opened root; nil creates and opens the path.
 func (l *Local) configure(settings map[string]string, root *os.Root) error {
 	if err := common.RejectCredentialSettings(settings); err != nil {
 		return err
@@ -611,12 +602,7 @@ func (l *Local) DeleteWithContext(ctx context.Context, key string) error {
 	return nil
 }
 
-// pruneEmptyDirs removes dir and then its parents for as long as they are
-// empty, stopping below the store's own directory. A directory that still holds
-// an object, a sidecar or an upload is kept, since os.Remove refuses it.
-//
-// It holds the write side of pruneMu, so it waits for the writers that are
-// between creating a directory and creating a file in it.
+// pruneEmptyDirs removes dir and its empty parents up to the store directory, holding pruneMu's write side.
 func (l *Local) pruneEmptyDirs(dir string) {
 	root, err := l.fsRoot()
 	if err != nil {
@@ -679,11 +665,7 @@ func (l *Local) ListWithContext(ctx context.Context, prefix string) ([]string, e
 
 	var keys []string
 
-	// Prefixes are matched byte-wise against keys below, not resolved as
-	// filesystem paths, so a prefix ending mid key-component (e.g. "k0" for
-	// keys "k01", "k02") must not be short-circuited here. Only guard against
-	// a missing base directory, which yields an empty list rather than an
-	// error.
+	// Prefixes match keys byte-wise, so only a missing base directory short-circuits to an empty list.
 	root, err := l.fsRoot()
 	if errors.Is(err, fs.ErrNotExist) {
 		return keys, nil
@@ -940,12 +922,7 @@ func (l *Local) loadMetadata(key string) (*common.Metadata, error) {
 // ValidateKey refuses keys that would name one.
 const tmpFilePrefix = common.TempFilePrefix
 
-// walkObjects walks root and calls fn with the slash-separated name of every
-// object file, skipping directories, metadata sidecars and in-flight
-// temporary files. The walk reads the tree through the root and never
-// follows a symlink. Entries that vanish while the walk is in progress (a
-// concurrent Put renaming its temp file, a concurrent Delete) are treated as
-// absent rather than failing the whole walk; any other error aborts it.
+// walkObjects calls fn for every object file under root without following symlinks; entries that vanish mid-walk are skipped.
 func (l *Local) walkObjects(ctx context.Context, root *os.Root, fn func(name string, d fs.DirEntry) error) error {
 	return fs.WalkDir(root.FS(), ".", func(name string, d fs.DirEntry, err error) error {
 		select {
@@ -980,35 +957,17 @@ func (l *Local) walkObjects(ctx context.Context, root *os.Root, fn func(name str
 	})
 }
 
-// writeFileAtomic writes the file name below root durably and atomically. It
-// streams the payload into a temporary file created in filepath.Dir(name) —
-// the same directory as name, so the final rename stays on a single
-// filesystem and the temp location can never diverge from the rename target
-// — fsyncs it, then renames it over name. A crash or concurrent reader
-// therefore never observes a truncated or partial file: the target either
-// contains the previous contents or the fully written new ones. On any error
-// the temporary file is removed and name is left untouched.
-//
-// write is invoked with the open temporary file. The final file is given the
-// supplied mode.
+// writeFileAtomic writes name via an fsynced temp file in the same directory and a rename, so readers see old or new contents only.
 func writeFileAtomic(root *os.Root, name string, mode os.FileMode, write func(io.Writer) error) error {
 	return writeAtomic(root, nil, name, mode, false, write)
 }
 
-// writeObjectAtomic is writeFileAtomic for a file whose directory may not exist
-// yet. Deleting an object prunes the directories it leaves empty, so the
-// directory is created, and the temp file made in it, while holding off the
-// prune of mu's store (see createObjectTemp).
+// writeObjectAtomic is writeFileAtomic creating the directory under holdDirs (see createObjectTemp).
 func writeObjectAtomic(root *os.Root, mu *sync.RWMutex, name string, mode os.FileMode, write func(io.Writer) error) error {
 	return writeAtomic(root, mu, name, mode, true, write)
 }
 
-// holdDirs takes the read side of mu, which keeps pruneEmptyDirs from removing
-// directories until the returned function is called. A nil mu holds nothing.
-// Callers hold it only across a mkdir and the create that follows it, never
-// across a read of a caller-supplied io.Reader: a Delete queued behind the
-// read lock would otherwise block every later writer, and a reader that
-// itself waits on that Delete would deadlock.
+// holdDirs takes mu's read side until the returned func runs; hold it only across a mkdir and create, never a caller's read.
 func holdDirs(mu *sync.RWMutex) (release func()) {
 	if mu == nil {
 		return func() {}
@@ -1055,16 +1014,7 @@ func mkdirTemp(root *os.Root, dir string) (string, error) {
 	}
 }
 
-// createObjectTemp creates the temp file for a write to dir and returns it
-// with its name. With makeDirs it also creates dir. mu is held from the mkdir
-// until the temp file exists, and a file in dir keeps a remove from pruning
-// it, so within one store no prune can land in that window.
-//
-// Pruning by another process sharing the root takes no part in mu, so the
-// ENOENT retry stays as a second line of defense. It is bounded by
-// pruneRetryAttempts and so only makes losing the race unlikely: a writer
-// that loses every round still fails. The store-level lock, not the retry, is
-// what makes writers within one process safe.
+// createObjectTemp creates dir (with makeDirs) and the temp file under mu; a bounded ENOENT retry covers pruning by another process.
 func createObjectTemp(root *os.Root, mu *sync.RWMutex, dir string, makeDirs bool) (*os.File, string, error) {
 	for attempt := 1; ; attempt++ {
 		release := holdDirs(mu)
@@ -1086,16 +1036,7 @@ func createObjectTemp(root *os.Root, mu *sync.RWMutex, dir string, makeDirs bool
 // sequence that a prune by another process interrupted.
 const pruneRetryAttempts = 100
 
-// mkdirAllPruneSafe is Root.MkdirAll that survives a prune removing the
-// directory, or one of its parents, while the path is being created. Within
-// a store the caller excludes pruneEmptyDirs with holdDirs; this retry covers
-// a prune by another process sharing the same root, which no in-process lock
-// can order. Each retry follows a prune that has already completed, and the
-// number of prunes is bounded by the deletes in flight, but the bound is not
-// a guarantee. EEXIST is retried too: MkdirAll reports it when the directory
-// it found was pruned again before its follow-up stat. A caller still has to
-// retry its own create step after this returns, since a prune can land
-// between the two.
+// mkdirAllPruneSafe is Root.MkdirAll retrying ENOENT and EEXIST when another process prunes the path; callers still retry their create.
 func mkdirAllPruneSafe(root *os.Root, dir string) error {
 	if dir == "." || dir == "" {
 		return nil

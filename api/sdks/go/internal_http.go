@@ -21,12 +21,7 @@ import (
 	"net/url"
 )
 
-// httpStatusError converts a non-success HTTP status code into an error that
-// wraps the canonical SDK sentinel for that status: 400 ErrInvalidArgument,
-// 401 ErrUnauthenticated, 403 ErrPermissionDenied, 404 ErrObjectNotFound,
-// 409 ErrAlreadyExists, 429 ErrRateLimited. Any other status (notably 5xx)
-// yields a plain server error with no sentinel. Shared by the REST, QUIC,
-// and MCP clients.
+// httpStatusError wraps the SDK sentinel for 400, 401, 403, 404, 409 and 429; other statuses yield a plain server error.
 func httpStatusError(op string, statusCode int) error {
 	var sentinel error
 	switch statusCode {
@@ -63,10 +58,7 @@ func applyAuthHeaders(req *http.Request, config *ClientConfig) {
 	}
 }
 
-// httpGetStream issues a streaming GET against the standard /objects/<key>
-// endpoint and returns the response body without buffering it. Shared by the
-// REST and QUIC clients; parseMeta extracts transport-specific metadata from
-// the response headers.
+// httpGetStream issues an unbuffered streaming GET on /objects/<key>; parseMeta reads transport-specific metadata.
 func httpGetStream(ctx context.Context, client *http.Client, baseURL, key string, config *ClientConfig, parseMeta func(http.Header) *Metadata) (io.ReadCloser, *Metadata, error) {
 	if err := validateKey(key); err != nil {
 		return nil, nil, err
@@ -92,10 +84,7 @@ func httpGetStream(ctx context.Context, client *http.Client, baseURL, key string
 	return resp.Body, parseMeta(resp.Header), nil
 }
 
-// httpPutStream issues a streaming PUT against the standard /objects/<key>
-// endpoint. size is the Content-Length hint; pass -1 when unknown. Shared by
-// the REST and QUIC clients; setCustom applies the transport-specific custom
-// metadata headers.
+// httpPutStream issues a streaming PUT on /objects/<key>; size is the Content-Length hint, -1 when unknown.
 func httpPutStream(ctx context.Context, client *http.Client, baseURL, key string, r io.Reader, size int64, metadata *Metadata, config *ClientConfig, setCustom func(*http.Request, map[string]string)) (*PutResult, error) {
 	if err := validateKey(key); err != nil {
 		return nil, err

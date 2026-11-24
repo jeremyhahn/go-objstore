@@ -76,7 +76,7 @@ func TestClassify(t *testing.T) {
 		{"wrapped permission denied", fmt.Errorf("get: %w", ErrPermissionDenied), CodePermissionDenied},
 		{"wrapped validation error", fmt.Errorf("put: %w", ValidateKey("../bad")), CodeInvalidArgument},
 
-		// Bare strings no longer classify: producers must wrap sentinels.
+		// Bare strings do not classify: producers must wrap sentinels.
 		{"string only not found", errors.New("not found"), CodeInternal},
 		{"string only already exists", errors.New("policy already exists"), CodeInternal},
 		{"unclassified", errors.New("disk on fire"), CodeInternal},

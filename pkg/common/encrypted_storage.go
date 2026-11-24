@@ -74,8 +74,7 @@ func (e *encryptedStorage) Put(key string, data io.Reader) error {
 
 // PutWithContext encrypts data and stores it in the underlying storage with context support
 func (e *encryptedStorage) PutWithContext(ctx context.Context, key string, data io.Reader) error {
-	// Store through the metadata path so the key ID is recorded (#226):
-	// without it the object only decrypts while the default key is unchanged.
+	// Store through the metadata path so the key ID is recorded and the object decrypts after the default key changes.
 	return e.putEncrypted(ctx, key, data, &Metadata{})
 }
 
@@ -169,13 +168,10 @@ func (e *encryptedStorage) GetMetadata(ctx context.Context, key string) (*Metada
 	return e.underlying.GetMetadata(ctx, key)
 }
 
-// UpdateMetadata updates metadata for an object (metadata is not encrypted)
 // UpdateMetadata replaces the object's metadata but keeps every
-// "encryption_*" entry of the stored metadata: backends replace the whole
-// record, so without this an update would drop encryption_key_id and the
-// object would no longer decrypt after the default key changes. Caller
-// supplied "encryption_*" entries are ignored. The caller's metadata is not
-// modified.
+// "encryption_*" entry of the stored metadata, so the object still decrypts
+// after the default key changes. Caller-supplied "encryption_*" entries are
+// ignored. The caller's metadata is not modified.
 func (e *encryptedStorage) UpdateMetadata(ctx context.Context, key string, metadata *Metadata) error {
 	if metadata == nil {
 		return e.underlying.UpdateMetadata(ctx, key, metadata)

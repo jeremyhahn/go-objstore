@@ -22,10 +22,7 @@ func kindType(k Kind) seal.Type {
 	}
 }
 
-// putSealed seals plain as an object of kind k, index or snapshot, under its
-// content-derived ID and writes it once. An object already there under that
-// ID is accepted if it opens to the same plaintext, as when a run repeats
-// one that was interrupted.
+// putSealed writes plain once under its content ID; an existing object that opens to the same plaintext is accepted.
 func (r *Repository) putSealed(ctx context.Context, op string, k Kind, plain []byte) (seal.ID, error) {
 	t := kindType(k)
 	id, err := r.keys.ObjectID(t, plain)

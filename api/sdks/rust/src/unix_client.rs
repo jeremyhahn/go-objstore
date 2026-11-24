@@ -146,10 +146,7 @@ impl UnixClient {
         let mut line = serde_json::to_string(&request)?;
         line.push('\n');
 
-        // Serialize request/response pairs over the single persistent
-        // connection.  Connect lazily; the server closes idle connections
-        // after ~30s, so a request that fails on a reused connection is
-        // retried once on a fresh one.
+        // One request at a time over the lazy persistent connection; a failure on a reused connection retries once on a fresh one.
         let mut guard = self.conn.lock().await;
         let reused = guard.is_some();
         if guard.is_none() {
@@ -411,10 +408,7 @@ impl UnixClient {
         Ok(())
     }
 
-    /// Add a lifecycle policy.
-    ///
-    /// Retention is sent as `retention_seconds`; the server gives it
-    /// precedence over the legacy whole-day `after_days` field.
+    /// Add a lifecycle policy; `retention_seconds` takes precedence over `after_days`.
     pub async fn add_policy(&self, policy: LifecyclePolicy) -> Result<()> {
         let params = serde_json::json!({
             "id": policy.id,
@@ -704,14 +698,7 @@ mod tests {
         requests: Arc<StdMutex<Vec<Value>>>,
     }
 
-    /// Spawn a mock server speaking persistent newline-delimited JSON-RPC.
-    ///
-    /// For every request line received the server replies with `template` (a
-    /// JSON object containing either a "result" or an "error" key) after
-    /// filling in the protocol version and echoing the request id (unless
-    /// `id_override` forces a fixed id).  When `close_after_each` is true the
-    /// connection is closed after every response, simulating the server's
-    /// idle-timeout behavior.
+    /// Mock newline-delimited JSON-RPC server replying with `template`; `close_after_each` simulates the idle timeout.
     fn spawn_mock_server_full(
         template: Value,
         close_after_each: bool,

@@ -33,10 +33,7 @@ import (
 )
 
 const (
-	// defaultPartSize is the multipart upload part size. Glacier requires
-	// part sizes of 1 MiB multiplied by a power of two; 16 MiB bounds
-	// Put's memory usage to a single part buffer regardless of archive
-	// size.
+	// defaultPartSize: Glacier needs 1 MiB times a power of two; 16 MiB bounds Put's memory to one part.
 	defaultPartSize = 16 << 20
 
 	// treeHashChunkSize is the 1 MiB chunk size mandated by the Glacier
@@ -146,11 +143,7 @@ func (g *Glacier) Put(key string, data io.Reader) error {
 	return err
 }
 
-// putMultipart streams the archive to Glacier with the multipart upload
-// API, buffering one part at a time. firstPart is the already-read first
-// part (always exactly partSize bytes); rest supplies the remainder of
-// the stream. The upload is aborted on any failure so Glacier does not
-// accumulate orphaned multipart uploads.
+// putMultipart uploads one part at a time after firstPart (exactly partSize bytes) and aborts the upload on any failure.
 func (g *Glacier) putMultipart(ctx context.Context, key string, partSize int, firstPart []byte, rest io.Reader) (err error) {
 	initOut, err := g.svc.InitiateMultipartUpload(ctx, &glacier.InitiateMultipartUploadInput{
 		VaultName:          aws.String(g.vaultName),
@@ -181,10 +174,7 @@ func (g *Glacier) putMultipart(ctx context.Context, key string, partSize int, fi
 	)
 	buf := firstPart
 	for {
-		// The per-part tree hash is computed here for the final
-		// whole-archive checksum; the SDK's tree hash middleware
-		// independently sets the per-request checksum headers from the
-		// seekable part body.
+		// The per-part tree hash feeds the final checksum; the SDK sets the per-request headers itself.
 		hash := computeTreeHash(buf)
 		end := offset + int64(len(buf)) - 1
 		if _, err = g.svc.UploadMultipartPart(ctx, &glacier.UploadMultipartPartInput{
@@ -214,10 +204,7 @@ func (g *Glacier) putMultipart(ctx context.Context, key string, partSize int, fi
 		buf = buf[:n]
 	}
 
-	// Because partSize is a power-of-two multiple of 1 MiB, combining the
-	// per-part tree hash roots yields the same root as a tree built from
-	// the archive's 1 MiB chunks — the value Glacier verifies on
-	// completion.
+	// Power-of-two part sizes make the combined part roots equal the archive's tree hash.
 	_, err = g.svc.CompleteMultipartUpload(ctx, &glacier.CompleteMultipartUploadInput{
 		VaultName:   aws.String(g.vaultName),
 		UploadId:    uploadID,
@@ -227,10 +214,7 @@ func (g *Glacier) putMultipart(ctx context.Context, key string, partSize int, fi
 	return err
 }
 
-// readPart fills buf from r, treating io.EOF as a short (possibly
-// empty) read rather than an error. Unlike io.ReadFull it propagates
-// io.ErrUnexpectedEOF from the underlying reader as a genuine failure.
-// It returns the number of bytes read.
+// readPart fills buf from r, treating io.EOF as a short read and io.ErrUnexpectedEOF as a failure.
 func readPart(r io.Reader, buf []byte) (int, error) {
 	n := 0
 	for n < len(buf) {

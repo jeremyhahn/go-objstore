@@ -11,22 +11,7 @@ WORKDIR /build
 
 # Copy go mod files first for better caching
 COPY go.mod go.sum ./
-# go.mod pins the internal first-party module github.com/jeremyhahn/go-enclave,
-# published to the internal Gitea rather than github.com. Resolving it needs
-# GOPRIVATE plus git's insteadOf rewrite carrying a read-only token
-# (conventions/dependency-resolution.md §6), supplied as an OPTIONAL BuildKit
-# secret carrying ONLY the tokenised GIT_CONFIG_KEY_0 value. It is mounted on
-# tmpfs for this RUN alone and read via a quoted command substitution — never
-# sourced as shell, so a credential containing shell metacharacters is assigned
-# literally rather than executed. It is never a build arg or ENV (recoverable
-# via docker history) and never written to a layer. The public parts of the
-# rewrite are literals below; only the token-bearing key is secret. The mount
-# is optional, so the same Dockerfile still builds against the public proxy
-# when no secret is provided.
-#
-# The CI `docker` job supplies this secret. The SDK integration compose harness
-# also builds this image (its objstore-server service) but does NOT supply the
-# secret yet, so those builds cannot resolve go-enclave — tracked in issue #36.
+# Private modules resolve through an optional BuildKit secret holding only the tokenised insteadOf key, read with a quoted substitution and never stored in a layer.
 RUN --mount=type=secret,id=gomodauth \
     set -eu; \
     if [ -s /run/secrets/gomodauth ]; then \
@@ -56,19 +41,10 @@ RUN if [ "$BUILD_BACKENDS" = "local" ]; then \
         make build-server; \
     fi
 
-# Stage 2: Create minimal runtime image
-# Pinned to a minor tag, not :latest. An unpinned base makes the image's
-# security posture depend on the day it was built: the same Dockerfile
-# produced an image with 15 CRITICAL/HIGH OpenSSL CVEs (libcrypto3 3.5.5-r0)
-# and, days later, a clean one (3.5.7-r0). 3.24 still receives patch updates,
-# so this pins the line without freezing out fixes.
+# Stage 2: minimal runtime image, pinned to a minor tag that still receives patch updates.
 FROM alpine:3.24
 
-# Install runtime dependencies, and upgrade the OpenSSL libraries to pull the
-# published patch for the base image's libcrypto3/libssl3. This realizes the
-# 3.24 pin note above ("still receives patch updates … without freezing out
-# fixes"): the base layer shipped 3.5.7-r0, one patch behind the fix for
-# CVE-2026-14456 (OpenSSL DoS, HIGH), which is published as 3.5.8-r0.
+# Install runtime dependencies and upgrade the OpenSSL libraries to the base line's latest patch.
 RUN apk add --no-cache ca-certificates tzdata \
     && apk upgrade --no-cache libcrypto3 libssl3
 
@@ -91,10 +67,7 @@ USER appuser
 # Expose common ports (REST: 8080, gRPC: 50051, QUIC: 4433, MCP: 8081)
 EXPOSE 8080 50051 4433 8081
 
-# Default command runs the server. The server's own defaults are for a host
-# install (no storage path, loopback-only listeners, QUIC and MCP off), so a
-# container names its root and binds every interface explicitly; publish only
-# the ports you need.
+# The server defaults suit a host install, so the container names its root and binds every interface; publish only the ports you need.
 CMD ["/app/objstore-server", \
      "-path", "/tmp/objstore", \
      "-grpc-addr", "0.0.0.0:50051", \

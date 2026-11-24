@@ -63,13 +63,7 @@ impl RpcError {
     }
 }
 
-/// Map a JSON-RPC error code and message to the SDK [`Error`] type.
-///
-/// Canonical table: -32602 -> [`Error::InvalidArgument`], -32002 ->
-/// [`Error::Unauthenticated`], -32001 -> [`Error::Forbidden`], -32004 ->
-/// [`Error::NotFound`], -32005 -> [`Error::AlreadyExists`], -32029 ->
-/// [`Error::RateLimited`]. Codes without a dedicated SDK variant surface as
-/// [`Error::OperationFailed`] with the server message preserved.
+/// Map a JSON-RPC error code to the SDK [`Error`]; codes without a variant become OperationFailed.
 pub(crate) fn error_from_code(code: i64, message: String) -> Error {
     match code {
         CODE_NOT_FOUND => Error::NotFound(message),

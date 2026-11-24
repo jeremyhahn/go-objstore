@@ -633,10 +633,7 @@ export class RestClient implements IObjectStoreClient {
     }
   }
 
-  // handleError converts an HTTP error response into the matching typed SDK
-  // error, preserving the status code and server-provided message. Failures
-  // without an HTTP response (DNS, refused connection, timeout, ...) are
-  // surfaced as ConnectionError.
+  // handleError maps an HTTP error to the typed SDK error; failures without a response become ConnectionError.
   private handleError(error: unknown): never {
     if (axios.isAxiosError(error)) {
       const axiosError = error as AxiosError;

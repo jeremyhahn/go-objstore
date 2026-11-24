@@ -204,9 +204,7 @@ func configFileExample() {
 	fmt.Println()
 }
 
-// createProductionEncryptedStorage shows how to wrap any storage backend with
-// AES-256-GCM encryption. In production, replace NewEncrypterFactory with a
-// factory backed by your KMS (HashiCorp Vault, AWS KMS, GCP KMS, etc.).
+// createProductionEncryptedStorage wraps a backend with AES-256-GCM; production uses a KMS-backed factory.
 func createProductionEncryptedStorage(baseStorage common.Storage, keyID string) (common.Storage, error) {
 	encryptionConfig := &Config{
 		Enabled:    true,

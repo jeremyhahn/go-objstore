@@ -50,10 +50,7 @@ var (
 	ErrMTLSRequiresPeer = errors.New("mTLS requires peer.Peer")
 )
 
-// Action constants define the canonical set of operations an Authorizer
-// evaluates. Servers map their protocol-specific methods onto these actions
-// before invoking Authorize, giving Authorizer implementations a stable,
-// transport-independent vocabulary.
+// Action constants are the transport-independent operations an Authorizer evaluates.
 const (
 	// ActionRead covers operations that read object data or metadata
 	// (get, head, exists, getmetadata).

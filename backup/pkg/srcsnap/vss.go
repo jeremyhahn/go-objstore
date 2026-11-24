@@ -17,12 +17,7 @@ var (
 	vssVolumeRe = regexp.MustCompile(`^[A-Za-z]:\\([^'\x00-\x1f]*\\)?$`)
 )
 
-// vssDriver makes a Volume Shadow Copy through CIM, by running Windows
-// PowerShell's Invoke-CimMethod on Win32_ShadowCopy.Create, reads it
-// through its \\?\GLOBALROOT shadow device path, and removes the
-// Win32_ShadowCopy instance on cleanup. Shadow copies are named by a GUID
-// the system chooses, so the driver records it in a state file named with
-// the prefix; Sweep deletes only shadow copies a state file records.
+// vssDriver makes a VSS shadow copy through CIM, reads it via its GLOBALROOT device path and records its GUID in a prefixed state file for Sweep.
 type vssDriver struct{ s *Snapshotter }
 
 func (d *vssDriver) base(v Volume) string { return v.MountPoint }

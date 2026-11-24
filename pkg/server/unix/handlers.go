@@ -111,11 +111,7 @@ func (h *Handler) authorize(ctx context.Context, req *Request) *Response {
 		return nil
 	}
 
-	// Prefer a peer-credential principal injected at the connection layer
-	// (Unix SO_PEERCRED). This is the natural identity for a Unix socket and
-	// takes precedence over the transport authenticator. When absent, fall back
-	// to the configured Authenticator (NoOp/anonymous by default), which
-	// preserves backward compatibility and lets consumers inject a custom one.
+	// Prefer the SO_PEERCRED principal from the connection layer, else the configured Authenticator.
 	principal, ok := principalFromContext(ctx)
 	if !ok {
 		// Derive the principal via the authenticator's HTTP entrypoint with a

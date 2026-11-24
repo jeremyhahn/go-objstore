@@ -1,7 +1,7 @@
 # Buckets and multipart upload: API-shape proposal
 
 > **Status: PROPOSAL** · Scope: go-objstore · Last verified: 2026-10-21
-> Not approved. Build nothing from this document until the owner rules; it then becomes NORMATIVE or is deleted.
+> Not approved. Build nothing from this document until it is approved; it then becomes NORMATIVE or is deleted.
 
 This document covers two SPEC.md rows: `provider-buckets` (create, list and delete buckets) and `provider-multipart` (initiate, upload a part, complete, abort). The consumer is go-quicbaas. It proposes the API shape, where bucket and upload state lives for each provider, and what the first tag leaves out. Identifiers marked *proposed* do not exist yet. Every other identifier and path was checked against this tree.
 
@@ -17,7 +17,7 @@ This follows the precedent already in the tree:
 | `PathAccessor` | `pkg/common/path_accessor.go:22` | `pkg/pool/local_only.go:60` |
 | `ArchiveOnlyStorage` | `pkg/common/archiveonly.go:17` | the factory's `archiveOnlyTypes` set, `pkg/factory/factory.go:29` |
 
-The coordinator recommended optional `BucketManager` and `MultipartUploader` interfaces. This proposal adopts that and adds four changes, each needed by something in the current code:
+This proposal adds optional `BucketManager` and `MultipartUploader` interfaces and four changes, each needed by something in the current code:
 
 1. **A typed "not supported" error and code.** `common.ErrorCode` has no unimplemented code today, and `common.Classify` (`pkg/common/errors.go:149`) falls through to `CodeInternal` for `ErrReplicationNotSupported`. The servers therefore answer an unsupported capability with 500 / `codes.Internal`. The two new interfaces need a code that maps to 501 / `codes.Unimplemented`.
 2. **A factory constructor for account-scoped bucket management.** Every cloud provider's `Configure` requires a bucket or container: s3 and gcs return `common.ErrBucketNotSet`, and azure returns `common.ErrAccountNotSet` without `containerName`. A caller that wants to list or create buckets has no bucket to configure with.
@@ -213,7 +213,7 @@ The first tag ships the Go API only: `pkg/common`, the providers, `pkg/objstore`
 | Bucket parameter on every multipart method (S3's wire shape) | Every `Storage` provider is bound to one bucket at `Configure`. A bucket parameter would let one instance write outside its configured bucket and bypass the policies and replication attached to it. `Bucket(ctx, name)` gives the same reach explicitly. |
 | A whole-object `PutMultipart(ctx, key, io.Reader)` helper only | It does not meet the SPEC row. go-quicbaas re-exports part-by-part upload to clients that send parts in separate requests, possibly to different server instances. |
 
-## 9. Open questions for the owner
+## 9. Open questions
 
 1. Approve optional `BucketManager` and `MultipartUploader` interfaces over widening `Storage`, with the new `CodeUnimplemented` and `CodeFailedPrecondition` codes. Either way, SPEC.md's boundary "every provider satisfies [the common `Storage` interface] completely" should name the capability interfaces, or the rows should say they are optional per provider.
 2. Reserve the key prefix `.objstore-multipart/` in `ValidateKey`. Rejecting keys that are accepted today is a behaviour change.

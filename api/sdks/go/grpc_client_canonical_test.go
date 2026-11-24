@@ -7,15 +7,7 @@
 
 package objstore
 
-// This file implements the canonical SDK unit-test matrix for the gRPC
-// protocol client. Each of the 19 operations gets a success and an error
-// case; nine operations additionally get a not_found case; and the protocol
-// gets metadata_round_trip and validation_empty_key cross-cutting cases.
-//
-// The transport is mocked with MockObjectStoreClient (a testify mock of the
-// generated objstorepb.ObjectStoreClient). gRPC errors are modeled with
-// status.Error(codes.NotFound, ...) / codes.Internal so the tests exercise the
-// real error-propagation paths in grpc_client.go.
+// Canonical SDK unit-test matrix for the gRPC client, over a mocked ObjectStoreClient.
 
 import (
 	"context"

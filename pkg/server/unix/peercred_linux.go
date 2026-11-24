@@ -13,19 +13,7 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 )
 
-// peerCredPrincipal extracts the connecting peer's OS credentials from a Unix
-// domain socket using SO_PEERCRED and builds an authenticated principal.
-//
-// The returned principal carries:
-//   - ID:   "uid:<uid>" (stable, numeric, never localized)
-//   - Name: the OS username if resolvable via os/user, else the uid string
-//   - Type: "unix-peer"
-//   - Roles: the primary group name (best-effort) so RBAC can key off OS groups
-//   - Attributes: uid, gid, pid (as decimal strings)
-//
-// Only *net.UnixConn carries peer credentials; any other connection type yields
-// ErrPeerCredUnsupported so the caller can fall back to the configured
-// authenticator.
+// peerCredPrincipal builds a "unix-peer" principal (uid:<uid>, username, primary-group role, uid/gid/pid attributes) from SO_PEERCRED; non-UnixConn yields ErrPeerCredUnsupported.
 func peerCredPrincipal(conn net.Conn) (*adapters.Principal, error) {
 	unixConn, ok := conn.(*net.UnixConn)
 	if !ok {

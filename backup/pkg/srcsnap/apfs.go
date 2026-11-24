@@ -15,12 +15,7 @@ var (
 	apfsDeviceRe = regexp.MustCompile(`^/dev/disk[0-9]+(s[0-9]+)*$`)
 )
 
-// apfsDriver takes one local snapshot with tmutil localsnapshot, which
-// covers every local APFS volume at once, mounts it read-only with
-// mount_apfs -s for each source volume, and on cleanup unmounts it and
-// deletes it with tmutil deletelocalsnapshots. tmutil names the snapshot
-// by its date, so the driver records the date in a state file named with
-// the prefix; Sweep deletes only snapshots a state file records.
+// apfsDriver takes one tmutil local snapshot, mounts it read-only per volume and records its date in a prefixed state file for Sweep.
 type apfsDriver struct {
 	s    *Snapshotter
 	date string

@@ -749,9 +749,7 @@ func TestEncryptedStorage_KeyChange_AllWritePaths(t *testing.T) {
 	}
 }
 
-// An UpdateMetadata without encryption fields must not drop the key id the
-// object was written under: after the default key changes the object still
-// decrypts with the original key (#226).
+// UpdateMetadata without encryption fields keeps the key id, so the object decrypts after the default key changes.
 func TestEncryptedStorage_UpdateMetadata_KeepsKeyIDAcrossKeyChange(t *testing.T) {
 	ctx := context.Background()
 	underlying := newMockUnderlyingStorage()
@@ -871,8 +869,7 @@ func TestEncryptedStorage_UpdateMetadata_MissingObject(t *testing.T) {
 	}
 }
 
-// A caller-supplied encryption_key_id (or algorithm) in PutWithMetadata is
-// overwritten with the key the object is really encrypted under (#226).
+// A caller-supplied encryption_key_id or algorithm is overwritten with the real one.
 func TestEncryptedStorage_PutWithMetadata_OverwritesCallerKeyID(t *testing.T) {
 	ctx := context.Background()
 	underlying := newMockUnderlyingStorage()

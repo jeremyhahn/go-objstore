@@ -38,29 +38,7 @@ import (
 	"github.com/Azure/azure-storage-blob-go/azblob"
 )
 
-// Multipart upload on Azure is emulated over native blocks. The data of a
-// part is staged as an uncommitted block of a staging blob that belongs to the
-// upload, and completing commits the block list of that blob, stages the
-// target's own blocks from ranges of it on the service, and commits those with
-// one block list, which makes the object appear at once and leaves the old
-// content of the key in place until then. The parts are not staged on the
-// target: committing a blob discards every uncommitted block the list does not
-// name, so uploads of one key, or a plain overwrite of it, would destroy each
-// other's parts. A completion that failed after the staging blob was committed
-// finds its blocks committed and only publishes again. The service has no upload
-// ID or upload metadata, so a manifest blob under the reserved prefix stands
-// for them, and a small record blob per part holds the ETag that the service
-// does not keep for a block:
-//
-//	.objstore-multipart/<uploadID>/manifest   key, metadata, initiation time
-//	.objstore-multipart/<uploadID>/staging    the blocks of the parts
-//	.objstore-multipart/<uploadID>/<number>   size and ETag of the part
-//
-// A part counts as uploaded only while its record exists. The record is
-// removed before the block is staged and written after, so a part whose
-// upload failed is simply absent. A blob of uncommitted blocks cannot be
-// deleted, so an aborted or expired upload commits an empty list to the
-// staging blob first and then deletes it.
+// Multipart is emulated: parts stage as uncommitted blocks of .objstore-multipart/<uploadID>/staging, with a manifest and per-part record blobs; completion commits the staging blob and publishes the target in one block list.
 const (
 	manifestName = "manifest"
 
@@ -79,10 +57,7 @@ const (
 	maxBlocks = 50000
 )
 
-// publishBlockSize is the size of the blocks the service reads from the
-// staging blob into the target. A block staged from a URL is limited to 100
-// MiB by the older versions of the service, so this is the size that is taken
-// everywhere. It is a variable so that a test can publish in small blocks.
+// publishBlockSize is the staged-from-URL block size (100 MiB service limit); a variable for tests.
 var publishBlockSize int64 = 100 << 20
 
 // publishAttempts is how often a publication stages its blocks again after
@@ -130,10 +105,7 @@ func (c containerWrapper) SourceURL(name string) url.URL {
 // again.
 const sourceLifetime = time.Hour
 
-// sourceURL names a blob of the container for a read by the service itself.
-// With a shared key the URL carries a read-only service signature on that one
-// blob, made here and never logged or stored; without one the URL is as the
-// container names it.
+// sourceURL names a blob for a service-side read, with a read-only signature under a shared key, never logged.
 func (a *Azure) sourceURL(src sourceAPI, name string) (url.URL, error) {
 	u := src.SourceURL(name)
 	if a.sharedKey == nil {
@@ -346,11 +318,7 @@ func (a *Azure) InitiateMultipartUpload(ctx context.Context, key string, metadat
 	return id, nil
 }
 
-// partBody streams a part to the service while it counts and hashes the
-// bytes. The service needs a seekable body to learn its length and to send
-// it again, so Seek answers the size and a rewind to the start, but only
-// while nothing has been read: a part of any size is never held in memory,
-// and a retry after a partial send fails instead of sending garbage.
+// partBody streams a part while counting and hashing; Seek supports only size and rewind-before-read, so a retry after a partial send fails.
 type partBody struct {
 	r        io.Reader
 	size     int64
@@ -584,11 +552,8 @@ func (a *Azure) CompleteMultipartUpload(ctx context.Context, key, uploadID strin
 	return nil
 }
 
-// deleteUpload removes the records and the manifest of an upload, the
-// manifest last so that a failure leaves the upload findable.
-// committedAs reports whether the committed blocks of the staging blob are
-// exactly ids and no block was staged after the commit that the list would take
-// instead.
+// deleteUpload removes the records, then the manifest, so a failure leaves the upload findable.
+// committedAs reports whether the staging blob's committed blocks are exactly ids.
 func committedAs(committed []blockSize, staged map[string]int64, ids []string) bool {
 	if len(committed) != len(ids) {
 		return false
@@ -604,12 +569,7 @@ func committedAs(committed []blockSize, staged map[string]int64, ids []string) b
 	return true
 }
 
-// publish makes the target hold the total bytes of the committed staging
-// blob. The service stages the blocks of the target from ranges of the
-// staging blob, then one block list commits them, so the target keeps its
-// old content until that commit and a failure before it leaves nothing
-// visible. The block IDs belong to the upload, so a repeat overwrites its own
-// blocks and no block of another upload of the key.
+// publish stages the target's blocks from the committed staging blob and commits them in one list; the target keeps its old content until then.
 func (a *Azure) publish(ctx context.Context, src sourceAPI, key, staging, uploadID string, total int64, headers azblob.BlobHTTPHeaders, custom map[string]string) error {
 	dst, err := a.blocks(key)
 	if err != nil {

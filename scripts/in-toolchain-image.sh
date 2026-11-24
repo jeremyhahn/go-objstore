@@ -1,60 +1,5 @@
 #!/usr/bin/env bash
-# Run a command in the toolchain image against a COPY of the checkout.
-#
-#   usage: scripts/in-toolchain-image.sh <image> <command...>
-#   e.g.   scripts/in-toolchain-image.sh go-enclave-toolchain:abc make build
-#
-# in-toolchain-template: v3 (ci-template v1.22.2). Ships beside ci.yml; copy it to
-# scripts/ with the workflow. From go-quicraft's scripts/in-toolchain-image.sh
-# (a141c3c), with the container prefix and uid taken from the environment.
-#
-# How CI runs a stage in the devcontainer image (handbook ci-standard.md §2). A
-# CI runner reaches its Docker daemon through a socket, so a bind mount would
-# resolve on the daemon's host, where the checkout does not exist. This
-# creates the container, streams the checkout into it (`.git` included: the
-# releasability tests read it) owned by the image's non-root user, then starts
-# it and returns the command's exit status. It works the same against a local
-# daemon; on a workstation `make docker-run CMD=...` (bind mount) is the
-# shorter path.
-#
-# The container keeps the integration service's posture where a copy-in allows
-# it: every capability dropped, no-new-privileges, the same ulimits and pid
-# bound, a non-root user, no network. The root filesystem is writable only
-# because `docker cp` cannot write into a read-only one.
-#
-# IN_IMAGE_NETWORK=bridge gives the container a network, for the stages that
-# must reach one: `make deps-check` asks the module proxy for the newest
-# releases, and `make security` fetches the vulnerability databases. Only then
-# are GOPROXY reopened, a writable module cache mounted (below; /tmp/gomodcache
-# with CI_CACHE=off), and the forge credentials passed through, by NAME from
-# this environment (the four variables dependency-resolution.md §6 has the
-# runner inject), so no token ever appears on a command line.
-#
-# v2 (ci-template v1.22, Company Agent m616 item 2): the caches live in named
-# volumes on the daemon's host (ci-standard.md §6), never in the container's
-# writable layer or its 3 GB /tmp: GOCACHE at /cache/gobuild and
-# GOLANGCI_LINT_CACHE at /cache/golangci for every stage, and, for a bridge
-# stage, GOMODCACHE at /cache/gomod (a no-network stage keeps the image's own
-# read-only module cache, so it still proves the image works offline). The
-# volumes are <CI_STACK_PREFIX>cache-<class>-{gobuild,golangci,gomod}, one set
-# per repo, trust class and daemon host, kept across jobs. CI_CACHE_CLASS
-# (default pr) is `main` only for a push to main, so a pull request never
-# writes a cache that main's build reads. A new volume's root is given to
-# IN_IMAGE_UID by a helper container holding CHOWN and nothing else.
-# scripts/trim-ci-caches.sh bounds their size. CI_CACHE=off mounts none (v1).
-#
-# v3 (ci-template v1.22.2, Company Agent m641 item 2 and m646 item 3): the
-# stage runs in this sibling container, so the sibling holds the job slot's
-# CPU bound. The job container's cgroup cpu.max gives it (rounded up; nproc
-# when the job has no quota; IN_IMAGE_CPUS overrides), and the sibling gets
-# --cpus N with GOMAXPROCS=N and GOFLAGS=-p=N. golangci-lint's default
-# concurrency follows the container CPU quota, so lint takes N with no flag.
-# A 4-CPU slot on the Dells gives 4; never a hardcoded number.
-#
-# The container is named <CI_STACK_PREFIX>tc-<pid>-<random>, under the prefix
-# scripts/reap-stale-ci-stacks.sh reaps (default <checkout dir>-ci-, which in CI
-# is <repo>-ci-), and is removed on every exit. IN_IMAGE_UID is the non-root
-# uid the command runs as (default 10001; devcontainer.md §5: any non-root uid).
+# in-toolchain-image.sh <image> <command...>: run the command in the toolchain image on a copy of the checkout, hardened, with cache volumes and the job's CPU bound.
 set -euo pipefail
 
 if [ "$#" -lt 2 ]; then
@@ -140,11 +85,7 @@ if [ "$network" = bridge ]; then
     if [ -n "${!v:-}" ]; then args+=(--env "$v"); fi
   done
 fi
-# #212: LABSTRINGS_PATTERNS names the labstrings gate's rules file (ci.yml
-# stages the RELEASABILITY_PATTERNS secret there). A bind mount would resolve
-# on the daemon's host, so the file is copied in like the checkout, mode 0400
-# and owned by the run's user, and the variable names the copy. A stage with a
-# network never gets it; unset, nothing is passed.
+# LABSTRINGS_PATTERNS is copied in mode 0400 for no-network stages only.
 patterns=${LABSTRINGS_PATTERNS:-}
 if [ -n "$patterns" ]; then
   if [ ! -f "$patterns" ] || [ -L "$patterns" ]; then

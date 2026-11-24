@@ -14,19 +14,7 @@ outputs:
 runs:
   using: composite
   steps:
-    # go mod download runs inside docker builds (the compose-built integration
-    # and SDK images, the root Dockerfile) which cannot reach the internal Gitea
-    # on their own. The runner injects GOPRIVATE and the tokenised insteadOf
-    # rewrite into the job's process environment
-    # (conventions/dependency-resolution.md §6), but a job environment does not
-    # cross into a docker build. The file lives OUTSIDE every build context, so a
-    # `COPY . .` cannot bake it into a layer (.dockerignore lists gomodauth* as a
-    # second guard). Read the variable straight from the shell environment,
-    # NEVER through ${{ env.X }}: that expression reads the workflow's own env:
-    # block, which does not define it, and would quietly write blanks. On GitHub
-    # the variable does not exist, the file is written empty, and each
-    # Dockerfile's secret mount is optional, so the same builds resolve from the
-    # public proxy.
+    # Writes the private-module insteadOf key outside every build context for docker builds; read from the shell, not ${{ env.X }}; empty on GitHub.
     - name: Stage module-fetch credentials
       id: stage
       shell: bash
@@ -35,10 +23,7 @@ runs:
         umask 077
         : > "${RUNNER_TEMP}/gomodauth.secret"
         if [ -n "${GIT_CONFIG_KEY_0:-}" ]; then
-          # Write ONLY the tokenised insteadOf key, as raw data with no trailing
-          # newline — never as `export NAME=value` shell. Each Dockerfile reads
-          # it with a quoted command substitution, so a credential containing
-          # shell metacharacters is assigned literally, never parsed or executed.
+          # Write only the tokenised insteadOf key as raw data; Dockerfiles read it with a quoted substitution, never as shell.
           printf '%s' "${GIT_CONFIG_KEY_0}" > "${RUNNER_TEMP}/gomodauth.secret"
           echo "staged Gitea module credential"
         else

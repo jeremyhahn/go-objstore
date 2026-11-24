@@ -243,12 +243,7 @@ func (b *Buckets) Bucket(ctx context.Context, name string) (common.Storage, erro
 }
 
 // requireDir reports ErrBucketNotFound unless the bucket is a directory.
-// openDir returns the bucket root as an os.Root. The handle held in b.dir is
-// reused while it still names the directory at b.root. Once that directory
-// has been removed or replaced, the path is opened again, after creating it
-// when create is set, so the buckets follow the root rather than a directory
-// that is gone. A handle that is replaced stays open: a call still using it
-// must not see it closed under it.
+// openDir returns the bucket root as an os.Root, reopening (and creating when asked) once the directory is gone; old handles stay open.
 func (b *Buckets) openDir(create bool) (*os.Root, error) {
 	b.dirMu.Lock()
 	defer b.dirMu.Unlock()

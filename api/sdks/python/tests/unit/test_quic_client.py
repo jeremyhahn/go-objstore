@@ -751,14 +751,7 @@ async def test_quic_put_file_like_object() -> None:
     assert put.call_args.kwargs["content"] == b"file data"
 
 
-# =====================================================================
-# transport-failure sweep (timeout + connect) for every operation
-#
-# The canonical matrix asserts one success + one error per op; this sweep
-# additionally drives the per-method httpx.TimeoutException /
-# httpx.ConnectError handlers so the client's transport-error mapping is
-# fully covered. Kept compact and table-driven.
-# =====================================================================
+# Transport-failure sweep: timeout and connect errors for every operation.
 
 
 _HTTP_METHOD = {

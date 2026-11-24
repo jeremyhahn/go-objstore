@@ -174,10 +174,7 @@ func (prm *PersistentReplicationManager) AddPolicy(policy common.ReplicationPoli
 		return common.ErrInvalidPolicy
 	}
 
-	// A persisted policy never carries a credential: the manager's credential
-	// provider supplies the handle at sync time, or the SDK default chain
-	// applies. A credential in its settings would be written to disk and is
-	// refused instead.
+	// A persisted policy never carries a credential; one in its settings is refused.
 	if err := common.RejectCredentialSettings(policy.SourceSettings); err != nil {
 		return err
 	}
@@ -589,10 +586,7 @@ func (prm *PersistentReplicationManager) Stop() {
 	prm.stopOnce.Do(func() { close(prm.stopChan) })
 }
 
-// save persists the current policies to storage atomically.
-// Must be called with mutex locked.
-// It writes to a sibling temp file, fsyncs it, then renames it over the policy
-// file so a crash between write and rename leaves the previous contents intact.
+// save persists the policies atomically (temp file, fsync, rename); call with the mutex held.
 func (prm *PersistentReplicationManager) save() error {
 	data := persistedPolicies{
 		Policies: prm.policies,

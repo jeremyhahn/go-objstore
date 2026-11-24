@@ -29,11 +29,7 @@ import (
 	restserver "github.com/jeremyhahn/go-objstore/pkg/server/rest"
 )
 
-// TestRESTServer_IPv6HostFromConfig starts the REST server exactly as
-// objstore-server does — configuration resolved by serverconfig from
-// OBJSTORE_* environment variables, then RESTServerConfig — with an IPv6 bind
-// host, and serves /health over [::1]. IPv6 is a requirement of this
-// environment (docker-compose.yml enables it); its absence fails the test.
+// TestRESTServer_IPv6HostFromConfig serves /health on [::1] from OBJSTORE_* configuration; IPv6 is required.
 func TestRESTServer_IPv6HostFromConfig(t *testing.T) {
 	// Reserve a free port on the IPv6 loopback, then hand it to the server.
 	probe, err := net.Listen("tcp", "[::1]:0")

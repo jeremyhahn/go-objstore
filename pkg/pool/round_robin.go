@@ -25,10 +25,7 @@ import (
 // in the cursor key.
 const roundRobinStrategyName = "round_robin"
 
-// cursorKeyPrefix namespaces the round-robin cursor inside the
-// caller-supplied StateStore. The full key is
-// "pool/<poolName>/round_robin/cursor". Keeping it stable across
-// versions is important for cursor compatibility on upgrade.
+// cursorKeyPrefix: the key is "pool/<poolName>/round_robin/cursor"; keep it stable across versions.
 const cursorKeyPrefix = "pool/"
 
 // RoundRobinStrategy returns candidates in rotation. The cursor is
@@ -45,11 +42,7 @@ type RoundRobinStrategy struct {
 	// system-tenant-backed KV store.
 	State StateStore
 
-	// mu serializes concurrent Pick calls so increment-and-store is
-	// atomic with respect to the StateStore round trip. The lock is
-	// per-strategy (not per-pool) — per-pool locks would require keying
-	// off the pool name and add complexity that the round-robin
-	// throughput does not warrant.
+	// mu serializes Pick so increment-and-store is atomic.
 	mu sync.Mutex
 }
 
@@ -71,10 +64,7 @@ func (s *RoundRobinStrategy) Pick(ctx context.Context, candidates []common.Stora
 		return nil, err
 	}
 
-	// Guard against an empty candidate set. The Manager rejects empty
-	// pools upstream, but a direct caller can still pass nil/empty here;
-	// without this check the cursor % len(candidates) below would panic
-	// with an integer divide-by-zero.
+	// An empty candidate set would divide by zero below.
 	if len(candidates) == 0 {
 		return nil, &EmptyPoolError{Name: poolNameFromContext(ctx)}
 	}
@@ -104,10 +94,7 @@ func (s *RoundRobinStrategy) Name() string {
 	return roundRobinStrategyName
 }
 
-// loadCursor reads the cursor value from the state store. A missing key
-// returns 0 (the cursor starts at zero). A malformed value (wrong byte
-// length) is treated as zero and overwritten on the next store — robust
-// against corrupted state from older versions or partial writes.
+// loadCursor reads the cursor; missing or malformed values count as zero.
 func (s *RoundRobinStrategy) loadCursor(ctx context.Context, key string) (uint64, error) {
 	value, found, err := s.State.Get(ctx, key)
 	if err != nil {

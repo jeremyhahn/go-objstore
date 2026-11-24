@@ -118,11 +118,7 @@ type Manager interface {
 	List(ctx context.Context) ([]Pool, error)
 }
 
-// poolNameContextKey is the private context key that the Manager uses
-// to thread the active pool name down to the strategy. Strategies that
-// need to namespace persistent state by pool name (round-robin) read
-// it via poolNameFromContext. Keeping the key unexported prevents
-// outside packages from spoofing it.
+// poolNameContextKey threads the active pool name to the strategy; unexported so it cannot be spoofed.
 type poolNameContextKey struct{}
 
 // withPoolName returns a derived context carrying the supplied pool

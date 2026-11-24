@@ -369,12 +369,7 @@ func (ctx *CommandContext) AddPolicyCommand(id, prefix, retentionDays, action st
 	return nil
 }
 
-// newPolicyArchiver creates the AWS Glacier archiver used as the destination
-// for archive lifecycle policies in local mode. It validates the runtime and
-// configuration up front so misconfiguration surfaces as a clear error when
-// the policy is added rather than an obscure failure when it is applied:
-// the glacier archiver must be compiled into the binary (build tag
-// "glacier") and a vault name must be configured via archive-vault-name.
+// newPolicyArchiver creates the local-mode Glacier archiver, failing early unless built with the glacier tag and archive-vault-name is set.
 func (ctx *CommandContext) newPolicyArchiver() (common.Archiver, error) {
 	if !factory.IsArchiverRegistered("glacier") {
 		return nil, ErrGlacierArchiverUnavailable

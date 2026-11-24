@@ -7,13 +7,7 @@
 
 package objstore
 
-// This file implements the canonical SDK unit-test matrix for the REST
-// protocol client. Each of the 19 operations gets a success and an error
-// case; nine operations additionally get a not_found case; and the protocol
-// gets metadata_round_trip and validation_empty_key cross-cutting cases.
-//
-// The transport is mocked with an httptest server (restServer) that routes by
-// method+path so a single handler can serve a whole round-trip.
+// Canonical SDK unit-test matrix for the REST client, over an httptest server routed by method and path.
 
 import (
 	"context"

@@ -373,7 +373,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   binaries) resolve every setting through one viper-based configuration layer:
   an optional YAML file (`-config` or `OBJSTORE_CONFIG`), `OBJSTORE_*`
   environment variables and flags, with precedence flags > environment > file >
-  defaults (issue #34, owner ruling 2026-08-26). `objstore-server` gains
+  defaults (issue #34). `objstore-server` gains
   `-rest-host` / `OBJSTORE_REST_HOST` / `rest.host`: its REST listener was
   previously pinned to `0.0.0.0`. See `docs/configuration/servers.md` and
   `configs/objstore-server.yaml.example`.
@@ -428,8 +428,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   `test/integration/minio-server/Dockerfile`, because the published MinIO
   images now refuse anonymous pulls; `integration-test-s3` and
   `integration-test-minio` bring the service up with `--build`.
-- Go toolchain 1.26.7 to 1.27.0 (portfolio standard, owner ruling
-  2026-09-01; issue #19): the `go` directive in every module (root,
+- Go toolchain 1.26.7 to 1.27.0 (issue #19): the `go` directive in every module (root,
   `api/sdks/go`, `examples/encryption`), the CI/nightly/release `GO_VERSION`
   pins, the Rust SDK workflow's `setup-go` pin (was 1.21), and every
   `golang:` Dockerfile base. The Debian-based integration images now pin
@@ -454,7 +453,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - The locked-memory primitive moved out of this repository. `pkg/enclave` is
   removed and its contents now ship as the Layer 0 module
   `github.com/jeremyhahn/go-enclave` (v0.3.0-alpha), so libraries that do not
-  sit above go-objstore can consume it (issue #29, owner-ruled 2026-08-23;
+  sit above go-objstore can consume it (issue #29;
   adopted here in #30, re-pinned to v0.3.0-alpha per #31). The exported
   surface is unchanged — same `package enclave`, same `MemoryEnclave`,
   `LockedMemoryError`, `ErrLockedMemoryUnavailable` and `WithBytes` — so call
@@ -464,11 +463,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   `github.com/jeremyhahn/go-objstore/pkg/enclave` must switch to
   `github.com/jeremyhahn/go-enclave`.**
 
-- `make release-alpha` is the company release-alpha template v2.3.9, vendored
+- `make release-alpha` is the release-alpha template v2.3.9, vendored
   verbatim at `mk/release-alpha.mk`, replacing the v1 recipe (issue #32). The
   version is now an explicit argument (`make release-alpha VERSION=vX.Y.Z-alpha`)
-  rather than a patch-only auto-increment; every git write signs through
-  `agent-git.sh` as this project's agent; the tag is annotated; only the release
+  rather than a patch-only auto-increment; every git write is signed; the tag is annotated; only the release
   commit and that one tag are pushed, to `origin`; and the recipe fails closed
   on a wrong branch, a dirty tree, an existing tag, an unreachable remote or a
   missing CHANGELOG section. The Makefile's build version variable is renamed
@@ -482,8 +480,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Build
 
-- Docker builds now fetch the internal first-party dependency go-enclave from
-  Gitea via an optional BuildKit secret (`--mount=type=secret,id=gomodauth`)
+- Docker builds now fetch the internal first-party dependency go-enclave via an optional BuildKit secret (`--mount=type=secret,id=gomodauth`)
   carrying the tokenised git `insteadOf` rewrite
   (conventions/dependency-resolution.md §6). This is required because go-enclave
   is go-objstore's first internal dependency: a plain `go mod download` inside a
@@ -499,7 +496,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   tests locally, point `GOMODAUTH_ENV` at a file **outside this repository**
   (the compose build context is the repo root; `.dockerignore` guards
   `gomodauth*` at any depth as a backstop) containing that single line,
-  e.g. `url.http://x:<token>@<gitea-host>/jeremyhahn/.insteadOf`; unset,
+  e.g. `url.http://x:<token>@<module-host>/jeremyhahn/.insteadOf`; unset,
   `GOMODAUTH_ENV` defaults to an empty secret and resolves from the public proxy.
 
 - `make test-release-alpha` runs the template's own regression harness and

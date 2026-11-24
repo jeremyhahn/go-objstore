@@ -8,15 +8,7 @@
 //go:build integration
 // +build integration
 
-// Package objstore contains the single comprehensive integration test suite.
-//
-// This is the canonical OPERATIONS × PROTOCOLS data-driven suite for the Go
-// SDK.  Every one of the 19 operations is exercised against every available
-// protocol (REST, gRPC, QUIC) with real assertions.  QUIC is enabled with
-// InsecureSkipVerify because the integration server runs with --quic-self-signed.
-//
-// Build tag: integration
-// Run:  go test -v -tags=integration -timeout=120s ./...
+// Package objstore runs every SDK operation against every protocol (go test -tags=integration).
 package objstore
 
 import (

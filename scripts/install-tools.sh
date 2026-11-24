@@ -1,15 +1,5 @@
 #!/bin/sh
-# install-tools.sh — build or download every tool scripts/tool-pins.sh pins
-# into one directory. Run by the devcontainer's tools stage
-# (build/docker/devcontainer/Dockerfile), with GOPROXY set by the caller.
-#
-# Usage: sh scripts/install-tools.sh <out-dir>
-#
-# The Go tools are built with `go install` at their pinned versions. gosec
-# builds in a throwaway module against XTOOLS_VERSION: the x/tools its own
-# go.mod names cannot read the export data Go 1.27 writes. The release
-# archives of trivy and shellcheck are each trusted only when both the archive
-# and the binary inside it match the SHA-256s pinned for this architecture.
+# install-tools.sh <out-dir>: install every tool tool-pins.sh pins; release archives must match the pinned archive and binary SHA-256s.
 set -eu
 
 prog=${0##*/}

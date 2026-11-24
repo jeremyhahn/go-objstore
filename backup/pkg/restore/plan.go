@@ -119,10 +119,7 @@ func validDigest(s string) bool {
 	return err == nil && len(b) == sha256.Size && hex.EncodeToString(b) == s
 }
 
-// resolve follows target from the directory dir, through the manifest's own
-// symlinks, and returns where it leads. It fails if the walk leaves the
-// target, passes through a symlink the manifest does not hold, or does not
-// end within its bounds.
+// resolve follows target from dir through the manifest's own symlinks; it fails if the walk leaves the target or meets an unknown symlink.
 func (pl *plan) resolve(dir, target string, depth int, steps *int, lstat lstatFunc) (string, error) {
 	if depth > maxLinkDepth {
 		return "", errEscape

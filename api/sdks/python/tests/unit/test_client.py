@@ -269,14 +269,7 @@ def test_unified_protocol_enum_values() -> None:
     assert Protocol.QUIC.value == "quic"
 
 
-# =====================================================================
-# delegation sweep — every logical op forwards to the active backend
-#
-# The canonical matrix only requires a representative delegated call per
-# protocol; this sweep covers the unified facade's per-op dispatch lines for
-# both the synchronous (REST/gRPC) and async-bridged (QUIC) paths so the
-# thin forwarding methods are fully exercised.
-# =====================================================================
+# Delegation sweep: every facade operation forwards to the active backend, sync and QUIC async paths.
 
 
 def _call(client: ObjectStoreClient, op: str):

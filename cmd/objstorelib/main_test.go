@@ -20,13 +20,7 @@ import (
 	"testing"
 )
 
-// The //export functions themselves cannot be called from here: `go test`
-// rejects cgo in test files outright ("use of cgo in test ... not supported"),
-// so nothing in a _test.go file can name C.int or *C.char. That is why the
-// length guard is a plain-Go function taking plain-Go types — it is the whole
-// of the decision, and it is reachable. The remaining untested surface is the
-// one-line `if !checkLength(...)` in each wrapper, which is covered end-to-end
-// from C by test_length_validation in examples/c_client/test_objstore.c.
+// go test rejects cgo in test files, so the length guard is plain Go; the wrappers are covered from C by examples/c_client/test_objstore.c.
 
 func TestCheckLengthAcceptsNonNegative(t *testing.T) {
 	for _, n := range []int{0, 1, 4096} {

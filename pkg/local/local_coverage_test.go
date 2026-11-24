@@ -30,9 +30,7 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
-// ---------------------------------------------------------------------------
-// Getter / setter methods previously at 0 %
-// ---------------------------------------------------------------------------
+// Getters and setters.
 
 func TestLocal_GetSetLogger(t *testing.T) {
 	dir := t.TempDir()
@@ -178,14 +176,7 @@ func TestWriteFileAtomic_ChmodFails(t *testing.T) {
 
 	dir := t.TempDir()
 
-	// Make the directory read-only so we cannot chmod the temp file
-	// (actually chmod on an existing file should always work for the owner,
-	// so we test an unreachable-in-practice branch by using a very restrictive
-	// directory – creating the temp succeeds but the chmod on the tmp fails
-	// when the parent dir is 0111 because the rename would fail anyway).
-	// The simplest way to hit the Chmod branch is to mock a file where
-	// Chmod fails; since that requires OS cooperation, we instead trigger
-	// the Rename failure which is the next uncovered statement.
+	// Trigger the Rename failure in a restricted directory.
 
 	// The target path is inside a sub-directory that does not exist;
 	// os.CreateTemp in the same dir succeeds, but os.Rename to a missing
@@ -305,9 +296,7 @@ func TestLocal_LoadMetadata_PermissionDenied(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// GetWithContext – encrypter-factory error and decrypt error (82.9 %)
-// ---------------------------------------------------------------------------
+// GetWithContext: encrypter-factory and decrypt errors.
 
 func TestLocal_GetWithContext_EncrypterFactoryError(t *testing.T) {
 	dir := t.TempDir()
@@ -387,20 +376,9 @@ func TestLocal_DeleteWithContext_NoMetadata(t *testing.T) {
 	dir := t.TempDir()
 	s := newConfigured(t, dir)
 
-	// Write the object directly to disk without going through Put so that
-	// the Stat on deletion cannot find size info (object doesn't exist yet).
-	// Actually the simplest approach: delete a file that was placed directly
-	// to disk, bypassing PutWithMetadata (so no sidecar).  Stat still
-	// succeeds for the object file itself; the sizeStr path is covered by
-	// other tests.  What's NOT covered is the `sizeStr == ""` branch inside
-	// DeleteWithContext (log line 451).
+	// A file placed without a sidecar reaches the empty-size branch of DeleteWithContext.
 
-	// Create a file where Stat WILL fail (the file is briefly deleted between
-	// our Stat and the one inside Delete — we can't race it reliably).
-	// The easier trick: put a directory where the object file would be, but
-	// Stat returns info for the directory (IsDir == true).  Actually the
-	// simplest approach is to just call DeleteWithContext on a key whose
-	// file we manually removed after stat.
+	// Delete a key whose file was removed after it was written.
 
 	// Best portable approach: use an object that exists but remove it between
 	// the stat inside DeleteWithContext and the actual Delete call — not
@@ -659,15 +637,7 @@ func TestLocal_GetWithContext_OpenPermissionDenied(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// GetWithContext – file.Stat() error on the non-encrypt path
-// file.Stat() on an open fd very rarely fails on a real filesystem,
-// so this exercises the else-branch by ensuring Stat returns an error.
-// We satisfy the branch indirectly: if Stat fails the else-log is emitted.
-// Since we cannot portably make Stat fail on an open fd without mocking,
-// we cover the decrypt stat-error branch (line 342-344) using a real setup
-// where the file is deleted after open (Unix unlink-while-open).
-// ---------------------------------------------------------------------------
+// GetWithContext: the decrypt path on a file unlinked while open.
 
 func TestLocal_GetWithContext_StatFailsAfterDecrypt(t *testing.T) {
 	dir := t.TempDir()
@@ -687,15 +657,7 @@ func TestLocal_GetWithContext_StatFailsAfterDecrypt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Delete the file on disk after it was written but before the Get
-	// reads it. The file is opened via os.Open which returns a valid fd;
-	// after the unlink the fd remains valid but Stat on the path would
-	// not find the file. Actually file.Stat() on an open fd uses fstat()
-	// which still works on a deleted file — so this path is genuinely
-	// unreachable without OS-level tricks.
-	// We therefore accept that this specific else-log branch remains
-	// uncovered and document it here. The test still exercises the
-	// decrypt success path end-to-end.
+	// fstat still works on an unlinked file, so this covers the decrypt success path only.
 	rc, err := s.GetWithContext(context.Background(), key)
 	if err != nil {
 		t.Fatalf("GetWithContext: %v", err)
@@ -741,31 +703,7 @@ func TestLocal_DeleteWithContext_PermissionDenied(t *testing.T) {
 	}
 }
 
-// TestLocal_DeleteWithContext_EmptySizeStr exercises the code path where
-// os.Stat on the object fails before deletion (size remains ""), so the
-// log entry uses the no-size variant.  We achieve this by writing the
-// object file as a directory — Stat succeeds but size is 0 — actually
-// the simplest approach is to delete a file that genuinely exists (Stat
-// succeeds → sizeStr is set) OR to have Stat fail by making the parent
-// unreadable *after* creation.  The empty-sizeStr branch occurs when
-// Stat itself fails. We trigger it by making the parent directory
-// unreadable before calling DeleteWithContext (the file was put there
-// before the chmod, so Remove itself would also fail).
-//
-// The cleanest portable way to exercise line 451-453 is to delete an
-// object that has a zero-byte body, which means info.Size() == 0 and
-// formatBytes returns "0 B" (non-empty string), so that doesn't help.
-// The branch at line 449-453 is:
-//
-//	if sizeStr != "" {  ← covered by successful deletes
-//	  log...
-//	} else {            ← line 451 – only reachable when Stat(path) fails
-//	  log...
-//	}
-//
-// Stat on an existing file only fails when the parent dir is unreadable.
-// But then Remove also fails. So we exercise both the "Remove fails"
-// and the "stat fails → sizeStr empty → Remove fails" paths together.
+// TestLocal_DeleteWithContext_EmptySizeStr: with the parent unreadable, Stat fails (empty size) and Remove fails.
 func TestLocal_DeleteWithContext_StatFailsBeforeDelete(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("cannot test permission errors as root")
@@ -977,15 +915,7 @@ func TestLocal_LoadMetadata_ValidateKeyError(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// writeFileAtomic – Chmod error path
-// We can't make fchmod fail on a normal Linux filesystem for a file we own.
-// The only portable way to exercise this is to use a read-only filesystem or
-// to make the directory read-only *after* CreateTemp succeeds.  Since that
-// is inherently racy and not portable, we accept this specific branch stays
-// at 0 % and document it here.  The related test below exercises the rename
-// failure path which is the next branch.
-// ---------------------------------------------------------------------------
+// writeFileAtomic: the rename failure path (fchmod cannot be made to fail portably).
 
 // TestWriteFileAtomic_RenameAfterSuccessfulWrite verifies that a rename to a
 // path in a different directory (non-same-filesystem) causes the rename step

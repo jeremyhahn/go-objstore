@@ -135,10 +135,7 @@ func (s *Server) Get(req *objstorepb.GetRequest, stream objstorepb.ObjectStore_G
 		return mapError(err)
 	}
 
-	// Send metadata in the first response.  For zero-byte objects, reader.Read
-	// returns (0, io.EOF) immediately so the data loop never fires; we carry
-	// the metadataSent flag to ensure metadata is always included in the very
-	// first message sent to the client.
+	// Metadata goes in the first message, even for a zero-byte object whose first Read is io.EOF.
 	metadataSent := false
 	buffer := make([]byte, s.opts.ChunkSize)
 

@@ -136,10 +136,7 @@ func (e *AESEncrypter) Decrypt(_ context.Context, ciphertext io.Reader) (io.Read
 		return nil, err
 	}
 
-	// Reject attacker-controlled nonce lengths before allocating. The nonce size
-	// is fixed by the GCM construction, so a mismatch indicates corrupt or hostile
-	// input; validating here also prevents a memory-amplification DoS where a tiny
-	// 4-byte header (e.g. 0xFFFFFFFF) would otherwise drive a multi-gigabyte make.
+	// Reject a nonce length other than the GCM size before allocating.
 	if nonceLen != uint32(gcm.NonceSize()) {
 		return nil, fmt.Errorf("invalid nonce length: got %d, want %d", nonceLen, gcm.NonceSize())
 	}

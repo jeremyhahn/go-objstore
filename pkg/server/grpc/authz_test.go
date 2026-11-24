@@ -192,9 +192,7 @@ func TestAuthorization_ObjstoreHealthAnyPrincipal(t *testing.T) {
 	}
 }
 
-// TestIsPublicAuthzMethod_ExactServicePrefix checks that only the standard
-// health and reflection services skip authorization, matched by service
-// prefix rather than by substring (#239).
+// TestIsPublicAuthzMethod_ExactServicePrefix: only the health and reflection services skip authorization, matched by full service prefix.
 func TestIsPublicAuthzMethod_ExactServicePrefix(t *testing.T) {
 	cases := map[string]bool{
 		"/grpc.health.v1.Health/Check":                                   true,

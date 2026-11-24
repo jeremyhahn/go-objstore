@@ -1,13 +1,6 @@
 //go:build conformance
 
-// Cross-protocol conformance suite: launches one objstore-server process with
-// all five transports enabled against a temp-dir local backend, then drives
-// the unified Go SDK through an operation matrix asserting that every
-// transport observes identical state — including byte-for-byte round trips of
-// binary payloads written via one transport and read via every other.
-//
-// Run with: make conformance-test
-// (or: go test -tags conformance -run TestConformance -v ./...)
+// Cross-protocol conformance: every transport of one server must observe identical state (make conformance-test).
 package objstore
 
 import (

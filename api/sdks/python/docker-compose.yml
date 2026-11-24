@@ -34,11 +34,7 @@ services:
 
   # Python SDK unit tests
   python-unit-tests:
-      # No source bind mount: the image is built from this SDK's source and
-      # already contains it, tests included. Mounting the tree over it is
-      # redundant on a normal host and impossible under a containerised CI
-      # runner, where the daemon is asked to mount a path that exists only
-      # inside the job container ("mkdir /workspace: file exists").
+      # No source bind mount: the image already contains the source, and a containerised runner cannot mount it.
     build:
       context: .
       dockerfile: Dockerfile
@@ -71,11 +67,7 @@ networks:
   objstore-net:
     driver: bridge
 
-# The go mod download inside the root-Dockerfile (objstore-server) build resolves
-# the internal go-enclave module from Gitea via an optional BuildKit secret
-# carrying the read-only module token (conventions/dependency-resolution.md §6);
-# the caller supplies the file path in GOMODAUTH_ENV. Unset, it defaults to
-# /dev/null and resolves from the public proxy.
+# GOMODAUTH_ENV is the optional BuildKit secret file for private modules; unset, it is /dev/null.
 secrets:
   gomodauth:
     file: ${GOMODAUTH_ENV:-/dev/null}

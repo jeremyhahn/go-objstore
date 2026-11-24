@@ -55,13 +55,7 @@ func (m *mockReplicationSetter) SetReplicationManager(rm common.ReplicationManag
 // backend but the defaultBackend field to be empty string.
 func TestDefaultBackend_EmptyDefaultBackend(t *testing.T) {
 	Reset()
-	// Force the facade into an initialized-but-no-default state by directly
-	// constructing the facade after initialization with an auto-selected default
-	// (which sets a non-empty default), then manipulating the internal field.
-	// The only legal way without touching non-test source is to set defaultBackend
-	// to "" via the exported Reset + re-init sequence is insufficient, so we
-	// manipulate through the package-private façade struct directly — this is
-	// an internal test (package objstore).
+	// Clear the default backend through the package-private facade struct.
 	err := Initialize(&FacadeConfig{
 		Backends: map[string]common.Storage{
 			"local": newMockStorage("local"),

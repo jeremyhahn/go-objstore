@@ -44,8 +44,8 @@ func RegisterStorage(backendType string, creator StorageCreator) {
 // An archiver whose settings name a path on the server's filesystem must also
 // be listed in pathArchiverTypes (wire_options.go), so CheckClientArchiverType
 // refuses it from clients with ErrClientLocalArchiver unless the server sets
-// archive.allow_client_local_destinations (#236). Registering such a type
-// without listing it would let any client write to a server path.
+// archive.allow_client_local_destinations. Registering such a type without
+// listing it would let any client write to a server path.
 func RegisterArchiver(backendType string, creator ArchiverCreator) {
 	archiverRegistry[backendType] = creator
 }

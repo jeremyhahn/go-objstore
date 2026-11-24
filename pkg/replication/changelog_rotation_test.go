@@ -210,12 +210,7 @@ func TestRewriteFile_ReopenFailureRecovers(t *testing.T) {
 
 	require.NoError(t, cl.RecordChange(ChangeEvent{Key: "k1", Operation: "put", Timestamp: time.Now()}))
 
-	// Force the rewrite to succeed through rename but fail on reopen: rewrite
-	// opens with O_APPEND|O_RDWR (no O_CREATE), so a write-only directory check
-	// is not enough; instead make the renamed file unreadable via chmod after
-	// rename by pre-creating an unwritable target path through a directory swap.
-	// Simpler deterministic approach: replace the log with a directory between
-	// rename and reopen is racy, so simulate the stranded state directly:
+	// Simulate the stranded state after a successful rename and a failed reopen:
 	cl.mutex.Lock()
 	_ = cl.file.Close()
 	cl.file = nil // state rewriteFile leaves behind on reopen failure

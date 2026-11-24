@@ -28,14 +28,7 @@ import (
 
 // --- helpers -----------------------------------------------------------------
 
-// pureStorage implements just enough of the common.Storage interface to be
-// usable by StorageFS but has NO listKeys method, so StorageFS.listKeys falls
-// back to returning an empty slice.  We embed mockStorage for every method
-// except we must NOT promote its unexported listKeys — but since listKeys is
-// lowercase it is already not promoted across packages.  Inside the same
-// package however, embedding promotes it.  We therefore define a completely
-// separate concrete type with no embedding so the unexported lister interface
-// check fails.
+// pureStorage implements common.Storage without listKeys, so StorageFS.listKeys returns empty.
 type minimalStorage struct {
 	inner *mockStorage
 }
@@ -147,12 +140,7 @@ func (m *listWithOptionsErrMock) ListWithOptions(ctx context.Context, opts *comm
 	return nil, m.listErr
 }
 
-// statErrMock makes Stat (via getMetadataInternal) fail so we hit the fallback
-// code paths in newStorageFile that create a default FileInfo.
-// It does this by returning a non-FileInfo fs.FileInfo from an embeddable
-// type, but since Stat is on StorageFS we need a different approach:
-// we override getMetadata by poisoning the metadata storage after the dir
-// marker is written.
+// statErrMock poisons metadata after the dir marker is written, so newStorageFile builds a default FileInfo.
 
 // nonFileInfoStat stores an os.FileInfo that is NOT *FileInfo so the type
 // assertion in newStorageFile fails.
@@ -196,17 +184,7 @@ func TestNewStorageFile_DirStatError(t *testing.T) {
 	}
 }
 
-// TestNewStorageFile_DirStatReturnsNonFileInfo exercises the branch where
-// fs.Stat returns a non-*FileInfo value. We trigger this by storing metadata
-// with invalid JSON (so Stat succeeds via the dirExists+fileExists fallback
-// which returns a plain os.FileInfo, not *FileInfo).
-//
-// The simpler approach: write a valid metadata JSON that the StorageFS Stat
-// will decode to *FileInfo but where we verify the else branch. The actual
-// unreachable else branch is for when the storage Stat returns something that
-// is not *FileInfo — that cannot happen with StorageFS.Stat itself.
-// Instead we cover the adjacent line (creating default FileInfo when
-// dirIndex==0 and f.fileInfo==nil inside Readdir).
+// TestNewStorageFile_DirStatReturnsNonFileInfo covers the default FileInfo built in Readdir at dirIndex 0.
 func TestReaddir_FileInfoNilFallback(t *testing.T) {
 	storage := newMockStorage()
 	sfs := New(storage)
@@ -231,7 +209,7 @@ func TestReaddir_FileInfoNilFallback(t *testing.T) {
 	}
 }
 
-// --- Read / ReadAt nil-buf paths (write-only file opened for WRONLY) ---------
+// Read and ReadAt nil-buffer paths.
 
 // TestRead_NilBuf exercises the f.buf == nil branch in Read.
 // A write-only file (O_WRONLY without O_RDWR) has a buf, but we can set it

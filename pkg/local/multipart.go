@@ -272,10 +272,7 @@ func (l *Local) UploadPart(ctx context.Context, key, uploadID string, partNumber
 	return common.PartInfo{PartNumber: partNumber, ETag: etag, Size: size}, nil
 }
 
-// copyEncryptedPart writes the encrypted part to w. The plaintext goes straight
-// from the caller's reader into the cipher: it is hashed and checked against
-// its declared size on the way through and never lands on disk, so a crash
-// leaves nothing but ciphertext behind.
+// copyEncryptedPart encrypts the part straight from the reader, checking hash and size, so plaintext never reaches disk.
 func copyEncryptedPart(ctx context.Context, enc common.Encrypter, w io.Writer, data io.Reader, size int64) (string, error) {
 	body, err := multipart.NewPartReader(data, size)
 	if err != nil {
@@ -522,10 +519,7 @@ func (l *Local) ListMultipartUploads(ctx context.Context, prefix string) ([]comm
 	return out, nil
 }
 
-// expireUploads removes the uploads past their expiry and returns how many it
-// removed. A directory whose record is missing or unreadable is judged by its
-// modification time, so a crash during initiate leaves nothing behind for
-// good. Entries that are not upload directories are left alone.
+// expireUploads removes expired uploads and returns the count; directories without a readable record are judged by mtime.
 func (l *Local) expireUploads() int {
 	if l.path == "" {
 		return 0

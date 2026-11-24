@@ -255,10 +255,7 @@ func TestServerShutdown(t *testing.T) {
 		t.Errorf("Shutdown() = %v, want nil", err)
 	}
 
-	// The server is known to have been serving, so Shutdown must actually
-	// unblock Start. Previously this was unknowable — the sleep left it open
-	// whether Shutdown had raced ahead of a server that never started, so the
-	// test could only assert that Shutdown had not panicked.
+	// The server was serving, so Shutdown must unblock Start.
 	select {
 	case err := <-errChan:
 		if err != http.ErrServerClosed {

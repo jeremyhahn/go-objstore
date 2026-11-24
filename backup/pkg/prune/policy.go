@@ -61,10 +61,7 @@ func (g Group) String() string {
 	return g.Host + ":" + g.Root
 }
 
-// keepGroups applies the policy to each group of snapshots with the same
-// host and root independently, so one source's snapshots never take the
-// place of another's. It returns the groups ordered by host and root, each
-// listing its snapshots in the order given.
+// keepGroups applies the policy to each host and root group independently, ordered by host and root.
 func (p Policy) keepGroups(snaps []dated, now time.Time) []Group {
 	bySource := make(map[source][]dated)
 	for _, s := range snaps {

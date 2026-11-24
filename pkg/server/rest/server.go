@@ -39,19 +39,7 @@ type Server struct {
 	config      *ServerConfig
 	rateLimiter *middleware.RateLimiter
 
-	// serving is closed by Start once httpServer is fully configured and the
-	// blocking serve call is about to be made. Closing a channel publishes
-	// every write the closing goroutine made beforehand, so this is the
-	// happens-before edge a caller needs before reading httpServer — notably
-	// httpServer.TLSConfig, which Start assigns.
-	//
-	// It means "Start has committed to serving", not "the listener is bound",
-	// and that is the guarantee callers actually need: http.Server makes the
-	// remainder deterministic, because Serve refuses to track a listener once
-	// shutdown has begun. A Shutdown issued after this point therefore either
-	// stops a running server or makes the imminent Serve return
-	// ErrServerClosed — never the silent no-op that racing Shutdown against
-	// an unstarted server produces.
+	// serving is closed when Start commits to serving, the happens-before edge for reading httpServer; a later Shutdown always takes effect.
 	serving     chan struct{}
 	servingOnce sync.Once
 }
@@ -249,12 +237,7 @@ func NewServer(storage common.Storage, config *ServerConfig) (*Server, error) {
 	// Add authentication middleware (always enabled, uses NoOpAuthenticator by default)
 	router.Use(AuthenticationMiddleware(config.Authenticator, config.Logger, config.AuditLogger, config.MetricsPublic))
 
-	// Add authorization middleware (always enabled, uses NoOpAuthorizer by default).
-	// Runs after authentication so the principal is available. Health and swagger
-	// routes are registered without these middlewares applied selectively below;
-	// since this is a global middleware, the health route still passes through the
-	// allow-all default. AuthorizationMiddleware only denies when a restrictive
-	// authorizer is configured.
+	// Authorization runs after authentication on every route; the default authorizer allows all.
 	router.Use(AuthorizationMiddleware(config.Authorizer, config.Logger, config.AuditLogger, config.MetricsPublic))
 
 	// Add logging middleware if enabled
@@ -302,11 +285,7 @@ func NewServer(storage common.Storage, config *ServerConfig) (*Server, error) {
 	return server, nil
 }
 
-// beginServing publishes the server's start-up state to anyone waiting on
-// serving. sync.Once is not defensive clutter: a second Start must fail on its
-// own terms — "address already in use", or ErrServerClosed after a Shutdown —
-// and closing an already-closed channel would turn that ordinary error into a
-// panic.
+// beginServing closes serving once, so a second Start fails with its own error, not a panic.
 func (s *Server) beginServing() {
 	s.servingOnce.Do(func() { close(s.serving) })
 }

@@ -98,13 +98,7 @@ func buildOutgoingMD(config *ClientConfig) metadata.MD {
 	return md
 }
 
-// wrapGRPCError converts a gRPC transport error into the SDK error model:
-// canonical status codes are mapped to the matching SDK sentinel
-// (codes.InvalidArgument -> ErrInvalidArgument, codes.Unauthenticated ->
-// ErrUnauthenticated, codes.PermissionDenied -> ErrPermissionDenied,
-// codes.NotFound -> ErrObjectNotFound, codes.AlreadyExists ->
-// ErrAlreadyExists, codes.ResourceExhausted -> ErrRateLimited) while the
-// original status error stays in the chain for status.Code inspection.
+// wrapGRPCError maps canonical gRPC status codes to the SDK sentinels and keeps the status error in the chain.
 func wrapGRPCError(op string, err error) error {
 	var sentinel error
 	switch status.Code(err) {
@@ -830,10 +824,7 @@ func (c *GRPCClient) PutStream(ctx context.Context, key string, r io.Reader, siz
 	}, nil
 }
 
-// fillChunk reads from r until buf is full or r returns an error. Only
-// io.EOF ends the data: it is returned with the bytes read before it. Any
-// other error, io.ErrUnexpectedEOF from the source included, is returned
-// as is, so the caller aborts the put instead of storing a short object.
+// fillChunk reads until buf is full; only io.EOF ends the data, any other error aborts the put.
 func fillChunk(r io.Reader, buf []byte) (int, error) {
 	n := 0
 	for n < len(buf) {

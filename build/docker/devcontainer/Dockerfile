@@ -1,53 +1,4 @@
-# go-objstore devcontainer: one Dockerfile, the shipped stages built FROM base.
-#
-#   tools        build-only: the pinned tools, built or downloaded into /out
-#   base         the Go toolchain, the C compiler -race and the C API need, a
-#                non-root user and the verified module cache of every module
-#                in the tree; GOPROXY=off
-#   toolchain    base + every tool the Makefile calls. CI runs `make lint`,
-#                `make build`, `make coverage`, `make security`, `make
-#                deps-check`, `make backup-lint` and `make backup-test` here
-#                (scripts/in-toolchain-image.sh). The checkout is COPIED in,
-#                never baked; `make toolchain-image` prints its
-#                content-addressed tag.
-#   capi         the same Go release on glibc (Debian) with base's module
-#                cache: CI runs `make lib-test` here. A Go c-shared library
-#                cannot load on musl: the Go runtime reads argc and argv from
-#                the arguments of its ELF constructor, which glibc passes and
-#                musl does not, so on Alpine it segfaults before main.
-#                `make capi-image` prints its tag.
-#   integration  base + the Go source, BAKED IN: the image CI names with
-#                `make it-image` and scans with `trivy image`. The integration
-#                suites under test/integration build their own images through
-#                their compose files.
-#
-# Build with `make docker-build`, which passes GO_IMAGE, GO_GLIBC_IMAGE,
-# GO_BUILD_PROXY and the gomodauth secret.
-#
-# THE GO TOOLCHAIN is the one every go.mod declares (`go 1.27.4`), from the
-# official Alpine image. Raise the tag in the same change that moves go.mod; to
-# pin by digest, `docker buildx imagetools inspect golang:<ver>-alpine<branch>`
-# and append `@sha256:<index digest>` to the tag.
-#
-# MODULE AUTHENTICATION: github.com/jeremyhahn/go-enclave is fetched with the
-# forge credentials, which reach the build ONLY as the BuildKit secret
-# `gomodauth` (`make stage-gomodauth`): an env file of GOPRIVATE,
-# GIT_CONFIG_COUNT, GIT_CONFIG_KEY_0 and GIT_CONFIG_VALUE_0, `KEY=value` or
-# `export KEY=value` lines. A secret mount is never written to a layer, and
-# the RUN that reads it prints nothing of it. An empty or absent secret means
-# the modules resolve without credentials.
-#
-# FETCHING happens only at build time and only through GO_BUILD_PROXY. The
-# images' ENV is GOPROXY=off, so a gate that reaches for a module fails instead
-# of fetching it. CI runs `make security` and `make deps-check` with the
-# network on, and they set their own proxy.
-#
-# There is deliberately no `# syntax=` directive: it would make every build
-# pull a frontend image by a floating tag. BuildKit's built-in frontend
-# supports everything used here, Dockerfile.dockerignore included.
-#
-# Every file a COPY in the tools, base or toolchain stage reads is in the
-# Makefile's TOOLCHAIN_INPUTS, so a change to one is a new toolchain tag.
+# Devcontainer stages: tools, base (Go toolchain, module cache, GOPROXY=off), toolchain (CI gates), capi (glibc, for make lib-test), integration (source baked in); build with `make docker-build`.
 
 #
 # The Go base images are pinned by tag and multi-arch index digest; the
@@ -62,8 +13,7 @@ ARG GO_BUILD_PROXY=https://proxy.golang.org,direct
 FROM ${GO_IMAGE} AS tools
 ARG GO_BUILD_PROXY
 
-# GOTOOLCHAIN=local: the Go tools are built by THIS toolchain. CGO_ENABLED=0:
-# static binaries.
+# GOTOOLCHAIN=local and CGO_ENABLED=0: static tools built by this toolchain.
 ENV GOTOOLCHAIN=local \
     CGO_ENABLED=0
 
@@ -79,10 +29,7 @@ RUN GOPROXY="$GO_BUILD_PROXY" sh scripts/install-tools.sh /out
 FROM ${GO_IMAGE} AS base
 ARG GO_BUILD_PROXY
 
-# GOTOOLCHAIN=local makes a go.mod asking for a newer toolchain FAIL rather
-# than download it. CGO_ENABLED=1 is for -race and for the C shared library
-# (`make lib`). The caches sit at fixed paths outside any home; the module
-# cache is /opt/go/mod, the path ci.yml's `trivy image` step skips.
+# GOTOOLCHAIN=local fails on a newer go.mod toolchain; CGO_ENABLED=1 for -race and the C library; module cache at /opt/go/mod.
 ENV GOTOOLCHAIN=local \
     CGO_ENABLED=1 \
     GOFLAGS=-mod=readonly \
@@ -102,10 +49,7 @@ RUN set -eux; \
     install -d -m 0755 -o 10001 -g 10001 /src; \
     install -d -o root -g root -m 0777 /gocache
 
-# Dependencies first: a source-only change reuses this layer. Every module's
-# go.mod and go.sum, at its own path, because the nested modules replace the
-# root module by relative path. The credentials are exported from the secret
-# in this RUN's shell only; nothing echoes them and nothing writes them down.
+# Dependencies first, every module's go.mod and go.sum at its own path; credentials stay in this RUN's shell.
 WORKDIR /build
 COPY go.mod go.sum ./
 COPY backup/go.mod backup/go.sum backup/
@@ -197,7 +141,7 @@ COPY --chown=root:root pkg/ pkg/
 COPY --chown=root:root internal/ internal/
 COPY --chown=root:root test/integration/ test/integration/
 
-# Fail the BUILD, not a run, if the tree that arrived cannot be compiled.
+# Fail the build if the tree cannot be compiled.
 RUN go vet -tags "local awss3 gcpstorage azureblob glacier azurearchive integration" ./test/integration/...
 
 CMD ["go", "version"]

@@ -64,10 +64,7 @@ func ValidateKey(key string) error {
 		return fmt.Errorf("%w: key cannot be an absolute path", common.ErrInvalidArgument)
 	}
 
-	// Check for path traversal attempts
-	// Check for ".." as a path component (not just anywhere in string)
-	// This catches: "..", "../foo", "foo/..", "foo/../bar", "foo/..", etc.
-	// But allows: "file..txt", "foo..bar" (where .. is part of the name)
+	// ".." is rejected as a path component only; "file..txt" is allowed.
 	if key == ".." ||
 		strings.HasPrefix(key, "../") ||
 		strings.HasSuffix(key, "/..") ||

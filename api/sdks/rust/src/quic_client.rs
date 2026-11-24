@@ -16,7 +16,7 @@ use std::sync::Arc;
 pub enum TlsVerification {
     /// Verify server certificates (production use)
     Enabled,
-    /// Skip certificate verification (testing only - INSECURE)
+    /// Skip certificate verification (testing only).
     Disabled,
 }
 
@@ -33,11 +33,7 @@ impl QuicClient {
         Self::new_with_tls(server_addr, server_name, TlsVerification::Enabled).await
     }
 
-    /// Create a new QUIC/HTTP3 client with custom TLS verification
-    ///
-    /// # Warning
-    /// Using `TlsVerification::Disabled` bypasses certificate validation and should ONLY
-    /// be used in testing environments. This creates a security vulnerability in production.
+    /// Create a QUIC/HTTP3 client with custom TLS verification; `Disabled` is for tests only.
     pub async fn new_with_tls(
         server_addr: SocketAddr,
         server_name: impl Into<String>,
@@ -66,7 +62,7 @@ impl QuicClient {
                 .with_no_client_auth()
             }
             TlsVerification::Disabled => {
-                // INSECURE: Skip certificate verification (testing only)
+                // Skip certificate verification (testing only).
                 eprintln!("WARNING: TLS certificate verification is DISABLED. This is INSECURE and should only be used for testing!");
                 rustls::ClientConfig::builder_with_provider(Arc::new(
                     rustls::crypto::ring::default_provider(),
@@ -998,11 +994,7 @@ impl QuicClient {
         Ok(quic_replication_status_into(parsed))
     }
 
-    /// Close the client, releasing the underlying QUIC endpoint.
-    ///
-    /// This signals all open connections to close gracefully and waits for the
-    /// endpoint to become idle. After calling this the client should not be
-    /// reused. [`Drop`] performs the same cleanup if `close` is not called.
+    /// Close the client and its QUIC endpoint; do not reuse it after. [`Drop`] does the same.
     pub async fn close(&self) -> Result<()> {
         self.endpoint.close(0u32.into(), b"client closed");
         self.endpoint.wait_idle().await;
@@ -1189,8 +1181,7 @@ fn parse_rfc3339(s: String) -> Option<chrono::DateTime<chrono::Utc>> {
         .map(|dt| dt.with_timezone(&chrono::Utc))
 }
 
-// Custom certificate verifier that skips verification (for testing only)
-// WARNING: This is INSECURE and should only be used for testing
+// Certificate verifier that accepts everything; testing only.
 #[derive(Debug)]
 struct SkipServerVerification;
 
@@ -1450,21 +1441,7 @@ mod tests {
         }
     }
 
-    // =====================================================================
-    // QUIC canonical test matrix.
-    //
-    // Each op gets `quic_<op>_success` / `quic_<op>_error`; the nine
-    // read/mutate ops additionally get `quic_<op>_not_found`. Plus
-    // `quic_metadata_round_trip` and `quic_validation_empty_key`. Transport is
-    // the in-process `MockH3Server` (quinn + h3 over the TlsVerification::
-    // Disabled seam); no live server is required.
-    //
-    // Documented impl behaviors:
-    //  - PUT treats only HTTP 201 CREATED as success.
-    //  - `exists` returns Ok(true) only for 200; any other status (404 or 5xx)
-    //    returns Ok(false) and never errors.
-    //  - The QUIC client performs NO client-side empty-key validation.
-    // =====================================================================
+    // QUIC canonical matrix over the in-process MockH3Server: PUT succeeds only on 201, exists is true only on 200, no client-side empty-key check.
 
     async fn one(method_path: &str, resp: MockResponse) -> MockH3Server {
         MockH3Server::start(routes(vec![(method_path, resp)])).await
@@ -2119,10 +2096,7 @@ mod tests {
 
     #[tokio::test]
     async fn quic_metadata_round_trip() {
-        // QUIC wire scheme: PUT sets Content-Type, Content-Encoding and one
-        // X-Meta-<key> header per custom entry; metadata is read back from the
-        // response headers on GET / get_metadata (HEAD). Here the mock echoes
-        // those headers so the inbound parse round-trips all three.
+        // PUT sets Content-Type, Content-Encoding and X-Meta-<key>; the mock echoes them so the parse round-trips.
         let server = MockH3Server::start(routes(vec![
             ("PUT /objects/obj", MockResponse::new(201)),
             (
@@ -2186,10 +2160,7 @@ mod tests {
 
     #[tokio::test]
     async fn quic_http_status_canonical_mapping() {
-        // Every row of the canonical HTTP status table, asserted over the
-        // mocked transport: 400 InvalidArgument, 401 Unauthenticated,
-        // 403 Forbidden, 404 NotFound, 409 AlreadyExists, 429 RateLimited,
-        // 5xx OperationFailed.
+        // Every row of the HTTP status table over the mocked transport.
         let cases: [(u16, fn(&Error) -> bool); 7] = [
             (400, |e| matches!(e, Error::InvalidArgument(_))),
             (401, |e| matches!(e, Error::Unauthenticated(_))),

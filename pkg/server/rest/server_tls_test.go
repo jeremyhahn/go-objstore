@@ -46,19 +46,7 @@ func initTLSTestFacade(t *testing.T, storage common.Storage) {
 	}
 }
 
-// startServing runs Start in a goroutine and blocks until the server has
-// committed to serving, returning the channel that will carry Start's error.
-//
-// It replaces the `go Start(); time.Sleep(50ms)` barrier every server test in
-// this package used to open with. A sleep is not a happens-before edge, so
-// reading httpServer.TLSConfig after one is a genuine data race (#18), and
-// calling Shutdown after one is a coin flip: lose it and Shutdown runs against
-// a server that has not started, Start then blocks forever, and the test's
-// deadline branch logs instead of failing — a vacuous pass.
-//
-// The deadline below is a failure deadline, not a synchronization primitive:
-// it exists so a wedged server fails loudly rather than hanging until the
-// package -timeout. The barrier itself is the closed channel.
+// startServing runs Start and waits until it has committed to serving, returning its error channel; the deadline only fails a wedged server.
 func startServing(t *testing.T, s *Server) <-chan error {
 	t.Helper()
 	errChan := make(chan error, 1)

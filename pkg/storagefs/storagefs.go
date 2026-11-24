@@ -482,10 +482,7 @@ func (fs *StorageFS) deleteMetadata(name string) error {
 // listKeys returns all keys with the given prefix.
 // This is a helper that assumes the storage backend can provide this functionality.
 func (fs *StorageFS) listKeys(prefix string) []string {
-	// Since the Storage interface doesn't have a List method yet,
-	// we'll need to use a type assertion to access it on the mock.
-	// In real implementations, we'd need to add this to the Storage interface
-	// or use a different approach.
+	// List is not on the Storage interface, so assert for it.
 
 	type lister interface {
 		listKeys(prefix string) []string

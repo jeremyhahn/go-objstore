@@ -61,10 +61,7 @@ func (s *Server) PutStream(stream objstorepb.ObjectStore_PutStreamServer) error 
 		metadata = protoToMetadata(header.GetMetadata())
 	}
 
-	// Accept the stream: the response headers tell the client the header
-	// message was valid and it may start sending data. A client can thus tell
-	// a server without PutStream (Unimplemented) apart before it has read
-	// anything from its source.
+	// The response headers accept the stream, letting a client detect a server without PutStream before reading its source.
 	if err := stream.SendHeader(nil); err != nil {
 		return err
 	}

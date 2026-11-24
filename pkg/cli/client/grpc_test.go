@@ -32,17 +32,7 @@ import (
 
 const bufSize = 1024 * 1024
 
-// serveGRPC starts a bufconn-backed gRPC server for srv and returns a client
-// connection to it, registering its own teardown.
-//
-// Every call gets its OWN listener. This package used to share a single
-// package-level *bufconn.Listener that each setup reassigned and the dialer
-// goroutine read, which is four data races under -race and made pkg/cli/client
-// the only package in the tree that could not join the race gate (#18).
-//
-// The serve error travels back over a channel rather than being logged from
-// the goroutine: t.Logf after its test completes panics, and stopping the
-// server is exactly what makes Serve return.
+// serveGRPC starts a bufconn gRPC server with its own listener per call and returns a client connection; the serve error comes back over a channel.
 func serveGRPC(t *testing.T, srv objstorepb.ObjectStoreServer) *grpc.ClientConn {
 	t.Helper()
 

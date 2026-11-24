@@ -26,10 +26,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3" //nolint:staticcheck // Using v1 SDK, migration to v2 planned
 )
 
-// isObjectNotFound reports whether err is the SDK's answer for a missing
-// object: NoSuchKey from GetObject or CopyObject, NotFound from HeadObject, or
-// a 404 that carries no code at all (a HEAD answer has no body to carry one).
-// A 404 with any other code, NoSuchBucket among them, is not a missing key.
+// isObjectNotFound reports NoSuchKey, NotFound or a code-less 404; any other 404 code, NoSuchBucket included, is not a missing key.
 func isObjectNotFound(err error) bool {
 	switch awsCode(err) {
 	case s3.ErrCodeNoSuchKey, codeNotFound:
@@ -41,10 +38,7 @@ func isObjectNotFound(err error) bool {
 	return false
 }
 
-// objectError maps a missing-object error from the SDK to
-// common.ErrKeyNotFound and a missing bucket (NoSuchBucket) to
-// common.ErrBucketNotFound, keeping the SDK error in the chain so errors.As
-// still reaches it. Any other error, and nil, is returned unchanged.
+// objectError maps a missing object to common.ErrKeyNotFound and NoSuchBucket to common.ErrBucketNotFound, keeping the SDK error in the chain.
 func objectError(err error, key string) error {
 	if err == nil {
 		return nil

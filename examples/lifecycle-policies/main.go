@@ -391,11 +391,7 @@ func lifecycleManagerExample() {
 	}
 }
 
-// Note: In production, you would run a lifecycle manager service that:
-// 1. Periodically scans objects in storage
-// 2. Checks their age against policy rules
-// 3. Executes delete or archive actions automatically
-// 4. Logs all lifecycle actions for audit trail
+// In production a lifecycle manager service scans, applies the policy rules and logs each action.
 func runLifecycleManager(ctx context.Context, storage common.Storage, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()

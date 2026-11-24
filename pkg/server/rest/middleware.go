@@ -288,10 +288,7 @@ func AuthorizationMiddleware(authorizer adapters.Authorizer, logger adapters.Log
 	}
 }
 
-// isPublicPath reports whether the path bypasses authentication entirely.
-// Only /health is always public; /metrics is public when the server is
-// configured with MetricsPublic. Swagger documentation requires
-// authentication and is therefore never public.
+// isPublicPath reports /health, and /metrics when MetricsPublic.
 func isPublicPath(path string, metricsPublic bool) bool {
 	if path == "/metrics" {
 		return metricsPublic
@@ -306,11 +303,7 @@ func isAuthzExemptPath(path string, metricsPublic bool) bool {
 	return isPublicPath(path, metricsPublic) || strings.HasPrefix(path, "/swagger")
 }
 
-// deriveActionResource maps an HTTP request to a (action, resource) pair from
-// the matched route template and the HTTP method (routeActions). Object and
-// metadata operations use the object key as the resource; management
-// operations use the resource category constants. ok is false when no route
-// matched or the route has no entry, and the request must then be refused.
+// deriveActionResource maps the route template and method to an action and resource; ok is false when no route matched.
 func deriveActionResource(c *gin.Context) (action, resource string, ok bool) {
 	// The matched route template (e.g. "/api/v1/objects/*key"), never the
 	// request path: an object key may itself contain "/metadata", "/exists",
@@ -343,9 +336,7 @@ type routeAction struct {
 	resource string
 }
 
-// routeActions maps "METHOD route-template" (without the /api/v1 prefix) to
-// the action a principal needs. Every route registered in SetupRoutes has an
-// entry; a route without one is refused by AuthorizationMiddleware.
+// routeActions maps "METHOD route-template" to the action needed; every route has one, and one without is refused.
 var routeActions = map[string]routeAction{
 	"GET /metrics": {adapters.ActionRead, ""},
 

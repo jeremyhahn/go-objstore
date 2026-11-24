@@ -83,8 +83,7 @@ func TestOptionsAllowClientLocalArchiveDestinations(t *testing.T) {
 	}
 }
 
-// TestNewPassesAllowClientLocalArchiveDestinations checks that New carries the
-// option into the archive handler's wire options, refusing by default (#236).
+// TestNewPassesAllowClientLocalArchiveDestinations: New passes the option to the archive handler, refusing by default.
 func TestNewPassesAllowClientLocalArchiveDestinations(t *testing.T) {
 	storage := local.New()
 	if err := storage.Configure(map[string]string{"path": t.TempDir()}, noCreds); err != nil {

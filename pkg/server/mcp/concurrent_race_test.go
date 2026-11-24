@@ -23,10 +23,7 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/adapters"
 )
 
-// TestAuthMiddlewareConcurrentNoBadLoggerRace fires many goroutines through the
-// shared authenticationMiddleware to prove that the per-request logger
-// enrichment no longer mutates the shared s.config.Logger field. Run with
-// -race; must produce zero data-race reports.
+// TestAuthMiddlewareConcurrentNoBadLoggerRace: per-request logger enrichment must not race under -race.
 func TestAuthMiddlewareConcurrentNoBadLoggerRace(t *testing.T) {
 	storage := NewMockStorage()
 	server := createTestServer(t, storage, ModeHTTP)

@@ -26,10 +26,7 @@ func DefaultDir() string {
 	return filepath.Join(pd, "objstore-backup", "snapshots")
 }
 
-// lockDir makes dir if it is missing, private to SYSTEM, Administrators and
-// this user; refuses it, before reading anything in it, unless its owner
-// and DACL keep it so; and takes its lock file name without waiting. The
-// directory stays open until unlock, so it cannot be swapped meanwhile.
+// lockDir makes dir private if missing, refuses it unless its owner and DACL keep it so, and takes its lock without waiting; dir stays open until unlock.
 func lockDir(dir, name string) (func() error, error) {
 	fail := func(sentinel error, cause error) error {
 		return &Error{Op: "lock", Volume: dir, Err: sentinel, Cause: cause}
@@ -103,9 +100,7 @@ func userSID() (string, error) {
 	return tu.User.Sid.String(), nil
 }
 
-// mkPrivateDir makes dir, if it is missing, with a protected DACL granting
-// full control to SYSTEM, Administrators and user alone, inherited by what
-// is made in it. Its parents are made as os.MkdirAll makes them.
+// mkPrivateDir makes dir with a protected, inheritable DACL for SYSTEM, Administrators and user alone.
 func mkPrivateDir(dir, user string) error {
 	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
 		return err
@@ -126,10 +121,7 @@ func mkPrivateDir(dir, user string) error {
 	return nil
 }
 
-// openChecked opens path, a directory when dir is set and a regular file
-// otherwise, without following a reparse point, and refuses it unless
-// checkHandle passes. A directory is opened without delete sharing, so it
-// cannot be renamed or removed while the handle is open.
+// openChecked opens path without following a reparse point and refuses it unless checkHandle passes; directories cannot be renamed while open.
 func openChecked(path string, access uint32, dir bool, user string) (windows.Handle, error) {
 	p, err := windows.UTF16PtrFromString(path)
 	if err != nil {

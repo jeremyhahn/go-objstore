@@ -333,12 +333,7 @@ func TestRoundRobin_NilStateStore(t *testing.T) {
 	}
 }
 
-// TestLocalOnly_RejectsCloudCandidate registers a pool with one local
-// and one fake-cloud (memory) candidate. Through the LocalOnly wrapper,
-// any pick that lands on memory must surface NonLocalCandidateError.
-//
-// We force the pick to land on memory by putting it at index 0 and using
-// a fresh round-robin (cursor = 0 → memory).
+// TestLocalOnly_RejectsCloudCandidate: a pick landing on the memory candidate at index 0 returns NonLocalCandidateError.
 func TestLocalOnly_RejectsCloudCandidate(t *testing.T) {
 	store := newMemStateStore()
 	mgr := pool.NewManager()

@@ -364,16 +364,7 @@ mod tests {
     use crate::error::Error;
     use mockito::Server;
 
-    // =========================================================================
-    // Unified client (ObjectStoreClient) tests.
-    //
-    // The unified client is a thin enum that delegates each call to the
-    // selected protocol's client. The REST arm is driven end-to-end against a
-    // `mockito` HTTP server, which covers the bulk of the delegating match arms
-    // in this file. The gRPC and QUIC arms are proven structurally (variant
-    // selection + that a call routes into that protocol's client), since
-    // end-to-end exercise of those arms needs a live gRPC/QUIC server.
-    // =========================================================================
+    // Unified client tests: the REST arm runs end to end against mockito; gRPC and QUIC arms are checked by routing.
 
     fn rest(url: String) -> ObjectStoreClient {
         ObjectStoreClient::rest(url).unwrap()
@@ -418,10 +409,7 @@ mod tests {
 
     #[tokio::test]
     async fn unified_delegates_grpc() {
-        // A live gRPC server is unavailable in unit tests, so delegation is
-        // proven structurally: a connection-refused endpoint fails fast and the
-        // error originates from the gRPC arm, demonstrating the call routed into
-        // the Grpc client rather than REST.
+        // No live gRPC server: a refused endpoint fails fast from the gRPC arm, proving the routing.
         let result = ObjectStoreClient::grpc("http://127.0.0.1:1").await;
         match result {
             Err(Error::GrpcTransport(_)) | Err(Error::Configuration(_)) => {}
@@ -430,11 +418,7 @@ mod tests {
         }
     }
 
-    /// Stand up a bare TCP listener that accepts connections but never speaks
-    /// gRPC. `GrpcClient::new` performs only a TCP-level connect, so this lets
-    /// us construct a real `ObjectStoreClient::Grpc(_)` (covering the `grpc`
-    /// constructor) and route calls through every gRPC delegation match arm
-    /// (each RPC then fails, which is expected -- we only assert it routed).
+    /// A TCP listener that never speaks gRPC, so calls route through every gRPC arm and fail.
     async fn grpc_over_dead_tcp() -> Option<ObjectStoreClient> {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.ok()?;
         let addr = listener.local_addr().ok()?;
@@ -449,17 +433,11 @@ mod tests {
         ObjectStoreClient::grpc(format!("http://{addr}")).await.ok()
     }
 
-    // Ignored in the unit suite: spawns a background accept-loop and routes
-    // gRPC calls that leak a non-terminating task, which hangs process exit.
-    // Delegation is covered by `unified_delegates_grpc` (fast-fail routing) and
-    // the `grpc_client` unit suite; this runs under the integration suite.
+    // Ignored in the unit suite: the accept loop leaks a task that hangs exit; runs in the integration suite.
     #[ignore = "leaks background task; covered by integration tests"]
     #[tokio::test]
     async fn unified_grpc_constructor_and_arms() {
-        // Cover the `grpc` constructor success path and every gRPC delegation
-        // arm. If construction does not succeed in this environment we skip
-        // rather than fail (the structural unified_delegates_grpc still asserts
-        // routing).
+        // Cover the grpc constructor and every gRPC arm; skip if construction fails here.
         let client = match grpc_over_dead_tcp().await {
             Some(c) => c,
             None => return,
@@ -509,10 +487,7 @@ mod tests {
     #[ignore = "leaks QUIC endpoint driver; covered by integration tests"]
     #[tokio::test]
     async fn unified_delegates_quic() {
-        // Build a unified client over the QUIC arm pointed at an unused local
-        // address. Construction succeeds (the endpoint binds locally); a call
-        // then routes into the Quic client and fails at connect time, proving
-        // the unified client delegates to the QUIC arm.
+        // A QUIC client at an unused address: the call routes to the QUIC arm and fails at connect.
         let addr: std::net::SocketAddr = "127.0.0.1:1".parse().unwrap();
         let client = ObjectStoreClient::quic(addr, "localhost").await.unwrap();
         assert!(matches!(client, ObjectStoreClient::Quic(_)));
@@ -536,10 +511,7 @@ mod tests {
         client.close().await.unwrap();
     }
 
-    // Ignored in the unit suite: constructs a real QUIC (quinn) endpoint. Even
-    // after close() the background driver can keep the process from exiting,
-    // hanging the test runner. QUIC close is exercised by the `quic_client` unit
-    // suite (quic_close) and the integration suite.
+    // Ignored in the unit suite: a real quinn endpoint can keep the process from exiting.
     #[ignore = "constructs QUIC endpoint; covered by integration tests"]
     #[tokio::test]
     async fn unified_close_quic() {
@@ -786,17 +758,11 @@ mod tests {
         status.assert_async().await;
     }
 
-    // Ignored in the unit suite: constructs a real QUIC (quinn) endpoint whose
-    // background driver does not terminate, hanging process exit. The QUIC
-    // delegation arms are covered by the `quic_client` unit suite; this runs
-    // under the integration suite.
+    // Ignored in the unit suite: a real quinn endpoint can keep the process from exiting.
     #[ignore = "leaks QUIC endpoint driver; covered by integration tests"]
     #[tokio::test]
     async fn unified_all_ops_route_through_quic_arm() {
-        // Drive every delegating method through the QUIC arm (pointed at a dead
-        // address). Each call executes its `ObjectStoreClient::Quic(_) =>` match
-        // arm in this file before failing at connect time, covering the QUIC
-        // delegation arms. We only assert the calls return (Err is expected).
+        // Drive every method through the QUIC arm at a dead address; only routing is asserted.
         let addr: std::net::SocketAddr = "127.0.0.1:1".parse().unwrap();
         let client = ObjectStoreClient::quic(addr, "localhost").await.unwrap();
 

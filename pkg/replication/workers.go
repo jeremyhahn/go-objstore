@@ -145,11 +145,7 @@ func (wp *WorkerPool) Submit(item WorkItem) error {
 		return ErrWorkerPoolShutdown
 	}
 
-	// Use a select with ctx.Done so we never send on a closed channel:
-	// - ctx is cancelled by Shutdown only after workers have drained and wg.Wait() returns,
-	//   but shuttingDown is set before close(workQueue), so most callers exit above.
-	// - The ctx.Done arm covers the narrow race window between the shuttingDown check
-	//   and the channel send.
+	// The ctx.Done arm covers the race between the shuttingDown check and the send, so a closed channel is never sent on.
 	select {
 	case <-wp.ctx.Done():
 		return ErrWorkerPoolCancelled

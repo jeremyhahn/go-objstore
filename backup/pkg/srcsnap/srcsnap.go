@@ -529,10 +529,7 @@ const hostLockName = ".host.lock"
 // opLocate is the Op of an Error from finding a source's volume and method.
 const opLocate = "locate"
 
-// lock takes the host lock, then the lock of the snapshot directory, each
-// without waiting. Every run takes the host lock whatever its snapshot
-// directory, so a sweep holding it knows no live run anywhere on the host
-// owns a snapshot with the name prefix.
+// lock takes the host lock, then the snapshot directory's lock, each without waiting.
 func (s *Snapshotter) lock() (func() error, error) {
 	unlockHost, err := lockDir(s.env.HostDir, hostLockName)
 	if err != nil {

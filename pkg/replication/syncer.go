@@ -114,7 +114,7 @@ func NewSyncerWithProvider(
 		}
 	}
 
-	// Apply CLIENT-SIDE DEK encryption based on mode (Layers 2 & 3)
+	// Apply client-side DEK encryption by mode (layers 2 and 3).
 	switch policy.ReplicationMode {
 	case common.ReplicationModeTransparent:
 		// In transparent mode, decrypt at source and re-encrypt at destination

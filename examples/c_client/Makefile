@@ -1,7 +1,4 @@
-# Makefile for go-objstore C API test client
-#
-# This Makefile builds the C test program that demonstrates usage of
-# the go-objstore shared library.
+# Builds the C test program for the go-objstore shared library.
 
 # Compiler and flags
 CC = gcc

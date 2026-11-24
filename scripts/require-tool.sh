@@ -1,13 +1,5 @@
 #!/usr/bin/env bash
-# require-tool.sh -- fail closed when a gate tool is missing or the wrong version.
-#
-# Usage: require-tool.sh <tool> [<version>]
-#
-# Looks for <tool> on PATH, then in $GOBIN / $GOPATH/bin. On success prints the
-# resolved path on stdout and exits 0. When the tool is absent, or <version> is
-# given and the tool's version output does not contain it, prints an install
-# hint on stderr and exits 1. A gate that cannot run must fail, never pass
-# vacuously (go-objstore#37).
+# require-tool.sh <tool> [<version>]: print the tool path, or fail with an install hint when it is missing or the wrong version.
 set -u
 
 if [ $# -lt 1 ] || [ $# -gt 2 ]; then

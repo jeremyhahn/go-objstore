@@ -247,11 +247,7 @@ func (c *Config) CertAuthenticator() adapters.Authenticator {
 	}, nil)
 }
 
-// identityAuthorizer authorizes by the roles auth.identities binds to the
-// principal's ID ("uid:N" on the Unix socket), ignoring any roles the
-// principal already carries (the Unix peer principal carries its OS group
-// name, which must not grant a role of the same name). When subject is set
-// it is used in place of the principal (MCP stdio: the process owner).
+// identityAuthorizer authorizes by the roles auth.identities binds to the principal ID (or subject when set), ignoring roles the principal carries.
 func (c *Config) identityAuthorizer(subject string) adapters.Authorizer {
 	return &identityAuthorizer{inner: c.Authorizer(), auth: c.Auth, subject: subject}
 }
@@ -272,10 +268,7 @@ func (a *identityAuthorizer) Authorize(ctx context.Context, principal *adapters.
 	return a.inner.Authorize(ctx, mapped, action, resource)
 }
 
-// listenerTLS returns the TLS configuration of a listener with the given
-// key pair: nil when no certificate is set, server TLS without auth, and
-// mutual TLS requiring a client certificate signed by auth.client_ca when
-// auth is set.
+// listenerTLS returns nil without a certificate, server TLS without auth, and mutual TLS against auth.client_ca with auth.
 func (c *Config) listenerTLS(cert, key string) *adapters.TLSConfig {
 	if cert == "" || key == "" {
 		return nil

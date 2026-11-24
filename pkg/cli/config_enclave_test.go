@@ -375,12 +375,7 @@ func TestMaskEnclave_ShortMaterial(t *testing.T) {
 	}
 }
 
-// TestCredentials_DestroyedEnclaveDoesNotFallBack proves the credential
-// path fails CLOSED. An enclave can be destroyed independently of the read — an
-// explicit rotation or a Config teardown, as this test does below. If a stale
-// value is still sitting in the deprecated plain field at that moment, reading
-// it would authenticate the backend with unprotected credentials the caller
-// believed it had replaced.
+// TestCredentials_DestroyedEnclaveDoesNotFallBack: a destroyed enclave fails rather than use the plain field.
 func TestCredentials_DestroyedEnclaveDoesNotFallBack(t *testing.T) {
 	cfg := &Config{Backend: "s3", BackendBucket: "b", BackendRegion: "us-east-1"}
 	if err := cfg.SetBackendKeyFromString(testAccessKey); err != nil {
@@ -438,12 +433,8 @@ func TestCredentials_DestroyedEnclaveDoesNotFallBack(t *testing.T) {
 	}
 }
 
-// TestStorageSettings_PlainFieldsStillReadableWithoutAnyEnclave keeps the
-// no-fallback rule from swallowing the deprecated path itself: the plain field
-// is legitimate when no enclave was ever selected.
-// TestNewCommandContext_DestroyedEnclaveIsRefused checks the fail-closed rule
-// where it matters: the backend is never constructed from a config whose
-// protected credential cannot be read.
+// TestStorageSettings_PlainFieldsStillReadableWithoutAnyEnclave: the plain field works when no enclave was set.
+// TestNewCommandContext_DestroyedEnclaveIsRefused: no backend is built from an unreadable protected credential.
 func TestNewCommandContext_DestroyedEnclaveIsRefused(t *testing.T) {
 	cfg := &Config{
 		Backend:       "s3",

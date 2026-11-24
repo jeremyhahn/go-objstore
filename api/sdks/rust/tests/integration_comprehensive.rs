@@ -93,14 +93,7 @@ fn quic_endpoint() -> (SocketAddr, String) {
     (addr, server_name)
 }
 
-/// Attempt to create a client for the given protocol.
-///
-/// REST and gRPC failures are hard errors: the objstore-server is always expected to be
-/// up (compose `depends_on: service_healthy`) so an unreachable REST or gRPC endpoint is
-/// a real bug, not a legitimate skip.
-///
-/// QUIC returns `None` (logged skip) because UDP routing in some Docker environments
-/// genuinely blocks QUIC; an explicit skip is preferable to a false-green.
+/// Create a client; REST and gRPC failures are errors, QUIC returns `None` because Docker UDP routing can block it.
 async fn try_create_client(
     protocol: Protocol,
 ) -> Result<Option<ObjectStoreClient>, Box<dyn std::error::Error>> {
@@ -161,14 +154,7 @@ fn is_quic_docker_skip(protocol: Protocol, err: &dyn std::fmt::Debug) -> bool {
 // Canonical replication policy (from spec)
 // ============================================================================
 
-/// Build a replication policy matching the canonical spec payload:
-/// - source_backend: "local", source_settings path: /tmp/repl-src-<id>
-/// - destination_backend: "local", destination_settings path: /tmp/repl-dst-<id>
-/// - check_interval_seconds: 3600 (REQUIRED per spec)
-/// - ReplicationMode::Transparent is the SDK zero-value; the canonical spec's
-///   "mode: async" refers to execution scheduling and has no separate field in
-///   this SDK type (the replication_mode field controls encryption transparency,
-///   not scheduling).  We use Transparent as the correct zero-value default.
+/// Canonical replication policy: local to local under /tmp, check_interval_seconds 3600, Transparent mode.
 fn canonical_replication_policy(id: &str) -> ReplicationPolicy {
     let mut source_settings = HashMap::new();
     source_settings.insert("path".to_string(), format!("/tmp/repl-src-{}", id));
@@ -220,15 +206,7 @@ async fn delete_keys(client: &ObjectStoreClient, keys: &[String]) {
     }
 }
 
-// ============================================================================
-// Macro: generate one #[tokio::test] per (protocol, test_fn) combination.
-//
-// Each generated test:
-//   - attempts client construction; skips with a log on connection failure
-//   - calls the test function
-//   - for QUIC, converts network-level timeouts to logged skips rather than
-//     hard failures (UDP routing commonly fails in Docker)
-// ============================================================================
+// One #[tokio::test] per (protocol, test); QUIC timeouts become logged skips.
 
 macro_rules! protocol_test {
     ($protocol:ident, $test_name:ident, $test_fn:expr) => {
@@ -656,20 +634,7 @@ async fn test_archive(
     Ok(())
 }
 
-// ============================================================================
-// 6. Replication operations (all protocols)
-// ============================================================================
-//
-// The canonical replication policy payload (from spec):
-//   source_backend "local", source_settings path=/tmp/repl-src-<id>
-//   destination_backend "local", dest_settings path=/tmp/repl-dst-<id>
-//   check_interval_seconds: 3600
-//
-// NOTE on "mode: async" in the spec: the Rust ReplicationPolicy type has no
-// "mode" field for scheduling.  replication_mode controls encryption
-// transparency (Transparent/Opaque) and is unrelated to async/sync scheduling.
-// The spec's "mode" field is a REST-layer concern; no type gap exists for the
-// Rust SDK — the missing scheduling-mode field is not exposed by this SDK.
+// 6. Replication operations (all protocols), with the canonical local-to-local policy.
 
 async fn test_add_replication_policy(
     client: ObjectStoreClient,
@@ -856,12 +821,7 @@ async fn test_remove_replication_policy(
 // 7. Error-path operations
 // ============================================================================
 
-/// Returns true if `err` represents a "not found" condition for the given protocol.
-///
-/// Over REST the SDK produces `Error::NotFound`.  Over gRPC tonic status codes
-/// are surfaced as `Error::GrpcStatus`; the server returns `code: NotFound` for
-/// most missing-object operations and `code: Internal` for `UpdateMetadata` on a
-/// missing key (a server-side mapping quirk).  Both are accepted here.
+/// True for a not-found error: Error::NotFound, or gRPC NotFound or Internal (UpdateMetadata on a missing key).
 fn is_not_found_error(protocol: Protocol, err: &go_objstore::Error) -> bool {
     match err {
         go_objstore::Error::NotFound(_) => true,
@@ -1120,8 +1080,7 @@ protocol_test!(Rest, test_close_op, test_close);
 protocol_test!(Grpc, test_close_op, test_close);
 protocol_test!(Quic, test_close_op, test_close);
 
-// Error paths (4 cases) — REST and gRPC only (QUIC omitted: same server paths,
-// not worth the UDP-in-Docker noise for error-path tests)
+// Error paths, REST and gRPC only.
 protocol_test!(Rest, test_error_get_nonexistent, test_get_nonexistent);
 protocol_test!(Grpc, test_error_get_nonexistent, test_get_nonexistent);
 
@@ -1144,18 +1103,7 @@ protocol_test!(Rest, test_large_object_op, test_large_object);
 protocol_test!(Grpc, test_large_object_op, test_large_object);
 protocol_test!(Quic, test_large_object_op, test_large_object);
 
-// ============================================================================
-// True cross-protocol consistency: write via A, read via B
-//
-// For every ordered pair (A, B) where A != B, among the available protocols:
-//   1. put via A  ->  get via B: assert bytes equal
-//   2. put via A  ->  getMetadata via B: assert size and content_type equal
-//   3. delete via A  ->  exists via B: assert false
-//
-// QUIC is included in the pairing (Rust has real QUIC).  If a protocol client
-// cannot be constructed (server unavailable), that protocol is excluded from
-// all pairs and the skip is logged.
-// ============================================================================
+// Cross-protocol consistency for every ordered pair of available protocols: put, metadata and delete via A, observed via B.
 
 #[tokio::test]
 async fn test_cross_protocol_consistency() -> Result<(), Box<dyn std::error::Error>> {

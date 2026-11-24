@@ -1,23 +1,8 @@
-# go-objstore server configuration (objstore-server and the single-transport
-# objstore-*-server binaries). Copy to a gitignored path and name it with
-# -config <file> or OBJSTORE_CONFIG=<file>.
-#
-# Precedence: flags > environment > this file > built-in defaults.
-# Every key is also an environment variable: OBJSTORE_ + the key path in
-# upper case joined with "_" (rest.host -> OBJSTORE_REST_HOST).
-#
-# Every key is commented out and shows its built-in default; uncomment only
-# what you change. Each binary reads the sections for the transports it
-# serves. Unknown keys are rejected at startup.
-#
-# The defaults are safe to start as is: gRPC, REST and MCP listen on
-# loopback only, and QUIC and MCP are off. Set an address such as
-# "0.0.0.0:50051" (or rest.host: 0.0.0.0) to listen beyond the machine.
+# go-objstore server configuration: pass with -config or OBJSTORE_CONFIG; precedence flags > env (OBJSTORE_<KEY_PATH>) > file > defaults; unknown keys are rejected; defaults listen on loopback only.
 
 # backend: local
 # path: ""
-# path has no default: the local backend refuses to start until it is set
-# to the directory that holds the objects (for example /var/lib/objstore).
+# path has no default: set it to the directory that holds the objects.
 
 # grpc:
 #   enabled: true
@@ -69,23 +54,13 @@
 
 # archive:
 #   allow_client_local_destinations: false
-# When false, every transport refuses an archive call or lifecycle policy
-# that names a local (filesystem path) archiver: the client would choose a
-# directory the server's user writes into.
+# When false, clients cannot name a local filesystem archiver.
 
 # replication:
 #   allow_client_local_backends: false
-# Replication policies name their backends and settings, so a "local" backend
-# could open any directory the service user can read. Policies with a local
-# source or destination are refused (and a policy file holding one fails to
-# load) unless this is true.
+# When false, policies with a local source or destination are refused.
 
-# auth is off by default: every listener then serves unauthenticated and logs
-# a warning. Setting it requires a client certificate signed by client_ca on
-# gRPC, REST, QUIC and MCP HTTP (each needs tls_cert and tls_key), maps the
-# certificate common name, or uid:N on the Unix socket and MCP stdio, to
-# roles, and refuses any action no role permits. An example, to uncomment
-# with "## " removed (see docs/configuration/auth.md):
+# auth (off by default; see docs/configuration/auth.md): mutual TLS against client_ca, subjects or uid:N mapped to roles. Uncomment with "## " removed:
 ## auth:
 ##   client_ca: /etc/objstore/client-ca.pem
 ##   roles:

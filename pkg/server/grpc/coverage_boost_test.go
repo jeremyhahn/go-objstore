@@ -153,14 +153,7 @@ func TestGetMetadata_NilMetadata(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// handlers.go: ApplyPolicies branches (63.6%)
-//   - GetPolicies error
-//   - ListWithOptions error (after policies found)
-//   - archive action with Destination
-//   - archive action with nil Destination (no-op)
-//   - delete error (continue)
-// ---------------------------------------------------------------------------
+// ApplyPolicies branches: GetPolicies and ListWithOptions errors, archive with and without Destination, delete error.
 
 // applyPoliciesListErrorStorage: has policies, but ListWithOptions fails.
 type applyPoliciesListErrorStorage struct {
@@ -1082,8 +1075,7 @@ func TestProtoToReplicationPolicy_Nil(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestProtoToReplicationPolicy_DefaultMode(t *testing.T) {
-	// ReplicationMode value 2 is not defined by the proto (only 0=TRANSPARENT
-	// and 1=OPAQUE exist), so the switch default fires and maps to Transparent.
+	// ReplicationMode 2 is undefined, so the default maps to Transparent.
 	proto := &objstorepb.ReplicationPolicy{
 		Id:              "p1",
 		SourceBackend:   "local",
@@ -1100,8 +1092,7 @@ func TestProtoToReplicationPolicy_DefaultMode(t *testing.T) {
 }
 
 func TestReplicationPolicyToProto_DefaultMode(t *testing.T) {
-	// Use an unrecognized domain mode (not Transparent or Opaque) to trigger
-	// the default branch, which maps to TRANSPARENT.
+	// An unknown domain mode maps to TRANSPARENT.
 	domain := &common.ReplicationPolicy{
 		ID:              "p1",
 		SourceBackend:   "local",
@@ -1117,10 +1108,7 @@ func TestReplicationPolicyToProto_DefaultMode(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// handlers_replication.go: ErrReplicationNotSupported path for handlers where
-//   only the generic-error path was hit previously (complete coverage).
-// ---------------------------------------------------------------------------
+// handlers_replication.go: the ErrReplicationNotSupported path.
 
 // The plain mockStorage does not implement ReplicationCapable, which causes
 // GetReplicationManager to return ErrReplicationNotSupported. Only

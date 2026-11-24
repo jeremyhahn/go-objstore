@@ -208,10 +208,7 @@ func (l *RateLimiter) GinMiddleware() gin.HandlerFunc {
 	}
 }
 
-// grpcClientKey derives the rate-limit key for a gRPC request. When per-IP
-// limiting is enabled, the peer address host identifies the client; otherwise
-// a single global key is used. Falls back to the global key when the peer is
-// unavailable (e.g. in-process transports).
+// grpcClientKey keys by peer host when per-IP limiting is on, else (or without a peer) the global key.
 func grpcClientKey(ctx context.Context, perIP bool) string {
 	if !perIP {
 		return "global"

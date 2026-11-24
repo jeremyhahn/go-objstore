@@ -109,9 +109,7 @@ func TestNewUnixSocketClient_RoundTrip(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// NewClient – unix protocol branch (factory.go:41 90.9%)
-// ---------------------------------------------------------------------------
+// NewClient: unix protocol.
 
 func TestNewClient_Unix(t *testing.T) {
 	client, err := NewClient(&Config{
@@ -137,9 +135,7 @@ func TestNewClient_Unix_MissingSocket(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// REST GetReplicationStatus (rest.go:650 – 0%)
-// ---------------------------------------------------------------------------
+// REST GetReplicationStatus.
 
 func TestRESTClient_GetReplicationStatus_Success(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
@@ -495,9 +491,7 @@ func TestGRPCClient_NewGRPCClient_WithValidURL(t *testing.T) {
 	c.Close()
 }
 
-// ---------------------------------------------------------------------------
-// REST/QUIC – remaining partial-coverage helpers
-// ---------------------------------------------------------------------------
+// REST and QUIC helper branches.
 
 // TestRESTClient_GetReplicationStatus_RoundTrip verifies the full happy path
 // including that JSON fields map to the domain type correctly.
@@ -641,12 +635,7 @@ func TestNewClient_Unix_RoundTrip(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Additional GRPCClient coverage – uncovered branches in GetReplicationPolicy,
-// GetReplicationPolicies, and TriggerReplication (83–88%).
-// The existing tests cover the happy path; these cover the cancelled-context
-// error return on each.
-// ---------------------------------------------------------------------------
+// GRPCClient replication calls with a canceled context.
 
 func TestGRPCClient_GetReplicationPolicy_ContextCanceled(t *testing.T) {
 	client, cleanup := createGRPCTestClient(t)
@@ -727,9 +716,7 @@ func TestGRPCClient_NewGRPCClient_DialFailure(t *testing.T) {
 	c.Close()
 }
 
-// ---------------------------------------------------------------------------
-// REST – UpdateMetadata nil metadata path (rest.go:280 89.5%)
-// ---------------------------------------------------------------------------
+// REST UpdateMetadata with nil metadata.
 
 func TestRESTClient_UpdateMetadata_NilMetadata(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -764,12 +751,7 @@ func TestQUICClient_Close_NonNilTransport(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// REST – AddReplicationPolicy marshal/HTTP path (rest.go:494 84.2%)
-// Cover the "invalid ServerURL that causes NewRequest to fail" branch by
-// injecting a URL with a control character which http.NewRequestWithContext
-// will reject.
-// ---------------------------------------------------------------------------
+// REST AddReplicationPolicy with a URL NewRequestWithContext rejects.
 
 func TestRESTClient_AddReplicationPolicy_BadURL(t *testing.T) {
 	client := &RESTClient{

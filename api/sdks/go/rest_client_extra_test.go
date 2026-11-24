@@ -7,10 +7,7 @@
 
 package objstore
 
-// Language-specific REST extras beyond the canonical matrix: malformed-body
-// decode failures, full metadata/field parsing on reads, and the nil-policy
-// guard. These reach Go-specific branches in rest_client.go that the canonical
-// cells do not.
+// REST cases beyond the canonical matrix: malformed bodies, full metadata parsing and the nil-policy guard.
 
 import (
 	"context"

@@ -158,7 +158,7 @@ objstore.GetWithContext(ctx, "archive:backup.tar")
 
 ## Factory Pattern (Internal)
 
-The factory is now primarily used internally by the facade. Direct factory usage is still supported for legacy code or advanced use cases:
+The facade uses the factory internally; direct factory use is supported for advanced cases:
 
 ```go
 import (

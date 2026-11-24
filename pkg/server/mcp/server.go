@@ -400,10 +400,7 @@ var mcpToolActions = map[string]string{
 	"objstore_delete":          adapters.ActionDelete,
 }
 
-// deriveMCPActionResource reads the request body and maps the MCP JSON-RPC
-// method (and tool name for tools/call) to an (action, resource) pair. It
-// returns the consumed body bytes so the caller can restore r.Body. Read-only
-// protocol methods (initialize, tools/list, resources/*, ping) map to read.
+// deriveMCPActionResource maps the JSON-RPC method (and tool) to an action and resource, returning the consumed body; protocol methods map to read.
 func (s *Server) deriveMCPActionResource(r *http.Request) (action, resource string, body []byte) {
 	body, _ = io.ReadAll(r.Body) // #nosec G104 -- body re-read errors surface downstream as invalid JSON
 	_ = r.Body.Close()

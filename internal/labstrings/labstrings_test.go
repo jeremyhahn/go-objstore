@@ -1,14 +1,4 @@
-// Package labstrings is the public-releasability gate (#51): a test-only
-// package that fails when a published file names the private development fleet
-// or its owner. See docs/release/public-releasability.md.
-//
-// The package has no non-test code and no exported API. The rules are not in
-// the tree (IS-31): they load at test time from the file the
-// LABSTRINGS_PATTERNS environment variable names (patterns_test.go); in CI
-// that file is the RELEASABILITY_PATTERNS secret. With the variable unset there
-// are no rules and the tree test finds nothing. Nothing prints a rule or a
-// match: a finding names its file, line, class and guidance only. The waiver,
-// the allow-list and the published-file manifest live here.
+// Package labstrings is the public-releasability gate (docs/release/public-releasability.md); rules load from LABSTRINGS_PATTERNS and nothing prints a rule or match.
 package labstrings
 
 import (
@@ -135,8 +125,7 @@ func allowed(list []allowEntry, f finding) bool {
 	return false
 }
 
-// isDevelopmentTooling reports whether rel is an agent-workflow file that is
-// never published.
+// isDevelopmentTooling reports whether rel is development tooling that is never published.
 func isDevelopmentTooling(rel string) bool {
 	base := path.Base(rel)
 	if base == "CLAUDE.md" || base == "AGENTS.md" {

@@ -83,16 +83,7 @@ func (e *InvalidLengthError) Is(target error) bool {
 	return target == ErrInvalidLength
 }
 
-// checkLength validates a caller-supplied length or count arriving over the C
-// boundary, recording the failure for ObjstoreGetLastError. It reports whether
-// the value is usable, so call sites read as a guard.
-//
-// Every length here crosses as a SIGNED C.int, so a negative value is
-// representable and arrives in Go as a negative int. Unchecked it is not merely
-// wrong but fatal: C.GoBytes panics on a negative length, which kills the host
-// process that loaded this shared library rather than returning an error code
-// it can act on. That is the whole point of the guard — this API's contract is
-// -1 plus a retrievable message, and a panic honors neither.
+// checkLength rejects a negative C length (C.GoBytes would panic the host process) and records the error for ObjstoreGetLastError.
 func checkLength(param string, n int) bool {
 	if n < 0 {
 		setLastError(&InvalidLengthError{Param: param, Value: n})
@@ -110,12 +101,7 @@ var (
 	lastErrorMutex  sync.Mutex
 )
 
-// registerStorage stores a Go storage object and returns a handle ID.
-//
-// Handles cross the C boundary as a 32-bit C.int and are never reused, so the
-// counter is an int32 that refuses to pass math.MaxInt32. As a plain int it
-// would truncate onto an earlier handle and route the caller's operations to
-// another storage.
+// registerStorage stores a storage object and returns a never-reused int32 handle ID.
 func registerStorage(storage any) (int32, error) {
 	storageMutex.Lock()
 	defer storageMutex.Unlock()
@@ -173,10 +159,7 @@ func ObjstoreGetLastError() *C.char {
 
 //export ObjstoreNewStorage
 func ObjstoreNewStorage(backendType *C.char, settingsKeys **C.char, settingsValues **C.char, settingsCount C.int) C.int {
-	// A negative count previously fell through the `settingsCount > 0` guard
-	// below and silently produced an empty settings map, so a caller that
-	// miscomputed its count got a backend configured with nothing instead of an
-	// error. Report it.
+	// A negative count is an error, not an empty settings map.
 	if !checkLength("settingsCount", int(settingsCount)) {
 		return -1
 	}
@@ -187,12 +170,7 @@ func ObjstoreNewStorage(backendType *C.char, settingsKeys **C.char, settingsValu
 func readSettings(settingsKeys **C.char, settingsValues **C.char, settingsCount C.int) map[string]string {
 	settings := make(map[string]string)
 	if settingsCount > 0 {
-		// #nosec G103 -- FFI boundary. settingsKeys/settingsValues are caller-owned
-		// arrays of C strings whose length only the caller knows; settingsCount is
-		// the C ABI's sole means of communicating it. The count is checked positive
-		// by the caller, and both slices are read (never written) and never outlive
-		// this call. A count larger than the real allocation is a caller-contract
-		// violation that no callee-side check can detect.
+		// #nosec G103 -- FFI boundary: caller-owned C string arrays of the checked count, read only within this call.
 		keysSlice := unsafe.Slice(settingsKeys, settingsCount)
 		// #nosec G103 -- same array-length contract as keysSlice above; the two are
 		// parallel arrays indexed together under the same settingsCount.
@@ -241,10 +219,7 @@ func ObjstoreNewStorageWithCredentials(backendType *C.char, settingsKeys **C.cha
 	return C.int(buildStorage(C.GoString(backendType), readSettings(settingsKeys, settingsValues, settingsCount), keyBytes, secretBytes))
 }
 
-// buildStorage creates the backend with key and secret in protected-memory
-// handles (nil or empty means the SDK default chain), destroys the handles,
-// registers the backend and returns its handle, or -1 with the last error set.
-// The caller owns key and secret and zeroizes them.
+// buildStorage creates the backend with key and secret in protected-memory handles, destroys them and returns the handle, or -1 with the last error set.
 func buildStorage(backendType string, settings map[string]string, key, secret []byte) int32 {
 	creds, release, err := protectCredentials(key, secret)
 	if err != nil {
@@ -318,13 +293,7 @@ func ObjstorePut(handle C.int, key *C.char, data *C.char, dataLen C.int) C.int {
 	}
 
 	goKey := C.GoString(key)
-	// #nosec G103 -- FFI boundary. GoBytes COPIES dataLen bytes from caller memory
-	// into a Go-owned slice, so nothing here aliases the caller's buffer past the
-	// call. dataLen is known non-negative (checkLength at the top of the
-	// function), which matters because gobytes PANICS on a negative length rather
-	// than erroring. What remains is a value larger than the real allocation — a
-	// caller-contract violation the callee cannot detect, as the C ABI requires
-	// the caller to assert its own buffer's length.
+	// #nosec G103 -- FFI boundary: GoBytes copies a checked non-negative dataLen from caller memory.
 	goData := C.GoBytes(unsafe.Pointer(data), dataLen)
 
 	reader := bytes.NewReader(goData)
@@ -382,13 +351,7 @@ func ObjstoreGet(handle C.int, key *C.char, buffer *C.char, bufferSize C.int) C.
 
 	// Copy to C buffer
 	if len(data) > 0 {
-		// #nosec G103 -- FFI boundary, and the one write into caller memory here.
-		// It is bounded on this side by two checks: bufferSize is known
-		// non-negative (checkLength at the top of the function), and the
-		// len(data) > bufferSize check above returns ErrBufferTooSmall, so the
-		// copy can never exceed the length the caller declared. The residual risk
-		// is a caller declaring a bufferSize larger than it allocated, which is a
-		// caller-contract violation no callee-side check can detect.
+		// #nosec G103 -- FFI boundary: the copy is bounded by the checked, caller-declared bufferSize.
 		goBuffer := unsafe.Slice((*byte)(unsafe.Pointer(buffer)), bufferSize)
 		copy(goBuffer, data)
 	}
@@ -436,11 +399,7 @@ func ObjstoreClose(handle C.int) {
 
 //export ObjstoreFreeString
 func ObjstoreFreeString(str *C.char) {
-	// #nosec G103 -- FFI boundary, and the deallocation half of this library's
-	// ownership contract: every *C.char it hands out comes from C.CString (a
-	// malloc), so the caller must return it here or leak. Passing a foreign or
-	// already-freed pointer is undefined, and C offers no way to verify one —
-	// which is why this function exists rather than asking callers to free().
+	// #nosec G103 -- FFI boundary: frees a *C.char this library allocated with C.CString.
 	C.free(unsafe.Pointer(str))
 }
 

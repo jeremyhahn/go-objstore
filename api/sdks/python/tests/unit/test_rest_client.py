@@ -731,13 +731,7 @@ def test_rest_health_timeout() -> None:
             _client().health()
 
 
-# =====================================================================
-# transport-failure sweep (timeout + connection) for every operation
-#
-# The canonical matrix asserts one success + one error per op; this sweep
-# additionally drives the per-method requests.Timeout / ConnectionError
-# handlers so the client's transport-error mapping is fully covered.
-# =====================================================================
+# Transport-failure sweep: timeout and connection errors for every operation.
 
 
 def _invocations(client: RestClient):

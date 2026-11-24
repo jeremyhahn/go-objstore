@@ -76,11 +76,7 @@ func GetRequestID(ctx context.Context) string {
 // AuditMiddleware creates a Gin middleware for audit logging
 func AuditMiddleware(auditLogger auditlog.AuditLogger) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Use the request ID already set by RequestIDMiddleware when present so
-		// audit records correlate with the X-Request-ID response header. Fall
-		// back to the sanitized inbound header, or generate a fresh one if
-		// absent/invalid. The response header is only set when RequestIDMiddleware
-		// has not already done so.
+		// Reuse the RequestIDMiddleware ID, else the sanitized inbound header, else a new one.
 		requestID := middleware.GetRequestIDFromGinContext(c)
 		if requestID == "" {
 			requestID = sanitizeRequestID(c.GetHeader(middleware.RequestIDHeader))

@@ -334,12 +334,7 @@ func (b *binaryMockStorage) GetPolicies() ([]common.LifecyclePolicy, error)     
 // ServeHTTP – non-jsonrpc2.Error error branch
 // ---------------------------------------------------------------------------
 
-// TestHTTPHandler_ServeHTTP_NonRPCError triggers the else-branch in ServeHTTP
-// where the returned error is not a *jsonrpc2.Error (plain Go error).
-// We can reach it via tools/call → CallTool → unknown tool returning ErrUnknownTool
-// which is a plain error, but the callTool path wraps it via servererrors.JSONRPCError
-// back into a jsonrpc2.Error. Instead, we verify the body-read-error path which
-// calls writeError directly and returns StatusOK with a JSON error.
+// TestHTTPHandler_ServeHTTP_NonRPCError covers the body-read error path, which writes a JSON error with 200.
 func TestHTTPHandler_ServeHTTP_BodyReadError(t *testing.T) {
 	storage := NewMockStorage()
 	server := createTestServer(t, storage, ModeHTTP)
@@ -723,12 +718,7 @@ func TestToolExecutor_executeApplyPolicies_ArchiveAction(t *testing.T) {
 	oldTime := time.Now().Add(-48 * time.Hour)
 	storage.metadata["old/blob.bin"].LastModified = oldTime
 
-	// Add a mock archiver that does nothing (local archiver reachable via factory).
-	// Since the factory requires a registered backend, use a nil Destination so
-	// the archive branch is entered but skips (Destination == nil guard).
-	//
-	// To exercise the non-nil Destination branch we rely on the mock lifecycle
-	// storage's Archive method which returns nil (success).
+	// A nil Destination enters the archive branch and skips it; the mock storage's Archive covers the non-nil case.
 	policy := common.LifecyclePolicy{
 		ID:          "archive-policy",
 		Prefix:      "old/",
@@ -992,13 +982,7 @@ func TestServer_StartHTTP_HealthEndpoint(t *testing.T) {
 		t.Fatalf("NewServer: %v", err)
 	}
 
-	// Build the same mux that startHTTP builds, by running startHTTP in a
-	// goroutine and hitting /health via a direct HTTP call. Since we don't
-	// know the ephemeral port, we instead exercise the handler by building it
-	// manually via the server's internal structure.
-	//
-	// A simpler approach: just call Start and hit /health, but port 0 makes
-	// the listener address unknowable. Use a fixed-but-unlikely port instead.
+	// Start on a fixed, unlikely port and hit /health.
 	server.config.HTTPAddress = "127.0.0.1:18182"
 
 	ctx, cancel := context.WithCancel(context.Background())

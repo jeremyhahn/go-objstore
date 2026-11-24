@@ -109,10 +109,7 @@ func (s *LeastUtilizationStrategy) Name() string {
 	return leastUtilizationStrategyName
 }
 
-// loadTallies reads the per-candidate load tallies from the state store.
-// A missing key, or a value whose length does not match the current
-// candidate count (the pool was resized, or the value is corrupt),
-// yields all-zero tallies that are overwritten on the next store.
+// loadTallies reads the tallies; a missing or wrong-length value yields zeros.
 func (s *LeastUtilizationStrategy) loadTallies(ctx context.Context, key string, n int) ([]uint64, error) {
 	loads := make([]uint64, n)
 

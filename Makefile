@@ -54,10 +54,7 @@ ifeq ($(WITH_AZURE_ARCHIVE),1)
 	BUILD_TAGS += azurearchive
 endif
 
-# GO_BUILD_TAGS is the tag set the ci-template passes to lint, build, test,
-# security and integration-test (handbook devcontainer.md §6). It defaults to
-# the repository's current tags (every backend); override it on the command
-# line (`make build GO_BUILD_TAGS="local awss3"`). Space- or comma-separated.
+# Build tags for lint, build, test, security and integration-test; override on the command line, space- or comma-separated.
 GO_BUILD_TAGS ?= $(strip $(BUILD_TAGS))
 export GO_BUILD_TAGS
 EMPTY :=
@@ -72,10 +69,7 @@ else
 	TAG_FLAGS :=
 endif
 
-# Version injection (read VERSION file; override pkg/version.Version at link time).
-# Named BUILD_VERSION, not VERSION: `make release-alpha VERSION=vX.Y.Z-alpha` and
-# `make version-set VERSION=X.Y.Z` take VERSION as an explicit argument, and a
-# Makefile-level VERSION would shadow it (release-alpha template v2.3.6 (b)).
+# Version injected at link time; named BUILD_VERSION so it does not shadow the VERSION argument of release-alpha and version-set.
 BUILD_VERSION := $(shell cat VERSION 2>/dev/null || echo "0.1.0-alpha")
 VERSION_PKG := github.com/jeremyhahn/go-objstore/pkg/version
 VERSION_LDFLAGS := -X $(VERSION_PKG).Version=$(BUILD_VERSION)
@@ -95,21 +89,10 @@ GOLANGCI_LINT_VERSION ?= 2.14.0
 # Docker Compose (use v2 syntax for GitHub Actions compatibility)
 DOCKER_COMPOSE := docker compose
 
-# Compose builds take the classic BuildKit path, not bake. The integration and
-# SDK compose files read the gomodauth secret from GOMODAUTH_SECRET, a file
-# outside the build context, and bake refuses that without an fs.read
-# entitlement ("additional privileges requested: pass --allow=fs.read=...").
-# The classic path reads the secret file without one, so no job has to turn
-# bake's entitlement checks off (BUILDX_BAKE_ENTITLEMENTS_FS=0).
+# Compose builds take the classic BuildKit path: bake refuses the gomodauth secret outside the context without an fs.read entitlement.
 export COMPOSE_BAKE := false
 
-# Compose project prefix for the integration targets. Concurrent CI jobs share
-# one Docker host, and compose's default project name (the directory) made one
-# job's `down -v --remove-orphans` remove another job's running containers.
-# Unique per CI job (run id + job), stable for a local run; each target adds
-# its own suffix. Sanitised to compose's charset: lowercase, digits, - and _.
-# CI names the prefix itself with IT_PROJECT, which ci.yml's tear-down steps
-# pass to `make clean-test-containers` as well.
+# Compose project prefix, unique per CI job and stable locally, so concurrent jobs on one Docker host never remove each other's containers.
 COMPOSE_PROJECT ?= $(shell printf '%s' "$(or $(IT_PROJECT),objstore-$(or $(GITHUB_RUN_ID),local)-$(or $(GITHUB_JOB),$(USER),user))" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9_\n-' '-')
 
 # Project structure
@@ -124,35 +107,13 @@ COVERAGE_DIR := coverage
 # ci.yml passes its own COVERAGE_THRESHOLD, the same number.
 COVERAGE_THRESHOLD ?= 89
 
-# Module authentication for docker builds. github.com/jeremyhahn/go-enclave is
-# private, so every image build that runs `go mod download` needs the forge
-# credentials. They reach a build only as a BuildKit secret file outside the
-# checkout: never a build arg, an ENV or a COPY, so no image layer carries
-# them. Two formats are in use:
-#   MODULE_ENV_FILE   GOPRIVATE, GIT_CONFIG_COUNT, GIT_CONFIG_KEY_0 and
-#                     GIT_CONFIG_VALUE_0 as KEY=value lines: the devcontainer's
-#                     secret, and the file ci.yml hands to every make call.
-#   GOMODAUTH_SECRET  the bare GIT_CONFIG_KEY_0 value: the secret the root
-#                     Dockerfile and the integration and SDK compose files
-#                     read, through GOMODAUTH_ENV.
-# `make stage-gomodauth` writes MODULE_ENV_FILE from the environment unless
-# the caller names one; `make stage-gomodauth-secret` derives GOMODAUTH_SECRET
-# from it. Both are mode 0600 and `make clean-gomodauth` removes them. The
-# recipes read values from the environment and from files only; none is ever
-# expanded into a command line, so neither `make -n` nor the log can show a
-# token. No credentials stage empty files, and the builds resolve from the
-# public proxy.
+# Private-module credentials reach docker builds only as BuildKit secret files outside the checkout (MODULE_ENV_FILE, GOMODAUTH_SECRET), mode 0600, never on a command line.
 GOMODAUTH_DIR := $(or $(RUNNER_TEMP),$(TMPDIR),/tmp)/$(PROJECT_NAME)-gomodauth-$(shell id -u)
 GOMODAUTH_FILE := $(GOMODAUTH_DIR)/gomodauth.env
 GOMODAUTH_SECRET := $(GOMODAUTH_DIR)/gomodauth.secret
 MODULE_ENV_FILE ?= $(GOMODAUTH_FILE)
 
-# The devcontainer images (build/docker/devcontainer/Dockerfile): the
-# toolchain image CI runs its gates in, and the integration image it scans.
-# TOOLCHAIN_INPUTS is every file the tools, base and toolchain stages read;
-# the toolchain tag is their content hash, so a change to any of them is a new
-# image and nothing else is. IT_CI_IMAGE names the integration image by the
-# checkout's content: tree, uncommitted diff and untracked files.
+# Devcontainer images: the toolchain tag is the content hash of TOOLCHAIN_INPUTS; IT_CI_IMAGE names the integration image by the checkout's content.
 DEVCONTAINER_DIR := build/docker/devcontainer
 TOOLCHAIN_INPUTS := $(DEVCONTAINER_DIR)/Dockerfile $(DEVCONTAINER_DIR)/Dockerfile.dockerignore \
 	scripts/tool-pins.sh scripts/install-tools.sh \
@@ -168,10 +129,7 @@ IT_IMAGE ?= $(PROJECT_NAME)-it:local
 RELEASE_IMAGE ?= $(PROJECT_NAME)
 IT_CI_IMAGE = $(PROJECT_NAME)-ci-it:$(shell { git rev-parse 'HEAD^{tree}'; git diff HEAD; \
 	git ls-files -oz --exclude-standard | xargs -0r sha256sum; } 2>/dev/null | sha256sum | cut -c1-16)
-# GO_IMAGE and GO_GLIBC_IMAGE are the Go base images, tag@digest; unset, they
-# are the Dockerfile's ARG defaults, read from it so the pins live in one
-# place. GO_BUILD_PROXY_ARG hands the caller's GOPROXY to the stages that
-# fetch; the shell expands $$GOPROXY, so make never echoes its value.
+# Go base images (tag@digest) default to the Dockerfile's ARGs; the caller's GOPROXY is expanded by the shell, never echoed by make.
 DEVCONTAINER_ARGS := $(file < $(DEVCONTAINER_DIR)/Dockerfile)
 GO_IMAGE ?= $(patsubst GO_IMAGE=%,%,$(filter GO_IMAGE=%,$(DEVCONTAINER_ARGS)))
 GO_GLIBC_IMAGE ?= $(patsubst GO_GLIBC_IMAGE=%,%,$(filter GO_GLIBC_IMAGE=%,$(DEVCONTAINER_ARGS)))
@@ -275,32 +233,8 @@ generate-proto:
 	@echo "$(GREEN)✓ Protobuf code generated$(RESET)"
 
 .PHONY: test
-## test: Run unit tests under the race detector, with coverage
-#
-# -race is not optional here (go-objstore#18). This repository's product is
-# locked memory, storage pools and replication -- concurrency-sensitive code --
-# and the suite ran without the race detector anywhere, locally or in CI, which
-# is how a data race in the REST server's TLS start-up survived on main. It
-# rides in this target rather than a separate CI job so it costs no extra
-# runner slot: CI's `test` job and nightly's `fips` job both call `make test`,
-# so both gained race coverage.
-#
-# -covermode=atomic is required with -race and was already set.
-#
-# The package list is ./pkg/..., ./internal/... and cmd/objstorelib, NOT
-# ./cmd/... . The library shim is the only cmd package carrying tests, and its
-# guards against negative lengths from C are worth gating (go-objstore#25); the
-# other six cmd packages have no test files at all, so sweeping them in would
-# add ~5 points of uncovered statements to the denominator while gating
-# nothing. The server binaries' configuration contract (defaults, file, env,
-# flags and their precedence) lives in internal/serverconfig so that it IS
-# gated here (go-objstore#34). Widening the coverage gate to cover the binaries
-# is a deliberate decision, not a side effect of this list.
-#
-# The backup agent is its own module, which ./... does not reach, so the
-# target ends with backup-test: its race tests and per-package coverage gate
-# run wherever `make test` does, CI included. It writes no coverage profile,
-# so unit.out stays the root module's alone.
+### test: Run unit tests under the race detector, with coverage
+# Covers ./pkg/..., ./internal/... and cmd/objstorelib, then backup-test for the separate backup module.
 test: test-unit
 	@$(MAKE) --no-print-directory backup-test
 
@@ -325,9 +259,7 @@ coverage: test-unit
 	awk -v c="$$total" -v t="$(COVERAGE_THRESHOLD)" 'BEGIN { if (c + 0 < t + 0) { print "coverage below " t "%"; exit 1 } }'
 
 .PHONY: test-fips
-## test-fips: Run coverage and backup-test in FIPS 140-3 only mode (GOFIPS140=latest GODEBUG=fips140=only)
-# A test that reaches a non-approved algorithm fails here, not in a FIPS
-# deployment.
+### test-fips: Run coverage and backup-test in FIPS 140-3 only mode (GOFIPS140=latest GODEBUG=fips140=only)
 test-fips: export GOFIPS140 := latest
 test-fips: export GODEBUG := fips140=only
 test-fips:
@@ -504,12 +436,7 @@ test-sdk-typescript:
 test-sdk-go:
 	@cd api/sdks/go && $(MAKE) test
 
-# The backup agent is its own module (backup/go.mod), so `make lint` and
-# `make test` at the root do not reach it. These two targets gate it: vet,
-# gofmt and golangci-lint with the root configuration, then the race-enabled
-# unit tests with COVERAGE_THRESHOLD applied to each library package
-# (backup/pkg/... and backup/internal/...; the command is tested, not gated,
-# as at the root).
+# The backup module (backup/go.mod) is outside the root ./...; these targets lint and test it with per-package coverage.
 BACKUP_DIR := backup
 
 .PHONY: backup-lint
@@ -881,18 +808,12 @@ install-security-tools:
 	@echo "$(GREEN)✓ govulncheck installed$(RESET)"
 	@echo "$(GREEN)$(BOLD)✓ All security tools installed successfully$(RESET)"
 
-# The build tags that gate the cloud backends into the build. gosec and
-# govulncheck both need them or they analyse 129 of the 140 files and the
-# S3/Glacier/Azure implementations go unscanned.
-# An explicit GO_BUILD_TAGS overrides the default.
+# Cloud backend build tags, so gosec and govulncheck scan every file; GO_BUILD_TAGS overrides.
 SECURITY_TAGS = $(if $(filter file,$(origin GO_BUILD_TAGS)),local$(COMMA)awss3$(COMMA)gcpstorage$(COMMA)azureblob$(COMMA)glacier,$(GO_BUILD_TAGS_CSV))
 
 .PHONY: security
-## security: Full devops.md §8 suite (gosec, govulncheck, go mod verify, trivy fs)
-# Container images are NOT scanned here -- `make trivy-image` builds and scans
-# the release image, which needs a Docker daemon and several minutes. CI scans
-# the same image in its image job, on the full tier. The gosec half is
-# scripts/gosec-scan.sh, which explains its two scans.
+### security: Full devops.md §8 suite (gosec, govulncheck, go mod verify, trivy fs)
+# Container images are scanned by `make trivy-image`, not here.
 security:
 	@echo "$(CYAN)$(BOLD)→ Running security checks...$(RESET)"
 	@echo "$(CYAN)  Running gosec...$(RESET)"
@@ -922,10 +843,8 @@ security:
 	@echo "$(YELLOW)Note: container images are scanned separately - run 'make trivy-image'$(RESET)"
 
 .PHONY: trivy-image
-## trivy-image: Build the release image and scan it with Trivy (CRITICAL/HIGH gate)
-# Mirrors the gate in the ci.yml docker job so the same failure reproduces
-# locally (devops.md §4). Builds the image, so it needs Docker and is not part
-# of `make security`.
+### trivy-image: Build the release image and scan it with Trivy (CRITICAL/HIGH gate)
+# Same gate as the CI docker job; needs Docker.
 trivy-image: docker-build-release
 	@echo "$(CYAN)$(BOLD)→ Scanning container image with Trivy...$(RESET)"
 	@BIN=$$($(REQUIRE_TOOL) trivy) || { echo "$(RED)✗ trivy required for the image scan$(RESET)"; exit 1; }; \
@@ -1017,15 +936,8 @@ clean:
 	@echo "$(GREEN)✓ Clean complete$(RESET)"
 
 .PHONY: lib-test
-## lib-test: Build the shared library and run the C API test suite against it
-#
-# The ONLY coverage that reaches the //export wrappers. `go test` refuses cgo in
-# test files ("use of cgo in test ... not supported"), so no Go test can call
-# ObjstorePut and friends with C arguments — a guard could be deleted from any
-# wrapper and every Go test would still pass (go-objstore#25).
-#
-# Depends on `lib` so the .so and its generated header are current; pass the
-# same WITH_* flags you would pass to `lib`.
+### lib-test: Build the shared library and run the C API test suite against it
+# The only coverage of the //export wrappers: go test cannot use cgo in test files.
 lib-test: lib
 	@echo "$(CYAN)$(BOLD)→ Running C API test suite...$(RESET)"
 	@$(MAKE) -C examples/c_client run
@@ -1189,9 +1101,7 @@ version-check:
 	@bash ./scripts/check-version.sh
 	@echo "$(GREEN)✓ All SDK versions match$(RESET)"
 
-# version-set takes the new version via VERSION=X.Y.Z. The argument is only
-# honored when it was provided on the command line; otherwise the target
-# errors instead of silently re-writing the file with a stale value.
+# VERSION must be given on the command line; otherwise the target errors.
 .PHONY: version-set
 ## version-set: Set root VERSION to X.Y.Z and sync all SDKs (usage: make version-set VERSION=X.Y.Z)
 version-set:
@@ -1268,24 +1178,14 @@ release-push:
 	@echo "$(GREEN)✓ Release v$(BUILD_VERSION) pushed to origin$(RESET)"
 
 
-# Builds never resolve through a workspace: modules come from Gitea tags
-# (dependency-resolution.md §2). Immunizes against stray go.work files.
+# Builds never resolve through a workspace (dependency-resolution.md §2).
 export GOWORK=off
 
-# ---- dependency-resolution.md targets (2026-08-13 cutover) ----
-# The nested modules tagged in lockstep with the root are LOCKSTEP_MODULES in
-# mk/release.mk (release-versioning.md P2). deps-latest runs before compiling in a
-# consumer repo. deps-latest picks the highest tag INCLUDING -alpha
-# prereleases — bare 'go get @latest' ignores prereleases and would downgrade
-# to legacy v0.0.0.
+# dependency-resolution.md targets; deps-latest picks the highest tag including -alpha prereleases.
 
 .PHONY: deps-latest
 
-# ---- release-alpha: see mk/release.mk (issue #32) ----
-# The signed -alpha release path: CHANGELOG fragment assembly, then the company
-# release-alpha template (vendored byte for byte at mk/template/, release-common.mk
-# 1.2.0), tagging the root, backup and api/sdks/go
-# modules in lockstep.
+# release-alpha: see mk/release.mk; tags the root, backup and api/sdks/go modules in lockstep.
 #
 #   make release-alpha VERSION=vX.Y.Z-alpha
 include mk/release.mk

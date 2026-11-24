@@ -337,8 +337,7 @@ static int test_negative_lengths(int handle) {
         return -1;
     }
 
-    /* NewStorage with a negative settingsCount, which used to be swallowed by
-     * the `settingsCount > 0` guard and produce an empty settings map. */
+    /* NewStorage with a negative settingsCount must fail, not yield empty settings. */
     if (ObjstoreNewStorage((char *)"memory", NULL, NULL, -1) >= 0) {
         PRINT_FAIL("NewStorage with negative settingsCount should have failed");
         return -1;

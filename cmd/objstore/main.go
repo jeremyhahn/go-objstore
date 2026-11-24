@@ -38,10 +38,7 @@ func main() {
 	os.Exit(run(rootCmd.Execute, func() error { return globalConfig.Destroy() }, os.Stderr))
 }
 
-// run executes the command, then destroys the locked-memory backend
-// credentials. It returns the process exit code: 1 when the command failed or
-// when the credentials could not be destroyed, so a failed zeroization is
-// never reported as success.
+// run executes the command and destroys the locked-memory credentials; it returns 1 if either fails.
 func run(execute, destroy func() error, stderr io.Writer) int {
 	code := 0
 	if err := execute(); err != nil {

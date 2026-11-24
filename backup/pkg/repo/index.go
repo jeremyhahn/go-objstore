@@ -9,14 +9,7 @@ import (
 	"github.com/jeremyhahn/go-objstore/backup/pkg/seal"
 )
 
-// An index object maps chunk IDs to where they are stored. Each backup run
-// that stores new chunks writes one, and loading the index merges them all.
-// Its plaintext is
-//
-//	version (1) | count (4) | count × (chunk ID (32) | pack ID (32) | offset (8) | length (4))
-//
-// with the entries sorted by chunk ID and no ID twice. It is sealed with the
-// index subkey, and its ID is the object ID of the plaintext.
+// Index object, sealed with the index subkey: version (1) | count (4) | count × (chunk ID (32) | pack ID (32) | offset (8) | length (4)), sorted by chunk ID.
 
 const (
 	indexVersion   = 1

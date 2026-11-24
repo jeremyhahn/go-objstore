@@ -22,10 +22,8 @@ enclave's concrete type is internal to go-enclave: `NewMemory` hands it out as
 an `enclave.ByteAccess`, and that interface is what this repository holds and
 passes around.
 
-The primitive lived in this repository as `pkg/enclave` until 2026-08-25. It was
-extracted to its own Layer 0 module (issue #29, owner-ruled 2026-08-23) so that
-libraries which do not sit above go-objstore can consume it; go-objstore is now
-an ordinary consumer. **go-enclave is the normative source for the mechanism.**
+The primitive is its own Layer 0 module so that libraries which do not sit
+above go-objstore can consume it; go-objstore is an ordinary consumer. **go-enclave is the normative source for the mechanism.**
 What this document specifies is how *this repository* uses it — the sections
 below on borrow discipline are the contract go-objstore's own call sites honour,
 and go-enclave's own documentation governs if the two ever disagree.
@@ -232,7 +230,7 @@ here rather than silently left:
   `*azblob.SharedKeyCredential`). Strings cannot be wiped and the SDKs are not
   ours to change; destroying the enclave removes the custody copy, not the
   SDK's. `pkg/gcs` and `pkg/glacier` ignore the handles and authenticate
-  through the vendor SDK's own chain. Closed by issue #16.
+  through the vendor SDK's own chain.
 - **Server archive `DestinationSettings` and the C library — handle inside the
   process, plain string on the wire.** The REST, gRPC, QUIC, unix and MCP
   servers accept archive credentials in `destination_settings` exactly as

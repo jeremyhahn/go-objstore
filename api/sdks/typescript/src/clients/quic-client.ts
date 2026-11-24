@@ -146,11 +146,7 @@ export class QuicClient implements IObjectStoreClient {
     const params = new URLSearchParams();
     if (request.prefix) params.append('prefix', request.prefix);
     if (request.delimiter) params.append('delimiter', request.delimiter);
-    // The QUIC server reads `max`/`continue` for list pagination. In Node the
-    // TypeScript QUIC client has no native HTTP/3 and is pointed at the REST
-    // endpoint, which instead reads `limit`/`token`. Send both spellings so the
-    // request paginates correctly regardless of which server handles it; the
-    // unrecognized keys are ignored by each server.
+    // Send both max/continue (QUIC server) and limit/token (REST server); each ignores the other's keys.
     if (request.maxResults) {
       params.append('max', request.maxResults.toString());
       params.append('limit', request.maxResults.toString());
@@ -403,7 +399,7 @@ export class QuicClient implements IObjectStoreClient {
   async triggerReplication(
     request: TriggerReplicationRequest
   ): Promise<TriggerReplicationResponse> {
-    // QUIC server takes policy_id as a QUERY param (empty = sync all policies).
+    // The QUIC server takes policy_id as a query parameter; empty syncs all policies.
     const params = new URLSearchParams();
     if (request.policyId) params.append('policy_id', request.policyId);
     const query = params.toString();
@@ -593,10 +589,7 @@ export class QuicClient implements IObjectStoreClient {
   }
 
   private deserializeMetadata(obj: any): Metadata {
-    // List responses return ObjectResponse-style JSON:
-    // - content_type (snake_case)
-    // - modified (not last_modified)
-    // - size, etag, key, metadata (for custom)
+    // List entries use content_type, modified, size, etag, key and metadata.
     return {
       contentType: obj.content_type || obj.contentType,
       contentEncoding: obj.content_encoding || obj.contentEncoding,

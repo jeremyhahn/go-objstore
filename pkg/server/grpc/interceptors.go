@@ -427,19 +427,14 @@ var methodActions = map[string]struct {
 	"GetReplicationStatus":    {adapters.ActionAdmin, adapters.ResourceReplication},
 }
 
-// isPublicAuthzMethod reports whether the gRPC method is exempt from
-// authorization: the standard grpc.health.v1.Health service and the two
-// server reflection services, each matched by its full service name so no
-// other method in their packages is exempt.
+// isPublicAuthzMethod reports whether the method belongs to the health or reflection services, matched by full service name.
 func isPublicAuthzMethod(fullMethod string) bool {
 	return strings.HasPrefix(fullMethod, "/grpc.health.v1.Health/") ||
 		strings.HasPrefix(fullMethod, "/grpc.reflection.v1.ServerReflection/") ||
 		strings.HasPrefix(fullMethod, "/grpc.reflection.v1alpha.ServerReflection/")
 }
 
-// isAnyPrincipalMethod reports whether fullMethod is open to every
-// authenticated principal, whatever its roles. Only the objstore Health RPC
-// qualifies, matched by its exact full method name (#239).
+// isAnyPrincipalMethod reports whether fullMethod is the objstore Health RPC, open to every authenticated principal.
 func isAnyPrincipalMethod(fullMethod string) bool {
 	return fullMethod == objstorepb.ObjectStore_Health_FullMethodName
 }

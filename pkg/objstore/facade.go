@@ -85,9 +85,9 @@ type FacadeConfig struct {
 	// Use this when you need to pass pre-configured Storage instances
 	Backends map[string]common.Storage
 
-	// BackendConfigs is a map of backend name to BackendConfig (simplified approach)
-	// Use this to let the facade create storage instances via the factory
-	// If both Backends and BackendConfigs are set, they are merged (Backends takes precedence)
+	// BackendConfigs maps backend name to BackendConfig; the facade creates those
+	// storage instances via the factory. If both Backends and BackendConfigs are
+	// set, they are merged and Backends takes precedence.
 	BackendConfigs map[string]BackendConfig
 
 	// DefaultBackend is the name of the default backend to use

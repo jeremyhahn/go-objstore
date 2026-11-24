@@ -11,21 +11,7 @@ import (
 	"github.com/jeremyhahn/go-objstore/backup/pkg/store"
 )
 
-// A pack is a run of sealed chunks followed by a sealed trailer that lists
-// them, and the trailer's length:
-//
-//	blob 0 | blob 1 | ... | sealed trailer | trailer length (4, big-endian)
-//
-// Each blob is one chunk sealed as a pack object whose additional data binds
-// the chunk ID. The trailer is sealed as a pack object whose additional data
-// binds the pack ID, so a pack renamed to another's name does not open. The
-// trailer's plaintext is
-//
-//	version (1) | count (4) | count × (chunk ID (32) | offset (8) | length (4))
-//
-// with the blobs in order and contiguous from offset 0. The pack ID is the
-// object ID of the chunk IDs in order, so the same chunks always make the
-// same pack, byte for byte apart from the nonces.
+// Pack: blob 0 | ... | sealed trailer | trailer length (4, BE); trailer: version (1) | count (4) | count × (chunk ID (32) | offset (8) | length (4)); the pack ID is the object ID of its chunk IDs.
 
 const (
 	trailerVersion   = 1

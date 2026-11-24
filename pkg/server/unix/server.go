@@ -257,11 +257,7 @@ func NewServer(config *ServerConfig) (*Server, error) {
 	}, nil
 }
 
-// removeStaleSocket removes the file at path only when it is a Unix domain
-// socket left over from a previous run. It returns nil when the path does not
-// exist. When the path exists but is not a socket it leaves the file untouched
-// and returns an error, so a misconfigured SocketPath never deletes an
-// unrelated file.
+// removeStaleSocket removes path only if it is a socket; nil when absent, an error and no removal when it is another file.
 func removeStaleSocket(path string) error {
 	fi, err := os.Lstat(path)
 	if err != nil {
@@ -331,10 +327,7 @@ func (s *Server) acceptLoop(ctx context.Context) {
 			continue
 		}
 
-		// Acquire the concurrency slot BEFORE spawning the goroutine so
-		// MaxConnections bounds goroutines and file descriptors, not just
-		// concurrent processing. Excess connections queue in the kernel's
-		// accept backlog instead of accumulating one goroutine each.
+		// Take the slot before spawning so MaxConnections bounds goroutines and descriptors; excess waits in the accept backlog.
 		s.connSem <- struct{}{}
 		s.wg.Add(1)
 		go s.handleConnection(ctx, conn)
@@ -349,12 +342,7 @@ func (s *Server) handleConnection(ctx context.Context, conn net.Conn) {
 
 	s.config.Logger.Debug(ctx, "New client connected")
 
-	// Extract the peer's OS credentials once per connection and carry the
-	// resulting principal in the context so the handler can authorize by the
-	// connecting process's identity. The socket file permissions remain the
-	// primary access gate; peer credentials supply the principal identity. If
-	// extraction is unsupported (non-Linux, non-Unix conn), fall back to the
-	// configured Authenticator by leaving the principal out of the context.
+	// Carry the peer-credential principal in the context; when unsupported, leave it out so the Authenticator applies.
 	if s.usePeerCred {
 		if principal, err := peerCredPrincipal(conn); err != nil {
 			if !errors.Is(err, ErrPeerCredUnsupported) {

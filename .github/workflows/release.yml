@@ -1,5 +1,4 @@
-# 2026-10-25: release jobs run on the release-only runner on Gitea (ubuntu-latest
-# on GitHub); the Trivy gate image is pinned by digest.
+# Release jobs; the Trivy gate image is pinned by digest.
 name: Release
 
 on:
@@ -196,11 +195,7 @@ jobs:
           FILES="${FILES} ${BINARY_NAME} ${BINARY_NAME}.sha256"
         done
 
-        # objstore-backup is the backup/ module. At a release tag it requires
-        # the root and Go SDK modules at that same tag with no replace; point
-        # them at this checkout, which is that tagged source, so the build does
-        # not wait on the new tags reaching a module proxy. The edit is never
-        # committed.
+        # Point the backup module at this tagged checkout so the build does not wait on the module proxy; never committed.
         BINARY_NAME="objstore-backup${FIPS_SUFFIX}${EXT}"
         echo "Building objstore-backup for ${GOOS}/${GOARCH}${FIPS_SUFFIX}..."
         (

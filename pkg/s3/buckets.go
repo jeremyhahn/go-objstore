@@ -76,10 +76,7 @@ func (s *S3) CreateBucket(ctx context.Context, name string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	// In the default region the service answers success when the caller
-	// already owns the bucket, and resets its ACLs, so the bucket is looked
-	// for first. A bucket made between the look and the create is still
-	// reported by the service, and mapped below.
+	// Look for the bucket first: the default region answers success for an owned bucket and resets its ACLs.
 	_, err := s.svc.HeadBucketWithContext(ctx, &s3.HeadBucketInput{Bucket: aws.String(name)})
 	if err == nil {
 		return fmt.Errorf("%w: %s", common.ErrBucketAlreadyExists, name)

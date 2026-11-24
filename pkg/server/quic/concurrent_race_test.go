@@ -24,16 +24,7 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/local"
 )
 
-// TestServeHTTPConcurrentNoBadLoggerRace fires many goroutines through a single
-// shared Handler.ServeHTTP to prove that the per-request logger enrichment no
-// longer mutates the shared h.logger field. Run with -race; must produce zero
-// data-race reports.
-//
-// The local filesystem backend is used because it is safe for concurrent
-// access, unlike the in-memory test mocks that use unsynchronized maps.
-// Each goroutine issues a GET /health request, which exercises the
-// authentication and per-request logger enrichment paths in ServeHTTP without
-// touching the backend, keeping the test focused on the logger race.
+// TestServeHTTPConcurrentNoBadLoggerRace: concurrent GET /health on a local backend must not race on the logger under -race.
 func TestServeHTTPConcurrentNoBadLoggerRace(t *testing.T) {
 	storage := local.New()
 	if err := storage.Configure(map[string]string{"path": t.TempDir()}, noCreds); err != nil {
