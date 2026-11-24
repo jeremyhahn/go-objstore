@@ -196,7 +196,22 @@ func New() common.Storage {
 	return &Azure{}
 }
 
-// Configure requires accountName and containerName; the account key is creds.Secret; optional subscriptionID and resourceGroup (lifecycle), endpoint and multipartExpiry (default 168h).
+// Configure sets up the backend with the necessary settings.
+// Required settings for blob operations:
+//   - accountName: Azure storage account name
+//   - containerName: Azure blob container name
+//
+// The storage account key is creds.Secret; creds.Key is not used, and an
+// accountKey entry in settings is an error.
+//
+// Optional settings for lifecycle management:
+//   - subscriptionID: Azure subscription ID (required for lifecycle policies)
+//   - resourceGroup: Azure resource group name (required for lifecycle policies)
+//
+// Optional settings:
+//   - endpoint: Custom endpoint URL (for Azurite, etc.)
+//   - multipartExpiry: age after which a multipart upload counts as aborted
+//     (default 168h)
 func (a *Azure) Configure(settings map[string]string, creds common.Credentials) error {
 	return a.configure(settings, creds, true)
 }

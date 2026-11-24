@@ -40,7 +40,14 @@ type CredentialTarget struct {
 	Side TargetSide
 }
 
-// CredentialProvider returns a fresh credential handle per target per sync, which the manager destroys; a zero value selects the SDK default chain.
+// CredentialProvider yields the protected-memory credential handle for a
+// replication target. The embedding application supplies it when it
+// constructs the replication manager; it is never persisted.
+//
+// Credentials is called once per target for each sync. The manager hands the
+// returned handles to the backend's Configure, then destroys them, so the
+// provider must return a fresh handle on every call and must not keep or reuse
+// one. A zero common.Credentials selects the SDK default credential chain.
 type CredentialProvider interface {
 	Credentials(ctx context.Context, target CredentialTarget) (common.Credentials, error)
 }
@@ -72,7 +79,10 @@ var ErrCredentialProvider = errors.New("credential provider failed")
 // destroyed after its backend was configured.
 var ErrCredentialDestroy = errors.New("credential handle not destroyed")
 
-// CredentialProviderError names only the target; the provider's error is reachable only through Unwrap.
+// CredentialProviderError reports that the provider could not supply the
+// credential for a target. Its message names only the target; the provider's
+// own error is reachable through Unwrap and never appears in the message, so
+// nothing a provider put in it can reach a log.
 type CredentialProviderError struct {
 	// Target is the backend the credential was for.
 	Target CredentialTarget

@@ -11,7 +11,12 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package auditlog defines the audit contract (event types, AuditLogger, no-op default) with no dependencies beyond pkg/adapters.
+// Package auditlog defines the audit logging contract: the event types, the
+// AuditLogger interface and a no-op default. It deliberately has no
+// dependencies beyond the standard library and pkg/adapters, so storage
+// backends can accept an audit logger without linking the HTTP, gRPC or
+// serialization stacks. The slog-backed logger and the HTTP/gRPC middleware
+// that implement and drive this contract live in pkg/audit.
 package auditlog
 
 import (

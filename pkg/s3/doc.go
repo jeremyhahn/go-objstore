@@ -11,5 +11,10 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package s3 is the S3 backend, built only with the awss3 tag (Makefile WITH_AWS_S3=1, the default).
+// Package s3 provides the s3 object-storage backend.
+//
+// The backend implementation is gated behind the "awss3" build tag so that
+// builds which do not need it avoid linking its cloud SDK. Without the tag this
+// package compiles to an empty stub and the backend is unregistered. Enable it
+// with: go build -tags awss3   (Makefile: WITH_AWS_S3=1, which is the default).
 package s3

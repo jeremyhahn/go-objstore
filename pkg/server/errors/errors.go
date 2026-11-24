@@ -11,7 +11,10 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package errors maps common.Classify classes to HTTP, gRPC and JSON-RPC codes, so every transport reports a failure the same way.
+// Package errors maps the canonical error taxonomy (common.Classify) to each
+// transport's wire representation: HTTP status codes, gRPC status codes, and
+// JSON-RPC error codes. Keeping the full matrix in one place guarantees that
+// every transport reports the same class of failure for the same error.
 package errors
 
 import (

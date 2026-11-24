@@ -13,7 +13,12 @@
 
 package common
 
-// PathAccessor is an optional interface of local-filesystem Storage for consumers that need a real OS path; cloud backends do not implement it.
+// PathAccessor is an optional interface that local-filesystem-backed Storage
+// implementations satisfy. Pool consumers that need a real OS path (e.g.
+// qrdb's per-tenant Pebble DBs that can only run on local disk) type-assert
+// to this interface to obtain the path. Cloud backends (S3, GCS, Azure,
+// Glacier) deliberately do not implement it, so misuse fails to compile or
+// surfaces an obvious nil-assertion panic at startup.
 type PathAccessor interface {
 	// LocalPath returns the absolute local-filesystem path that backs this
 	// Storage. The returned path must already exist and be writable by the

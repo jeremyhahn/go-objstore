@@ -39,7 +39,13 @@ func RegisterStorage(backendType string, creator StorageCreator) {
 	storageRegistry[backendType] = creator
 }
 
-// RegisterArchiver registers an archiver creator; one whose settings name a server path must also be in pathArchiverTypes.
+// RegisterArchiver registers an archiver creator.
+//
+// An archiver whose settings name a path on the server's filesystem must also
+// be listed in pathArchiverTypes (wire_options.go), so CheckClientArchiverType
+// refuses it from clients with ErrClientLocalArchiver unless the server sets
+// archive.allow_client_local_destinations. Registering such a type without
+// listing it would let any client write to a server path.
 func RegisterArchiver(backendType string, creator ArchiverCreator) {
 	archiverRegistry[backendType] = creator
 }
@@ -67,7 +73,16 @@ func NewArchiver(backendType string, settings map[string]string, creds common.Cr
 	return creator(settings, creds)
 }
 
-// NewArchiverFromWire builds an archiver from client settings, moving credentials into a protected handle destroyed after the build; local archivers return ErrClientLocalArchiver.
+// NewArchiverFromWire builds an archiver from destination settings received
+// over a wire protocol (REST, gRPC, QUIC, unix socket, MCP). The credential
+// entries are moved out of wire into a protected-memory handle before the
+// backend sees them, and the handle is destroyed when the archiver is built.
+// wire is left without credential entries. A request that carries no credential
+// uses the SDK default chain.
+//
+// A filesystem-path archiver type (local) is refused with
+// ErrClientLocalArchiver; a server that allows client-supplied local
+// destinations calls NewArchiverFromWireOpts.
 func NewArchiverFromWire(backendType string, wire map[string]string) (common.Archiver, error) {
 	return NewArchiverFromWireOpts(backendType, wire, WireOptions{})
 }

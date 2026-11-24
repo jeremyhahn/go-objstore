@@ -88,7 +88,10 @@ type sizedSeeker struct {
 	start int64
 }
 
-// Read fails for good once the part failed: the v4 signer ignores a read error while hashing and sends the body anyway.
+// Read fails for good once the part has failed. The v4 signer ignores a read
+// error while it hashes the body and then sends the body anyway, so the
+// failure has to outlive the rewind that follows the hashing pass: a part that
+// is not the declared size must not reach the service as a complete request.
 func (s *sizedSeeker) Read(p []byte) (int, error) {
 	switch {
 	case s.err != nil:
@@ -289,7 +292,11 @@ func (s *S3) UploadPart(ctx context.Context, key, uploadID string, partNumber in
 	return common.PartInfo{PartNumber: partNumber, ETag: aws.StringValue(out.ETag), Size: size}, nil
 }
 
-// CompleteMultipartUpload checks part order and numbers (the service checks ETags and sizes); uploads older than multipartExpiry count as aborted.
+// CompleteMultipartUpload assembles the listed parts. The order and the
+// numbers of the parts are checked here; their entity tags and sizes are
+// checked by the service, which refuses the whole request on a mismatch.
+//
+// An upload older than the multipartExpiry setting is treated as aborted.
 func (s *S3) CompleteMultipartUpload(ctx context.Context, key, uploadID string, parts []common.CompletedPart) error {
 	if err := common.ValidateKey(key); err != nil {
 		return err

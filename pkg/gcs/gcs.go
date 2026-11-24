@@ -351,7 +351,12 @@ func (g *GCS) AddPolicy(policy common.LifecyclePolicy) error {
 	return err
 }
 
-// RemovePolicy removes the lifecycle rules matching the condition of rule "rule-<index>"; an unknown id wraps common.ErrPolicyNotFound.
+// RemovePolicy removes a lifecycle policy by updating GCS bucket lifecycle rules.
+// GCS lifecycle rules carry no identifiers, so the id must follow the
+// "rule-<index>" scheme that GetPolicies uses to synthesize policy IDs. The
+// identified rule's translated condition (prefix + age, the same condition
+// AddPolicy writes) determines which rule(s) are removed. An id that does not
+// resolve to an existing rule yields an error wrapping common.ErrPolicyNotFound.
 func (g *GCS) RemovePolicy(id string) error {
 	g.policiesMutex.Lock()
 	defer g.policiesMutex.Unlock()

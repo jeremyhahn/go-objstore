@@ -57,7 +57,15 @@ func NewBufferTooSmallError(need, have int) error {
 	return fmt.Errorf("%w: need %d bytes, have %d", ErrBufferTooSmall, need, have)
 }
 
-// InvalidLengthError reports a negative length or count supplied across the C boundary, naming the parameter.
+// InvalidLengthError reports a negative length or count supplied across the C
+// boundary. It names the parameter at fault, because a caller holding only -1
+// and a message cannot otherwise tell which argument it got wrong.
+//
+// A typed error rather than fmt.Errorf, per the repository's error conventions
+// and the LockedMemoryError precedent in go-enclave: the fields stay
+// programmatically reachable instead of being flattened into a string. (The
+// two constructors above predate that rule and are left alone here — converting
+// them is not this change's business.)
 type InvalidLengthError struct {
 	// Param is the exported function's parameter name, e.g. "dataLen".
 	Param string
@@ -176,7 +184,17 @@ func readSettings(settingsKeys **C.char, settingsValues **C.char, settingsCount 
 	return settings
 }
 
-// ObjstoreNewStorageWithCredentials is ObjstoreNewStorage with explicit-length key and secret buffers (NULL, 0 for the default chain); nothing is kept and the caller wipes its buffers.
+// ObjstoreNewStorageWithCredentials is ObjstoreNewStorage for a backend that
+// needs an explicit credential. key and secret are byte buffers with explicit
+// lengths (not NUL-terminated strings): the S3 access key and secret key, or
+// the Azure account key in secret. Pass NULL and 0 for one or both to use the
+// SDK default chain. A credential still cannot go in the settings arrays.
+//
+// The library copies each buffer into protected memory, builds the backend,
+// destroys the protected copy before returning, and zeroizes its own temporary
+// copy. It keeps nothing of the credential after the call. The caller still
+// owns key and secret and must wipe them (explicit_bzero, SecureZeroMemory)
+// as soon as the call returns.
 //
 //export ObjstoreNewStorageWithCredentials
 func ObjstoreNewStorageWithCredentials(backendType *C.char, settingsKeys **C.char, settingsValues **C.char, settingsCount C.int, key *C.char, keyLen C.int, secret *C.char, secretLen C.int) C.int {

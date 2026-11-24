@@ -41,7 +41,19 @@ func (k Kind) dir() string {
 	}
 }
 
-// Layout names objects under prefix: config, keys/<id>, packs/<id[:2]>/<id>, index/<id>, snapshots/<id>, marks/<id>; ids are keyed hex object IDs that reveal nothing.
+// Layout names a repository's objects under its prefix:
+//
+//	<prefix>config                  the sealed repository config
+//	<prefix>keys/<id>               a wrapped data key; id is SHA-256 of it
+//	<prefix>packs/<id[:2]>/<id>     a pack
+//	<prefix>index/<id>              an index object
+//	<prefix>snapshots/<id>          a snapshot manifest
+//	<prefix>marks/<id>              a prune mark
+//
+// Every id is 64 lowercase hex digits. A pack, index or snapshot id is the
+// keyed object ID of its content (seal.Keys.ObjectID), so names reveal
+// nothing about the files backed up, not even when two repositories hold
+// the same files.
 type Layout struct {
 	prefix string
 }

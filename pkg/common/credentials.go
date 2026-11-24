@@ -21,7 +21,19 @@ import (
 	"github.com/jeremyhahn/go-enclave"
 )
 
-// Credentials holds go-enclave handles for Key and Secret (a single-key backend reads Secret); nil means the SDK default chain, and backends never retain them.
+// Credentials is the protected-memory credential handle a backend is
+// configured with. Each field is a go-enclave handle, never a string: the
+// material stays in locked, zeroized memory until the backend borrows it to
+// build the vendor SDK credential.
+//
+// A nil field means "none": the backend falls back to the SDK's default
+// credential chain. A backend never retains a Credentials value or either
+// handle; it opens them through [Credentials.Open] for the length of the call
+// that builds the SDK credential.
+//
+// Key is the access key identifier and Secret the secret access key. A backend
+// whose only secret is one key (for example an Azure storage account key)
+// reads Secret.
 type Credentials struct {
 	Key    enclave.ByteAccess
 	Secret enclave.ByteAccess
@@ -32,7 +44,13 @@ func (c Credentials) IsZero() bool {
 	return c.Key == nil && c.Secret == nil
 }
 
-// Open calls fn with zeroized-after copies of the set credentials; an unreadable handle fails with *CredentialUnavailableError.
+// Open copies each set credential out of its handle and calls fn with the
+// copies, then zeroizes them. A credential that is not set reaches fn as nil.
+// fn must not retain either slice.
+//
+// A handle that cannot be read, or that yields no bytes, fails closed with a
+// [*CredentialUnavailableError]: the SDK's default chain is never substituted
+// for a credential that was supplied but is unusable.
 func (c Credentials) Open(fn func(key, secret []byte) error) error {
 	key, err := copyCredential("access key", c.Key)
 	defer clear(key)
@@ -76,7 +94,10 @@ var ErrCredentialEmpty = errors.New("credential handle holds no material")
 // settings map instead of [Credentials]. Match it with errors.Is.
 var ErrCredentialInSettings = errors.New("credential supplied in settings; pass it in Credentials")
 
-// CredentialUnavailableError reports an unreadable credential handle; Unwrap exposes the cause.
+// CredentialUnavailableError reports that a credential handle was supplied but
+// could not be read: its enclave was destroyed, or it holds no material. The
+// backend is left unconfigured. Unwrap exposes the cause, typically
+// enclave.ErrEnclaveDestroyed.
 type CredentialUnavailableError struct {
 	// Credential names the credential, for example "secret key".
 	Credential string
@@ -154,7 +175,21 @@ var credentialRoles = map[string]credentialRole{
 	"accountkey":      roleSecret,
 }
 
-// ExtractCredentialSettings moves wire-received credential entries into protected handles and deletes them from the map; call release when done (never nil).
+// ExtractCredentialSettings moves the credential entries of a settings map
+// received over a wire protocol into protected-memory handles. It is for the
+// API boundary only: call it before anything else touches the map. The
+// returned settings hold no credential entry, so they pass
+// RejectCredentialSettings and Configure; the entries are also deleted from
+// the map passed in, so the request holds no credential after the call.
+//
+// Entries with an empty value are dropped, which leaves that handle nil (the
+// SDK default chain). Two entries for the same handle are ambiguous and
+// rejected. release destroys the handles and must be called when the call that
+// uses them ends; it is never nil, even on error.
+//
+// The wire format is a JSON, protobuf or text string, so the decoder has
+// already made a Go string copy that Go cannot zeroize. The handle bounds the
+// lifetime of every copy this package makes, not the decoder's.
 func ExtractCredentialSettings(settings map[string]string) (clean map[string]string, creds Credentials, release func() error, err error) {
 	clean = make(map[string]string, len(settings))
 	release = func() error {

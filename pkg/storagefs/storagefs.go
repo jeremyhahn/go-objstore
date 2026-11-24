@@ -331,7 +331,8 @@ func (fs *StorageFS) Chmod(name string, mode os.FileMode) error {
 	return fs.putMetadataInternal(name, meta)
 }
 
-// Chown is not supported by StorageFS.
+// Chown changes the owner and group of the named file.
+// Not supported by StorageFS.
 func (fs *StorageFS) Chown(name string, uid, gid int) error {
 	return os.ErrInvalid
 }

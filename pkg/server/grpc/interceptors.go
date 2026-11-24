@@ -461,7 +461,10 @@ func principalFromContext(ctx context.Context) *adapters.Principal {
 	return nil
 }
 
-// AuthorizationUnaryInterceptor authorizes unary calls after authentication, skipping health and reflection; denial is PermissionDenied.
+// AuthorizationUnaryInterceptor enforces authorization on unary RPC calls. It
+// must run after AuthenticationUnaryInterceptor so the principal is in context.
+// Health and reflection methods are skipped. On denial it returns
+// codes.PermissionDenied. The default authorizer (NoOpAuthorizer) allows all.
 func AuthorizationUnaryInterceptor(authorizer adapters.Authorizer, logger adapters.Logger) grpc.UnaryServerInterceptor {
 	return func(
 		ctx context.Context,

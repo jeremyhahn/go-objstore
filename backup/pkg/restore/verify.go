@@ -35,7 +35,12 @@ type Report struct {
 	Problems []*Error
 }
 
-// Verify opens every index, pack, chunk and selected manifest without writing files; data faults are collected and joined, access failures stop it.
+// Verify checks a repository without writing files. It opens every index,
+// every pack the indexes name and every chunk in them, checking each chunk's
+// ID; then it opens the selected manifests and checks every file's chunks
+// and digest. Faults in the data are collected in the report, and Verify
+// then returns an error joining them; a failure to reach the repository, or
+// a canceled context, stops it at once.
 func Verify(ctx context.Context, r *repo.Repository, opts VerifyOptions) (*Report, error) {
 	v := &verifier{
 		ctx:    ctx,

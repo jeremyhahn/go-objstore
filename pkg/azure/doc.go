@@ -11,5 +11,10 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package azure is the Azure Blob backend, built only with the azureblob tag (Makefile WITH_AZURE_BLOB=1, the default).
+// Package azure provides the azure object-storage backend.
+//
+// The backend implementation is gated behind the "azureblob" build tag so that
+// builds which do not need it avoid linking its cloud SDK. Without the tag this
+// package compiles to an empty stub and the backend is unregistered. Enable it
+// with: go build -tags azureblob   (Makefile: WITH_AZURE_BLOB=1, which is the default).
 package azure

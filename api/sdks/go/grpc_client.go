@@ -742,7 +742,14 @@ func (c *GRPCClient) GetStream(ctx context.Context, key string) (io.ReadCloser, 
 // smallest receive limit the server accepts (1 MiB).
 const grpcPutChunkSize = 1<<20 - 1<<10
 
-// PutStream streams r in grpcPutChunkSize chunks after a header; it is not retried, and falls back to unary Put when the server lacks PutStream.
+// PutStream stores an object from an io.Reader over the PutStream RPC: a
+// header message with key and metadata, then chunks of grpcPutChunkSize read
+// from r, so only one chunk is held in memory and the object may exceed the
+// server's message size limit. size is advisory and may be -1. A read error
+// or a cancelled ctx aborts the stream and the server stores nothing. The
+// call is not retried, since r cannot be replayed. Against a server without
+// PutStream (Unimplemented, detected before r is read) it reads r whole and
+// falls back to the unary Put.
 func (c *GRPCClient) PutStream(ctx context.Context, key string, r io.Reader, size int64, meta *Metadata) (*PutResult, error) {
 	if err := validateKey(key); err != nil {
 		return nil, err

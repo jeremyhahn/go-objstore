@@ -35,12 +35,20 @@ type Config struct {
 	BackendRegion string
 	// BackendKey is the backend access key identifier.
 	//
-	// Deprecated: a Go string cannot be zeroized; use GetConfigProtected or SetBackendKeyEnclave. When both are set, the enclave wins.
+	// Deprecated: BackendKey holds credential material in an ordinary Go
+	// string, which is immutable and therefore cannot be zeroized — it stays
+	// readable in the heap until the garbage collector happens to reuse the
+	// memory, and is pageable to swap and visible in a core dump throughout.
+	// Use GetConfigProtected or SetBackendKeyEnclave, which hold the
+	// credential in a locked, zeroized memory enclave ([enclave.ByteAccess]). This field
+	// remains for compatibility and is removed in the next major version;
+	// when both are set, the enclave wins.
 	BackendKey string
 
 	// BackendSecret is the backend secret access key.
 	//
-	// Deprecated: use GetConfigProtected or SetBackendSecretEnclave.
+	// Deprecated: same reasoning as BackendKey. Use GetConfigProtected or
+	// SetBackendSecretEnclave.
 	BackendSecret string
 
 	BackendURL     string
@@ -104,7 +112,12 @@ func InitConfig(cfgFile string) (*viper.Viper, error) {
 	return v, nil
 }
 
-// GetConfig extracts the configuration from Viper, with credentials in the deprecated plain fields; prefer GetConfigProtected.
+// GetConfig extracts the configuration from Viper into a Config struct.
+//
+// The backend credentials are placed in the deprecated plain-string
+// BackendKey and BackendSecret fields, where they cannot be zeroized. Prefer
+// GetConfigProtected, which puts them in locked memory instead. This function
+// remains for compatibility and keeps its current behavior.
 func GetConfig(v *viper.Viper) *Config {
 	return &Config{
 		Backend:        v.GetString("backend"),
@@ -123,7 +136,25 @@ func GetConfig(v *viper.Viper) *Config {
 	}
 }
 
-// GetConfigProtected extracts the configuration with credentials in owned enclaves (call Destroy); Viper's string copy and the vendor SDK's copy remain outside its reach.
+// GetConfigProtected extracts the configuration from Viper into a Config
+// struct, holding the backend credentials in locked, zeroized memory instead
+// of in the deprecated plain-string fields, which are left empty.
+//
+// This is the protected replacement for GetConfig. The returned Config owns
+// the enclaves; call [Config.Destroy] when it is no longer needed. Every
+// reader in this package prefers the enclaves, so display and backend
+// settings behave identically either way.
+//
+// It protects custody of the credential inside this package, not end to end:
+//
+//   - Viper hands out credentials as Go strings, which cannot be wiped, so one
+//     unprotected copy of each exists between v.GetString and the enclave.
+//   - [Config.Credentials] hands the enclaves to the backend's Configure, which
+//     copies a credential out only to build the vendor SDK credential and
+//     zeroizes that copy. The SDK keeps its own copy for its lifetime;
+//     [Config.Destroy] cannot reach it.
+//
+// Between those boundaries the credential lives only in locked, zeroized memory.
 func GetConfigProtected(v *viper.Viper) (*Config, error) {
 	cfg := GetConfig(v)
 
@@ -138,7 +169,10 @@ func GetConfigProtected(v *viper.Viper) (*Config, error) {
 	return cfg, nil
 }
 
-// SetBackendKeyEnclave takes ownership of e as the access key and clears the plain field; the error is the replaced enclave's release report.
+// SetBackendKeyEnclave sets the backend access key from a locked memory
+// enclave and clears the deprecated plain field. The Config takes ownership of
+// the enclave; any previously held one is destroyed. e is installed whatever
+// the result: the error is the replaced enclave's release report.
 func (c *Config) SetBackendKeyEnclave(e enclave.ByteAccess) error {
 	var err error
 	if c.backendKeyEnclave != nil && c.backendKeyEnclave != e {
@@ -149,7 +183,11 @@ func (c *Config) SetBackendKeyEnclave(e enclave.ByteAccess) error {
 	return err
 }
 
-// SetBackendSecretEnclave takes ownership of e as the secret key and clears the plain field; the error is the replaced enclave's release report.
+// SetBackendSecretEnclave sets the backend secret access key from a locked
+// memory enclave and clears the deprecated plain field. The Config takes
+// ownership of the enclave; any previously held one is destroyed. e is
+// installed whatever the result: the error is the replaced enclave's release
+// report.
 func (c *Config) SetBackendSecretEnclave(e enclave.ByteAccess) error {
 	var err error
 	if c.backendSecretEnclave != nil && c.backendSecretEnclave != e {
@@ -200,7 +238,14 @@ func (c *Config) BackendSecretEnclave() enclave.ByteAccess {
 	return c.backendSecretEnclave
 }
 
-// Destroy zeroizes the credentials this Config owns and clears the plain fields; idempotent and nil-safe, returning the joined release reports.
+// Destroy zeroizes the credentials this Config owns. It is idempotent, safe on
+// a nil *Config, and safe to defer. The deprecated plain-string fields are
+// cleared as well, though a Go string cannot actually be wiped — that is
+// precisely why they are deprecated.
+//
+// The error joins both enclaves' release reports. The material is wiped
+// whatever they say, and a discarded error loses nothing: the next
+// [enclave.WipeAll] retries a refused release and reports a corrupt enclave.
 func (c *Config) Destroy() error {
 	if c == nil {
 		return nil
@@ -219,7 +264,20 @@ func (c *Config) Destroy() error {
 	return errors.Join(keyErr, secretErr)
 }
 
-// Credentials returns protected handles for Configure and a release func; a destroyed enclave fails with *CredentialUnavailableError, never a plain-field fallback.
+// Credentials returns the backend credentials as protected-memory handles for
+// [common.Storage.Configure], plus a release func the caller must call once the
+// backend is configured. No credential is ever copied into a string or a
+// settings map.
+//
+// Once an enclave has been selected for a credential it is the ONLY source: a
+// destroyed enclave fails closed with a [*CredentialUnavailableError] rather
+// than falling back to the deprecated plain field. An enclave can be destroyed
+// independently of this call — a rotation or a Config teardown elsewhere — so
+// authenticating with whatever stale plaintext happened to be left in
+// BackendKey at that moment would be a fail-open. The deprecated plain field is
+// read only when no enclave was ever set; it is then moved into a temporary
+// enclave that the release func destroys. A credential that is not configured
+// is left nil, so the backend uses the SDK's default credential chain.
 func (c *Config) Credentials() (common.Credentials, func() error, error) {
 	var temp []enclave.ByteAccess
 	release := func() error {
@@ -286,14 +344,18 @@ func (c *Config) maskedBackendSecret() string {
 	return maskSecret(c.BackendSecret)
 }
 
-// StorageSettings converts Config to a backend settings map that never holds a credential.
+// StorageSettings converts Config to the plain settings map of a storage
+// backend. It never holds a credential: those travel separately, as the
+// protected-memory handles [Config.Credentials] returns, so no credential is
+// ever an ordinary Go string that cannot be wiped.
 func (c *Config) StorageSettings() map[string]string {
 	return c.storageSettingsWithoutCredentials()
 }
 
-// GetStorageSettings converts Config to a backend settings map.
+// GetStorageSettings converts Config to storage backend settings map.
 //
-// Deprecated: use StorageSettings.
+// Deprecated: use StorageSettings. The two are identical; neither carries a
+// credential.
 func (c *Config) GetStorageSettings() map[string]string {
 	return c.StorageSettings()
 }

@@ -12,7 +12,10 @@ import (
 var (
 	// ErrInvalidTarget reports a restore target that is not a directory.
 	ErrInvalidTarget = errors.New("restore: target is not a directory")
-	// ErrUnsafeEntry reports a manifest entry that cannot be placed safely inside the target.
+	// ErrUnsafeEntry reports a manifest entry that cannot be placed safely
+	// inside the target: an absolute or non-local path, a path through a
+	// symlink, a symlink that leads outside the target, or an entry the
+	// manifest does not describe completely.
 	ErrUnsafeEntry = errors.New("restore: entry cannot be placed safely")
 	// ErrExists reports an existing entry at a path the restore would
 	// replace without the overwrite option, or one it never replaces.

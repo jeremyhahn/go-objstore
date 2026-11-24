@@ -30,7 +30,12 @@ import (
 	unixserver "github.com/jeremyhahn/go-objstore/pkg/server/unix"
 )
 
-// Builders that give each transport its options from the resolved configuration, so every binary applies a setting the same way.
+// These builders hand each transport its options struct populated from the
+// resolved configuration: the configured listen address and TLS, plus the
+// cross-transport middleware (rate limiting and audit) from a Middleware.
+// Every binary builds its transports only through them, so a setting the
+// loader accepts is applied the same way by the combined server and by each
+// single-transport server.
 
 // Middleware is the cross-transport middleware every transport applies:
 // rate_limit.* and audit.enabled, with one audit logger shared by all of a
@@ -77,7 +82,10 @@ func (c *Config) RateLimitConfig() *middleware.RateLimitConfig {
 	}
 }
 
-// GRPCOptions returns the gRPC options; an unloadable configured key pair is a *TLSCredentialsError, never plaintext.
+// GRPCOptions returns the gRPC server options: the configured address, the
+// shared middleware and, when grpc.tls_cert and grpc.tls_key are set, the TLS
+// credentials loaded from those files. A configured key pair that cannot be
+// loaded is a *TLSCredentialsError, never a silent fallback to plaintext.
 func (c *Config) GRPCOptions(mw Middleware) ([]grpcserver.ServerOption, error) {
 	opts := []grpcserver.ServerOption{
 		grpcserver.WithAddress(c.GRPC.Addr),
@@ -138,7 +146,10 @@ func (c *Config) RESTServerConfig(mw Middleware) *restserver.ServerConfig {
 	return sc
 }
 
-// QUICOptions returns the QUIC options; the caller loads TLS from QUIC.TLSCert/TLSKey or QUIC.SelfSigned.
+// QUICOptions returns the QUIC server options: the package defaults with the
+// configured address, body limit, timeouts and stream limits and the shared
+// middleware. TLS is loaded by the caller from QUIC.TLSCert/TLSKey or
+// QUIC.SelfSigned.
 func (c *Config) QUICOptions(mw Middleware) *quicserver.Options {
 	opts := quicserver.DefaultOptions().
 		WithAddr(c.QUIC.Addr).

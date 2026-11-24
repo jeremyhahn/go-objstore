@@ -1,4 +1,17 @@
-// Package chunker splits a stream into content-defined chunks with FastCDC (USENIX ATC 2016, normalized level 2); the Gear table is part of the repository format.
+// Package chunker splits a stream into content-defined chunks with FastCDC
+// (Xia et al., "FastCDC: a Fast and Efficient Content-Defined Chunking
+// Approach for Data Deduplication", USENIX ATC 2016).
+//
+// A boundary is placed where a Gear rolling hash of the bytes before it meets
+// a mask, so boundaries follow the content: an insertion or deletion moves
+// only the boundaries near it, and the chunks after it are found again. The
+// chunker uses the paper's sub-minimum skipping and normalized chunking (level
+// 2): a stricter mask before the average size and a looser one after it, which
+// narrows the spread of chunk sizes.
+//
+// For a given input and Params the boundaries are always the same, however the
+// reader splits its reads. The Gear table is fixed, so it is part of the
+// repository format.
 package chunker
 
 import (

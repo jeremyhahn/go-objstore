@@ -15,7 +15,9 @@ import (
 // lockName is the lock file in the snapshot directory.
 const lockName = ".lock"
 
-// DefaultDir is under the service's ProgramData directory, locked to SYSTEM and Administrators.
+// DefaultDir is the snapshot directory when none is set, under the
+// service's ProgramData directory, which the install locks down to SYSTEM
+// and Administrators.
 func DefaultDir() string {
 	pd := os.Getenv("ProgramData")
 	if pd == "" || !filepath.IsAbs(pd) {

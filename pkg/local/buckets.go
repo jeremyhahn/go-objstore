@@ -34,7 +34,11 @@ var _ common.BucketManager = (*Buckets)(nil)
 // settingBucketRoot names the directory whose subdirectories are the buckets.
 const settingBucketRoot = "bucketRoot"
 
-// Buckets emulates buckets as directories directly under an explicit bucket root.
+// Buckets emulates buckets over the filesystem: a bucket is a directory
+// directly under the bucket root, and Bucket returns a Local rooted there.
+//
+// The root is explicit because its parent, the alternative, could hold
+// unrelated directories that would then be listed as buckets.
 type Buckets struct {
 	root     string
 	dirMu    sync.Mutex
@@ -45,7 +49,9 @@ type Buckets struct {
 	encrypters common.EncrypterFactory // handed to each bucket; nil means no encryption at rest
 }
 
-// SetAtRestEncrypterFactory sets the at-rest encryption of every bucket handed out afterwards.
+// SetAtRestEncrypterFactory sets the factory that encrypts the objects and
+// multipart parts of every bucket handed out afterwards, as it does for a
+// single Local.
 func (b *Buckets) SetAtRestEncrypterFactory(factory common.EncrypterFactory) {
 	b.encrypters = factory
 }

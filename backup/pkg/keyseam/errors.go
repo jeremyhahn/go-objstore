@@ -32,7 +32,10 @@ var (
 	ErrIterations = errors.New("keyseam: PBKDF2 iteration count out of bounds")
 )
 
-// Error wraps one of the package sentinels or a context error, with an optional Cause; it never holds key material.
+// Error is the error every operation in this package returns. Err is one of the
+// package's sentinels or a context error; Cause, when set, is the underlying
+// error (from go-enclave, the standard library or a Provider). Neither ever
+// holds key material.
 type Error struct {
 	// Op names the operation that failed, such as "wrap" or "unwrap".
 	Op string

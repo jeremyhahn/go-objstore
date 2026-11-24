@@ -1,4 +1,24 @@
-// Package seal: HKDF-SHA-256 subkeys per purpose, HMAC-SHA-256 chunk and object IDs, AES-256-GCM objects "OBKS" | version (1) | type (1) | compression (1) | nonce (12) | ciphertext | tag (16), AAD = header + length-prefixed ID.
+// Package seal is the backup repository's object encryption: per-purpose
+// subkeys derived from the data key, keyed chunk IDs, and sealed objects.
+//
+// Subkeys are derived from the repository data key with HKDF-SHA-256 (RFC 5869,
+// NIST SP 800-56C), one distinct info label per purpose: chunk IDs, object
+// IDs, packs, indexes, snapshots and the repository config. Every subkey is
+// held in go-enclave locked memory until Keys.Close destroys it.
+//
+// A chunk ID is HMAC-SHA-256 of the chunk under the chunk-ID subkey, so equal
+// chunks deduplicate without exposing a plaintext hash. An object ID, the
+// name of a pack, index or snapshot, is HMAC-SHA-256 of the object's type and
+// content under the object-ID subkey.
+//
+// A sealed object is AES-256-GCM (NIST SP 800-38D) under its type's subkey,
+// with a random 96-bit nonce:
+//
+//	"OBKS" | version (1) | type (1) | compression (1) | nonce (12) | ciphertext | tag (16)
+//
+// The additional data is the 7-byte header followed by the object's ID
+// (a 4-byte big-endian length, then the ID), so an object sealed as one type
+// or ID does not open as another, and its compression cannot be altered.
 package seal
 
 import (
@@ -98,7 +118,10 @@ func (k *Keys) Seal(t Type, id []byte, c Compression, plaintext []byte) ([]byte,
 	return aead.Seal(out, nil, payload, ad), nil //nolint:gosec // G407: the AEAD draws a random nonce itself
 }
 
-// Open authenticates and decrypts sealed as type t named id; ErrOpen if it does not authenticate, ErrMalformed for short or unknown input.
+// Open authenticates and decrypts sealed as an object of type t named id, and
+// returns its decompressed plaintext. Anything that does not authenticate (a
+// wrong type, ID or key, or any altered byte) fails with ErrOpen; input too
+// short or in an unknown format fails with ErrMalformed.
 func (k *Keys) Open(t Type, id, sealed []byte) ([]byte, error) {
 	const op = "open"
 	key, err := k.keyFor(op, t)

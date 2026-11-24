@@ -24,7 +24,13 @@ type localOnlyManager struct {
 	inner Manager
 }
 
-// LocalOnly wraps a Manager so Pick rejects non-PathAccessor candidates; Register and List delegate to the inner Manager.
+// LocalOnly wraps a Manager so Pick rejects any candidate that isn't a
+// common.PathAccessor. Register and List delegate verbatim to the
+// inner Manager.
+//
+// The wrapper does not deep-copy the inner Manager — registering or
+// listing on either the wrapper or the inner is equivalent. Pool
+// ownership stays with the caller that created the inner Manager.
 func LocalOnly(m Manager) Manager {
 	return &localOnlyManager{inner: m}
 }

@@ -83,7 +83,8 @@ func (f *NoopEncrypterFactory) DefaultKeyID() string {
 	return ""
 }
 
-// Close is a no-op; NoopEncrypterFactory holds no resources.
+// Close releases any resources held by the factory.
+// NoopEncrypterFactory has no resources to release, so this is a no-op.
 func (f *NoopEncrypterFactory) Close() error {
 	return nil
 }

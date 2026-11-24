@@ -11,5 +11,8 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package local stores objects as files with sidecar metadata, written atomically.
+// Package local implements the Storage interface on the local filesystem.
+//
+// Each object is stored as a file with sidecar metadata, written atomically,
+// with support for lifecycle policies and change-log-based replication.
 package local

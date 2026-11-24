@@ -11,7 +11,11 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package main implements common.Encrypter and common.EncrypterFactory with the standard library only.
+// Package main provides a self-contained example of implementing go-objstore's
+// encryption interfaces using only the Go standard library. AESEncrypter and
+// AESEncrypterFactory demonstrate how any application can wire in its own key
+// management by satisfying common.Encrypter and common.EncrypterFactory — no
+// external KMS dependency required.
 package main
 
 import (
@@ -165,7 +169,10 @@ func (e *AESEncrypter) KeyID() string {
 	return e.keyID
 }
 
-// AESEncrypterFactory implements common.EncrypterFactory with random in-memory AES-256 keys per key CN; production loads them from a KMS.
+// AESEncrypterFactory implements common.EncrypterFactory using in-memory AES-256
+// keys generated at startup. Each key CN in the configuration gets a fresh
+// random 32-byte key; in a production system these would be loaded from your
+// KMS (HashiCorp Vault, AWS KMS, GCP KMS, Azure Key Vault, etc.).
 type AESEncrypterFactory struct {
 	keys         map[string][]byte // keyID → 32-byte AES key
 	defaultKeyID string

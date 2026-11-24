@@ -11,7 +11,12 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package audit provides the slog-backed audit logger and HTTP/gRPC middleware for the pkg/auditlog contract.
+// Package audit provides comprehensive audit logging for object storage operations.
+//
+// The logging contract (auditlog.AuditLogger, the event types and the no-op
+// default) lives in pkg/auditlog so storage backends can depend on it without
+// linking this package's HTTP and gRPC middleware. This package supplies the
+// slog-backed implementation and the middleware.
 package audit
 
 import (

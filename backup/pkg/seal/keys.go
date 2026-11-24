@@ -81,7 +81,10 @@ type Keys struct {
 	mark     enclave.ByteAccess
 }
 
-// DeriveKeys derives the per-purpose subkeys from dataKey, which the caller still owns.
+// DeriveKeys derives the per-purpose subkeys from dataKey, which it only reads:
+// the caller still owns and destroys dataKey. It fails with ErrInvalidKey for
+// a nil key or one that is not DataKeySize bytes, and ErrKeysDestroyed for a
+// destroyed one.
 func DeriveKeys(dataKey enclave.ByteAccess) (*Keys, error) {
 	const op = "derive keys"
 	switch {

@@ -9,7 +9,13 @@ import (
 	objstore "github.com/jeremyhahn/go-objstore/api/sdks/go"
 )
 
-// SDK is a Store over a go-objstore server; Put checks Exists first (the backup identity is the only writer), and a WORM refusal or 409 is ErrExists.
+// SDK is a Store backed by a go-objstore server through the Go client SDK,
+// over any protocol the SDK speaks.
+//
+// The SDK has no conditional put, so Put checks Exists first. The backup
+// identity is a repository's only writer, so nothing races that check; a
+// server-side WORM policy or a 409 from the server is reported as ErrExists
+// too.
 type SDK struct {
 	c objstore.Client
 }

@@ -108,7 +108,11 @@ type ArchiveParams struct {
 	DestinationSettings map[string]string `json:"destination_settings"`
 }
 
-// PolicyParams are lifecycle policy parameters; a positive RetentionSeconds overrides AfterDays, and responses fill both.
+// PolicyParams represents lifecycle policy parameters. RetentionSeconds
+// expresses the retention with second granularity; when positive it takes
+// precedence over AfterDays in requests, and responses always populate it
+// (exact) alongside AfterDays (rounded down to whole days) for backward
+// compatibility.
 type PolicyParams struct {
 	ID               string `json:"id"`
 	Prefix           string `json:"prefix"`

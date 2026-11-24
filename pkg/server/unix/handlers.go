@@ -53,7 +53,12 @@ type Handler struct {
 	wireOpts      factory.WireOptions // how archiver settings a client sent are treated
 }
 
-// NewHandler creates a handler; the authenticator gets a credential-less HTTP request, so only allow-anonymous authenticators pass.
+// NewHandler creates a new handler.
+//
+// Unix transport carries no per-request HTTP/gRPC/mTLS credential object, so the
+// authenticator is invoked via its HTTP entrypoint with a credential-less request.
+// With the default NoOpAuthenticator this yields the anonymous principal; custom
+// authenticators that require credentials will deny (since none are present).
 func NewHandler(backend string, logger adapters.Logger, authenticator adapters.Authenticator, authorizer adapters.Authorizer) *Handler {
 	if authenticator == nil {
 		authenticator = adapters.NewNoOpAuthenticator()

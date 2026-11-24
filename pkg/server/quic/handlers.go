@@ -72,7 +72,12 @@ type Handler struct {
 	wireOpts           factory.WireOptions // how archiver settings a client sent are treated
 }
 
-// NewHandler creates an HTTP/3 handler over an initialized facade; allowedOrigins sets CORS (see setCORSHeaders).
+// NewHandler creates a new HTTP/3 handler using the ObjstoreFacade.
+// The facade must be initialized before calling this function.
+//
+// allowedOrigins controls CORS behavior: when empty/nil (or ["*"]), all origins
+// are allowed without credentials; when set to a specific allowlist, only those
+// origins are echoed back and credentials are permitted.
 func NewHandler(backend string, maxRequestBodySize int64, readTimeout, writeTimeout time.Duration, logger adapters.Logger, authenticator adapters.Authenticator, authorizer adapters.Authorizer, allowedOrigins []string) (*Handler, error) {
 	if !objstore.IsInitialized() {
 		return nil, objstore.ErrNotInitialized

@@ -21,7 +21,12 @@ import (
 	"time"
 )
 
-// BucketManager is an optional, account-scoped capability to create, list and delete buckets; detect it with a type assertion.
+// BucketManager creates, lists and deletes buckets (containers on Azure,
+// directories under a root on local). It is account-scoped: one value
+// manages every bucket its credentials reach.
+//
+// It is an optional capability. Callers detect it with a type assertion;
+// Storage is not widened.
 type BucketManager interface {
 	// CreateBucket creates the named bucket. It returns
 	// ErrBucketAlreadyExists when the bucket exists.
@@ -47,9 +52,17 @@ type BucketInfo struct {
 	Created time.Time // zero when the provider does not report it
 }
 
-// MultipartUploader is an optional capability to upload one object in parts; keys are validated as Put validates them.
+// MultipartUploader uploads one object in independently sent parts.
+// Keys are object keys in the provider's configured bucket, validated by
+// ValidateKey exactly as Put validates them.
+//
+// It is an optional capability. Callers detect it with a type assertion
+// on the Storage; Storage is not widened.
 type MultipartUploader interface {
-	// InitiateMultipartUpload starts an upload and returns an ID valid only on this provider instance; metadata applies to the completed object.
+	// InitiateMultipartUpload starts an upload and returns its ID. The
+	// metadata is applied to the completed object as PutWithMetadata
+	// applies it. An upload ID belongs to the provider instance that
+	// issued it.
 	InitiateMultipartUpload(ctx context.Context, key string, metadata *Metadata) (uploadID string, err error)
 
 	// UploadPart stores one part. size is the exact part length; a reader
@@ -107,7 +120,10 @@ const (
 	MaxBucketNameLength = 63
 )
 
-// ValidateBucketName accepts 3 to 63 lowercase letters, digits and single hyphens, starting and ending alphanumeric; errors wrap ErrInvalidBucketName.
+// ValidateBucketName checks a bucket name against the set every provider
+// accepts: 3 to 63 characters, lowercase letters, digits and single hyphens,
+// starting and ending with a letter or digit. The returned error wraps
+// ErrInvalidBucketName.
 func ValidateBucketName(name string) error {
 	if n := len(name); n < MinBucketNameLength || n > MaxBucketNameLength {
 		return bucketNameError("bucket name must be 3 to 63 characters")

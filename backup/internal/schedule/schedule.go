@@ -1,4 +1,11 @@
-// Package schedule runs a job on an interval or at a time of day, one run at a time; missed due times are not made up, and sleep never exceeds MaxWait.
+// Package schedule runs a job on a fixed interval or at a time of day, one
+// run at a time, by the wall clock.
+//
+// The loop never sleeps longer than MaxWait before it reads the wall clock
+// again, so a run that fell due while the machine slept starts within
+// MaxWait of waking. Due times that pass while a run is still going, or
+// while the machine sleeps, are not made up: the loop runs once and then
+// waits for the next due time after that run.
 package schedule
 
 import (

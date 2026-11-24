@@ -1,4 +1,18 @@
-// Package srcsnap snapshots the volumes a backup reads (LVM, btrfs, ZFS, APFS, VSS) without a shell; Sweep removes only NamePrefix leftovers.
+// Package srcsnap takes a point-in-time snapshot of the volumes a backup's
+// sources live on, so a backup reads a frozen view instead of a live,
+// changing file system.
+//
+// A Snapshotter snapshots each volume once, through the platform's own
+// tools (LVM, btrfs, ZFS, APFS through tmutil and mount_apfs, or Windows
+// VSS through PowerShell's CIM cmdlets), run with an argument vector and
+// never a shell. Create returns a Set that maps each source to the same
+// directory inside its snapshot; Set.Close removes everything Create made,
+// and runs even when the context is canceled. Snapshot names carry the
+// prefix NamePrefix and a random suffix, and Sweep removes leftovers with
+// that prefix from a run that crashed, never anything else.
+//
+// There is no fsfreeze method: freezing a live file system for the length
+// of a walk would stall every writer on it.
 package srcsnap
 
 import (
@@ -84,9 +98,14 @@ type Config struct {
 	// OnFailure is the failure policy; empty means Fail. The package only
 	// carries it; the caller applies it.
 	OnFailure Policy
-	// Dir holds mount points, state files and the lock; empty means DefaultDir. Only the agent's user may write it.
+	// Dir holds the mount points (LVM, APFS), the state files (APFS, VSS)
+	// and the lock. Empty means DefaultDir. It must be a directory only the
+	// agent's user can write.
 	Dir string
-	// LVMSize bounds the copy-on-write space: "4G" or a percentage such as "10%ORIGIN"; empty means DefaultLVMSize.
+	// LVMSize bounds an LVM snapshot's copy-on-write space: a size such as
+	// "4G" (lvcreate --size) or a percentage of 1 to 100 of ORIGIN, FREE or
+	// VG such as "10%ORIGIN" (lvcreate --extents). Empty means
+	// DefaultLVMSize.
 	LVMSize string
 	// BtrfsDir is the directory btrfs snapshots are created in, on the
 	// same file system as each subvolume. Empty means the subvolume's
@@ -268,7 +287,10 @@ func (t *Set) Path(p string) string {
 	return p
 }
 
-// Skip returns the live-tree directories holding the set's snapshots, which a backup must not walk.
+// Skip returns the directories, by their paths on the live file systems,
+// that hold the set's snapshots inside a file system being backed up. A
+// backup must not walk them: it would read a snapshot, its own or another
+// source's, as part of the tree. Nil Sets skip nothing.
 func (t *Set) Skip() []string {
 	if t == nil {
 		return nil
@@ -276,7 +298,10 @@ func (t *Set) Skip() []string {
 	return slices.Clone(t.skip)
 }
 
-// Close removes what Create made, in reverse, within CleanupTimeout even after cancel; safe to call more than once.
+// Close removes what Create made, in reverse order, on a context of its
+// own bounded by CleanupTimeout, so it runs after the run's context is
+// canceled. Every step runs even if an earlier one fails. Close is safe to
+// call more than once and returns the first call's result.
 func (t *Set) Close() error {
 	if t == nil {
 		return nil
@@ -384,7 +409,11 @@ func (s *Snapshotter) locate(paths []string) ([]source, error) {
 	return out, nil
 }
 
-// Create snapshots each volume of paths once and maps each path into its snapshot; on failure it removes what it made.
+// Create snapshots the volume of every path in paths, each volume once,
+// and returns the Set mapping each path into its snapshot. With method
+// None it returns a nil Set. On failure everything already made is removed
+// before Create returns. The host lock and the snapshot directory stay
+// locked until Close.
 func (s *Snapshotter) Create(ctx context.Context, paths []string) (*Set, error) {
 	if s.cfg.Method == None {
 		return nil, nil
@@ -448,7 +477,16 @@ func (s *Snapshotter) create(ctx context.Context, paths []string, t *Set) error 
 	return nil
 }
 
-// Sweep removes snapshots, mounts and state files named with NamePrefix from crashed runs, under the host lock; it never removes an unprefixed name.
+// Sweep removes the leftovers of runs that crashed: snapshots, mount
+// points and state files whose names carry NamePrefix, for the methods the
+// paths' volumes use. It never removes a name without the prefix. Each
+// removal is logged. With method None it does nothing.
+//
+// The ZFS and LVM sweeps remove prefixed snapshots anywhere on the host, and
+// the btrfs sweep those in the volumes' snapshot directories, which runs
+// with other snapshot directories share. Sweep, like Create, takes the host
+// lock, which every run takes whatever its directory, so it never runs
+// beside a live run, and fails as busy if one is.
 func (s *Snapshotter) Sweep(ctx context.Context, paths []string) (err error) {
 	if s.cfg.Method == None {
 		return nil

@@ -22,7 +22,12 @@ import (
 type Storage interface {
 	LifecycleManager
 
-	// Configure sets up the backend from plain settings (a credential entry is an error) and borrowed credential handles; a zero Credentials means the SDK default chain.
+	// Configure sets up the backend. settings carries the plain settings (path,
+	// bucket, region, endpoint and so on); a credential entry in it is an
+	// error. creds carries the protected-memory credential handles: a backend
+	// copies a credential out of its handle only for the length of the call
+	// that builds the vendor SDK credential, zeroizes the copy, and never
+	// retains the handle. A zero Credentials means the SDK's default chain.
 	Configure(settings map[string]string, creds Credentials) error
 
 	// Put stores an object in the backend.

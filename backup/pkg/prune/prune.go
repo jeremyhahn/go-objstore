@@ -1,4 +1,14 @@
-// Package prune removes forgotten snapshots and the packs only they used, by lock-free mark and sweep with a grace period; only a store.PruneStore can remove objects.
+// Package prune removes the snapshots a retention policy forgets, and the
+// index entries and packs only they used, from a snapshot repository.
+//
+// Prune is the only code that can remove objects: it runs with a
+// store.PruneStore, a privileged capability the backup and restore paths
+// never hold. Removal is a mark and sweep that needs no lock. Each run records
+// the packs no kept snapshot uses in a sealed mark; a backup reads every mark
+// before it loads the index and neither reuses a marked pack nor writes one
+// under a marked name. A later run removes a pack only when it is still
+// unreferenced and the newest earlier mark has named it for a full grace
+// period, longer than any backup runs.
 package prune
 
 import (
@@ -100,7 +110,11 @@ type run struct {
 	entries []repo.Entry
 }
 
-// Run forgets snapshots pol does not keep; the new index is written first, so an interrupted run leaves every kept snapshot restorable and a rerun completes it.
+// Run forgets the snapshots pol does not keep and removes what only they
+// used. Objects are removed in an order that leaves every kept snapshot
+// restorable if the run stops part way: the new index is written first, then
+// forgotten snapshots, superseded indexes, unreferenced packs and old marks
+// are removed. Running again completes an interrupted run.
 func (p *Pruner) Run(ctx context.Context, pol Policy, opts Options) (*Report, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, newError("start", "", ErrCanceled, err)

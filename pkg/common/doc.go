@@ -11,5 +11,11 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package common defines go-objstore's shared types, interfaces, error sentinels and Classify taxonomy, key validation, encryption wrappers and lifecycle policies.
+// Package common defines the core types, interfaces, and errors shared across
+// go-objstore.
+//
+// It declares the Storage and Archiver interfaces, object Metadata and list
+// options, the canonical error sentinels and the Classify taxonomy that maps
+// errors to a transport-independent class, key validation, encrypted-storage
+// wrappers, and lifecycle policy types.
 package common

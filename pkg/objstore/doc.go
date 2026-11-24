@@ -11,5 +11,9 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package objstore is the facade that routes operations to configured backends by key, with optional lifecycle and replication.
+// Package objstore provides the high-level facade for go-objstore.
+//
+// The facade routes object operations to one or more configured storage
+// backends by key, presenting a single Storage-compatible API over them, and
+// wires optional lifecycle and replication management on top.
 package objstore

@@ -11,7 +11,10 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package jsonrpc provides the JSON-RPC 2.0 envelope, error codes and parsing shared by the unix-socket and MCP transports.
+// Package jsonrpc provides the JSON-RPC 2.0 envelope, error codes, and
+// parsing shared by the unix-socket and MCP transports. Transport-specific
+// concerns (framing, peer credentials, MCP tool semantics) remain in the
+// respective server packages.
 package jsonrpc
 
 import "encoding/json"
@@ -56,7 +59,7 @@ const (
 	CodeForbidden = -32001
 	// CodeUnauthenticated reports an authentication failure.
 	CodeUnauthenticated = -32002
-	// CodeUnavailable reports an unavailable backend or dependency (retryable).
+	// CodeUnavailable reports a backend or dependency outage (retryable).
 	CodeUnavailable = -32003
 	// CodeNotFound reports a missing object, metadata entry, or policy.
 	CodeNotFound = -32004

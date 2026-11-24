@@ -11,5 +11,9 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package storagefs presents a Storage backend as an io/fs file tree with Open, Create, ReadDir, Seek and Stat.
+// Package storagefs adapts a Storage backend to the standard io/fs interfaces.
+//
+// It presents stored objects as a navigable file system, supporting Open,
+// Create, ReadDir, Seek, and Stat so backends can be used wherever an fs.FS
+// (or a read-write file tree) is expected.
 package storagefs

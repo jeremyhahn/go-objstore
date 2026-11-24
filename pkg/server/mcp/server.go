@@ -54,7 +54,11 @@ const (
 // requests (100 MB, matching the REST server default).
 const defaultMCPMaxBodySize int64 = 100 * 1024 * 1024
 
-// DefaultHTTPAddress is the default HTTP listen address, overridden by mcp.addr, OBJSTORE_MCP_ADDR or the address flag.
+// DefaultHTTPAddress is the defaults-layer listen address for HTTP mode. It
+// is the value DefaultServerConfig carries and NewServer applies when
+// ServerConfig.HTTPAddress is empty; deployments override it through their
+// configuration (for the objstore binaries: the mcp.addr key, the
+// OBJSTORE_MCP_ADDR environment variable, or the address flag).
 const DefaultHTTPAddress = ":8081"
 
 // ServerConfig holds the server configuration
@@ -74,10 +78,20 @@ type ServerConfig struct {
 	// (default: NoOpAuthenticator). Not used for stdio mode.
 	Authenticator adapters.Authenticator
 
-	// Authorizer is always enforced over HTTP (default allow-all) and over stdio only with EnforceStdioAuthz.
+	// Authorizer is the pluggable authorization adapter.
+	// For HTTP mode it is always enforced (default: NoOpAuthorizer = allow-all).
+	// For stdio mode it is enforced when EnforceStdioAuthz is true (default:
+	// false for backward compatibility; set to true to require the same RBAC
+	// checks on stdio as HTTP). When left false, stdio is unauthenticated and
+	// every method is allowed — this is acceptable only when access to the
+	// stdio pipe is controlled at the OS level.
 	Authorizer adapters.Authorizer
 
-	// EnforceStdioAuthz runs the Authorizer for stdio requests as the anonymous principal; HTTP always enforces.
+	// EnforceStdioAuthz, when true, runs the Authorizer for every JSON-RPC
+	// request arriving over stdio. The anonymous principal (from
+	// NoOpAuthenticator) is used because stdio carries no credential object.
+	// Set this to true when pairing with a custom Authorizer that restricts
+	// anonymous access. Ignored in HTTP mode (always enforced there).
 	EnforceStdioAuthz bool
 
 	// TLSConfig is the TLS/mTLS configuration for HTTP mode (optional)

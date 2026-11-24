@@ -11,7 +11,9 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package validation is the input validation the facade applies for every API (gRPC, REST, QUIC, CLI, MCP).
+// Package validation provides centralized input validation for all go-objstore APIs.
+// ALL public interfaces (gRPC, REST, QUIC, CLI, MCP) use the facade which enforces
+// these validations, preventing injection attacks across all entry points.
 //
 //nolint:err113 // Validation errors are intentionally dynamic for descriptive messages
 package validation
@@ -34,7 +36,14 @@ var (
 	backendPattern = regexp.MustCompile(`^[a-z0-9\-]+$`)
 )
 
-// ValidateKey rejects empty, NUL, absolute, ".." component, unsafe-character and over-length keys.
+// ValidateKey validates an object key.
+// Prevents path traversal, injection, and other attacks by:
+// - Rejecting empty strings
+// - Rejecting null bytes
+// - Rejecting absolute paths
+// - Rejecting parent directory references (..)
+// - Allowing only safe characters
+// - Enforcing length limits
 func ValidateKey(key string) error {
 	if key == "" {
 		return fmt.Errorf("%w: key cannot be empty", common.ErrInvalidArgument)

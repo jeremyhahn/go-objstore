@@ -85,7 +85,9 @@ type FacadeConfig struct {
 	// Use this when you need to pass pre-configured Storage instances
 	Backends map[string]common.Storage
 
-	// BackendConfigs maps backend name to BackendConfig for the factory to build; Backends takes precedence on a name clash.
+	// BackendConfigs maps backend name to BackendConfig; the facade creates those
+	// storage instances via the factory. If both Backends and BackendConfigs are
+	// set, they are merged and Backends takes precedence.
 	BackendConfigs map[string]BackendConfig
 
 	// DefaultBackend is the name of the default backend to use
@@ -673,7 +675,11 @@ type ReplicationConfig struct {
 	// replication uses the SDK default credential chain.
 	CredentialProvider replication.CredentialProvider
 
-	// AllowClientLocalBackends permits replication policies with a filesystem-path backend; false refuses them with replication.ErrClientLocalBackend.
+	// AllowClientLocalBackends permits replication policies whose source or
+	// destination backend type takes a filesystem path (such as "local").
+	// Policies come from the client, so such a backend could open any
+	// directory the service user can read. False (the default) refuses them
+	// with replication.ErrClientLocalBackend.
 	AllowClientLocalBackends bool
 
 	// RunInBackground starts a background goroutine to run periodic syncs.

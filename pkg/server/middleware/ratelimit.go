@@ -65,7 +65,10 @@ const idleClientTTL = 5 * time.Minute
 // evictInterval controls how often the sweep runs.
 const evictInterval = idleClientTTL
 
-// RateLimiter is a shared, stoppable limiter; call Stop at shutdown to end its eviction goroutine.
+// RateLimiter is a stoppable rate limiter shared across transports. Create one
+// per server with NewRateLimiter, attach it via GinMiddleware, HTTPMiddleware,
+// UnaryInterceptor, or StreamInterceptor, and call Stop during server shutdown
+// to terminate the background eviction goroutine.
 type RateLimiter struct {
 	config   *RateLimitConfig
 	global   *rate.Limiter

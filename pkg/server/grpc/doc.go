@@ -11,5 +11,8 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package grpc is the go-objstore gRPC server with authentication, authorization, audit and rate-limiting interceptors.
+// Package grpc implements the go-objstore gRPC server.
+//
+// It provides object, metadata, lifecycle, and replication handlers along with
+// authentication, authorization, audit, and rate-limiting interceptors.
 package grpc

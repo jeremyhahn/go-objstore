@@ -17,7 +17,10 @@ type Marked struct {
 	Since time.Time `json:"since"`
 }
 
-// Mark records the packs a prune run found unreferenced; backups never reuse or write a marked pack.
+// Mark is the record a prune run leaves of the packs it found unreferenced.
+// A backup reads every mark before it loads the index and neither reuses a
+// marked pack nor writes a pack under a marked name, so a pack that stays
+// unreferenced for a full grace period can be removed while backups run.
 type Mark struct {
 	Version int       `json:"version"`
 	Time    time.Time `json:"time"`

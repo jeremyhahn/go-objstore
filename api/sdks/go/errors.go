@@ -74,6 +74,9 @@ var (
 	// exists (HTTP 409, gRPC AlreadyExists, JSON-RPC -32005).
 	ErrAlreadyExists = errors.New("already exists")
 
-	// ErrRateLimited is returned when the server throttles a request; it wraps ErrTemporaryFailure so the call stays retryable.
+	// ErrRateLimited is returned when the server throttles the request
+	// (HTTP 429, gRPC ResourceExhausted, JSON-RPC -32029). It wraps
+	// ErrTemporaryFailure so rate-limited operations remain retryable:
+	// errors.Is(err, ErrTemporaryFailure) holds for rate-limit errors.
 	ErrRateLimited = fmt.Errorf("rate limited: %w", ErrTemporaryFailure)
 )

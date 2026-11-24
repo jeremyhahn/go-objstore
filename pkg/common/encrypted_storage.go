@@ -45,7 +45,14 @@ type encryptedStorage struct {
 	defaultKeyID     string
 }
 
-// NewEncryptedStorage wraps storage with per-object stream encryption; it offers neither MultipartUploader nor BucketManager.
+// NewEncryptedStorage creates a new encrypted storage wrapper.
+// The underlying storage backend will store encrypted data.
+// The encrypterFactory provides encryption/decryption operations.
+//
+// The wrapper encrypts each object as one stream, and separately encrypted
+// parts do not join into such a stream. It therefore offers neither
+// MultipartUploader nor BucketManager, whatever the wrapped storage offers,
+// and the facade reports ErrNotSupported for a wrapped backend.
 func NewEncryptedStorage(underlying Storage, encrypterFactory EncrypterFactory) Storage {
 	return &encryptedStorage{
 		underlying:       underlying,
@@ -161,7 +168,10 @@ func (e *encryptedStorage) GetMetadata(ctx context.Context, key string) (*Metada
 	return e.underlying.GetMetadata(ctx, key)
 }
 
-// UpdateMetadata replaces the metadata but keeps the stored "encryption_*" entries, ignoring caller-supplied ones; the caller's map is not modified.
+// UpdateMetadata replaces the object's metadata but keeps every
+// "encryption_*" entry of the stored metadata, so the object still decrypts
+// after the default key changes. Caller-supplied "encryption_*" entries are
+// ignored. The caller's metadata is not modified.
 func (e *encryptedStorage) UpdateMetadata(ctx context.Context, key string, metadata *Metadata) error {
 	if metadata == nil {
 		return e.underlying.UpdateMetadata(ctx, key, metadata)

@@ -59,7 +59,15 @@ var (
 	ErrReplicationRequiresServer = fmt.Errorf("%w in local CLI mode: connect to an objstore server with --server to manage replication", common.ErrReplicationNotSupported)
 )
 
-// CredentialUnavailableError reports a configured credential whose enclave cannot be read; Unwrap exposes the cause, typically enclave.ErrEnclaveDestroyed.
+// CredentialUnavailableError reports that a backend credential is configured
+// but could not be read out of the locked memory holding it — the enclave was
+// destroyed, e.g. by a credential rotation or a Config teardown after the
+// protected path was chosen.
+//
+// It is deliberately NOT a fallback to the deprecated plain-string field:
+// authenticating with whatever stale value happens to sit there after the
+// protected path was chosen is a fail-open. Callers match the underlying
+// cause, which Unwrap exposes — typically enclave.ErrEnclaveDestroyed.
 type CredentialUnavailableError struct {
 	// Credential names the credential, for example "backend access key".
 	Credential string

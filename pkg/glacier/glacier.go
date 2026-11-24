@@ -96,7 +96,10 @@ func (g *Glacier) Configure(settings map[string]string, _ common.Credentials) er
 	return nil
 }
 
-// Put stores an object, with one UploadArchive call when it fits one part and multipart upload otherwise.
+// Put stores an object in the archive. Streams that fit within a single
+// part are uploaded with one UploadArchive call; larger streams use the
+// Glacier multipart upload API so memory usage stays bounded by a single
+// part buffer instead of the whole archive.
 func (g *Glacier) Put(key string, data io.Reader) error {
 	// The common.Archiver interface carries no context; one TODO context
 	// is shared by every SDK call this method makes.

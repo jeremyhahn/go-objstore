@@ -19,7 +19,10 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
-// ErrClientLocalArchiver refuses a client-supplied filesystem archiver; it wraps common.ErrInvalidArgument.
+// ErrClientLocalArchiver is returned when an archiver whose settings name a
+// filesystem path (the local archiver) is built from settings a client sent,
+// and the server does not allow client-supplied local destinations. It wraps
+// common.ErrInvalidArgument, so every transport answers invalid argument.
 var ErrClientLocalArchiver = fmt.Errorf("factory: client-supplied local archive destinations are not allowed: %w", common.ErrInvalidArgument)
 
 // pathArchiverTypes lists the registered archiver types whose settings name a
@@ -54,7 +57,10 @@ func CheckClientArchiverType(backendType string, opts WireOptions) error {
 	return nil
 }
 
-// NewArchiverFromWireOpts is NewArchiverFromWire with options; the local check runs before any setting is read.
+// NewArchiverFromWireOpts is NewArchiverFromWire with options. A
+// filesystem-path archiver type is refused with ErrClientLocalArchiver unless
+// opts.AllowLocalDestinations is set; the check runs before any setting is
+// read, so a refused request leaves no credential handle behind.
 func NewArchiverFromWireOpts(backendType string, wire map[string]string, opts WireOptions) (common.Archiver, error) {
 	if err := CheckClientArchiverType(backendType, opts); err != nil {
 		return nil, err

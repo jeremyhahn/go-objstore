@@ -319,7 +319,14 @@ func (ctx *CommandContext) ArchiveCommandWithSettings(key, destinationBackend st
 	return nil
 }
 
-// AddPolicyCommand adds a lifecycle policy; in local mode "archive" uses the Glacier archiver from the archive settings (see newPolicyArchiver).
+// AddPolicyCommand adds a lifecycle policy.
+//
+// In server mode the policy is forwarded as-is; the server configures the
+// archive destination from its own settings. In local mode the "archive"
+// action uses the AWS Glacier archiver as the destination, configured from
+// the dedicated archive settings (archive-vault-name, archive-region) with
+// the storage backend region as the region fallback. See newPolicyArchiver
+// for the validation rules.
 func (ctx *CommandContext) AddPolicyCommand(id, prefix, retentionDays, action string) error {
 	// Parse retention days
 	var retentionSeconds int64

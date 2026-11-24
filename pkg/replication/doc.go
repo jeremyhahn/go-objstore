@@ -11,5 +11,9 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package replication copies changed objects, recorded in a durable change log, to destination backends under persistent policies.
+// Package replication provides change-log-based object replication.
+//
+// A watcher detects source changes and records them to a durable change log; a
+// syncer copies the affected objects to destination backends. A persistent
+// manager coordinates replication policies and resumes progress across restarts.
 package replication

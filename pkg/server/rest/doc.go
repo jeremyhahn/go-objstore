@@ -11,5 +11,9 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package rest is the go-objstore REST server with authentication, authorization, audit and rate-limiting middleware.
+// Package rest implements the go-objstore REST/HTTP server.
+//
+// It exposes object, metadata, archive, lifecycle, and replication endpoints
+// with authentication, authorization, audit, and rate-limiting middleware and
+// an OpenAPI-documented surface.
 package rest

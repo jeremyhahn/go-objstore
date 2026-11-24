@@ -108,7 +108,18 @@ func New() common.Storage {
 	}
 }
 
-// Configure takes path (required), runLifecycle, lifecycleManagerType and lifecyclePolicyFile; creds are unused. Enable replication with SetReplicationManager after.
+// Configure sets up the backend with the necessary settings. The local
+// filesystem needs no credential, so creds is not read; a credential entry in
+// settings is an error.
+// Settings:
+//   - path: The directory path for local storage (required)
+//   - runLifecycle: "true" to run lifecycle processing in background (optional)
+//   - lifecycleManagerType: "memory" (default) or "persistent" (optional)
+//   - lifecyclePolicyFile: Path to policy file when using persistent manager (optional, default: ".lifecycle-policies.json")
+//
+// Note: Replication is enabled by calling SetReplicationManager() after Configure().
+// This allows the caller to configure replication with custom settings and avoids
+// import cycles between packages.
 func (l *Local) Configure(settings map[string]string, _ common.Credentials) error {
 	return l.configure(settings, nil)
 }
@@ -205,7 +216,9 @@ func (l *Local) configure(settings map[string]string, root *os.Root) error {
 	return nil
 }
 
-// SetAtRestEncrypterFactory sets at-rest encryption for data written and read; unset means plaintext.
+// SetAtRestEncrypterFactory sets the encryption factory for at-rest encryption.
+// When set, all data written to disk will be encrypted, and all data read from
+// disk will be decrypted. If not set, data is stored in plaintext (noop).
 func (l *Local) SetAtRestEncrypterFactory(factory common.EncrypterFactory) {
 	l.atRestEncrypterFactory = factory
 	if l.buckets != nil {

@@ -35,7 +35,10 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/server/middleware"
 )
 
-// ErrPeerCredUnsupported means peer credentials are unavailable for the connection; callers fall back to the Authenticator.
+// ErrPeerCredUnsupported indicates that peer credentials could not be obtained
+// for the connection (e.g. on a platform without SO_PEERCRED, or for a
+// non-Unix connection). Callers fall back to the configured Authenticator when
+// this is returned.
 var ErrPeerCredUnsupported = errors.New("unix: peer credentials not supported on this platform/connection")
 
 // principalCtxKey is the context key under which a peer-credential principal is
@@ -85,7 +88,15 @@ type ServerConfig struct {
 	// Logger is the pluggable logger adapter
 	Logger adapters.Logger
 
-	// Authenticator is used when peer credentials are off or unavailable; it receives no transport credentials (default NoOpAuthenticator).
+	// Authenticator is the pluggable authentication adapter (default: NoOpAuthenticator).
+	//
+	// Unix-domain-socket transport carries no HTTP/gRPC/mTLS credential object,
+	// so the server cannot present transport credentials to the authenticator.
+	// With the default NoOpAuthenticator every request is treated as the
+	// anonymous principal. Custom authenticators are still honored for their
+	// principal shape, but principals here are derived without transport
+	// credentials. Richer unix authN (e.g. SO_PEERCRED-based identity) is a
+	// follow-up.
 	Authenticator adapters.Authenticator
 
 	// Authorizer is the pluggable authorization adapter (default: NoOpAuthorizer = allow-all).
@@ -100,7 +111,27 @@ type ServerConfig struct {
 	// iteration. Zero uses the default (30 s).
 	ReadDeadline time.Duration
 
-	// UsePeerCredentials derives the principal from SO_PEERCRED (nil means true); socket permissions remain the access gate and the Authorizer decides per method.
+	// UsePeerCredentials, when set, controls whether the request principal is
+	// derived from the connecting peer's OS credentials (SO_PEERCRED: uid/gid/pid)
+	// instead of the configured Authenticator.
+	//
+	// A nil value (the zero value, i.e. unset) is treated as TRUE: peer
+	// credentials are the natural, zero-config identity for a Unix domain socket
+	// and are strictly more informative than an anonymous principal. Use
+	// DisablePeerCredentials() to opt out, or EnablePeerCredentials() to be
+	// explicit.
+	//
+	// The socket file's permission bits (SocketPermissions, default 0660) remain
+	// the primary access gate: the OS only lets processes that can open the
+	// socket connect at all. Peer credentials add the authenticated identity
+	// (uid/gid and primary-group role) on top, which the Authorizer then uses for
+	// per-method decisions. With the default NoOpAuthorizer every method is still
+	// allowed, so enabling peer credentials does not change access on its own;
+	// supply an RBACAuthorizer keyed on the peer's group/role to restrict by OS
+	// identity.
+	//
+	// If peer credentials cannot be extracted (non-Linux platforms, or a non-Unix
+	// connection), the server falls back to the configured Authenticator.
 	UsePeerCredentials *bool
 
 	// EnableRateLimit enables rate limiting (default: false). Requests are

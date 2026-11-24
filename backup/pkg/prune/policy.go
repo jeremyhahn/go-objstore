@@ -11,7 +11,10 @@ import (
 	"github.com/jeremyhahn/go-objstore/backup/pkg/seal"
 )
 
-// Policy says which snapshots to keep, per host and root group; a snapshot any rule keeps is kept. Times are UTC from the manifests.
+// Policy says which snapshots to keep. It applies to each group of snapshots
+// with the same host and root on its own: within a group, a snapshot is kept
+// when any rule keeps it, and every other snapshot is forgotten. Times are the
+// ones sealed inside the manifests, in UTC.
 type Policy struct {
 	// Last keeps the newest Last snapshots.
 	Last int

@@ -105,8 +105,11 @@ type persistedPolicies struct {
 	Policies map[string]common.ReplicationPolicy `json:"policies"`
 }
 
-// NewPersistentReplicationManager loads policies from policyFile (default ".replication-policies.json").
-// WithCredentialProvider supplies each sync's credential handles; without it the SDK default chain applies.
+// NewPersistentReplicationManager creates a new persistent replication manager.
+// The manager automatically loads existing policies from the policy file.
+// If policyFile is empty, it defaults to ".replication-policies.json".
+// WithCredentialProvider makes each sync take its targets' credential handles
+// from the application's provider; without it the SDK default chain applies.
 func NewPersistentReplicationManager(
 	fs FileSystem,
 	policyFile string,

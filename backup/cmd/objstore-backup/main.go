@@ -1,4 +1,7 @@
-// Command objstore-backup backs directories up to an objstore repository (encrypted, deduplicated, incremental) and restores, verifies and prunes it.
+// Command objstore-backup is the go-objstore backup agent. It backs
+// directories up to a repository on an objstore server, encrypted,
+// deduplicated and incremental, and restores, verifies and prunes that
+// repository.
 package main
 
 import (

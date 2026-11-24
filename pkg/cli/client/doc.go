@@ -11,5 +11,8 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package client provides the CLI's transport clients for REST, gRPC, QUIC/HTTP3, Unix socket and MCP.
+// Package client provides the CLI's remote transport clients.
+//
+// Each client implements a common Client interface over one of the go-objstore
+// server protocols: REST, gRPC, QUIC/HTTP3, Unix socket, and MCP.
 package client

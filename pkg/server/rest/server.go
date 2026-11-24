@@ -49,7 +49,11 @@ type ServerConfig struct {
 	// Host is the hostname to bind to (default: "0.0.0.0")
 	Host string
 
-	// TrustedProxies lists the CIDRs or IPs trusted for X-Forwarded-For and X-Real-IP; nil trusts none.
+	// TrustedProxies is the list of CIDR ranges or IP addresses that the
+	// server trusts as upstream proxies when reading X-Forwarded-For /
+	// X-Real-IP headers. Defaults to nil (no trusted proxies), meaning the
+	// client IP is always the direct peer address. Set this only when the
+	// server is known to sit behind a trusted load balancer.
 	TrustedProxies []string
 
 	// Port is the port to listen on (default: 8080)
@@ -58,7 +62,10 @@ type ServerConfig struct {
 	// EnableCORS enables CORS middleware
 	EnableCORS bool
 
-	// AllowedOrigins lists the CORS origins; see CORSMiddleware.
+	// AllowedOrigins is the list of origins permitted by the CORS middleware.
+	// When empty/nil (or set to ["*"]), all origins are allowed without
+	// credentials. When set to a specific allowlist, only those origins are
+	// echoed back and credentials are permitted. See CORSMiddleware.
 	AllowedOrigins []string
 
 	// EnableLogging enables request logging middleware

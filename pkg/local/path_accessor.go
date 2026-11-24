@@ -15,7 +15,13 @@ package local
 
 import "github.com/jeremyhahn/go-objstore/pkg/common"
 
-// LocalPath returns the absolute path backing this storage (common.PathAccessor); empty before Configure.
+// LocalPath returns the absolute local-filesystem path that backs this
+// storage. It satisfies common.PathAccessor so pool consumers that need a
+// real OS path (e.g. qrdb's per-tenant Pebble DBs) can type-assert to the
+// interface and obtain it.
+//
+// The path is set during Configure via the "path" setting; calling
+// LocalPath before Configure returns the empty string.
 func (l *Local) LocalPath() string {
 	return l.path
 }

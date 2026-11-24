@@ -27,7 +27,10 @@ import (
 	unixserver "github.com/jeremyhahn/go-objstore/pkg/server/unix"
 )
 
-// Config is a server binary's resolved configuration; env var for a key is OBJSTORE_ plus the upper-cased key path joined with "_".
+// Config is the resolved configuration of an objstore server binary. The
+// mapstructure tags are the config-file keys; the environment variable for a
+// key is OBJSTORE_ followed by the upper-cased key path joined with "_".
+// Each binary reads the sections for the transports it serves.
 type Config struct {
 	// Backend is the storage backend type (local, s3, gcs, azure, ...).
 	Backend string `mapstructure:"backend"`
@@ -122,7 +125,10 @@ type AuditConfig struct {
 // ArchiveConfig holds the settings for archive calls and lifecycle policies
 // that name a destination archiver.
 type ArchiveConfig struct {
-	// AllowClientLocalDestinations lets a client name a local filesystem archiver; off by default.
+	// AllowClientLocalDestinations lets a client name a local (filesystem
+	// path) archiver as an archive or lifecycle-policy destination. Off by
+	// default: the client would choose a directory the service user writes
+	// into.
 	AllowClientLocalDestinations bool `mapstructure:"allow_client_local_destinations"`
 }
 
@@ -142,7 +148,13 @@ func onLoopback(addr string) string {
 	return net.JoinHostPort(LoopbackHost, port)
 }
 
-// Defaults is the defaults layer, ports from each transport package; no storage path, loopback listeners, QUIC and MCP off.
+// Defaults is the defaults layer. Every listen port is taken from the owning
+// transport package's own defaults so the value exists in exactly one place;
+// the file, environment and flag layers override it.
+//
+// The defaults are safe to start as is: there is no default storage path,
+// so the local backend needs one set explicitly; gRPC, REST and MCP listen
+// on loopback only; QUIC and MCP are off until enabled.
 func Defaults() Config {
 	rest := restserver.DefaultServerConfig()
 	quic := quicserver.DefaultOptions()

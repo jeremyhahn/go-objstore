@@ -11,5 +11,10 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package glacier is the Glacier backend, built only with the glacier tag (Makefile WITH_GLACIER=1, the default).
+// Package glacier provides the glacier object-storage backend.
+//
+// The backend implementation is gated behind the "glacier" build tag so that
+// builds which do not need it avoid linking its cloud SDK. Without the tag this
+// package compiles to an empty stub and the backend is unregistered. Enable it
+// with: go build -tags glacier   (Makefile: WITH_GLACIER=1, which is the default).
 package glacier

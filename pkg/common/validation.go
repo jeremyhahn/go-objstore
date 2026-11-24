@@ -72,7 +72,15 @@ func inReservedArea(key string) bool {
 	return len(key) == len(dir) || key[len(dir)] == '/' || key[len(dir)] == '\\'
 }
 
-// ValidateKey rejects empty, traversing, absolute, NUL-containing, overlong or invalid-character keys and the reserved multipart staging directory.
+// ValidateKey validates an object key for security issues
+// Returns error if the key:
+// - Is empty
+// - Contains path traversal sequences (..)
+// - Is an absolute path
+// - Contains null bytes
+// - Exceeds maximum length
+// - Contains invalid characters
+// - Names the reserved multipart staging directory, or anything below it
 func ValidateKey(key string) error {
 	if key == "" {
 		return &ValidationError{
@@ -214,7 +222,12 @@ func ValidateKey(key string) error {
 	return nil
 }
 
-// ValidateMetadata rejects too many entries, overlong keys or values, NUL bytes and invalid UTF-8.
+// ValidateMetadata validates metadata for security and size constraints
+// Returns error if metadata:
+// - Has too many entries
+// - Has keys or values that are too long
+// - Contains null bytes
+// - Contains invalid UTF-8
 func ValidateMetadata(metadata map[string]string) error {
 	if metadata == nil {
 		return nil

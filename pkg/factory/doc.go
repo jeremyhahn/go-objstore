@@ -11,5 +11,9 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Package factory builds storage backends and archivers registered by name, often behind build tags.
+// Package factory constructs storage backends and archivers from configuration.
+//
+// Backends and archivers register themselves by name (often behind build tags
+// so unused cloud SDKs are not linked) and are created on demand, keeping
+// backend selection decoupled from the rest of the library.
 package factory
