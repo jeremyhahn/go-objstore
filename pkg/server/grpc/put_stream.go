@@ -30,7 +30,7 @@ import (
 // handler stops the put before the client finished the stream.
 var errPutStreamAborted = errors.New("put stream aborted")
 
-// PutStream stores a client-streamed object (header, then chunks) through an io.Pipe, one chunk in memory; a failed or cancelled stream stores nothing.
+// PutStream stores a client-streamed object (header, then chunks) through an io.Pipe, one chunk in memory; a failed or canceled stream stores nothing.
 func (s *Server) PutStream(stream objstorepb.ObjectStore_PutStreamServer) error {
 	ctx := stream.Context()
 

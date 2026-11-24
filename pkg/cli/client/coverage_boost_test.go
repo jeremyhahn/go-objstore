@@ -635,7 +635,7 @@ func TestNewClient_Unix_RoundTrip(t *testing.T) {
 	}
 }
 
-// GRPCClient replication calls with a cancelled context.
+// GRPCClient replication calls with a canceled context.
 
 func TestGRPCClient_GetReplicationPolicy_ContextCanceled(t *testing.T) {
 	client, cleanup := createGRPCTestClient(t)
