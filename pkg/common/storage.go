@@ -92,3 +92,10 @@ type ReplicationCapable interface {
 	// GetReplicationManager returns the replication manager if supported.
 	GetReplicationManager() (ReplicationManager, error)
 }
+
+// AtRestEncryptable is implemented by backends that can encrypt the objects
+// they store with a caller-supplied encrypter factory (backend at-rest
+// encryption, replication Layer 1).
+type AtRestEncryptable interface {
+	SetAtRestEncrypterFactory(factory EncrypterFactory)
+}

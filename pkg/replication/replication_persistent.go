@@ -343,27 +343,14 @@ func (prm *PersistentReplicationManager) SetDestinationEncrypterFactory(policyID
 	return nil
 }
 
-// getFactories retrieves encrypter factories for a policy, returning noop factories as defaults.
+// getFactories returns the encrypter factories set for a policy, nil for any
+// not set. There is no passthrough default: the syncer refuses an enabled
+// layer whose factory is nil (ErrEncrypterFactoryMissing).
 func (prm *PersistentReplicationManager) getFactories(policyID string) (backend, source, dest common.EncrypterFactory) {
 	prm.mutex.RLock()
 	defer prm.mutex.RUnlock()
 
-	backend = prm.backendFactories[policyID]
-	if backend == nil {
-		backend = NewNoopEncrypterFactory()
-	}
-
-	source = prm.sourceFactories[policyID]
-	if source == nil {
-		source = NewNoopEncrypterFactory()
-	}
-
-	dest = prm.destFactories[policyID]
-	if dest == nil {
-		dest = NewNoopEncrypterFactory()
-	}
-
-	return
+	return prm.backendFactories[policyID], prm.sourceFactories[policyID], prm.destFactories[policyID]
 }
 
 // getOrCreateMetrics returns existing metrics or creates new ones for a policy.

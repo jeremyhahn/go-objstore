@@ -37,6 +37,9 @@ import (
 const metadataSuffix = common.MetadataSuffix
 
 // Local is a storage backend that stores files on the local disk.
+// Local applies backend at-rest encryption for replication (Layer 1).
+var _ common.AtRestEncryptable = (*Local)(nil)
+
 type Local struct {
 	path                   string
 	policyFile             string // a non-default lifecyclePolicyFile, refused as a key

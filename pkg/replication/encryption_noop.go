@@ -20,8 +20,9 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 )
 
-// NoopEncrypter implements common.Encrypter with passthrough (no encryption).
-// It returns data unmodified, preserving ReadCloser interfaces where possible.
+// NoopEncrypter implements common.Encrypter with passthrough: it provides NO
+// encryption and returns data unmodified. It is for tests only; no
+// production code path uses it, and replication never falls back to it.
 type NoopEncrypter struct{}
 
 // NewNoopEncrypter creates a new NoopEncrypter instance.
@@ -59,8 +60,10 @@ func (n *NoopEncrypter) KeyID() string {
 	return ""
 }
 
-// NoopEncrypterFactory implements common.EncrypterFactory for passthrough encryption.
-// It returns the same NoopEncrypter instance for all key IDs.
+// NoopEncrypterFactory implements common.EncrypterFactory with passthrough
+// encrypters: it provides NO encryption. It is for tests only (it stays
+// exported for the integration tests); setting it on an encrypted policy
+// stores plaintext. It returns the same NoopEncrypter for all key IDs.
 type NoopEncrypterFactory struct {
 	encrypter *NoopEncrypter
 }

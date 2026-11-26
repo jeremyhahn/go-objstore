@@ -26,12 +26,19 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
-	"github.com/jeremyhahn/go-objstore/pkg/local"
 )
 
 var (
 	// ErrUnsupportedReplicationMode is returned when an unsupported replication mode is specified.
 	ErrUnsupportedReplicationMode = errors.New("unsupported replication mode")
+
+	// ErrBackendEncryptionUnsupported is returned when a policy enables
+	// backend at-rest encryption on a backend that cannot apply it.
+	ErrBackendEncryptionUnsupported = errors.New("backend at-rest encryption not supported by backend")
+
+	// ErrEncrypterFactoryMissing is returned when a policy enables an
+	// encryption layer and no encrypter factory is set for it.
+	ErrEncrypterFactoryMissing = errors.New("encrypter factory missing for enabled encryption layer")
 	// ErrChangeLogRenameReopen is returned when both rename and reopen fail during changelog rotation.
 	ErrChangeLogRenameReopen = errors.New("failed to rename and failed to reopen")
 	// ErrChangeLogClosed is returned when an operation is attempted on a closed changelog.
@@ -92,6 +99,11 @@ func NewSyncerWithProvider(
 	logger adapters.Logger,
 	auditLog auditlog.AuditLogger,
 ) (*Syncer, error) {
+	// Refuse an enabled layer with no factory before building anything:
+	// replicating it would store plaintext the policy declared encrypted.
+	if err := checkEncrypterFactories(policy, backendFactory, sourceFactory, destFactory); err != nil {
+		return nil, err
+	}
 
 	// Create source and destination backends
 	source, err := newBackend(ctx, provider, CredentialTarget{PolicyID: policy.ID, Side: SourceSide},
@@ -106,17 +118,15 @@ func NewSyncerWithProvider(
 		return nil, err
 	}
 
-	// Set backend at-rest encryption if applicable (Layer 1)
-	if policy.Encryption != nil && policy.Encryption.Backend != nil && policy.Encryption.Backend.Enabled {
-		if policy.SourceBackend == backendLocal {
-			if localBackend, ok := source.(*local.Local); ok {
-				localBackend.SetAtRestEncrypterFactory(backendFactory)
-			}
+	// Set backend at-rest encryption (Layer 1). A side that cannot apply it
+	// fails the sync rather than replicating unencrypted.
+	enc := policy.Encryption
+	if enc != nil && layerEnabled(enc.Backend) {
+		if err := enableAtRestEncryption(source, SourceSide, policy.SourceBackend, backendFactory); err != nil {
+			return nil, err
 		}
-		if policy.DestinationBackend == backendLocal {
-			if localBackend, ok := dest.(*local.Local); ok {
-				localBackend.SetAtRestEncrypterFactory(backendFactory)
-			}
+		if err := enableAtRestEncryption(dest, DestinationSide, policy.DestinationBackend, backendFactory); err != nil {
+			return nil, err
 		}
 	}
 
@@ -126,10 +136,10 @@ func NewSyncerWithProvider(
 	switch policy.ReplicationMode {
 	case common.ReplicationModeTransparent:
 		// In transparent mode, decrypt at source and re-encrypt at destination
-		if policy.Encryption != nil && policy.Encryption.Source != nil && policy.Encryption.Source.Enabled {
+		if enc != nil && layerEnabled(enc.Source) {
 			source = common.NewEncryptedStorage(source, sourceFactory)
 		}
-		if policy.Encryption != nil && policy.Encryption.Destination != nil && policy.Encryption.Destination.Enabled {
+		if enc != nil && layerEnabled(enc.Destination) {
 			dest = common.NewEncryptedStorage(dest, destFactory)
 		}
 
@@ -150,6 +160,59 @@ func NewSyncerWithProvider(
 		auditLog:   auditLog,
 		metrics:    NewReplicationMetrics(),
 	}, nil
+}
+
+// layerEnabled reports whether an encryption layer is configured and enabled.
+func layerEnabled(layer *common.EncryptionConfig) bool {
+	return layer != nil && layer.Enabled
+}
+
+// checkEncrypterFactories returns ErrEncrypterFactoryMissing for the first
+// enabled encryption layer that has no factory. Opaque mode copies blobs
+// as-is and skips the source and destination DEK layers, so only the backend
+// layer is checked there.
+func checkEncrypterFactories(
+	policy common.ReplicationPolicy,
+	backendFactory, sourceFactory, destFactory common.EncrypterFactory,
+) error {
+	enc := policy.Encryption
+	if enc == nil {
+		return nil
+	}
+	type layer struct {
+		name    string
+		config  *common.EncryptionConfig
+		factory common.EncrypterFactory
+	}
+	layers := []layer{{"backend", enc.Backend, backendFactory}}
+	if policy.ReplicationMode == common.ReplicationModeTransparent {
+		layers = append(layers,
+			layer{"source", enc.Source, sourceFactory},
+			layer{"destination", enc.Destination, destFactory})
+	}
+	for _, l := range layers {
+		if layerEnabled(l.config) && l.factory == nil {
+			return fmt.Errorf("%w: %s layer of policy %q", ErrEncrypterFactoryMissing, l.name, policy.ID)
+		}
+	}
+	return nil
+}
+
+// enableAtRestEncryption sets the backend at-rest encrypter factory on one
+// side, or returns ErrBackendEncryptionUnsupported when that backend cannot
+// apply it.
+func enableAtRestEncryption(
+	backend common.Storage,
+	side TargetSide,
+	backendType string,
+	factory common.EncrypterFactory,
+) error {
+	encryptable, ok := backend.(common.AtRestEncryptable)
+	if !ok {
+		return fmt.Errorf("%w: %s backend %q", ErrBackendEncryptionUnsupported, side, backendType)
+	}
+	encryptable.SetAtRestEncrypterFactory(factory)
+	return nil
 }
 
 // newBackend configures one target's backend. The provider's handles live only
