@@ -223,7 +223,18 @@ Storage-layer encryption provided by the backend itself.
 
 - **Cloud backends**: S3 SSE/KMS, GCS CMEK, Azure SSE (configured via backend settings)
 - **Local backend**: Configurable via `encryption.backend` in replication policy
-- **Default**: No encryption (noop)
+- **Default**: Disabled
+
+`encryption.backend` applies only to backends that support at-rest encryption
+(local). Enabling it when either side is any other backend fails the sync with
+`ErrBackendEncryptionUnsupported`; use the provider's SSE/KMS/CMEK settings
+there instead.
+
+Any enabled layer (backend, and source and destination in transparent mode)
+needs its encrypter factory set with `SetBackendEncrypterFactory`,
+`SetSourceEncrypterFactory` or `SetDestinationEncrypterFactory`, or the sync
+fails with `ErrEncrypterFactoryMissing`. Replication never falls back to a
+passthrough encrypter, so a policy marked encrypted never replicates plaintext.
 
 **Example (S3 with KMS):**
 ```go
@@ -241,7 +252,7 @@ Application-layer encryption applied before reading from source.
 - Configured via `encryption.source` in replication policy
 - Decrypts data after download from source storage
 - Only used in transparent mode
-- Default: No encryption (noop)
+- Default: Disabled; when enabled, its factory must be set
 
 ### Layer 3: Destination DEK
 
@@ -250,7 +261,7 @@ Application-layer encryption applied before writing to destination.
 - Configured via `encryption.destination` in replication policy
 - Encrypts data before upload to destination storage
 - Only used in transparent mode
-- Default: No encryption (noop)
+- Default: Disabled; when enabled, its factory must be set
 
 ### Encryption Flow Diagram
 
@@ -259,21 +270,21 @@ Application-layer encryption applied before writing to destination.
 │ Layer 3: Client-Side Destination DEK (Application)         │
 │ - Configurable via encryption.destination                   │
 │ - Encrypts before upload to destination                     │
-│ - Default: noop                                              │
+│ - Default: off                                               │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
 │ Layer 2: Client-Side Source DEK (Application)              │
 │ - Configurable via encryption.source                        │
 │ - Decrypts after download from source                       │
-│ - Default: noop                                              │
+│ - Default: off                                               │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
 │ Layer 1: Backend At-Rest Encryption (Storage)              │
 │ - Cloud: S3 SSE/KMS, GCS CMEK, Azure SSE                   │
 │ - Local: Configurable via encryption.backend                │
-│ - Default: noop                                              │
+│ - Default: off                                               │
 └─────────────────────────────────────────────────────────────┘
 ```
 
