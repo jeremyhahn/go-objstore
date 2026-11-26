@@ -323,29 +323,20 @@ func TestGetFactoriesNoopDefaults(t *testing.T) {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
 
-	// Get factories for non-existent policy - should return noops
+	// No factory set: getFactories returns nil, never a passthrough default,
+	// so the syncer can refuse an enabled layer (ErrEncrypterFactoryMissing).
 	backend, source, dest := mgr.getFactories("nonexistent-policy")
 
-	if backend == nil {
-		t.Error("Expected non-nil backend factory")
+	if backend != nil {
+		t.Errorf("backend factory = %T, want nil", backend)
 	}
 
-	if source == nil {
-		t.Error("Expected non-nil source factory")
+	if source != nil {
+		t.Errorf("source factory = %T, want nil", source)
 	}
 
-	if dest == nil {
-		t.Error("Expected non-nil dest factory")
-	}
-
-	// Verify they're actually usable noop factories
-	backendEnc, err := backend.GetEncrypter("test-key")
-	if err != nil {
-		t.Errorf("Backend factory GetEncrypter failed: %v", err)
-	}
-
-	if backendEnc == nil {
-		t.Error("Expected non-nil encrypter from backend factory")
+	if dest != nil {
+		t.Errorf("dest factory = %T, want nil", dest)
 	}
 }
 

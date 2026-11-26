@@ -706,16 +706,10 @@ func TestGetFactories(t *testing.T) {
 		t.Fatalf("Failed to add policy: %v", err)
 	}
 
-	// Get factories without setting any (should return noops)
+	// Get factories without setting any: nil, never a passthrough default
 	backend, source, dest := mgr.getFactories("factory-test")
-	if backend == nil {
-		t.Error("Expected non-nil backend factory")
-	}
-	if source == nil {
-		t.Error("Expected non-nil source factory")
-	}
-	if dest == nil {
-		t.Error("Expected non-nil dest factory")
+	if backend != nil || source != nil || dest != nil {
+		t.Errorf("factories = (%T, %T, %T), want all nil", backend, source, dest)
 	}
 
 	// Set custom factories

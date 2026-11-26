@@ -73,10 +73,29 @@ type Storage interface {
 	Archive(key string, destination Archiver) error
 }
 
+// IdentityPutter is implemented by a Storage whose upload with metadata is a
+// single call that reports the identity of the object it stored.
+//
+// PutWithMetadataResult stores data and metadata as PutWithMetadata does and
+// returns the stored object's ETag (or generation) and size as the upload
+// reported them, not as a later read would see them: a concurrent rewrite
+// after the upload cannot change the result. A nil result, or an empty ETag,
+// means the backend reported no identity for this upload.
+type IdentityPutter interface {
+	PutWithMetadataResult(ctx context.Context, key string, data io.Reader, metadata *Metadata) (*Metadata, error)
+}
+
 // ReplicationCapable extends Storage with replication capabilities.
 type ReplicationCapable interface {
 	Storage
 
 	// GetReplicationManager returns the replication manager if supported.
 	GetReplicationManager() (ReplicationManager, error)
+}
+
+// AtRestEncryptable is implemented by backends that can encrypt the objects
+// they store with a caller-supplied encrypter factory (backend at-rest
+// encryption, replication Layer 1).
+type AtRestEncryptable interface {
+	SetAtRestEncrypterFactory(factory EncrypterFactory)
 }

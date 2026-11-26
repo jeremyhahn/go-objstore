@@ -17,6 +17,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"strconv"
 	"sync"
 	"time"
 
@@ -24,12 +26,19 @@ import (
 	"github.com/jeremyhahn/go-objstore/pkg/auditlog"
 	"github.com/jeremyhahn/go-objstore/pkg/common"
 	"github.com/jeremyhahn/go-objstore/pkg/factory"
-	"github.com/jeremyhahn/go-objstore/pkg/local"
 )
 
 var (
 	// ErrUnsupportedReplicationMode is returned when an unsupported replication mode is specified.
 	ErrUnsupportedReplicationMode = errors.New("unsupported replication mode")
+
+	// ErrBackendEncryptionUnsupported is returned when a policy enables
+	// backend at-rest encryption on a backend that cannot apply it.
+	ErrBackendEncryptionUnsupported = errors.New("backend at-rest encryption not supported by backend")
+
+	// ErrEncrypterFactoryMissing is returned when a policy enables an
+	// encryption layer and no encrypter factory is set for it.
+	ErrEncrypterFactoryMissing = errors.New("encrypter factory missing for enabled encryption layer")
 	// ErrChangeLogRenameReopen is returned when both rename and reopen fail during changelog rotation.
 	ErrChangeLogRenameReopen = errors.New("failed to rename and failed to reopen")
 	// ErrChangeLogClosed is returned when an operation is attempted on a closed changelog.
@@ -48,12 +57,16 @@ const (
 )
 
 type Syncer struct {
-	policy   common.ReplicationPolicy
-	source   common.Storage
-	dest     common.Storage
-	logger   adapters.Logger
-	auditLog auditlog.AuditLogger
-	metrics  *ReplicationMetrics
+	policy common.ReplicationPolicy
+	source common.Storage
+	dest   common.Storage
+	// destRetags is set when the destination backend's metadata writes
+	// change the copy's ETag (MetadataWriteChangesETag): the copy is then
+	// bound by its upload, not by a later metadata write.
+	destRetags bool
+	logger     adapters.Logger
+	auditLog   auditlog.AuditLogger
+	metrics    *ReplicationMetrics
 }
 
 // NewSyncer creates a new Syncer with proper encryption wrapping based on the policy.
@@ -86,6 +99,11 @@ func NewSyncerWithProvider(
 	logger adapters.Logger,
 	auditLog auditlog.AuditLogger,
 ) (*Syncer, error) {
+	// Refuse an enabled layer with no factory before building anything:
+	// replicating it would store plaintext the policy declared encrypted.
+	if err := checkEncrypterFactories(policy, backendFactory, sourceFactory, destFactory); err != nil {
+		return nil, err
+	}
 
 	// Create source and destination backends
 	source, err := newBackend(ctx, provider, CredentialTarget{PolicyID: policy.ID, Side: SourceSide},
@@ -100,28 +118,28 @@ func NewSyncerWithProvider(
 		return nil, err
 	}
 
-	// Set backend at-rest encryption if applicable (Layer 1)
-	if policy.Encryption != nil && policy.Encryption.Backend != nil && policy.Encryption.Backend.Enabled {
-		if policy.SourceBackend == backendLocal {
-			if localBackend, ok := source.(*local.Local); ok {
-				localBackend.SetAtRestEncrypterFactory(backendFactory)
-			}
+	// Set backend at-rest encryption (Layer 1). A side that cannot apply it
+	// fails the sync rather than replicating unencrypted.
+	enc := policy.Encryption
+	if enc != nil && layerEnabled(enc.Backend) {
+		if err := enableAtRestEncryption(source, SourceSide, policy.SourceBackend, backendFactory); err != nil {
+			return nil, err
 		}
-		if policy.DestinationBackend == backendLocal {
-			if localBackend, ok := dest.(*local.Local); ok {
-				localBackend.SetAtRestEncrypterFactory(backendFactory)
-			}
+		if err := enableAtRestEncryption(dest, DestinationSide, policy.DestinationBackend, backendFactory); err != nil {
+			return nil, err
 		}
 	}
 
 	// Apply CLIENT-SIDE DEK encryption based on mode (Layers 2 & 3)
+	// Asked of the backend itself: an encrypting wrapper hides it.
+	destRetags := metadataWriteRetags(dest)
 	switch policy.ReplicationMode {
 	case common.ReplicationModeTransparent:
 		// In transparent mode, decrypt at source and re-encrypt at destination
-		if policy.Encryption != nil && policy.Encryption.Source != nil && policy.Encryption.Source.Enabled {
+		if enc != nil && layerEnabled(enc.Source) {
 			source = common.NewEncryptedStorage(source, sourceFactory)
 		}
-		if policy.Encryption != nil && policy.Encryption.Destination != nil && policy.Encryption.Destination.Enabled {
+		if enc != nil && layerEnabled(enc.Destination) {
 			dest = common.NewEncryptedStorage(dest, destFactory)
 		}
 
@@ -134,13 +152,67 @@ func NewSyncerWithProvider(
 	}
 
 	return &Syncer{
-		policy:   policy,
-		source:   source,
-		dest:     dest,
-		logger:   logger,
-		auditLog: auditLog,
-		metrics:  NewReplicationMetrics(),
+		policy:     policy,
+		source:     source,
+		dest:       dest,
+		destRetags: destRetags,
+		logger:     logger,
+		auditLog:   auditLog,
+		metrics:    NewReplicationMetrics(),
 	}, nil
+}
+
+// layerEnabled reports whether an encryption layer is configured and enabled.
+func layerEnabled(layer *common.EncryptionConfig) bool {
+	return layer != nil && layer.Enabled
+}
+
+// checkEncrypterFactories returns ErrEncrypterFactoryMissing for the first
+// enabled encryption layer that has no factory. Opaque mode copies blobs
+// as-is and skips the source and destination DEK layers, so only the backend
+// layer is checked there.
+func checkEncrypterFactories(
+	policy common.ReplicationPolicy,
+	backendFactory, sourceFactory, destFactory common.EncrypterFactory,
+) error {
+	enc := policy.Encryption
+	if enc == nil {
+		return nil
+	}
+	type layer struct {
+		name    string
+		config  *common.EncryptionConfig
+		factory common.EncrypterFactory
+	}
+	layers := []layer{{"backend", enc.Backend, backendFactory}}
+	if policy.ReplicationMode == common.ReplicationModeTransparent {
+		layers = append(layers,
+			layer{"source", enc.Source, sourceFactory},
+			layer{"destination", enc.Destination, destFactory})
+	}
+	for _, l := range layers {
+		if layerEnabled(l.config) && l.factory == nil {
+			return fmt.Errorf("%w: %s layer of policy %q", ErrEncrypterFactoryMissing, l.name, policy.ID)
+		}
+	}
+	return nil
+}
+
+// enableAtRestEncryption sets the backend at-rest encrypter factory on one
+// side, or returns ErrBackendEncryptionUnsupported when that backend cannot
+// apply it.
+func enableAtRestEncryption(
+	backend common.Storage,
+	side TargetSide,
+	backendType string,
+	factory common.EncrypterFactory,
+) error {
+	encryptable, ok := backend.(common.AtRestEncryptable)
+	if !ok {
+		return fmt.Errorf("%w: %s backend %q", ErrBackendEncryptionUnsupported, side, backendType)
+	}
+	encryptable.SetAtRestEncrypterFactory(factory)
+	return nil
 }
 
 // newBackend configures one target's backend. The provider's handles live only
@@ -323,14 +395,11 @@ func (s *Syncer) SyncAllParallel(ctx context.Context, workerCount int) (*common.
 // SyncObject synchronizes a single object from source to destination.
 // Returns the size of the object synced.
 func (s *Syncer) SyncObject(ctx context.Context, key string) (int64, error) {
-	// Get from source (automatically decrypted if encrypted)
-	reader, err := s.source.GetWithContext(ctx, key)
-	if err != nil {
-		return 0, fmt.Errorf("failed to read source: %w", err)
-	}
-	defer func() { _ = reader.Close() }()
-
-	// Get source metadata
+	// Get source metadata before opening the data. The fingerprint recorded
+	// on the copy then describes these bytes or an older version, never a
+	// newer one: a source replaced in between is copied again next sync,
+	// where reading the metadata after the open would stamp the newer
+	// fingerprint on the older bytes and hide the change for good.
 	srcMetadata, err := s.source.GetMetadata(ctx, key)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get metadata: %w", err)
@@ -340,13 +409,28 @@ func (s *Syncer) SyncObject(ctx context.Context, key string) (int64, error) {
 		srcMetadata = &common.Metadata{}
 	}
 
-	// Put to destination (automatically encrypted if enabled)
-	err = s.dest.PutWithMetadata(ctx, key, reader, srcMetadata)
+	// Get from source (automatically decrypted if encrypted)
+	reader, err := s.source.GetWithContext(ctx, key)
+	if err != nil {
+		return 0, fmt.Errorf("failed to read source: %w", err)
+	}
+	defer func() { _ = reader.Close() }()
+
+	// Put to destination (automatically encrypted if enabled), recording the
+	// source fingerprint the next change detection compares against.
+	fingerprint := sourceFingerprint(srcMetadata)
+	if _, ok := fingerprint.Custom[MetaReplicationDestSize]; ok && s.destRetags {
+		// A metadata write would re-tag the copy, so the upload carries
+		// the binding record itself (see bindDestination).
+		fingerprint.Custom[MetaReplicationDestETag] = destETagUpload
+	}
+	stored, err := s.putDestination(ctx, key, reader, fingerprint)
 	if err != nil {
 		_ = s.auditLog.LogObjectMutation(ctx, "replication_failed",
 			"", "", "", key, "", "", 0, "failure", err)
 		return 0, fmt.Errorf("failed to write destination: %w", err)
 	}
+	s.bindDestination(ctx, key, fingerprint, stored)
 
 	// Audit log success
 	_ = s.auditLog.LogObjectMutation(ctx, "replication_success",
@@ -357,6 +441,59 @@ func (s *Syncer) SyncObject(ctx context.Context, key string) (int64, error) {
 		adapters.Field{Key: "size", Value: srcMetadata.Size})
 
 	return srcMetadata.Size, nil
+}
+
+// putDestination uploads the copy. When the destination reports the stored
+// object's identity from the upload itself (common.IdentityPutter) it is
+// returned; otherwise the result is nil.
+func (s *Syncer) putDestination(ctx context.Context, key string, data io.Reader, md *common.Metadata) (*common.Metadata, error) {
+	if ip, ok := s.dest.(common.IdentityPutter); ok {
+		return ip.PutWithMetadataResult(ctx, key, data, md)
+	}
+	return nil, s.dest.PutWithMetadata(ctx, key, data, md)
+}
+
+// bindDestination records, on the copy just written, the identity its upload
+// returned: its ETag (or generation) and the size it is stored at (client-side
+// encryption adds bytes). It never reads the destination back, so a rewrite
+// between the upload and this record leaves a record that names the copy, not
+// the rewrite, and the next sync copies again. With no identity from the
+// upload nothing is bound, and the next sync copies again: never a skip.
+func (s *Syncer) bindDestination(ctx context.Context, key string, fingerprint, stored *common.Metadata) {
+	expected, ok := fingerprint.Custom[MetaReplicationDestSize]
+	if !ok {
+		return
+	}
+	if s.destRetags {
+		// The upload already carried the destETagUpload record. A metadata
+		// write re-tags the copy, so make one only to correct the stored
+		// size (an encrypting destination), and never record an ETag.
+		if stored == nil {
+			stored, _ = s.dest.GetMetadata(ctx, key)
+		}
+		if stored == nil || stored.Size <= 0 || strconv.FormatInt(stored.Size, 10) == expected {
+			return
+		}
+	} else if stored == nil || stored.ETag == "" {
+		return
+	}
+	updated := *fingerprint
+	updated.Custom = make(map[string]string, len(fingerprint.Custom)+2)
+	for k, v := range fingerprint.Custom {
+		updated.Custom[k] = v
+	}
+	if stored.Size > 0 {
+		updated.Custom[MetaReplicationDestSize] = strconv.FormatInt(stored.Size, 10)
+	}
+	if s.destRetags {
+		updated.Custom[MetaReplicationDestETag] = destETagUpload
+	} else {
+		updated.Custom[MetaReplicationDestETag] = stored.ETag
+	}
+	if err := s.dest.UpdateMetadata(ctx, key, &updated); err != nil {
+		s.logger.Warn(ctx, "Failed to record the copy's identity",
+			adapters.Field{Key: fieldKey, Value: key})
+	}
 }
 
 // GetMetrics returns the current replication metrics.

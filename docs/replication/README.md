@@ -10,11 +10,12 @@ Comprehensive guide to replicating and synchronizing data between storage backen
 1. [Overview](#overview)
 2. [Quick Start](#quick-start)
 3. [Replication Modes](#replication-modes)
-4. [Encryption Layers](#encryption-layers)
-5. [Configuration](#configuration)
-6. [API Usage](#api-usage)
-7. [Best Practices](#best-practices)
-8. [Technical Details](#technical-details)
+4. [Change Detection and Schedule](#change-detection-and-schedule)
+5. [Encryption Layers](#encryption-layers)
+6. [Configuration](#configuration)
+7. [API Usage](#api-usage)
+8. [Best Practices](#best-practices)
+9. [Technical Details](#technical-details)
 
 ---
 
@@ -200,6 +201,18 @@ policy := common.ReplicationPolicy{
 
 ---
 
+## Change Detection and Schedule
+
+ETags are not comparable across backends: a local ETag is built from modification time and size, an S3 ETag is an MD5. Comparing them directly would report every object as changed. Instead, each copy records the source fingerprint it was made from (source ETag, size, modification time and a digest of the source metadata) in the destination object's metadata, together with the destination size and ETag the copy produced. On the next sync an object counts as unchanged when the recorded fingerprint still matches the source and the destination still matches what the copy produced. A rewrite of the source, even within the same second, changes the source ETag and so is copied again. A destination copy with no fingerprint (an older copy) counts as changed and is copied once. Without a source ETag, the check falls back to comparing size and modification time.
+
+A second sync with no changes therefore copies 0 objects.
+
+A sync copies new and changed objects; it does not copy deletes.
+
+The server can run replication on a schedule: set `replication.interval` (`-replication-interval`, `OBJSTORE_REPLICATION_INTERVAL`). The default `0` leaves replication trigger-only, a negative value refuses to start, and the schedule stops when the server shuts down. See [server configuration](../configuration/servers.md).
+
+---
+
 ## Encryption Layers
 
 The replication system supports three independent encryption layers:
@@ -210,7 +223,18 @@ Storage-layer encryption provided by the backend itself.
 
 - **Cloud backends**: S3 SSE/KMS, GCS CMEK, Azure SSE (configured via backend settings)
 - **Local backend**: Configurable via `encryption.backend` in replication policy
-- **Default**: No encryption (noop)
+- **Default**: Disabled
+
+`encryption.backend` applies only to backends that support at-rest encryption
+(local). Enabling it when either side is any other backend fails the sync with
+`ErrBackendEncryptionUnsupported`; use the provider's SSE/KMS/CMEK settings
+there instead.
+
+Any enabled layer (backend, and source and destination in transparent mode)
+needs its encrypter factory set with `SetBackendEncrypterFactory`,
+`SetSourceEncrypterFactory` or `SetDestinationEncrypterFactory`, or the sync
+fails with `ErrEncrypterFactoryMissing`. Replication never falls back to a
+passthrough encrypter, so a policy marked encrypted never replicates plaintext.
 
 **Example (S3 with KMS):**
 ```go
@@ -228,7 +252,7 @@ Application-layer encryption applied before reading from source.
 - Configured via `encryption.source` in replication policy
 - Decrypts data after download from source storage
 - Only used in transparent mode
-- Default: No encryption (noop)
+- Default: Disabled; when enabled, its factory must be set
 
 ### Layer 3: Destination DEK
 
@@ -237,7 +261,7 @@ Application-layer encryption applied before writing to destination.
 - Configured via `encryption.destination` in replication policy
 - Encrypts data before upload to destination storage
 - Only used in transparent mode
-- Default: No encryption (noop)
+- Default: Disabled; when enabled, its factory must be set
 
 ### Encryption Flow Diagram
 
@@ -246,21 +270,21 @@ Application-layer encryption applied before writing to destination.
 │ Layer 3: Client-Side Destination DEK (Application)         │
 │ - Configurable via encryption.destination                   │
 │ - Encrypts before upload to destination                     │
-│ - Default: noop                                              │
+│ - Default: off                                               │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
 │ Layer 2: Client-Side Source DEK (Application)              │
 │ - Configurable via encryption.source                        │
 │ - Decrypts after download from source                       │
-│ - Default: noop                                              │
+│ - Default: off                                               │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐
 │ Layer 1: Backend At-Rest Encryption (Storage)              │
 │ - Cloud: S3 SSE/KMS, GCS CMEK, Azure SSE                   │
 │ - Local: Configurable via encryption.backend                │
-│ - Default: noop                                              │
+│ - Default: off                                               │
 └─────────────────────────────────────────────────────────────┘
 ```
 

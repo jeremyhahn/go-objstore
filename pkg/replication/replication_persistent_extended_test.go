@@ -307,32 +307,25 @@ func TestGetFactories_AllNil(t *testing.T) {
 		t.Fatalf("Failed to add policy: %v", err)
 	}
 
-	// Get factories without setting any - should return noop factories
+	// Get factories without setting any: nil, never a passthrough default,
+	// so the syncer can refuse an enabled layer (ErrEncrypterFactoryMissing).
 	backend, source, dest := mgr.getFactories("policy1")
 
-	if backend == nil {
-		t.Error("Expected non-nil backend factory")
+	if backend != nil {
+		t.Errorf("backend factory = %T, want nil", backend)
 	}
 
-	if source == nil {
-		t.Error("Expected non-nil source factory")
+	if source != nil {
+		t.Errorf("source factory = %T, want nil", source)
 	}
 
-	if dest == nil {
-		t.Error("Expected non-nil dest factory")
+	if dest != nil {
+		t.Errorf("dest factory = %T, want nil", dest)
 	}
 
-	// Verify they are noop factories
-	if backend.DefaultKeyID() != "" {
-		t.Error("Expected noop backend factory")
-	}
-
-	if source.DefaultKeyID() != "" {
-		t.Error("Expected noop source factory")
-	}
-
-	if dest.DefaultKeyID() != "" {
-		t.Error("Expected noop dest factory")
+	// A policy with no encryption enabled still builds a syncer with no factory.
+	if _, err := NewSyncer(policy, backend, source, dest, logger, auditLog); err != nil {
+		t.Errorf("NewSyncer with no encryption enabled: %v", err)
 	}
 }
 
@@ -370,19 +363,19 @@ func TestGetFactories_Mixed(t *testing.T) {
 		t.Fatalf("Failed to set backend factory: %v", err)
 	}
 
-	// Get factories - backend should be set, others should be noop
+	// Get factories - backend is the one set, the others nil (no default)
 	backend, source, dest := mgr.getFactories("policy1")
 
-	if backend == nil {
-		t.Error("Expected non-nil backend factory")
+	if backend != backendFactory {
+		t.Errorf("backend factory = %T, want the factory set", backend)
 	}
 
-	if source == nil {
-		t.Error("Expected non-nil source factory")
+	if source != nil {
+		t.Errorf("source factory = %T, want nil", source)
 	}
 
-	if dest == nil {
-		t.Error("Expected non-nil dest factory")
+	if dest != nil {
+		t.Errorf("dest factory = %T, want nil", dest)
 	}
 }
 

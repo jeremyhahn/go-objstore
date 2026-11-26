@@ -37,6 +37,9 @@ import (
 const metadataSuffix = common.MetadataSuffix
 
 // Local is a storage backend that stores files on the local disk.
+// Local applies backend at-rest encryption for replication (Layer 1).
+var _ common.AtRestEncryptable = (*Local)(nil)
+
 type Local struct {
 	path                   string
 	policyFile             string // a non-default lifecyclePolicyFile, refused as a key
@@ -309,19 +312,26 @@ func (l *Local) validateKey(key string) error {
 
 // PutWithMetadata stores an object with associated metadata.
 func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader, metadata *common.Metadata) error {
+	_, err := l.PutWithMetadataResult(ctx, key, data, metadata)
+	return err
+}
+
+// PutWithMetadataResult stores data and metadata like PutWithMetadata and
+// returns the stored object's ETag and size (common.IdentityPutter).
+func (l *Local) PutWithMetadataResult(ctx context.Context, key string, data io.Reader, metadata *common.Metadata) (*common.Metadata, error) {
 	if err := l.validateKey(key); err != nil {
-		return err
+		return nil, err
 	}
 
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return nil, ctx.Err()
 	default:
 	}
 
 	root, err := l.fsRoot()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	name := rootName(key)
 	path := filepath.Join(l.path, name)
@@ -332,7 +342,7 @@ func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 		var err error
 		encrypter, err = l.atRestEncrypterFactory.GetEncrypter("")
 		if err != nil {
-			return fmt.Errorf("failed to get encrypter: %w", err)
+			return nil, fmt.Errorf("failed to get encrypter: %w", err)
 		}
 	}
 
@@ -341,20 +351,32 @@ func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 	if encrypter != nil {
 		encryptedData, err := encrypter.Encrypt(ctx, data)
 		if err != nil {
-			return fmt.Errorf("encryption failed: %w", err)
+			return nil, fmt.Errorf("encryption failed: %w", err)
 		}
 		defer func() { _ = encryptedData.Close() }()
 		dataToWrite = encryptedData
 	}
 
 	var size int64
+	// The identity is taken from the file actually written, before it is
+	// published: a stat by name after the rename could describe a
+	// concurrent writer's replacement instead.
+	var written os.FileInfo
 	if err := writeObjectAtomic(root, &l.pruneMu, name, 0644, func(w io.Writer) error {
 		n, werr := io.Copy(w, dataToWrite)
 		size = n
-		return werr
+		if werr != nil {
+			return werr
+		}
+		if f, ok := w.(interface{ Stat() (os.FileInfo, error) }); ok {
+			if fi, serr := f.Stat(); serr == nil {
+				written = fi
+			}
+		}
+		return nil
 	}); err != nil {
 		log.Printf("[LOCAL] ✗ Failed to write object '%s': %v", key, err)
-		return err
+		return nil, err
 	}
 
 	// Create or update metadata
@@ -363,11 +385,14 @@ func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 	}
 	metadata.Size = size
 	metadata.LastModified = time.Now()
+	if afterPublishHook != nil {
+		afterPublishHook(name)
+	}
 
-	// Get file info for ETag (using modification time as simple ETag)
-	info, err := root.Stat(name)
-	if err == nil {
-		metadata.ETag = fmt.Sprintf("%d-%d", info.ModTime().Unix(), size)
+	// ETag from the written file's modification time and size.
+	if written != nil {
+		metadata.LastModified = written.ModTime()
+		metadata.ETag = fmt.Sprintf("%d-%d", written.ModTime().UnixNano(), size)
 	}
 
 	// Add at-rest encryption metadata if encrypted
@@ -382,8 +407,9 @@ func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 
 	if err := l.saveMetadata(key, metadata); err != nil {
 		log.Printf("[LOCAL] ✗ Failed to save metadata for '%s': %v", key, err)
-		return err
+		return nil, err
 	}
+	stored := &common.Metadata{ETag: metadata.ETag, Size: metadata.Size, LastModified: metadata.LastModified}
 
 	// Log successful operation with details
 	sizeStr := formatBytes(size)
@@ -409,7 +435,7 @@ func (l *Local) PutWithMetadata(ctx context.Context, key string, data io.Reader,
 		})
 	}
 
-	return nil
+	return stored, nil
 }
 
 // Get retrieves an object from the backend.
@@ -535,7 +561,7 @@ func (l *Local) UpdateMetadata(ctx context.Context, key string, metadata *common
 	}
 	metadata.Size = info.Size()
 	metadata.LastModified = time.Now()
-	metadata.ETag = fmt.Sprintf("%d-%d", info.ModTime().Unix(), info.Size())
+	metadata.ETag = fmt.Sprintf("%d-%d", info.ModTime().UnixNano(), info.Size())
 
 	return l.saveMetadata(key, metadata)
 }
@@ -782,7 +808,7 @@ func (l *Local) ListWithOptions(ctx context.Context, opts *common.ListOptions) (
 			metadata = &common.Metadata{
 				Size:         info.Size(),
 				LastModified: info.ModTime(),
-				ETag:         fmt.Sprintf("%d-%d", info.ModTime().Unix(), info.Size()),
+				ETag:         fmt.Sprintf("%d-%d", info.ModTime().UnixNano(), info.Size()),
 			}
 		}
 
@@ -999,6 +1025,10 @@ func writeFileAtomic(root *os.Root, name string, mode os.FileMode, write func(io
 // yet. Deleting an object prunes the directories it leaves empty, so the
 // directory is created, and the temp file made in it, while holding off the
 // prune of mu's store (see createObjectTemp).
+// afterPublishHook, when set by a test, runs in PutWithMetadataResult after
+// the object is published and before its result is built.
+var afterPublishHook func(name string)
+
 func writeObjectAtomic(root *os.Root, mu *sync.RWMutex, name string, mode os.FileMode, write func(io.Writer) error) error {
 	return writeAtomic(root, mu, name, mode, true, write)
 }

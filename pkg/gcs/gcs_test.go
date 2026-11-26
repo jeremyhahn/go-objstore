@@ -364,6 +364,34 @@ type fakeObj struct {
 	attrsErr  bool
 	updateErr bool
 	updated   *storage.ObjectAttrsToUpdate
+	attrs     *storage.ObjectAttrs // committed by a successful NewWriterWithAttrs upload
+}
+
+// NewWriterWithAttrs commits the data and attributes together on a
+// successful Close, as one GCS upload does.
+func (f *fakeObj) NewWriterWithAttrs(ctx context.Context, attrs storage.ObjectAttrs) io.WriteCloser {
+	if f.writeErr {
+		return &errorWriter{closeErr: f.closeErr}
+	}
+	return &attrsWriter{obj: f, attrs: attrs}
+}
+
+type attrsWriter struct {
+	obj   *fakeObj
+	attrs storage.ObjectAttrs
+	buf   bytes.Buffer
+}
+
+func (w *attrsWriter) Write(p []byte) (int, error) { return w.buf.Write(p) }
+
+func (w *attrsWriter) Close() error {
+	if w.obj.closeErr {
+		return errCloseError
+	}
+	w.obj.data = w.buf.Bytes()
+	a := w.attrs
+	w.obj.attrs = &a
+	return nil
 }
 
 func (f *fakeObj) NewWriter(ctx context.Context) io.WriteCloser {
